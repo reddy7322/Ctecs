@@ -21,29 +21,88 @@ object KmzParser {
 
     /**
      * Parses a KMZ or KML stream into [RouteData].
+     * Uses automatic magic-byte header inspection (PK..) and filename fallback
+     * to safely detect whether the file is a KMZ (ZIP archive) or plain KML (XML),
+     * preventing binary ZIP bytes from being fed to the XML parser.
      */
     @Throws(RouteParseException::class)
     fun parse(inputStream: InputStream, originalFileName: String): RouteData {
-        val isKmz = originalFileName.endsWith(".kmz", ignoreCase = true)
-        return if (isKmz) {
-            parseKmzStream(inputStream, originalFileName)
+        val bytes = try {
+            inputStream.readBytes()
+        } catch (e: Exception) {
+            throw RouteParseException("Cannot read route file stream: ${e.message}", e)
+        }
+
+        if (bytes.isEmpty()) {
+            throw RouteParseException("Selected route file is empty: $originalFileName")
+        }
+
+        // Check for ZIP magic header: 0x50 0x4B (ASCII 'P' 'K')
+        val isZipHeader = bytes.size >= 4 &&
+                bytes[0] == 0x50.toByte() &&
+                bytes[1] == 0x4B.toByte()
+
+        val isKmzByName = originalFileName.endsWith(".kmz", ignoreCase = true)
+
+        return if (isZipHeader || isKmzByName) {
+            try {
+                parseKmzBytes(bytes, originalFileName)
+            } catch (kmzErr: Exception) {
+                // If it wasn't a valid ZIP archive but might be XML text, attempt KML fallback
+                if (!isZipHeader) {
+                    try {
+                        parseKmlBytes(bytes, originalFileName)
+                    } catch (ignored: Exception) {
+                        throw kmzErr
+                    }
+                } else {
+                    throw kmzErr
+                }
+            }
         } else {
-            parseKmlStream(inputStream, originalFileName)
+            try {
+                parseKmlBytes(bytes, originalFileName)
+            } catch (kmlErr: Exception) {
+                // If KML parsing failed and it has a ZIP header, attempt KMZ extraction
+                if (isZipHeader) {
+                    try {
+                        parseKmzBytes(bytes, originalFileName)
+                    } catch (ignored: Exception) {
+                        throw kmlErr
+                    }
+                } else {
+                    throw kmlErr
+                }
+            }
         }
     }
 
-    private fun parseKmzStream(inputStream: InputStream, originalFileName: String): RouteData {
+    private fun parseKmzBytes(bytes: ByteArray, originalFileName: String): RouteData {
         try {
-            val zis = ZipInputStream(inputStream)
+            val zis = ZipInputStream(ByteArrayInputStream(bytes))
             var entry: ZipEntry? = zis.nextEntry
+            var fallbackKmlBytes: ByteArray? = null
+
             while (entry != null) {
-                if (!entry.isDirectory && entry.name.endsWith(".kml", ignoreCase = true)) {
-                    val kmlBytes = zis.readBytes()
-                    val routeData = parseKmlStream(ByteArrayInputStream(kmlBytes), originalFileName)
-                    zis.close()
-                    return routeData
+                if (!entry.isDirectory) {
+                    val entryBytes = zis.readBytes()
+                    if (entry.name.endsWith(".kml", ignoreCase = true)) {
+                        zis.close()
+                        return parseKmlBytes(entryBytes, originalFileName)
+                    }
+                    if (fallbackKmlBytes == null && entryBytes.isNotEmpty()) {
+                        val header = String(entryBytes.take(128).toByteArray(), Charsets.UTF_8).trimStart()
+                        if (header.contains("<kml", ignoreCase = true) || header.contains("<?xml", ignoreCase = true)) {
+                            fallbackKmlBytes = entryBytes
+                        }
+                    }
                 }
                 entry = zis.nextEntry
+            }
+            zis.close()
+
+            if (fallbackKmlBytes != null) {
+                return parseKmlBytes(fallbackKmlBytes, originalFileName)
             }
             throw RouteParseException("No valid .kml entry found inside the KMZ archive: $originalFileName")
         } catch (e: RouteParseException) {
@@ -51,6 +110,20 @@ object KmzParser {
         } catch (e: Exception) {
             throw RouteParseException("Failed to read KMZ file: ${e.message}", e)
         }
+    }
+
+    fun parseKmlBytes(bytes: ByteArray, originalFileName: String): RouteData {
+        // Strip UTF-8 BOM (EF BB BF) if present
+        val cleanBytes = if (bytes.size >= 3 &&
+            bytes[0] == 0xEF.toByte() &&
+            bytes[1] == 0xBB.toByte() &&
+            bytes[2] == 0xBF.toByte()
+        ) {
+            bytes.copyOfRange(3, bytes.size)
+        } else {
+            bytes
+        }
+        return parseKmlStream(ByteArrayInputStream(cleanBytes), originalFileName)
     }
 
     @Throws(RouteParseException::class)

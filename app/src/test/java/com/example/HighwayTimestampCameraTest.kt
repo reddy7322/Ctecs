@@ -250,6 +250,25 @@ class HighwayTimestampCameraTest {
         )
     }
 
+    // 9b. Validating KMZ parsing when filename lacks .kmz extension (e.g. Android SAF content URI)
+    @Test
+    fun testKmzParsingWithoutKmzExtension() {
+        val kmzFile = listOf(
+            java.io.File("src/main/assets/sample_nh58.kmz"),
+            java.io.File("app/src/main/assets/sample_nh58.kmz")
+        ).firstOrNull { it.exists() }
+        assertNotNull("sample_nh58.kmz must exist in assets", kmzFile)
+
+        // Pass a name without .kmz (simulating raw SAF ID: 1000868329)
+        val routeData = kmzFile!!.inputStream().use { input ->
+            KmzParser.parse(input, "1000868329")
+        }
+
+        assertEquals(1600, routeData.markers.size)
+        assertEquals(130000L, routeData.startChainage?.metres)
+        assertEquals(209883L, routeData.endChainage?.metres)
+    }
+
     // 10. Testing Smart Inbuilt Update Semantic Versioning
     @Test
     fun testSemanticVersionComparison() {

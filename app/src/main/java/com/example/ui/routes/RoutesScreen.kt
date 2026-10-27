@@ -76,12 +76,32 @@ fun RoutesScreen(
     var routeToDelete by remember { mutableStateOf<RouteEntity?>(null) }
     var showMarkerInspector by remember { mutableStateOf(false) }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            val fileName = uri.lastPathSegment?.substringAfterLast("/") ?: "imported_route.kmz"
-            viewModel.importRoute(uri, fileName)
+            var fileName: String? = null
+            if (uri.scheme == "content") {
+                try {
+                    context.contentResolver.query(
+                        uri,
+                        arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                        null,
+                        null,
+                        null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (idx != -1) {
+                                fileName = cursor.getString(idx)
+                            }
+                        }
+                    }
+                } catch (ignored: Exception) {}
+            }
+            val resolvedName = fileName ?: uri.lastPathSegment?.substringAfterLast("/") ?: "imported_route.kmz"
+            viewModel.importRoute(uri, resolvedName)
         }
     }
 

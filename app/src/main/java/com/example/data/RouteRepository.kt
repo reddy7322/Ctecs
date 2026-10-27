@@ -62,9 +62,10 @@ class RouteRepository(
 
     suspend fun importRouteFromUri(uri: Uri, displayName: String): Result<RouteData> = withContext(Dispatchers.IO) {
         try {
-            // Copy stream to app internal storage
+            // Resolve actual display name from ContentResolver
+            val resolvedName = resolveFileNameFromUri(context, uri, displayName)
             val routesDir = File(context.filesDir, "imported_routes").apply { mkdirs() }
-            val sanitizedName = displayName.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
+            val sanitizedName = resolvedName.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
             val targetFile = File(routesDir, "${System.currentTimeMillis()}_$sanitizedName")
 
             context.contentResolver.openInputStream(uri)?.use { input ->
@@ -73,16 +74,22 @@ class RouteRepository(
                 }
             } ?: return@withContext Result.failure(Exception("Cannot open file stream"))
 
-            // Parse file
+            // Parse file with automatic magic-byte detection
             val parsedRoute = targetFile.inputStream().use { input ->
                 KmzParser.parse(input, sanitizedName)
+            }
+
+            val finalDisplayName = if (parsedRoute.name.isNotBlank() && parsedRoute.name != sanitizedName) {
+                parsedRoute.name
+            } else {
+                resolvedName.substringBeforeLast(".")
             }
 
             // Save in DB
             val entity = RouteEntity(
                 id = parsedRoute.id,
-                name = parsedRoute.name,
-                fileName = displayName,
+                name = finalDisplayName,
+                fileName = resolvedName,
                 markerCount = parsedRoute.markers.size,
                 startChainageMetres = parsedRoute.startChainage?.metres,
                 endChainageMetres = parsedRoute.endChainage?.metres,
@@ -104,6 +111,32 @@ class RouteRepository(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private fun resolveFileNameFromUri(context: Context, uri: Uri, fallback: String): String {
+        if (fallback.endsWith(".kmz", ignoreCase = true) || fallback.endsWith(".kml", ignoreCase = true)) {
+            return fallback
+        }
+        if (uri.scheme == "content") {
+            try {
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (idx != -1) {
+                            val name = cursor.getString(idx)
+                            if (!name.isNullOrBlank()) return name
+                        }
+                    }
+                }
+            } catch (ignored: Exception) {}
+        }
+        return fallback
     }
 
     suspend fun loadBundledSampleRoute(): Result<RouteData> = withContext(Dispatchers.IO) {
