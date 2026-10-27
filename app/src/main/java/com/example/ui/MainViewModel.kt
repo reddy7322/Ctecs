@@ -562,4 +562,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopLocation() {
         locationTracker.stopTracking()
     }
+
+    fun showInfo(message: String) {
+        viewModelScope.launch {
+            _uiMessages.emit(UiMessage.Info(message))
+        }
+    }
+
+    fun showError(message: String) {
+        viewModelScope.launch {
+            _uiMessages.emit(UiMessage.Error(message))
+        }
+    }
 }

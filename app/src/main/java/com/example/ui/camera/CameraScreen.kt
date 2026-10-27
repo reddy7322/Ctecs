@@ -222,17 +222,27 @@ fun CameraScreen(
     // Trigger Video Recording Toggle
     fun toggleVideoRecording() {
         if (!isRecording) {
-            viewModel.onVideoRecordingStarted()
             videoManager.startRecording(
                 controller = controller,
                 recordAudio = cameraSettings.recordAudio,
                 onEvent = { event ->
-                    if (event is androidx.camera.video.VideoRecordEvent.Finalize) {
-                        viewModel.onVideoRecordingStopped()
+                    when (event) {
+                        is androidx.camera.video.VideoRecordEvent.Start -> {
+                            viewModel.onVideoRecordingStarted()
+                        }
+                        is androidx.camera.video.VideoRecordEvent.Finalize -> {
+                            viewModel.onVideoRecordingStopped()
+                            if (event.hasError()) {
+                                viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
+                            } else {
+                                viewModel.showInfo("Video recording saved")
+                            }
+                        }
                     }
                 },
-                onError = {
+                onError = { throwable ->
                     viewModel.onVideoRecordingStopped()
+                    viewModel.showError(throwable.message ?: "Video recording not supported on this device profile")
                 }
             )
         } else {
@@ -248,6 +258,7 @@ fun CameraScreen(
             isFlashOn = isFlashOn,
             zoomRatio = currentZoomRatio,
             exposureIndex = exposureCompensation,
+            isVideoMode = (captureMode == CaptureMode.VIDEO),
             controller = controller,
             modifier = Modifier.fillMaxSize()
         )
