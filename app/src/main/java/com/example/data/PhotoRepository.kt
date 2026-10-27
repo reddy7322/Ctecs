@@ -1,0 +1,114 @@
+package com.example.data
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.os.Environment
+import com.example.model.CaptureSnapshot
+import com.example.overlay.OverlayRenderer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class PhotoRepository(
+    private val context: Context,
+    private val photoRecordDao: PhotoRecordDao
+) {
+    val allPhotos: Flow<List<PhotoRecordEntity>> = photoRecordDao.getAllPhotos()
+
+    fun searchPhotos(query: String): Flow<List<PhotoRecordEntity>> =
+        photoRecordDao.searchPhotos(query)
+
+    suspend fun saveCapturedPhoto(
+        sourceBitmap: Bitmap,
+        snapshot: CaptureSnapshot
+    ): Result<PhotoRecordEntity> = withContext(Dispatchers.IO) {
+        try {
+            // 1. Generate filename: e.g. NH58_196+040_RHS_20261026_173200.jpg
+            val dateFmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+            val dateStr = dateFmt.format(Date(snapshot.timestamp))
+            val highwayClean = snapshot.projectProfile.highwayId.replace("[^a-zA-Z0-9]".toRegex(), "")
+            val chainageClean = snapshot.displayChainage.replace("[^a-zA-Z0-9+]".toRegex(), "")
+            val sideClean = snapshot.projectProfile.roadSide.label
+
+            val baseName = if (chainageClean.isNotBlank() && chainageClean != "---") {
+                "${highwayClean}_${chainageClean}_${sideClean}_$dateStr"
+            } else {
+                "${highwayClean}_$dateStr"
+            }
+            val fileName = "$baseName.jpg"
+
+            // Target directory: Pictures/HighwayTimestampCamera
+            val picturesDir = File(
+                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES),
+                "HighwayTimestampCamera"
+            ).apply { mkdirs() }
+
+            val destinationFile = File(picturesDir, fileName)
+
+            // 2. Render permanent overlay
+            val stampedBitmap = OverlayRenderer.renderOverlay(
+                context = context,
+                sourceBitmap = sourceBitmap,
+                snapshot = snapshot
+            )
+
+            // 3. Save to file with EXIF
+            val savedOk = OverlayRenderer.saveBitmapWithExif(
+                bitmap = stampedBitmap,
+                destinationFile = destinationFile,
+                snapshot = snapshot
+            )
+
+            if (!savedOk) {
+                return@withContext Result.failure(Exception("Failed to encode or save JPEG to disk"))
+            }
+
+            // Optional: Save original unmodified if enabled
+            if (snapshot.overlayConfig.saveOriginalImage) {
+                val origFile = File(picturesDir, "${baseName}_ORIGINAL.jpg")
+                OverlayRenderer.saveBitmapWithExif(sourceBitmap, origFile, snapshot)
+            }
+
+            // 4. Save record in Room Database
+            val entity = PhotoRecordEntity(
+                filePath = destinationFile.absolutePath,
+                fileName = fileName,
+                timestamp = snapshot.timestamp,
+                latitude = snapshot.location?.latitude ?: 0.0,
+                longitude = snapshot.location?.longitude ?: 0.0,
+                accuracy = snapshot.gpsAccuracy,
+                altitude = snapshot.location?.altitude ?: 0.0,
+                chainageMetres = snapshot.matchResult.chainage?.metres,
+                chainageLabel = snapshot.displayChainage,
+                chainageConfidence = snapshot.matchResult.confidence.name,
+                isManualChainage = snapshot.matchResult.isManual,
+                offsetMetres = snapshot.matchResult.offsetMetres.toFloat(),
+                highwayId = snapshot.projectProfile.highwayId,
+                packageSection = snapshot.projectProfile.packageSection,
+                roadSide = snapshot.projectProfile.roadSide.label,
+                lane = snapshot.projectProfile.lane,
+                activity = snapshot.projectProfile.activity,
+                customDescription = snapshot.projectProfile.customDescription,
+                inspectorName = snapshot.projectProfile.inspectorName,
+                formattedOverlayText = snapshot.projectProfile.buildHighwayText(snapshot.displayChainage)
+            )
+
+            val newId = photoRecordDao.insertPhoto(entity)
+            Result.success(entity.copy(id = newId))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deletePhoto(photo: PhotoRecordEntity) = withContext(Dispatchers.IO) {
+        val file = File(photo.filePath)
+        if (file.exists()) {
+            file.delete()
+        }
+        photoRecordDao.deletePhoto(photo)
+    }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Ctecs",
+  "description": "Highway Timestamp Camera Pro with automatic chainage detection, GPS timestamp overlays, and road construction documentation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
