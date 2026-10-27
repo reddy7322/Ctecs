@@ -43,6 +43,10 @@ data class OverlayConfig(
     val showChainage: Boolean = true,
     val showMapInset: Boolean = true,
     val showProjectInfo: Boolean = true,
+    val showCompass: Boolean = true,
+    val showAltitude: Boolean = true,
+    val showAccuracy: Boolean = true,
+    val burnInTimestamp: Boolean = true,        // When false: pristine photo with metadata-only timestamp
 
     // Custom Logo & Manual Settings
     val showLogo: Boolean = true,
@@ -75,7 +79,10 @@ data class CaptureSnapshot(
     val matchResult: ChainageMatchResult,
     val projectProfile: ProjectProfile,
     val overlayConfig: OverlayConfig,
-    val activeRoute: RouteData?
+    val activeRoute: RouteData?,
+    val deviceRotationDegrees: Int = 0,
+    val compassHeading: String = "",
+    val compassAzimuth: Float = 0f
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage

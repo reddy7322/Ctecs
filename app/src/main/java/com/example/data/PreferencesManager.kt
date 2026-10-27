@@ -38,6 +38,11 @@ class PreferencesManager(private val context: Context) {
         val KEY_SHOW_CHAINAGE = booleanPreferencesKey("show_chainage")
         val KEY_SHOW_MAP_INSET = booleanPreferencesKey("show_map_inset")
         val KEY_SHOW_PROJECT_INFO = booleanPreferencesKey("show_project_info")
+        val KEY_SHOW_COMPASS = booleanPreferencesKey("show_compass")
+        val KEY_SHOW_ALTITUDE = booleanPreferencesKey("show_altitude")
+        val KEY_SHOW_ACCURACY = booleanPreferencesKey("show_accuracy")
+        val KEY_BURN_IN_TIMESTAMP = booleanPreferencesKey("burn_in_timestamp")
+        val KEY_AUTO_ROTATE_UI = booleanPreferencesKey("auto_rotate_ui")
 
         // Logo manual settings keys
         val KEY_SHOW_LOGO = booleanPreferencesKey("show_logo")
@@ -128,6 +133,10 @@ class PreferencesManager(private val context: Context) {
             showChainage = prefs[KEY_SHOW_CHAINAGE] ?: true,
             showMapInset = prefs[KEY_SHOW_MAP_INSET] ?: true,
             showProjectInfo = prefs[KEY_SHOW_PROJECT_INFO] ?: true,
+            showCompass = prefs[KEY_SHOW_COMPASS] ?: true,
+            showAltitude = prefs[KEY_SHOW_ALTITUDE] ?: true,
+            showAccuracy = prefs[KEY_SHOW_ACCURACY] ?: true,
+            burnInTimestamp = prefs[KEY_BURN_IN_TIMESTAMP] ?: true,
 
             // Logo manual settings
             showLogo = prefs[KEY_SHOW_LOGO] ?: true,
@@ -175,6 +184,10 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_SHOW_CHAINAGE] = config.showChainage
             prefs[KEY_SHOW_MAP_INSET] = config.showMapInset
             prefs[KEY_SHOW_PROJECT_INFO] = config.showProjectInfo
+            prefs[KEY_SHOW_COMPASS] = config.showCompass
+            prefs[KEY_SHOW_ALTITUDE] = config.showAltitude
+            prefs[KEY_SHOW_ACCURACY] = config.showAccuracy
+            prefs[KEY_BURN_IN_TIMESTAMP] = config.burnInTimestamp
 
             // Logo settings
             prefs[KEY_SHOW_LOGO] = config.showLogo

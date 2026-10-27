@@ -162,7 +162,18 @@ object OverlayRenderer {
                 }
 
                 if (config.showCoordinates && location != null) {
-                    lines.add(location.formatReference(config.coordinatePrecision))
+                    var coordLine = location.formatReference(config.coordinatePrecision)
+                    if (config.showAltitude && location.altitude != 0.0) {
+                        coordLine += " Alt: ${location.altitude.toInt()}m"
+                    }
+                    if (config.showAccuracy && snapshot.gpsAccuracy > 0f) {
+                        coordLine += " (±${snapshot.gpsAccuracy.toInt()}m)"
+                    }
+                    lines.add(coordLine)
+                }
+
+                if (config.showCompass && snapshot.compassHeading.isNotBlank() && snapshot.compassHeading != "---") {
+                    lines.add("Compass: ${snapshot.compassHeading}")
                 }
 
                 if (config.showProjectInfo || config.showChainage) {
@@ -451,6 +462,27 @@ object OverlayRenderer {
                 if (loc != null) {
                     setGpsExif(exif, loc)
                 }
+
+                // Orientation metadata
+                val exifOrientation = when (snapshot.deviceRotationDegrees) {
+                    90 -> ExifInterface.ORIENTATION_ROTATE_90
+                    180 -> ExifInterface.ORIENTATION_ROTATE_180
+                    270 -> ExifInterface.ORIENTATION_ROTATE_270
+                    else -> ExifInterface.ORIENTATION_NORMAL
+                }
+                exif.setAttribute(ExifInterface.TAG_ORIENTATION, exifOrientation.toString())
+                exif.setAttribute(ExifInterface.TAG_MAKE, android.os.Build.MANUFACTURER)
+                exif.setAttribute(ExifInterface.TAG_MODEL, android.os.Build.MODEL)
+                exif.setAttribute(ExifInterface.TAG_SOFTWARE, "Highway Timestamp Camera Pro")
+
+                if (snapshot.compassAzimuth > 0f) {
+                    exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, "${snapshot.compassAzimuth.toInt()}/1")
+                    exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "M")
+                }
+
+                val userComment = "${snapshot.projectProfile.highwayId} ${snapshot.projectProfile.packageSection} ${snapshot.displayChainage} ${snapshot.projectProfile.roadSide.name} ${snapshot.projectProfile.lane} ${snapshot.projectProfile.activity}"
+                exif.setAttribute(ExifInterface.TAG_USER_COMMENT, userComment)
+
                 exif.saveAttributes()
             } catch (ignored: Exception) {}
 

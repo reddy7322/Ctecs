@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.BrandingWatermark
 import androidx.compose.material.icons.filled.Camera
@@ -137,6 +138,7 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(
     viewModel: MainViewModel,
+    onNavigateBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val currentProject by viewModel.projectProfile.collectAsStateWithLifecycle()
@@ -164,6 +166,10 @@ fun SettingsScreen(
     var showChainage by remember(currentOverlay) { mutableStateOf(currentOverlay.showChainage) }
     var showMapInset by remember(currentOverlay) { mutableStateOf(currentOverlay.showMapInset) }
     var showProjectInfo by remember(currentOverlay) { mutableStateOf(currentOverlay.showProjectInfo) }
+    var showCompass by remember(currentOverlay) { mutableStateOf(currentOverlay.showCompass) }
+    var showAltitude by remember(currentOverlay) { mutableStateOf(currentOverlay.showAltitude) }
+    var showAccuracy by remember(currentOverlay) { mutableStateOf(currentOverlay.showAccuracy) }
+    var burnInTimestamp by remember(currentOverlay) { mutableStateOf(currentOverlay.burnInTimestamp) }
     var hasTextShadow by remember(currentOverlay) { mutableStateOf(currentOverlay.hasTextShadow) }
     var fontSizeSp by remember(currentOverlay) { mutableFloatStateOf(currentOverlay.fontSizeSp) }
     var saveOriginal by remember(currentOverlay) { mutableStateOf(currentOverlay.saveOriginalImage) }
@@ -226,6 +232,15 @@ fun SettingsScreen(
                         color = PrimaryText
                     )
                 },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to Camera",
+                            tint = PrimaryText
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = PrimaryBackground,
                     titleContentColor = PrimaryText
@@ -258,6 +273,10 @@ fun SettingsScreen(
                                     showChainage = showChainage,
                                     showMapInset = showMapInset,
                                     showProjectInfo = showProjectInfo,
+                                    showCompass = showCompass,
+                                    showAltitude = showAltitude,
+                                    showAccuracy = showAccuracy,
+                                    burnInTimestamp = burnInTimestamp,
                                     hasTextShadow = hasTextShadow,
                                     fontSizeSp = fontSizeSp,
                                     saveOriginalImage = saveOriginal,
@@ -583,13 +602,31 @@ fun SettingsScreen(
             }
 
             // SECTION 6: TIMESTAMP & TEXT
-            if (matchesSearch("timestamp", "date", "time", "font", "shadow", "24h", "text")) {
+            if (matchesSearch("timestamp", "date", "time", "font", "shadow", "24h", "text", "format", "burn")) {
                 SettingsSectionCard(title = "6. Timestamp & Text", icon = Icons.Default.TextFields) {
                     SettingSwitchRow(
                         label = "Show Date & Time",
                         subtitle = "Prints formatted timestamp on photo",
                         checked = showTimestamp,
                         onCheckedChange = { showTimestamp = it }
+                    )
+                    SettingSwitchRow(
+                        label = "Burn-In Timestamp On Media",
+                        subtitle = "When disabled, keeps pristine image with metadata-only timestamps in EXIF",
+                        checked = burnInTimestamp,
+                        onCheckedChange = { burnInTimestamp = it }
+                    )
+                    SettingDropdownRow(
+                        label = "Timestamp Format",
+                        current = timestampFormat,
+                        options = listOf(
+                            "dd-MM-yyyy HH:mm:ss",
+                            "dd/MM/yyyy HH:mm:ss",
+                            "yyyy-MM-dd HH:mm:ss",
+                            "yyyy-MM-dd'T'HH:mm:ss",
+                            "dd MMMM yyyy h:mm a"
+                        ),
+                        onSelect = { timestampFormat = it }
                     )
                     SettingSwitchRow(
                         label = "24-Hour Time Format",
@@ -623,13 +660,31 @@ fun SettingsScreen(
             }
 
             // SECTION 7: GPS & CHAINAGE
-            if (matchesSearch("gps", "chainage", "dms", "accuracy", "radius", "precision", "utm")) {
-                SettingsSectionCard(title = "7. GPS & Chainage", icon = Icons.Default.MyLocation) {
+            if (matchesSearch("gps", "chainage", "dms", "accuracy", "radius", "precision", "utm", "compass", "altitude")) {
+                SettingsSectionCard(title = "7. GPS, Compass & Chainage", icon = Icons.Default.MyLocation) {
                     SettingDropdownRow(
                         label = "Coordinate Format",
                         current = coordFormat.label,
                         options = CoordinateFormat.entries.map { it.label },
                         onSelect = { label -> coordFormat = CoordinateFormat.entries.first { it.label == label } }
+                    )
+                    SettingSwitchRow(
+                        label = "Show Compass Heading",
+                        subtitle = "Displays device direction in degrees and cardinal heading (e.g. 184° S)",
+                        checked = showCompass,
+                        onCheckedChange = { showCompass = it }
+                    )
+                    SettingSwitchRow(
+                        label = "Show Altitude",
+                        subtitle = "Displays elevation in meters above sea level",
+                        checked = showAltitude,
+                        onCheckedChange = { showAltitude = it }
+                    )
+                    SettingSwitchRow(
+                        label = "Show GPS Accuracy",
+                        subtitle = "Displays accuracy margin indicator (e.g. ±3m)",
+                        checked = showAccuracy,
+                        onCheckedChange = { showAccuracy = it }
                     )
                     Column {
                         Row(
@@ -837,6 +892,20 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Check Update", fontSize = 12.sp)
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Made with ❤️ madhureddyainala",
+                            color = SecondaryText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center
+                        )
                     }
 
                     OutlinedButton(

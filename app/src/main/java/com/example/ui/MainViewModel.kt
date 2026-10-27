@@ -53,8 +53,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val routeRepository = RouteRepository(application, db.routeDao(), preferencesManager, viewModelScope)
     val photoRepository = PhotoRepository(application, db.photoRecordDao())
     val locationTracker = LocationTracker(application)
+    val compassTracker = com.example.sensor.CompassAndOrientationTracker(application)
     val appUpdateManager = com.example.update.AppUpdateManager(application)
     val whatsNewManager = com.example.update.WhatsNewManager(application)
+
+    val compassState: StateFlow<com.example.sensor.CompassState> = compassTracker.compassState
+    val deviceOrientation: StateFlow<com.example.sensor.DeviceOrientation> = compassTracker.deviceOrientation
+    val rotationDegrees: StateFlow<Float> = compassTracker.rotationDegrees
 
     private val _currentTab = MutableStateFlow(AppTab.CAMERA)
     val currentTab: StateFlow<AppTab> = _currentTab.asStateFlow()
@@ -530,7 +535,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     matchResult = liveMatchResult.value,
                     projectProfile = projectProfile.value,
                     overlayConfig = overlayConfig.value,
-                    activeRoute = activeRouteData.value
+                    activeRoute = activeRouteData.value,
+                    deviceRotationDegrees = rotationDegrees.value.toInt(),
+                    compassHeading = compassState.value.displayHeading,
+                    compassAzimuth = compassState.value.azimuthDegrees
                 )
 
                 val result = photoRepository.saveCapturedPhoto(bitmap, snapshot)
@@ -557,10 +565,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startLocation() {
         locationTracker.startTracking()
+        compassTracker.startTracking()
     }
 
     fun stopLocation() {
         locationTracker.stopTracking()
+        compassTracker.stopTracking()
     }
 
     fun showInfo(message: String) {

@@ -101,56 +101,7 @@ fun MainScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            NavigationBar(
-                containerColor = SurfaceDark,
-                contentColor = PrimaryText
-            ) {
-                val navBarColors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = HighlightYellow,
-                    selectedTextColor = HighlightYellow,
-                    indicatorColor = DarkYellowSurface,
-                    unselectedIconColor = SecondaryText,
-                    unselectedTextColor = SecondaryText
-                )
-
-                NavigationBarItem(
-                    selected = currentTab == AppTab.CAMERA,
-                    onClick = { viewModel.setTab(AppTab.CAMERA) },
-                    icon = { Icon(Icons.Default.CameraAlt, contentDescription = "Camera") },
-                    label = { Text("Camera") },
-                    colors = navBarColors,
-                    modifier = Modifier.testTag("tab_camera")
-                )
-
-                NavigationBarItem(
-                    selected = currentTab == AppTab.PHOTOS,
-                    onClick = { viewModel.setTab(AppTab.PHOTOS) },
-                    icon = { Icon(Icons.Default.PhotoLibrary, contentDescription = "Photos") },
-                    label = { Text("Photos") },
-                    colors = navBarColors,
-                    modifier = Modifier.testTag("tab_photos")
-                )
-
-                NavigationBarItem(
-                    selected = currentTab == AppTab.ROUTES,
-                    onClick = { viewModel.setTab(AppTab.ROUTES) },
-                    icon = { Icon(Icons.Default.AltRoute, contentDescription = "Routes") },
-                    label = { Text("Routes") },
-                    colors = navBarColors,
-                    modifier = Modifier.testTag("tab_routes")
-                )
-
-                NavigationBarItem(
-                    selected = currentTab == AppTab.SETTINGS,
-                    onClick = { viewModel.setTab(AppTab.SETTINGS) },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                    label = { Text("Settings") },
-                    colors = navBarColors,
-                    modifier = Modifier.testTag("tab_settings")
-                )
-            }
-        },
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         containerColor = PrimaryBackground,
         modifier = modifier
     ) { innerPadding ->
@@ -162,11 +113,22 @@ fun MainScreen(
             when (currentTab) {
                 AppTab.CAMERA -> CameraScreen(
                     viewModel = viewModel,
-                    onNavigateToPhotos = { viewModel.setTab(AppTab.PHOTOS) }
+                    onNavigateToPhotos = { viewModel.setTab(AppTab.PHOTOS) },
+                    onNavigateToRoutes = { viewModel.setTab(AppTab.ROUTES) },
+                    onNavigateToSettings = { viewModel.setTab(AppTab.SETTINGS) }
                 )
-                AppTab.PHOTOS -> PhotosScreen(viewModel = viewModel)
-                AppTab.ROUTES -> RoutesScreen(viewModel = viewModel)
-                AppTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
+                AppTab.PHOTOS -> PhotosScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { viewModel.setTab(AppTab.CAMERA) }
+                )
+                AppTab.ROUTES -> RoutesScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { viewModel.setTab(AppTab.CAMERA) }
+                )
+                AppTab.SETTINGS -> SettingsScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { viewModel.setTab(AppTab.CAMERA) }
+                )
             }
         }
     }

@@ -9,6 +9,7 @@ import androidx.camera.view.LifecycleCameraController
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -76,6 +77,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -83,6 +85,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -127,6 +130,8 @@ import java.util.Locale
 fun CameraScreen(
     viewModel: MainViewModel,
     onNavigateToPhotos: () -> Unit,
+    onNavigateToRoutes: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -152,6 +157,15 @@ fun CameraScreen(
     val overlayConfig by viewModel.overlayConfig.collectAsStateWithLifecycle()
     val lastPhoto by viewModel.lastCapturedPhoto.collectAsStateWithLifecycle()
     val showManualDialog by viewModel.showManualChainageDialog.collectAsStateWithLifecycle()
+
+    // Real-time Compass & Device Orientation state
+    val rotationDegrees by viewModel.rotationDegrees.collectAsStateWithLifecycle()
+    val compassState by viewModel.compassState.collectAsStateWithLifecycle()
+    val animatedRotation by animateFloatAsState(
+        targetValue = rotationDegrees.toFloat(),
+        animationSpec = tween(250),
+        label = "icon_rotation"
+    )
 
     var showSimDialog by remember { mutableStateOf(false) }
     var showActivityMenu by remember { mutableStateOf(false) }
@@ -356,13 +370,13 @@ fun CameraScreen(
             }
         }
 
-        // 6. Top Bar: Quick Controls & Status
+        // 6. Top Bar: Minimal Single-Icon Controls & Status
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .background(Color(0x99000000))
-                .padding(top = 16.dp, bottom = 8.dp, start = 12.dp, end = 12.dp)
+                .background(Color(0x80000000))
+                .padding(top = 24.dp, bottom = 6.dp, start = 8.dp, end = 8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -373,9 +387,10 @@ fun CameraScreen(
                 IconButton(
                     onClick = { viewModel.toggleFlash() },
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .background(ElevatedSurface)
+                        .graphicsLayer { rotationZ = -animatedRotation }
                         .testTag("flash_toggle_button")
                 ) {
                     Icon(
@@ -386,39 +401,32 @@ fun CameraScreen(
                     )
                 }
 
-                // Timer cycle button
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = ElevatedSurface,
-                    modifier = Modifier.clickable { viewModel.cycleTimer() }.testTag("timer_cycle_button")
+                // Timer cycle button (single compact icon)
+                IconButton(
+                    onClick = { viewModel.cycleTimer() },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(if (cameraSettings.captureTimer != CaptureTimer.OFF) DarkYellowSurface else ElevatedSurface)
+                        .graphicsLayer { rotationZ = -animatedRotation }
+                        .testTag("timer_cycle_button")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Timer,
-                            contentDescription = "Timer",
-                            tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = cameraSettings.captureTimer.label,
-                            color = PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Timer,
+                        contentDescription = "Timer",
+                        tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
 
                 // Grid cycle button
                 IconButton(
                     onClick = { viewModel.cycleGrid() },
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
-                        .background(ElevatedSurface)
+                        .background(if (cameraSettings.gridMode != CameraGridMode.OFF) DarkYellowSurface else ElevatedSurface)
+                        .graphicsLayer { rotationZ = -animatedRotation }
                         .testTag("grid_cycle_button")
                 ) {
                     Icon(
@@ -433,9 +441,10 @@ fun CameraScreen(
                 IconButton(
                     onClick = { showExposureSlider = !showExposureSlider },
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .background(if (showExposureSlider) DarkYellowSurface else ElevatedSurface)
+                        .graphicsLayer { rotationZ = -animatedRotation }
                         .testTag("exposure_toggle_button")
                 ) {
                     Icon(
@@ -446,77 +455,14 @@ fun CameraScreen(
                     )
                 }
 
-                // Route status badge
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (activeRoute != null) Color(0xD90A0A0A) else ElevatedSurface,
-                    modifier = Modifier
-                        .border(1.dp, if (activeRoute != null) HighlightYellow.copy(alpha = 0.5f) else BorderColor, RoundedCornerShape(12.dp))
-                        .clickable { viewModel.setTab(AppTab.ROUTES) }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AltRoute,
-                            contentDescription = "Route",
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = activeRoute?.name?.take(10) ?: "Route",
-                            color = PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                // GPS Accuracy status pill
-                val gpsColor = when (locationState.status) {
-                    LocationStatus.READY -> HighlightYellow
-                    LocationStatus.POOR_ACCURACY -> Color(0xFFF59E0B)
-                    LocationStatus.ACQUIRING -> Color(0xFF38BDF8)
-                    else -> AccentRed
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = SurfaceDark,
-                    modifier = Modifier
-                        .border(1.dp, BorderColor, RoundedCornerShape(12.dp))
-                        .clickable { showSimDialog = true }
-                        .testTag("gps_status_pill")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(gpsColor)
-                        )
-                        Text(
-                            text = if (locationState.point != null) "±${locationState.accuracy.toInt()}m" else "GPS..",
-                            color = PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
                 // Flip Camera
                 IconButton(
                     onClick = { viewModel.toggleCameraFacing() },
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .background(ElevatedSurface)
+                        .graphicsLayer { rotationZ = -animatedRotation }
                         .testTag("camera_flip_button")
                 ) {
                     Icon(
@@ -525,6 +471,107 @@ fun CameraScreen(
                         tint = PrimaryText,
                         modifier = Modifier.size(20.dp)
                     )
+                }
+
+                // Tiny single-icon Route button
+                IconButton(
+                    onClick = { onNavigateToRoutes() },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(if (activeRoute != null) DarkYellowSurface else ElevatedSurface)
+                        .graphicsLayer { rotationZ = -animatedRotation }
+                        .testTag("routes_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AltRoute,
+                        contentDescription = "Routes",
+                        tint = if (activeRoute != null) HighlightYellow else PrimaryText,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Tiny single-icon Settings gear button
+                IconButton(
+                    onClick = { onNavigateToSettings() },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(ElevatedSurface)
+                        .graphicsLayer { rotationZ = -animatedRotation }
+                        .testTag("settings_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = PrimaryText,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Compact Status Row: GPS Status & Live Compass Heading
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp, start = 4.dp, end = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val gpsColor = when (locationState.status) {
+                    LocationStatus.READY -> HighlightYellow
+                    LocationStatus.POOR_ACCURACY -> Color(0xFFF59E0B)
+                    LocationStatus.ACQUIRING -> Color(0xFF38BDF8)
+                    else -> AccentRed
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = SurfaceDark.copy(alpha = 0.85f),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, BorderColor),
+                    modifier = Modifier
+                        .clickable { showSimDialog = true }
+                        .testTag("gps_status_pill")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(gpsColor)
+                        )
+                        Text(
+                            text = if (locationState.point != null) "GPS ±${locationState.accuracy.toInt()}m" else "GPS Acquiring...",
+                            color = PrimaryText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                if (overlayConfig.showCompass) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = SurfaceDark.copy(alpha = 0.85f),
+                        border = androidx.compose.foundation.BorderStroke(0.5.dp, BorderColor)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "🧭 ${compassState.displayHeading}",
+                                color = HighlightYellow,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
 
@@ -702,6 +749,34 @@ fun CameraScreen(
                             text = coordText,
                             color = PrimaryText,
                             fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.End,
+                            style = androidx.compose.ui.text.TextStyle(
+                                shadow = androidx.compose.ui.graphics.Shadow(
+                                    color = Color.Black,
+                                    offset = Offset(2f, 2f),
+                                    blurRadius = 4f
+                                )
+                            )
+                        )
+                    }
+
+                    // Telemetry: Altitude, Accuracy & Compass Heading
+                    val telemetryItems = mutableListOf<String>()
+                    if (overlayConfig.showCompass) {
+                        telemetryItems.add(compassState.displayHeading)
+                    }
+                    if (overlayConfig.showAltitude && locationState.point != null && locationState.altitude != 0.0) {
+                        telemetryItems.add(String.format(Locale.US, "%.0f m", locationState.altitude))
+                    }
+                    if (overlayConfig.showAccuracy && locationState.point != null && locationState.accuracy > 0f) {
+                        telemetryItems.add(String.format(Locale.US, "±%.0fm", locationState.accuracy))
+                    }
+                    if (telemetryItems.isNotEmpty()) {
+                        Text(
+                            text = telemetryItems.joinToString("  |  "),
+                            color = HighlightYellow,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.End,
                             style = androidx.compose.ui.text.TextStyle(
@@ -903,7 +978,8 @@ fun CameraScreen(
                             text = label,
                             color = if (isSelected) PrimaryBackground else PrimaryText,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.graphicsLayer { rotationZ = -animatedRotation }
                         )
                     }
                 }
@@ -963,13 +1039,14 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Recent Thumbnail Button
+                // Recent Thumbnail / Gallery Button
                 Box(
                     modifier = Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .border(1.5.dp, BorderColor, RoundedCornerShape(12.dp))
                         .background(SurfaceDark)
+                        .graphicsLayer { rotationZ = -animatedRotation }
                         .clickable { onNavigateToPhotos() }
                         .testTag("recent_thumbnail_button"),
                     contentAlignment = Alignment.Center
@@ -983,10 +1060,10 @@ fun CameraScreen(
                         )
                     } else {
                         Icon(
-                            imageVector = Icons.Default.LocationOn,
+                            imageVector = Icons.Default.PhotoLibrary,
                             contentDescription = "Gallery",
                             tint = SecondaryText,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
@@ -1019,7 +1096,9 @@ fun CameraScreen(
                                 imageVector = Icons.Default.Camera,
                                 contentDescription = "Take Photo",
                                 tint = PrimaryBackground,
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
                             )
                         }
                     }
@@ -1063,6 +1142,7 @@ fun CameraScreen(
                         .clip(CircleShape)
                         .background(SurfaceDark)
                         .border(1.dp, BorderColor, CircleShape)
+                        .graphicsLayer { rotationZ = -animatedRotation }
                         .testTag("gps_sim_button")
                 ) {
                     Icon(

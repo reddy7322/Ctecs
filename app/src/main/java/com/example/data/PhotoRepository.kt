@@ -49,16 +49,20 @@ class PhotoRepository(
 
             val destinationFile = File(picturesDir, fileName)
 
-            // 2. Render permanent overlay
-            val stampedBitmap = OverlayRenderer.renderOverlay(
-                context = context,
-                sourceBitmap = sourceBitmap,
-                snapshot = snapshot
-            )
+            // 2. Render permanent overlay if burn-in is enabled, or keep clean original
+            val bitmapToSave = if (snapshot.overlayConfig.burnInTimestamp) {
+                OverlayRenderer.renderOverlay(
+                    context = context,
+                    sourceBitmap = sourceBitmap,
+                    snapshot = snapshot
+                )
+            } else {
+                sourceBitmap
+            }
 
-            // 3. Save to file with EXIF
+            // 3. Save to file with EXIF metadata
             val savedOk = OverlayRenderer.saveBitmapWithExif(
-                bitmap = stampedBitmap,
+                bitmap = bitmapToSave,
                 destinationFile = destinationFile,
                 snapshot = snapshot
             )
@@ -67,8 +71,8 @@ class PhotoRepository(
                 return@withContext Result.failure(Exception("Failed to encode or save JPEG to disk"))
             }
 
-            // Optional: Save original unmodified if enabled
-            if (snapshot.overlayConfig.saveOriginalImage) {
+            // Optional: Save original unmodified if enabled alongside stamped image
+            if (snapshot.overlayConfig.saveOriginalImage && snapshot.overlayConfig.burnInTimestamp) {
                 val origFile = File(picturesDir, "${baseName}_ORIGINAL.jpg")
                 OverlayRenderer.saveBitmapWithExif(sourceBitmap, origFile, snapshot)
             }
