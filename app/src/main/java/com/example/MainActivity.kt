@@ -25,22 +25,33 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
             val deviceOrientation by viewModel.deviceOrientation.collectAsStateWithLifecycle()
             val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
 
-            // Automatic Orientation Override: switches between portrait and landscape
-            // even if system Auto-Rotate is disabled, while locking orientation during video recording
-            LaunchedEffect(deviceOrientation, isRecording) {
-                if (!isRecording) {
-                    val targetOrientation = when (deviceOrientation) {
-                        DeviceOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        DeviceOrientation.LANDSCAPE_LEFT -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                        DeviceOrientation.REVERSE_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-                        DeviceOrientation.LANDSCAPE_RIGHT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+            // Automatic Orientation Override:
+            // Locks non-camera screens (Home, Photos, Routes, Settings) strictly to PORTRAIT mode.
+            // On Camera screen, dynamically adjusts between portrait and landscape for photo capture.
+            LaunchedEffect(currentTab, deviceOrientation, isRecording) {
+                if (currentTab == com.example.ui.AppTab.CAMERA) {
+                    if (!isRecording) {
+                        val targetOrientation = when (deviceOrientation) {
+                            DeviceOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            DeviceOrientation.LANDSCAPE_LEFT -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                            DeviceOrientation.REVERSE_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+                            DeviceOrientation.LANDSCAPE_RIGHT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                        }
+                        if (requestedOrientation != targetOrientation) {
+                            try {
+                                requestedOrientation = targetOrientation
+                            } catch (ignored: Exception) {}
+                        }
                     }
-                    if (requestedOrientation != targetOrientation) {
+                } else {
+                    // Force PORTRAIT on Home Page and all other non-camera screens
+                    if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
                         try {
-                            requestedOrientation = targetOrientation
+                            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                         } catch (ignored: Exception) {}
                     }
                 }

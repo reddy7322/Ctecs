@@ -1,6 +1,7 @@
 package com.example.ui.home
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -9,8 +10,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -143,6 +146,7 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.statusBars)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -215,12 +219,11 @@ fun HomeScreen(
                 subTextColor = subTextColor
             )
 
-            // 4. Interactive Smart KMZ Map - Fully Responsive Vertical Stretch to Bottom Navbar
+            // 4. Interactive Smart KMZ Map - Expanded 360.dp Card
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .heightIn(min = 240.dp)
+                    .height(360.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .border(0.8.dp, cardBorderColor, RoundedCornerShape(18.dp))
             ) {
@@ -229,122 +232,11 @@ fun HomeScreen(
                     gpsAccuracy = locationState.accuracy,
                     bearing = locationState.bearing,
                     compassHeading = compassState.azimuthDegrees,
+                    compassHeadingStr = compassState.displayHeading,
                     routeData = activeRoute,
                     matchedProjectedPoint = matchResult.projectedPoint,
                     modifier = Modifier.fillMaxSize()
                 )
-
-                // Left Map Tools (Layers, Re-center, Pin)
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    MapToolButton(icon = Icons.Default.Layers, contentDesc = "Layers", tag = "map_layers_btn")
-                    MapToolButton(icon = Icons.Default.MyLocation, contentDesc = "Location", tag = "map_locate_btn")
-                    MapToolButton(icon = Icons.Default.Place, contentDesc = "Pin", tag = "map_pin_btn")
-                }
-
-                // Top Right Circular Compass Widget
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xEE121212),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, HighlightYellow.copy(alpha = 0.8f)),
-                    shadowElevation = 6.dp,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(10.dp)
-                        .size(54.dp)
-                        .testTag("map_compass_widget")
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        val headingDeg = compassState.azimuthDegrees
-                        Canvas(modifier = Modifier.size(46.dp)) {
-                            val cx = size.width / 2f
-                            val cy = size.height / 2f
-                            rotate(degrees = -headingDeg, pivot = Offset(cx, cy)) {
-                                val p = Path().apply {
-                                    moveTo(cx, cy - 14.dp.toPx())
-                                    lineTo(cx - 5.dp.toPx(), cy + 6.dp.toPx())
-                                    lineTo(cx, cy + 2.dp.toPx())
-                                    lineTo(cx + 5.dp.toPx(), cy + 6.dp.toPx())
-                                    close()
-                                }
-                                drawPath(p, color = Color(0xFFEF4444))
-                            }
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "N",
-                                color = Color(0xFFEF4444),
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = compassState.displayHeading,
-                                color = HighlightYellow,
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Black
-                            )
-                        }
-                    }
-                }
-
-                // Right Side Zoom Controls (+ / -)
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color.White.copy(alpha = 0.92f),
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.LightGray),
-                    shadowElevation = 4.dp,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 10.dp)
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        IconButton(
-                            onClick = {},
-                            modifier = Modifier
-                                .size(34.dp)
-                                .testTag("map_zoom_in_btn")
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = "Zoom In", tint = Color.Black, modifier = Modifier.size(18.dp))
-                        }
-                        Box(
-                            modifier = Modifier
-                                .width(22.dp)
-                                .height(0.8.dp)
-                                .background(Color.LightGray)
-                        )
-                        IconButton(
-                            onClick = {},
-                            modifier = Modifier
-                                .size(34.dp)
-                                .testTag("map_zoom_out_btn")
-                        ) {
-                            Icon(Icons.Default.Remove, contentDescription = "Zoom Out", tint = Color.Black, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-
-                // Bottom Right Scale Bar
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xD0000000),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 10.dp, end = 10.dp)
-                ) {
-                    Text(
-                        text = "50 m",
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
             }
 
             // 5. Next Chainage & Telemetry Cards Row (4 Cards below Map)
@@ -372,7 +264,7 @@ fun HomeScreen(
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 1: TOP TELEMETRY HEADER ROW (4 Cards)
+// COMPONENT 1: TOP TELEMETRY HEADER ROW (Adaptive 4 Cards / 2x2 Grid)
 // -------------------------------------------------------------------
 @Composable
 fun TopTelemetryHeaderRow(
@@ -389,12 +281,9 @@ fun TopTelemetryHeaderRow(
     mainTextColor: Color,
     subTextColor: Color
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Card 1: GPS Accuracy Pill
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val isNarrow = maxWidth < 360.dp
+
         val (dotCol, gpsText) = when {
             !hasFix -> Color(0xFF38BDF8) to "GPS --"
             accuracy <= 5f -> Color(0xFF22C55E) to String.format(Locale.US, "GPS ±%.0fm", accuracy)
@@ -402,151 +291,321 @@ fun TopTelemetryHeaderRow(
             else -> AccentRed to String.format(Locale.US, "GPS ±%.0fm", accuracy)
         }
 
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF0F172A),
-            modifier = Modifier
-                .weight(1f)
-                .height(44.dp)
-        ) {
+        if (isNarrow) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Card 1: GPS Accuracy Pill
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF0F172A),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(dotCol)
+                                    .alpha(if (!hasFix) gpsPulseAlpha else 1.0f)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = gpsText,
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Card 2: Satellites
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = cardBgColor,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SatelliteAlt,
+                                contentDescription = null,
+                                tint = mainTextColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Column(horizontalAlignment = Alignment.Start) {
+                                Text(
+                                    text = if (hasFix) "$satellitesCount" else "--",
+                                    color = mainTextColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = "Satellites",
+                                    color = subTextColor,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Card 3: Speed
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = cardBgColor,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Speed,
+                                contentDescription = null,
+                                tint = mainTextColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Column(horizontalAlignment = Alignment.Start) {
+                                Text(
+                                    text = String.format(Locale.US, "%.0f", speedKmh),
+                                    color = mainTextColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = "km/h",
+                                    color = subTextColor,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    // Card 4: Compass Pill + Quick Theme Shortcut
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF0F172A),
+                        modifier = Modifier
+                            .weight(1.1f)
+                            .height(44.dp)
+                            .clickable { onToggleTheme() }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.CompassCalibration,
+                                    contentDescription = null,
+                                    tint = HighlightYellow,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = compassHeadingStr,
+                                    color = HighlightYellow,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+
+                            Icon(
+                                imageVector = when (currentThemeMode) {
+                                    "light" -> Icons.Default.LightMode
+                                    "dark" -> Icons.Default.DarkMode
+                                    else -> Icons.Default.Palette
+                                },
+                                contentDescription = "Toggle Theme",
+                                tint = Color.White.copy(alpha = 0.7f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                // Card 1: GPS Accuracy Pill
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF0F172A),
                     modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(dotCol)
-                        .alpha(if (!hasFix) gpsPulseAlpha else 1.0f)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = gpsText,
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // Card 2: Satellites
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = cardBgColor,
-            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
-            modifier = Modifier
-                .weight(1f)
-                .height(44.dp)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SatelliteAlt,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Column(horizontalAlignment = Alignment.Start) {
-                    Text(
-                        text = if (hasFix) "$satellitesCount" else "--",
-                        color = mainTextColor,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    Text(
-                        text = "Satellites",
-                        color = subTextColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        // Card 3: Speed
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = cardBgColor,
-            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
-            modifier = Modifier
-                .weight(1f)
-                .height(44.dp)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Speed,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Column(horizontalAlignment = Alignment.Start) {
-                    Text(
-                        text = String.format(Locale.US, "%.0f", speedKmh),
-                        color = mainTextColor,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    Text(
-                        text = "km/h",
-                        color = subTextColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        // Card 4: Compass Pill + Quick Theme Shortcut
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF0F172A),
-            modifier = Modifier
-                .weight(1.1f)
-                .height(44.dp)
-                .clickable { onToggleTheme() }
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.CompassCalibration,
-                        contentDescription = null,
-                        tint = HighlightYellow,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = compassHeadingStr,
-                        color = HighlightYellow,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Black
-                    )
+                        .weight(1f)
+                        .height(44.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(dotCol)
+                                .alpha(if (!hasFix) gpsPulseAlpha else 1.0f)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = gpsText,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
-                Icon(
-                    imageVector = when (currentThemeMode) {
-                        "light" -> Icons.Default.LightMode
-                        "dark" -> Icons.Default.DarkMode
-                        else -> Icons.Default.Palette
-                    },
-                    contentDescription = "Toggle Theme",
-                    tint = Color.White.copy(alpha = 0.7f),
-                    modifier = Modifier.size(14.dp)
-                )
+                // Card 2: Satellites
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = cardBgColor,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SatelliteAlt,
+                            contentDescription = null,
+                            tint = mainTextColor,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Column(horizontalAlignment = Alignment.Start) {
+                            Text(
+                                text = if (hasFix) "$satellitesCount" else "--",
+                                color = mainTextColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                            Text(
+                                text = "Satellites",
+                                color = subTextColor,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                // Card 3: Speed
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = cardBgColor,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = null,
+                            tint = mainTextColor,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Column(horizontalAlignment = Alignment.Start) {
+                            Text(
+                                text = String.format(Locale.US, "%.0f", speedKmh),
+                                color = mainTextColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                            Text(
+                                text = "km/h",
+                                color = subTextColor,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                // Card 4: Compass Pill + Quick Theme Shortcut
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF0F172A),
+                    modifier = Modifier
+                        .weight(1.1f)
+                        .height(44.dp)
+                        .clickable { onToggleTheme() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CompassCalibration,
+                                contentDescription = null,
+                                tint = HighlightYellow,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = compassHeadingStr,
+                                color = HighlightYellow,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+
+                        Icon(
+                            imageVector = when (currentThemeMode) {
+                                "light" -> Icons.Default.LightMode
+                                "dark" -> Icons.Default.DarkMode
+                                else -> Icons.Default.Palette
+                            },
+                            contentDescription = "Toggle Theme",
+                            tint = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -565,97 +624,111 @@ fun CentralChainageDisplay(
     mainTextColor: Color,
     subTextColor: Color
 ) {
-    Column(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentAlignment = Alignment.Center
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            // Left Yellow Pill: KM
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = HighlightYellow,
-                modifier = Modifier.padding(end = 8.dp)
-            ) {
-                Text(
-                    text = "KM",
-                    color = Color.Black,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-
-            // Central Extra-Large Odometer Chainage Digits
-            OdometerChainageRow(
-                chainageText = chainageText,
-                mainTextColor = mainTextColor
-            )
-
-            // Right Yellow Pill: RHS / LHS
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = HighlightYellow,
-                modifier = Modifier.padding(start = 8.dp)
-            ) {
-                Text(
-                    text = "• $detectedSide",
-                    color = Color.Black,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
+        val containerWidth = maxWidth
+        val digitFontSize = when {
+            containerWidth < 340.dp -> 42.sp
+            containerWidth < 380.dp -> 50.sp
+            containerWidth < 430.dp -> 58.sp
+            else -> 66.sp
         }
 
-        Spacer(modifier = Modifier.height(2.dp))
-
-        // Quality & Offset Status Line Below Chainage
-        Row(
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                text = if (hasActiveRoute) "Model" else "GPS-Derived",
-                color = mainTextColor,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "  •  ",
-                color = subTextColor,
-                fontSize = 12.sp
-            )
-            Text(
-                text = String.format(Locale.US, "Offset: %.1fm", offsetMetres),
-                color = mainTextColor,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
-                text = "  •  ",
-                color = subTextColor,
-                fontSize = 12.sp
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Left Yellow Pill: KM (Small & Compact)
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = HighlightYellow,
+                    modifier = Modifier.padding(end = 6.dp)
+                ) {
+                    Text(
+                        text = "KM",
+                        color = Color.Black,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
 
-            val (confText, confCol) = when (confidence) {
-                MatchConfidence.HIGH -> "Good" to Color(0xFF22C55E)
-                MatchConfidence.MEDIUM -> "Moderate" to Color(0xFF22C55E)
-                MatchConfidence.LOW -> "Poor" to AccentRed
-                MatchConfidence.NO_MATCH -> "No Fix" to Color.Gray
+                // Central Extra-Large Odometer Chainage Digits
+                OdometerChainageRow(
+                    chainageText = chainageText,
+                    mainTextColor = mainTextColor,
+                    digitFontSize = digitFontSize
+                )
+
+                // Right Yellow Pill: RHS / LHS (Small & Compact)
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = HighlightYellow,
+                    modifier = Modifier.padding(start = 6.dp)
+                ) {
+                    Text(
+                        text = "• $detectedSide",
+                        color = Color.Black,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
-            Text(
-                text = confText,
-                color = confCol,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            // Quality & Offset Status Line Below Chainage
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = if (hasActiveRoute) "Model" else "GPS-Derived",
+                    color = mainTextColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "  •  ",
+                    color = subTextColor,
+                    fontSize = 12.sp
+                )
+                Text(
+                    text = String.format(Locale.US, "Offset: %.1fm", offsetMetres),
+                    color = mainTextColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "  •  ",
+                    color = subTextColor,
+                    fontSize = 12.sp
+                )
+
+                val (confText, confCol) = when (confidence) {
+                    MatchConfidence.HIGH -> "Good" to Color(0xFF22C55E)
+                    MatchConfidence.MEDIUM -> "Moderate" to Color(0xFF22C55E)
+                    MatchConfidence.LOW -> "Poor" to AccentRed
+                    MatchConfidence.NO_MATCH -> "No Fix" to Color.Gray
+                }
+                Text(
+                    text = confText,
+                    color = confCol,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -663,17 +736,19 @@ fun CentralChainageDisplay(
 @Composable
 fun OdometerChainageRow(
     chainageText: String,
-    mainTextColor: Color
+    mainTextColor: Color,
+    digitFontSize: TextUnit = 62.sp
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
         val chars = chainageText.toCharArray()
-        chars.forEachIndexed { index, ch ->
+        chars.forEach { ch ->
             OdometerSingleDigit(
                 char = ch,
-                mainTextColor = mainTextColor
+                mainTextColor = mainTextColor,
+                digitFontSize = digitFontSize
             )
         }
     }
@@ -682,7 +757,8 @@ fun OdometerChainageRow(
 @Composable
 fun OdometerSingleDigit(
     char: Char,
-    mainTextColor: Color
+    mainTextColor: Color,
+    digitFontSize: TextUnit = 62.sp
 ) {
     var prevChar by remember { mutableStateOf(char) }
     var isChanging by remember { mutableStateOf(false) }
@@ -691,65 +767,62 @@ fun OdometerSingleDigit(
         if (char != prevChar) {
             isChanging = true
             prevChar = char
-            delay(750L)
+            delay(650L)
             isChanging = false
         }
     }
 
-    if (!char.isDigit()) {
-        Text(
-            text = char.toString(),
-            color = mainTextColor,
-            fontSize = 58.sp,
-            fontWeight = FontWeight.Black,
-            textAlign = TextAlign.Center
-        )
-    } else {
-        val digitColor by animateColorAsState(
-            targetValue = if (isChanging) Color(0xFFFF0000) else mainTextColor,
-            animationSpec = tween(300),
-            label = "digit_glow_color"
-        )
+    val digitColor by animateColorAsState(
+        targetValue = if (isChanging) HighlightYellow else mainTextColor,
+        animationSpec = tween(220),
+        label = "digit_accent_color"
+    )
 
-        Box(
-            modifier = Modifier
-                .then(
-                    if (isChanging) {
-                        Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0x55FF0000),
-                                        Color(0x22FF0000),
-                                        Color(0x55FF0000)
-                                    )
-                                )
-                            )
-                            .border(1.dp, Color(0xFFFF3333).copy(alpha = 0.85f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 3.dp, vertical = 1.dp)
-                    } else {
-                        Modifier.padding(horizontal = 1.dp, vertical = 1.dp)
-                    }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        if (!char.isDigit()) {
+            Text(
+                text = char.toString(),
+                color = mainTextColor,
+                fontSize = digitFontSize,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center
+            )
+        } else {
             AnimatedContent(
                 targetState = char,
                 transitionSpec = {
-                    (slideInVertically(animationSpec = tween(260)) { height -> height / 2 } + fadeIn(tween(180)))
-                        .togetherWith(slideOutVertically(animationSpec = tween(260)) { height -> -height / 2 } + fadeOut(tween(160)))
+                    (slideInVertically(animationSpec = tween(220, easing = FastOutSlowInEasing)) { h -> h / 2 } + fadeIn(tween(160)))
+                        .togetherWith(slideOutVertically(animationSpec = tween(220, easing = FastOutSlowInEasing)) { h -> -h / 2 } + fadeOut(tween(140)))
                 },
                 label = "digit_slide"
             ) { targetChar ->
                 Text(
                     text = targetChar.toString(),
                     color = digitColor,
-                    fontSize = 58.sp,
+                    fontSize = digitFontSize,
                     fontWeight = FontWeight.Black,
                     textAlign = TextAlign.Center
                 )
             }
+        }
+
+        // Minimalist active digit indicator line
+        AnimatedVisibility(
+            visible = isChanging,
+            enter = fadeIn(tween(150)) + expandHorizontally(),
+            exit = fadeOut(tween(200)) + shrinkHorizontally()
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .width(14.dp)
+                    .height(3.dp)
+                    .clip(CircleShape)
+                    .background(HighlightYellow)
+            )
         }
     }
 }
@@ -878,37 +951,42 @@ fun NextChainageTelemetryRow(
             color = cardBgColor,
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
             modifier = Modifier
-                .weight(1.2f)
-                .height(68.dp)
+                .weight(1.25f)
+                .height(74.dp)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Default.AltRoute,
                     contentDescription = null,
                     tint = mainTextColor,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Column {
+                Column(verticalArrangement = Arrangement.Center) {
                     Text(
                         text = "Chainage (Next)",
                         color = subTextColor,
                         fontSize = 9.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = nextChainage,
                         color = mainTextColor,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Black
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = distanceMetres,
                         color = subTextColor,
-                        fontSize = 9.sp
+                        fontSize = 9.sp,
+                        maxLines = 1
                     )
                 }
             }
@@ -921,10 +999,10 @@ fun NextChainageTelemetryRow(
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
             modifier = Modifier
                 .weight(1f)
-                .height(68.dp)
+                .height(74.dp)
         ) {
             Column(
-                modifier = Modifier.padding(all = 8.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -934,17 +1012,21 @@ fun NextChainageTelemetryRow(
                     tint = mainTextColor,
                     modifier = Modifier.size(18.dp)
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Direction",
                     color = subTextColor,
                     fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
                 )
                 Text(
                     text = compassHeadingStr,
                     color = mainTextColor,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Black
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -956,10 +1038,10 @@ fun NextChainageTelemetryRow(
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
             modifier = Modifier
                 .weight(1f)
-                .height(68.dp)
+                .height(74.dp)
         ) {
             Column(
-                modifier = Modifier.padding(all = 8.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -969,17 +1051,21 @@ fun NextChainageTelemetryRow(
                     tint = mainTextColor,
                     modifier = Modifier.size(18.dp)
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Speed",
                     color = subTextColor,
                     fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
                 )
                 Text(
                     text = String.format(Locale.US, "%.0f km/h", speedKmh),
                     color = mainTextColor,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Black
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -991,10 +1077,10 @@ fun NextChainageTelemetryRow(
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
             modifier = Modifier
                 .weight(1f)
-                .height(68.dp)
+                .height(74.dp)
         ) {
             Column(
-                modifier = Modifier.padding(all = 8.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -1004,17 +1090,21 @@ fun NextChainageTelemetryRow(
                     tint = mainTextColor,
                     modifier = Modifier.size(18.dp)
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Accuracy",
                     color = subTextColor,
                     fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
                 )
                 Text(
                     text = String.format(Locale.US, "±%.0f m", accuracy),
                     color = mainTextColor,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Black
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -1050,6 +1140,7 @@ fun InteractiveSmartMap(
     gpsAccuracy: Float,
     bearing: Float?,
     compassHeading: Float,
+    compassHeadingStr: String = "359° N",
     routeData: RouteData?,
     matchedProjectedPoint: GeoPoint?,
     modifier: Modifier = Modifier
@@ -1204,13 +1295,14 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Map Control Floating Buttons (Zoom +, Zoom -, Follow Me)
+        // Left Map Tools (Layers, Re-center/Follow, Pin)
         Column(
             modifier = Modifier
-                .align(Alignment.BottomEnd)
+                .align(Alignment.CenterStart)
                 .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            MapToolButton(icon = Icons.Default.Layers, contentDesc = "Layers", tag = "map_layers_btn")
             IconButton(
                 onClick = {
                     isFollowingUser = true
@@ -1231,40 +1323,106 @@ fun InteractiveSmartMap(
                     modifier = Modifier.size(18.dp)
                 )
             }
+            MapToolButton(icon = Icons.Default.Place, contentDesc = "Pin", tag = "map_pin_btn")
+        }
 
-            IconButton(
-                onClick = { viewRangeMetres = (viewRangeMetres * 0.7).coerceAtLeast(100.0) },
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xD0121212))
-                    .border(0.8.dp, Color.White.copy(alpha = 0.2f), CircleShape)
-                    .testTag("map_zoom_in")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Zoom In",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
+        // Top Right Circular Compass Widget
+        Surface(
+            shape = CircleShape,
+            color = Color(0xEE121212),
+            border = androidx.compose.foundation.BorderStroke(1.dp, HighlightYellow.copy(alpha = 0.8f)),
+            shadowElevation = 6.dp,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(10.dp)
+                .size(54.dp)
+                .testTag("map_compass_widget")
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Canvas(modifier = Modifier.size(46.dp)) {
+                    val cx = size.width / 2f
+                    val cy = size.height / 2f
+                    rotate(degrees = -compassHeading, pivot = Offset(cx, cy)) {
+                        val p = Path().apply {
+                            moveTo(cx, cy - 14.dp.toPx())
+                            lineTo(cx - 5.dp.toPx(), cy + 6.dp.toPx())
+                            lineTo(cx, cy + 2.dp.toPx())
+                            lineTo(cx + 5.dp.toPx(), cy + 6.dp.toPx())
+                            close()
+                        }
+                        drawPath(p, color = Color(0xFFEF4444))
+                    }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "N",
+                        color = Color(0xFFEF4444),
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = compassHeadingStr,
+                        color = HighlightYellow,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
             }
+        }
 
-            IconButton(
-                onClick = { viewRangeMetres = (viewRangeMetres * 1.4).coerceAtMost(15000.0) },
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xD0121212))
-                    .border(0.8.dp, Color.White.copy(alpha = 0.2f), CircleShape)
-                    .testTag("map_zoom_out")
+        // Right Side Zoom Controls (+ / -)
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = Color.White.copy(alpha = 0.95f),
+            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.LightGray),
+            shadowElevation = 4.dp,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 10.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = Icons.Default.Remove,
-                    contentDescription = "Zoom Out",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
+                IconButton(
+                    onClick = { viewRangeMetres = (viewRangeMetres * 0.7).coerceAtLeast(100.0) },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("map_zoom_in")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Zoom In", tint = Color.Black, modifier = Modifier.size(18.dp))
+                }
+                Box(
+                    modifier = Modifier
+                        .width(22.dp)
+                        .height(0.8.dp)
+                        .background(Color.LightGray)
                 )
+                IconButton(
+                    onClick = { viewRangeMetres = (viewRangeMetres * 1.4).coerceAtMost(15000.0) },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("map_zoom_out")
+                ) {
+                    Icon(Icons.Default.Remove, contentDescription = "Zoom Out", tint = Color.Black, modifier = Modifier.size(18.dp))
+                }
             }
+        }
+
+        // Bottom Right Scale Bar
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = Color(0xD0000000),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 10.dp, end = 10.dp)
+        ) {
+            Text(
+                text = "50 m",
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            )
         }
     }
 }
