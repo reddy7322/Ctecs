@@ -41,9 +41,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import com.example.ui.ToastType
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.Camera
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Exposure
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -55,6 +59,7 @@ import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -67,6 +72,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,6 +82,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -184,6 +193,7 @@ fun CameraScreen(
     var showManualActivityDialog by remember { mutableStateOf(false) }
     var showExposureSlider by remember { mutableStateOf(false) }
     var showZoomSlider by remember { mutableStateOf(false) }
+    var showQuickSettingsPopup by remember { mutableStateOf(false) }
 
     // Countdown Timer State
     var countdownRemaining by remember { mutableIntStateOf(0) }
@@ -259,7 +269,7 @@ fun CameraScreen(
                     deviceRotationDegrees = rotationDegrees.toInt(),
                     onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                     onError = {
-                        val fallback = createSimulatedCameraFrame(context)
+                        val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
                         viewModel.processCapture(fallback)
                     }
                 )
@@ -271,7 +281,7 @@ fun CameraScreen(
                 deviceRotationDegrees = rotationDegrees.toInt(),
                 onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                 onError = {
-                    val fallback = createSimulatedCameraFrame(context)
+                    val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
                     viewModel.processCapture(fallback)
                 }
             )
@@ -435,135 +445,143 @@ fun CameraScreen(
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .padding(top = 8.dp, bottom = 6.dp, start = 8.dp, end = 8.dp)
         ) {
-            Row(
+            androidx.compose.foundation.lazy.LazyRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Flash cycle button
-                IconButton(
-                    onClick = { viewModel.toggleFlash() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(ElevatedSurface)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("flash_toggle_button")
-                ) {
-                    Icon(
-                        imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                        contentDescription = "Flash",
-                        tint = if (isFlashOn) HighlightYellow else PrimaryText,
-                        modifier = Modifier.size(20.dp)
-                    )
+                item {
+                    // Flash cycle button
+                    IconButton(
+                        onClick = { viewModel.toggleFlash() },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("flash_toggle_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                            contentDescription = "Flash",
+                            tint = if (isFlashOn) HighlightYellow else PrimaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-
-                // Timer cycle button (single compact icon)
-                IconButton(
-                    onClick = { viewModel.cycleTimer() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (cameraSettings.captureTimer != CaptureTimer.OFF) DarkYellowSurface else ElevatedSurface)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("timer_cycle_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Timer,
-                        contentDescription = "Timer",
-                        tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
-                        modifier = Modifier.size(20.dp)
-                    )
+                item {
+                    // Timer cycle button (single compact icon)
+                    IconButton(
+                        onClick = { viewModel.cycleTimer() },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (cameraSettings.captureTimer != CaptureTimer.OFF) DarkYellowSurface else ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("timer_cycle_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = "Timer",
+                            tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-
-                // Grid cycle button
-                IconButton(
-                    onClick = { viewModel.cycleGrid() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (cameraSettings.gridMode != CameraGridMode.OFF) DarkYellowSurface else ElevatedSurface)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("grid_cycle_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.GridOn,
-                        contentDescription = "Grid",
-                        tint = if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else SecondaryText,
-                        modifier = Modifier.size(20.dp)
-                    )
+                item {
+                    // Grid cycle button
+                    IconButton(
+                        onClick = { viewModel.cycleGrid() },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (cameraSettings.gridMode != CameraGridMode.OFF) DarkYellowSurface else ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("grid_cycle_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.GridOn,
+                            contentDescription = "Grid",
+                            tint = if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else SecondaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-
-                // Exposure Compensation Button
-                IconButton(
-                    onClick = { showExposureSlider = !showExposureSlider },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (showExposureSlider) DarkYellowSurface else ElevatedSurface)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("exposure_toggle_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Exposure,
-                        contentDescription = "Exposure",
-                        tint = if (exposureCompensation != 0) HighlightYellow else PrimaryText,
-                        modifier = Modifier.size(20.dp)
-                    )
+                item {
+                    // Exposure Compensation Button
+                    IconButton(
+                        onClick = { showExposureSlider = !showExposureSlider },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (showExposureSlider) DarkYellowSurface else ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("exposure_toggle_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Exposure,
+                            contentDescription = "Exposure",
+                            tint = if (exposureCompensation != 0) HighlightYellow else PrimaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-
-                // Flip Camera
-                IconButton(
-                    onClick = { viewModel.toggleCameraFacing() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(ElevatedSurface)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("camera_flip_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.FlipCameraAndroid,
-                        contentDescription = "Flip Camera",
-                        tint = PrimaryText,
-                        modifier = Modifier.size(20.dp)
-                    )
+                item {
+                    // Flip Camera
+                    IconButton(
+                        onClick = { viewModel.toggleCameraFacing() },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("camera_flip_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FlipCameraAndroid,
+                            contentDescription = "Flip Camera",
+                            tint = PrimaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-
-                // Tiny single-icon Route button
-                IconButton(
-                    onClick = { onNavigateToRoutes() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (activeRoute != null) DarkYellowSurface else ElevatedSurface)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("routes_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AltRoute,
-                        contentDescription = "Routes",
-                        tint = if (activeRoute != null) HighlightYellow else PrimaryText,
-                        modifier = Modifier.size(20.dp)
-                    )
+                item {
+                    // Tiny single-icon Route button
+                    IconButton(
+                        onClick = { onNavigateToRoutes() },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (activeRoute != null) DarkYellowSurface else ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("routes_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AltRoute,
+                            contentDescription = "Routes",
+                            tint = if (activeRoute != null) HighlightYellow else PrimaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
-
-                // Tiny single-icon Settings gear button
-                IconButton(
-                    onClick = { onNavigateToSettings() },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(ElevatedSurface)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("settings_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = PrimaryText,
-                        modifier = Modifier.size(20.dp)
-                    )
+                item {
+                    // Tiny single-icon Settings gear button
+                    IconButton(
+                        onClick = { showQuickSettingsPopup = true },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (showQuickSettingsPopup) DarkYellowSurface else ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("settings_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Camera Settings",
+                            tint = if (showQuickSettingsPopup) HighlightYellow else PrimaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
@@ -742,18 +760,19 @@ fun CameraScreen(
             }
         }
 
-        // 7. Live Overlay HUD (Bottom Section above Shutter)
+        // 7. Unified Bottom Controls & Overlay HUD Container (Guarantees zero overlapping between HUD, field chips, mode selector, and shutter bar)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 150.dp)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = 10.dp)
         ) {
-            // Live Preview Overlay mirroring reference road photo
+            // Live Preview Overlay (Mini-Map on lower-left, Metadata Text on lower-right)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom
             ) {
@@ -769,7 +788,7 @@ fun CameraScreen(
                     Spacer(modifier = Modifier.width(1.dp))
                 }
 
-                // Lower-Right: Information Block (Right-aligned bold white text with black shadow)
+                // Lower-Right: Information Block (Right-aligned text)
                 Column(
                     horizontalAlignment = Alignment.End,
                     modifier = Modifier.weight(1f).padding(start = 12.dp)
@@ -778,8 +797,7 @@ fun CameraScreen(
                     if (overlayConfig.showLogo && overlayConfig.logoPosition == LogoPosition.ABOVE_TEXT) {
                         LiveLogoOverlay(
                             config = overlayConfig,
-                            modifier = Modifier
-                                .padding(bottom = 8.dp)
+                            modifier = Modifier.padding(bottom = 6.dp)
                         )
                     }
 
@@ -803,7 +821,7 @@ fun CameraScreen(
                         Text(
                             text = line,
                             color = PrimaryText,
-                            fontSize = if (isLast) 19.sp else 17.sp,
+                            fontSize = if (isLast) 18.sp else 16.sp,
                             fontWeight = if (isLast) FontWeight.Black else FontWeight.Bold,
                             textAlign = TextAlign.End,
                             style = androidx.compose.ui.text.TextStyle(
@@ -818,11 +836,13 @@ fun CameraScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(4.dp))
+
             // Minimalist Glass Field Selectors (Side, Lane, Activity, Chainage)
             androidx.compose.foundation.lazy.LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -833,7 +853,7 @@ fun CameraScreen(
                         color = Color(0x701A1A1A), // Translucent dark glass
                         border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
                         modifier = Modifier
-                            .height(38.dp)
+                            .height(36.dp)
                             .clickable {
                                 val nextSide = when (projectProfile.roadSide) {
                                     RoadSide.RHS -> RoadSide.LHS
@@ -873,7 +893,7 @@ fun CameraScreen(
                         color = Color(0x701A1A1A),
                         border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
                         modifier = Modifier
-                            .height(38.dp)
+                            .height(36.dp)
                             .clickable {
                                 val lanes = ProjectProfile.LANE_PRESETS
                                 val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
@@ -910,7 +930,7 @@ fun CameraScreen(
                             color = Color(0x701A1A1A),
                             border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
                             modifier = Modifier
-                                .height(38.dp)
+                                .height(36.dp)
                                 .clickable { showActivityMenu = true }
                                 .testTag("activity_chip")
                         ) {
@@ -966,7 +986,7 @@ fun CameraScreen(
                         color = if (matchResult.isManual) Color(0x99DC2626) else Color(0x701A1A1A),
                         border = androidx.compose.foundation.BorderStroke(0.8.dp, if (matchResult.isManual) AccentRed else BorderColor.copy(alpha = 0.5f)),
                         modifier = Modifier
-                            .height(38.dp)
+                            .height(36.dp)
                             .clickable { viewModel.openManualChainageDialog() }
                             .testTag("chainage_chip")
                     ) {
@@ -991,31 +1011,21 @@ fun CameraScreen(
                     }
                 }
             }
-        }
 
-        // 8. Bottom Controls: Mode Selector + Zoom Selector Bar + Shutter + Mode Switch
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp)
-        ) {
-
-
-
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Mode Selector Pill: PHOTO | VIDEO
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 2.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = Color(0x501A1A1A),
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.White.copy(alpha = 0.25f))
+                    color = Color(0x701A1A1A),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.White.copy(alpha = 0.3f))
                 ) {
                     Row(modifier = Modifier.padding(2.dp)) {
                         Box(
@@ -1023,7 +1033,7 @@ fun CameraScreen(
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(if (captureMode == CaptureMode.PHOTO) HighlightYellow else Color.Transparent)
                                 .clickable { viewModel.setCaptureMode(CaptureMode.PHOTO) }
-                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .padding(horizontal = 18.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = "PHOTO",
@@ -1037,7 +1047,7 @@ fun CameraScreen(
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(if (captureMode == CaptureMode.VIDEO) AccentRed else Color.Transparent)
                                 .clickable { viewModel.setCaptureMode(CaptureMode.VIDEO) }
-                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .padding(horizontal = 18.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = "VIDEO",
@@ -1050,12 +1060,13 @@ fun CameraScreen(
                 }
             }
 
-            // Bottom Shutter Bar (Gallery Thumbnail, Fixed Shutter, Quick Simulator)
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Bottom Shutter Bar (Gallery Thumbnail, Fixed Shutter, Quick Location Simulator)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                    .padding(horizontal = 24.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1088,13 +1099,13 @@ fun CameraScreen(
                     }
                 }
 
-                // Fixed Capture Shutter Button (Persistent Box across photo and video modes)
+                // Fixed Capture Shutter Button
                 Box(
                     modifier = Modifier
-                        .size(76.dp)
+                        .size(72.dp)
                         .clip(CircleShape)
                         .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                        .padding(6.dp)
+                        .padding(5.dp)
                         .clip(CircleShape)
                         .background(
                             if (captureMode == CaptureMode.PHOTO) {
@@ -1335,7 +1346,293 @@ fun CameraScreen(
                 }
             )
         }
+
+        // Camera Quick Settings Popup Dialog
+        if (showQuickSettingsPopup) {
+            CameraQuickSettingsDialog(
+                cameraSettings = cameraSettings,
+                overlayConfig = overlayConfig,
+                isFlashOn = isFlashOn,
+                onToggleFlash = { viewModel.toggleFlash() },
+                onUpdateCameraSettings = { updated -> viewModel.saveCameraSettingsSilent(updated) },
+                onUpdateOverlayConfig = { updated -> viewModel.saveOverlayConfigSilent(updated) },
+                onNavigateToFullSettings = { onNavigateToSettings() },
+                onDismiss = { showQuickSettingsPopup = false }
+            )
+        }
     }
+}
+
+/**
+ * Clean Popup Dialog showing only Camera-related Settings
+ */
+@Composable
+fun CameraQuickSettingsDialog(
+    cameraSettings: com.example.model.CameraSettings,
+    overlayConfig: OverlayConfig,
+    isFlashOn: Boolean,
+    onToggleFlash: () -> Unit,
+    onUpdateCameraSettings: (com.example.model.CameraSettings) -> Unit,
+    onUpdateOverlayConfig: (OverlayConfig) -> Unit,
+    onNavigateToFullSettings: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Camera,
+                        contentDescription = null,
+                        tint = HighlightYellow,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Camera Settings", color = PrimaryText, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = SecondaryText
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Section 1: Capture Controls
+                Text("HARDWARE & CAPTURE", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                // Flash Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { onToggleFlash() },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Camera Flash", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = isFlashOn,
+                        onCheckedChange = { onToggleFlash() },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                // Shutter Sound
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateCameraSettings(cameraSettings.copy(captureSound = !cameraSettings.captureSound))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Shutter Sound", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = cameraSettings.captureSound,
+                        onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(captureSound = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                // Touch to Capture
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateCameraSettings(cameraSettings.copy(touchToCapture = !cameraSettings.touchToCapture))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Touch to Take Photo", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = cameraSettings.touchToCapture,
+                        onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(touchToCapture = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                // Horizon Leveler
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateCameraSettings(cameraSettings.copy(showHorizonLevel = !cameraSettings.showHorizonLevel))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Electronic Level Indicator", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = cameraSettings.showHorizonLevel,
+                        onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(showHorizonLevel = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                // Keep Original Photo
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateCameraSettings(cameraSettings.copy(saveOriginalAndStamped = !cameraSettings.saveOriginalAndStamped))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Save Clean Original Photo", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = cameraSettings.saveOriginalAndStamped,
+                        onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(saveOriginalAndStamped = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
+
+                // Section 2: Grid & Timer
+                Text("GRID & COUNTDOWN TIMER", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                // Grid Mode Selector
+                Column {
+                    Text("Viewfinder Grid", color = SecondaryText, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CameraGridMode.values().forEach { gMode ->
+                            val isSel = cameraSettings.gridMode == gMode
+                            FilterChip(
+                                selected = isSel,
+                                onClick = { onUpdateCameraSettings(cameraSettings.copy(gridMode = gMode)) },
+                                label = { Text(gMode.name, fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = HighlightYellow,
+                                    selectedLabelColor = Color.Black,
+                                    containerColor = ElevatedSurface,
+                                    labelColor = PrimaryText
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Timer Selector
+                Column {
+                    Text("Capture Timer", color = SecondaryText, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CaptureTimer.values().forEach { timerVal ->
+                            val isSel = cameraSettings.captureTimer == timerVal
+                            FilterChip(
+                                selected = isSel,
+                                onClick = { onUpdateCameraSettings(cameraSettings.copy(captureTimer = timerVal)) },
+                                label = { Text(if (timerVal == CaptureTimer.OFF) "OFF" else "${timerVal.seconds}s", fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = HighlightYellow,
+                                    selectedLabelColor = Color.Black,
+                                    containerColor = ElevatedSurface,
+                                    labelColor = PrimaryText
+                                )
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
+
+                // Section 3: Watermark Overlay Toggles
+                Text("CAMERA WATERMARK OVERLAYS", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateOverlayConfig(overlayConfig.copy(showTimestamp = !overlayConfig.showTimestamp))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Timestamp Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = overlayConfig.showTimestamp,
+                        onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showTimestamp = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateOverlayConfig(overlayConfig.copy(showCoordinates = !overlayConfig.showCoordinates))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("GPS Coordinates Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = overlayConfig.showCoordinates,
+                        onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showCoordinates = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateOverlayConfig(overlayConfig.copy(showCompass = !overlayConfig.showCompass))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Compass Heading Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = overlayConfig.showCompass,
+                        onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showCompass = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onUpdateOverlayConfig(overlayConfig.copy(showMapInset = !overlayConfig.showMapInset))
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Live MiniMap Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Switch(
+                        checked = overlayConfig.showMapInset,
+                        onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showMapInset = it)) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = HighlightYellow, contentColor = Color.Black)
+            ) {
+                Text("Done", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    onDismiss()
+                    onNavigateToFullSettings()
+                }
+            ) {
+                Text("All App Settings...", color = PrimaryText)
+            }
+        }
+    )
 }
 
 /**
@@ -1356,11 +1653,13 @@ private fun toDms(dec: Double, isLat: Boolean): String {
 }
 
 /**
- * Creates a high resolution simulated camera frame with road texture if device camera hardware is unavailable.
+ * Creates a high resolution simulated camera frame with road texture if device camera hardware is unavailable,
+ * correctly sized for landscape (1920x1080) or portrait (1080x1920).
  */
-private fun createSimulatedCameraFrame(context: Context): Bitmap {
-    val w = 1920
-    val h = 1080
+private fun createSimulatedCameraFrame(context: Context, rotationDegrees: Int = 0): Bitmap {
+    val isLandscape = rotationDegrees == 90 || rotationDegrees == 270
+    val w = if (isLandscape) 1920 else 1080
+    val h = if (isLandscape) 1080 else 1920
     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 
@@ -1377,7 +1676,8 @@ private fun createSimulatedCameraFrame(context: Context): Bitmap {
         color = AndroidColor.rgb(255, 214, 0)
         strokeWidth = 14f
     }
-    for (y in 400 until h step 140) {
+    val startY = (h * 0.4f).toInt()
+    for (y in startY until h step 140) {
         canvas.drawLine(w * 0.5f, y.toFloat(), w * 0.5f, (y + 80).toFloat(), linePaint)
     }
 

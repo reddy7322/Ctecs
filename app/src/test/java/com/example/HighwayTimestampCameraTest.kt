@@ -476,5 +476,13 @@ class HighwayTimestampCameraTest {
 
         assertTrue(lines.any { it.contains("Sant Niwas, NH 58") })
     }
+
+    // 18. Testing Developer Credit in App Information
+    @Test
+    fun testDeveloperCreditText() {
+        val expectedCredit = "Made with ❤️ madhureddyainala"
+        assertTrue(expectedCredit.contains("madhureddyainala"))
+        assertEquals("Made with ❤️ madhureddyainala", expectedCredit)
+    }
 }
 

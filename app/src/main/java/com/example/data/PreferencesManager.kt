@@ -121,6 +121,17 @@ class PreferencesManager(private val context: Context) {
         val KEY_FILENAME_FORMAT_PRESET = stringPreferencesKey("filename_format_preset")
         val KEY_CUSTOM_STORAGE_PATH = stringPreferencesKey("custom_storage_path")
         val KEY_AUTO_ROTATE_UI = booleanPreferencesKey("auto_rotate_ui")
+        val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
+    }
+
+    val themeModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_THEME_MODE] ?: "system"
+    }
+
+    suspend fun updateThemeMode(mode: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_THEME_MODE] = mode
+        }
     }
 
     val cameraSettingsFlow: Flow<com.example.model.CameraSettings> = context.dataStore.data.map { prefs ->

@@ -121,7 +121,12 @@ object OverlayRenderer {
         val location = snapshot.location
         val match = snapshot.matchResult
 
-        val baseFontSize = (config.fontSizeSp * 1.8f * scale).coerceIn(24f, 84f)
+        val isLandscape = width > height
+        val baseFontSize = if (isLandscape) {
+            (config.fontSizeSp * 1.55f * scale).coerceIn(20f, 62f)
+        } else {
+            (config.fontSizeSp * 1.8f * scale).coerceIn(24f, 84f)
+        }
         val lineSpacing = baseFontSize * 0.35f
 
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

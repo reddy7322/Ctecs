@@ -9,6 +9,7 @@ import android.graphics.Matrix
 import android.media.CamcorderProfile
 import android.os.Environment
 import android.util.Log
+import android.view.Surface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -256,7 +257,50 @@ fun CameraPreview(
 }
 
 /**
- * Captures image from LifecycleCameraController and returns a correctly rotated Bitmap.
+ * Normalizes raw captured bitmap orientation based on CameraX image info rotation
+ * and physical device sensor orientation, ensuring true landscape or portrait output.
+ */
+fun normalizeBitmapOrientation(
+    rawBitmap: Bitmap,
+    cameraXRotationDegrees: Int,
+    deviceRotationDegrees: Int
+): Bitmap {
+    val initialRotated = if (cameraXRotationDegrees != 0) {
+        try {
+            val matrix = Matrix().apply { postRotate(cameraXRotationDegrees.toFloat()) }
+            Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+        } catch (e: Exception) {
+            rawBitmap
+        }
+    } else {
+        rawBitmap
+    }
+
+    val isLandscape = deviceRotationDegrees == 90 || deviceRotationDegrees == 270
+
+    // If device is in landscape but bitmap is portrait, rotate by 90 or 270
+    if (isLandscape && initialRotated.width < initialRotated.height) {
+        try {
+            val matrix = Matrix().apply { postRotate(90f) }
+            return Bitmap.createBitmap(initialRotated, 0, 0, initialRotated.width, initialRotated.height, matrix, true)
+        } catch (e: Exception) {
+            return initialRotated
+        }
+    } else if (!isLandscape && initialRotated.width > initialRotated.height) {
+        try {
+            val matrix = Matrix().apply { postRotate(90f) }
+            return Bitmap.createBitmap(initialRotated, 0, 0, initialRotated.width, initialRotated.height, matrix, true)
+        } catch (e: Exception) {
+            return initialRotated
+        }
+    }
+
+    return initialRotated
+}
+
+/**
+ * Captures image from LifecycleCameraController and returns a correctly rotated Bitmap
+ * that strictly adheres to the physical device orientation.
  */
 fun capturePhoto(
     controller: LifecycleCameraController,
@@ -277,27 +321,20 @@ fun capturePhoto(
                     buffer.get(bytes)
                     val rawBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 
-                    // Ensure bitmap is correctly rotated to match orientation
-                    val finalRotation = if (deviceRotationDegrees != 0) {
-                        (rotationDegrees + deviceRotationDegrees) % 360
-                    } else {
-                        rotationDegrees
+                    if (rawBitmap == null) {
+                        image.close()
+                        onError(Exception("Decoded bitmap is null"))
+                        return
                     }
 
-                    val rotatedBitmap = if (finalRotation != 0 && rawBitmap != null) {
-                        val matrix = Matrix().apply { postRotate(finalRotation.toFloat()) }
-                        Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
-                    } else {
-                        rawBitmap
-                    }
+                    val normalizedBitmap = normalizeBitmapOrientation(
+                        rawBitmap = rawBitmap,
+                        cameraXRotationDegrees = rotationDegrees,
+                        deviceRotationDegrees = deviceRotationDegrees
+                    )
 
                     image.close()
-
-                    if (rotatedBitmap != null) {
-                        onSuccess(rotatedBitmap)
-                    } else {
-                        onError(Exception("Decoded bitmap is null"))
-                    }
+                    onSuccess(normalizedBitmap)
                 } catch (e: Exception) {
                     image.close()
                     onError(e)

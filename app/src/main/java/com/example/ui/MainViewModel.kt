@@ -140,6 +140,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = OverlayConfig()
     )
 
+    val themeMode: StateFlow<String> = preferencesManager.themeModeFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "system"
+    )
+
+    fun setThemeMode(mode: String) {
+        viewModelScope.launch {
+            preferencesManager.updateThemeMode(mode)
+            _uiMessages.emit(UiMessage.Info("Theme updated to ${mode.replaceFirstChar { it.uppercase() }}"))
+        }
+    }
+
     val cameraSettings: StateFlow<com.example.model.CameraSettings> = preferencesManager.cameraSettingsFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

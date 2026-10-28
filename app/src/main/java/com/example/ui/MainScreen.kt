@@ -7,22 +7,26 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -117,7 +121,70 @@ fun MainScreen(
 
     Scaffold(
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
-        containerColor = PrimaryBackground,
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            if (currentTab != AppTab.CAMERA) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 12.dp)
+                        .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars),
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+                    shadowElevation = 12.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val tabs = listOf(
+                            Triple(AppTab.HOME, Icons.Default.Home, "Home"),
+                            Triple(AppTab.CAMERA, Icons.Default.CameraAlt, "Camera"),
+                            Triple(AppTab.PHOTOS, Icons.Default.PhotoLibrary, "Gallery"),
+                            Triple(AppTab.ROUTES, Icons.Default.AltRoute, "Routes"),
+                            Triple(AppTab.SETTINGS, Icons.Default.Settings, "Settings")
+                        )
+
+                        tabs.forEach { (tab, icon, contentDesc) ->
+                            val isSelected = currentTab == tab
+                            val iconTint by animateColorAsState(
+                                targetValue = if (isSelected) HighlightYellow else MaterialTheme.colorScheme.onSurfaceVariant,
+                                animationSpec = tween(200),
+                                label = "icon_tint"
+                            )
+                            val bgTint by animateColorAsState(
+                                targetValue = if (isSelected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f) else Color.Transparent,
+                                animationSpec = tween(200),
+                                label = "icon_bg"
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(bgTint)
+                                    .clickable {
+                                        viewModel.setTab(tab)
+                                    }
+                                    .testTag("nav_item_${tab.name.lowercase()}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = contentDesc,
+                                    tint = iconTint,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
         modifier = modifier
     ) { innerPadding ->
         Box(

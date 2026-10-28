@@ -1764,7 +1764,7 @@ fun SettingsScreen(
             // ====================================================
             // 12. APP INFORMATION
             // ====================================================
-            if (matchesSearch("about info application ctecs developer version build", searchQuery)) {
+            if (matchesSearch("about info application ctecs developer version build madhureddyainala", searchQuery)) {
                 SmartDropdownSection(
                     title = "App Information",
                     subtitle = "Ctecs Highway Camera • v${BuildConfig.VERSION_NAME}",
@@ -1796,6 +1796,28 @@ fun SettingsScreen(
                             color = SecondaryText,
                             modifier = Modifier.padding(top = 4.dp)
                         )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                            thickness = 0.5.dp,
+                            color = BorderColor.copy(alpha = 0.4f)
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Made with ❤️ madhureddyainala",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SecondaryText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Normal,
+                                letterSpacing = 0.3.sp,
+                                modifier = Modifier.testTag("developer_credit")
+                            )
+                        }
                     }
                 }
             }

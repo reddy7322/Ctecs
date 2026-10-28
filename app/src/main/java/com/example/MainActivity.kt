@@ -46,8 +46,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            MyApplicationTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+
+            MyApplicationTheme(themeMode = themeMode) {
+                Surface(modifier = Modifier.fillMaxSize(), color = androidx.compose.material3.MaterialTheme.colorScheme.background) {
                     MainScreen(viewModel = viewModel)
                 }
             }
