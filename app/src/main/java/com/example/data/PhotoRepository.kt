@@ -1,8 +1,12 @@
 package com.example.data
 
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
 import com.example.model.CaptureSnapshot
 import com.example.overlay.OverlayRenderer
 import kotlinx.coroutines.Dispatchers
@@ -41,13 +45,12 @@ class PhotoRepository(
             }
             val fileName = "$baseName.jpg"
 
-            // Target directory: Pictures/HighwayCamera (Shared Public Storage)
-            val picturesDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+            // Reliable App-Specific Storage (guaranteed writable across all Android versions)
+            val localDir = File(
+                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir,
                 "HighwayCamera"
             ).apply { mkdirs() }
-
-            val destinationFile = File(picturesDir, fileName)
+            val localFile = File(localDir, fileName)
 
             // 2. Render permanent overlay if burn-in is enabled, or keep clean original
             val bitmapToSave = if (snapshot.overlayConfig.burnInTimestamp) {
@@ -60,35 +63,115 @@ class PhotoRepository(
                 sourceBitmap
             }
 
-            // 3. Save to file with EXIF metadata
+            // 3. Save to local file with full EXIF metadata
             val savedOk = OverlayRenderer.saveBitmapWithExif(
                 bitmap = bitmapToSave,
-                destinationFile = destinationFile,
-                snapshot = snapshot
+                destinationFile = localFile,
+                snapshot = snapshot,
+                context = context
             )
 
             if (!savedOk) {
                 return@withContext Result.failure(Exception("Failed to encode or save JPEG to disk"))
             }
 
-            // Scan file to make it instantly visible in Gallery, Google Photos, and MediaStore
+            var recordedPath = localFile.absolutePath
+
+            // 4. Publish to Shared Device Storage via Android MediaStore (Pictures/HighwayCamera)
             try {
-                android.media.MediaScannerConnection.scanFile(
-                    context,
-                    arrayOf(destinationFile.absolutePath),
-                    arrayOf("image/jpeg")
-                ) { _, _ -> }
+                val resolver = context.contentResolver
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    put(MediaStore.Images.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                    put(MediaStore.Images.Media.DATE_TAKEN, snapshot.timestamp)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HighwayCamera")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+
+                val imageCollection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else {
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                }
+
+                val itemUri = resolver.insert(imageCollection, contentValues)
+                if (itemUri != null) {
+                    resolver.openOutputStream(itemUri)?.use { outStream ->
+                        localFile.inputStream().use { inStream ->
+                            inStream.copyTo(outStream)
+                        }
+                        outStream.flush()
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        contentValues.clear()
+                        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        resolver.update(itemUri, contentValues, null, null)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("PhotoRepository", "MediaStore insert exception: ${e.message}")
+            }
+
+            // 5. Also copy to shared public directory if accessible and trigger MediaScanner
+            try {
+                val publicDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    "HighwayCamera"
+                )
+                if (publicDir.exists() || publicDir.mkdirs()) {
+                    val publicFile = File(publicDir, fileName)
+                    localFile.copyTo(publicFile, overwrite = true)
+                    recordedPath = publicFile.absolutePath
+                    android.media.MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(publicFile.absolutePath, localFile.absolutePath),
+                        arrayOf("image/jpeg")
+                    ) { _, _ -> }
+                }
             } catch (ignored: Exception) {}
 
             // Optional: Save original unmodified if enabled alongside stamped image
             if (snapshot.overlayConfig.saveOriginalImage && snapshot.overlayConfig.burnInTimestamp) {
-                val origFile = File(picturesDir, "${baseName}_ORIGINAL.jpg")
-                OverlayRenderer.saveBitmapWithExif(sourceBitmap, origFile, snapshot)
+                try {
+                    val origFileName = "${baseName}_ORIGINAL.jpg"
+                    val origLocal = File(localDir, origFileName)
+                    OverlayRenderer.saveBitmapWithExif(sourceBitmap, origLocal, snapshot, context = context)
+
+                    val resolver = context.contentResolver
+                    val origCv = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, origFileName)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                        put(MediaStore.Images.Media.DATE_TAKEN, snapshot.timestamp)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HighwayCamera")
+                        }
+                    }
+                    val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    } else {
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    }
+                    val origUri = resolver.insert(collection, origCv)
+                    if (origUri != null) {
+                        resolver.openOutputStream(origUri)?.use { outStream ->
+                            origLocal.inputStream().use { inStream ->
+                                inStream.copyTo(outStream)
+                            }
+                            outStream.flush()
+                        }
+                    }
+                } catch (ignored: Exception) {}
             }
 
-            // 4. Save record in Room Database
+            // 6. Save record in Room Database
             val entity = PhotoRecordEntity(
-                filePath = destinationFile.absolutePath,
+                filePath = recordedPath,
                 fileName = fileName,
                 timestamp = snapshot.timestamp,
                 latitude = snapshot.location?.latitude ?: 0.0,

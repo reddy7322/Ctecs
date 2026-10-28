@@ -44,14 +44,24 @@ class CompassAndOrientationTracker(context: Context) {
         override fun onOrientationChanged(orientation: Int) {
             if (orientation == ORIENTATION_UNKNOWN) return
 
-            val (newOrientation, targetAngle) = when {
-                orientation >= 315 || orientation < 45 -> DeviceOrientation.PORTRAIT to 0f
-                orientation in 45..134 -> DeviceOrientation.LANDSCAPE_RIGHT to 270f
-                orientation in 135..224 -> DeviceOrientation.REVERSE_PORTRAIT to 180f
-                else -> DeviceOrientation.LANDSCAPE_LEFT to 90f
+            // Hysteresis deadband: only switch when firmly within quadrant to prevent flickering
+            val current = _deviceOrientation.value
+            val newOrientation = when {
+                (orientation in 330..359 || orientation in 0..30) -> DeviceOrientation.PORTRAIT
+                (orientation in 60..120) -> DeviceOrientation.LANDSCAPE_RIGHT
+                (orientation in 150..210) -> DeviceOrientation.REVERSE_PORTRAIT
+                (orientation in 240..300) -> DeviceOrientation.LANDSCAPE_LEFT
+                else -> current
             }
 
-            if (_deviceOrientation.value != newOrientation) {
+            val targetAngle = when (newOrientation) {
+                DeviceOrientation.PORTRAIT -> 0f
+                DeviceOrientation.LANDSCAPE_RIGHT -> 270f
+                DeviceOrientation.REVERSE_PORTRAIT -> 180f
+                DeviceOrientation.LANDSCAPE_LEFT -> 90f
+            }
+
+            if (_deviceOrientation.value != newOrientation || _rotationDegrees.value != targetAngle) {
                 _deviceOrientation.value = newOrientation
                 _rotationDegrees.value = targetAngle
             }

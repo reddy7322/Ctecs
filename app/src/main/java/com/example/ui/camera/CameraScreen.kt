@@ -205,6 +205,36 @@ fun CameraScreen(
         }
     }
 
+    val audioPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) {
+        // Start recording whether granted or not (VideoRecordingManager safely records silent video if denied)
+        videoManager.startRecording(
+            controller = controller,
+            recordAudio = cameraSettings.recordAudio,
+            onEvent = { event ->
+                when (event) {
+                    is androidx.camera.video.VideoRecordEvent.Start -> {
+                        viewModel.onVideoRecordingStarted()
+                        viewModel.showInfo("Recording video...")
+                    }
+                    is androidx.camera.video.VideoRecordEvent.Finalize -> {
+                        viewModel.onVideoRecordingStopped()
+                        if (event.hasError()) {
+                            viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
+                        } else {
+                            viewModel.showSuccess("Video saved to Movies/HighwayCamera")
+                        }
+                    }
+                }
+            },
+            onError = { throwable ->
+                viewModel.onVideoRecordingStopped()
+                viewModel.showError(throwable.message ?: "Video recording failed to start")
+            }
+        )
+    }
+
     // Trigger Photo Capture (with or without countdown)
     fun triggerPhotoCapture() {
         if (isCapturing || isCountingDown) return
@@ -221,6 +251,7 @@ fun CameraScreen(
                 capturePhoto(
                     controller = controller,
                     context = context,
+                    deviceRotationDegrees = rotationDegrees.toInt(),
                     onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                     onError = {
                         val fallback = createSimulatedCameraFrame(context)
@@ -232,6 +263,7 @@ fun CameraScreen(
             capturePhoto(
                 controller = controller,
                 context = context,
+                deviceRotationDegrees = rotationDegrees.toInt(),
                 onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                 onError = {
                     val fallback = createSimulatedCameraFrame(context)
@@ -244,29 +276,39 @@ fun CameraScreen(
     // Trigger Video Recording Toggle
     fun toggleVideoRecording() {
         if (!isRecording) {
-            videoManager.startRecording(
-                controller = controller,
-                recordAudio = cameraSettings.recordAudio,
-                onEvent = { event ->
-                    when (event) {
-                        is androidx.camera.video.VideoRecordEvent.Start -> {
-                            viewModel.onVideoRecordingStarted()
-                        }
-                        is androidx.camera.video.VideoRecordEvent.Finalize -> {
-                            viewModel.onVideoRecordingStopped()
-                            if (event.hasError()) {
-                                viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
-                            } else {
-                                viewModel.showInfo("Video recording saved")
+            val hasAudioPerm = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+            if (cameraSettings.recordAudio && !hasAudioPerm) {
+                audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            } else {
+                videoManager.startRecording(
+                    controller = controller,
+                    recordAudio = cameraSettings.recordAudio,
+                    onEvent = { event ->
+                        when (event) {
+                            is androidx.camera.video.VideoRecordEvent.Start -> {
+                                viewModel.onVideoRecordingStarted()
+                                viewModel.showInfo("Recording video...")
+                            }
+                            is androidx.camera.video.VideoRecordEvent.Finalize -> {
+                                viewModel.onVideoRecordingStopped()
+                                if (event.hasError()) {
+                                    viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
+                                } else {
+                                    viewModel.showSuccess("Video saved to Movies/HighwayCamera")
+                                }
                             }
                         }
+                    },
+                    onError = { throwable ->
+                        viewModel.onVideoRecordingStopped()
+                        viewModel.showError(throwable.message ?: "Video recording failed to start")
                     }
-                },
-                onError = { throwable ->
-                    viewModel.onVideoRecordingStopped()
-                    viewModel.showError(throwable.message ?: "Video recording not supported on this device profile")
-                }
-            )
+                )
+            }
         } else {
             videoManager.stop()
             viewModel.onVideoRecordingStopped()

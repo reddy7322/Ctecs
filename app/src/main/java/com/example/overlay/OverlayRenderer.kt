@@ -411,11 +411,25 @@ object OverlayRenderer {
         bitmap: Bitmap,
         destinationFile: File,
         snapshot: CaptureSnapshot,
-        jpegQuality: Int = 95
+        jpegQuality: Int = 95,
+        context: Context? = null
     ): Boolean {
-        val tempFile = File(destinationFile.parentFile, "${destinationFile.name}.tmp")
+        destinationFile.parentFile?.mkdirs()
+        val tempFile = try {
+            if (destinationFile.parentFile?.canWrite() == true) {
+                File(destinationFile.parentFile, "${destinationFile.name}.tmp")
+            } else {
+                File.createTempFile("stamp_", ".tmp", context?.cacheDir)
+            }
+        } catch (e: Exception) {
+            try {
+                File.createTempFile("stamp_", ".tmp", context?.cacheDir)
+            } catch (e2: Exception) {
+                File(destinationFile.absolutePath + ".tmp")
+            }
+        }
+
         try {
-            destinationFile.parentFile?.mkdirs()
             FileOutputStream(tempFile).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, out)
                 out.flush()
@@ -435,14 +449,8 @@ object OverlayRenderer {
                     setGpsExif(exif, loc)
                 }
 
-                // Orientation metadata
-                val exifOrientation = when (snapshot.deviceRotationDegrees) {
-                    90 -> ExifInterface.ORIENTATION_ROTATE_90
-                    180 -> ExifInterface.ORIENTATION_ROTATE_180
-                    270 -> ExifInterface.ORIENTATION_ROTATE_270
-                    else -> ExifInterface.ORIENTATION_NORMAL
-                }
-                exif.setAttribute(ExifInterface.TAG_ORIENTATION, exifOrientation.toString())
+                // Orientation metadata: since the bitmap itself is already upright, tag as NORMAL
+                exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
                 exif.setAttribute(ExifInterface.TAG_MAKE, android.os.Build.MANUFACTURER)
                 exif.setAttribute(ExifInterface.TAG_MODEL, android.os.Build.MODEL)
                 exif.setAttribute(ExifInterface.TAG_SOFTWARE, "Highway Timestamp Camera Pro")
@@ -458,7 +466,7 @@ object OverlayRenderer {
                 exif.saveAttributes()
             } catch (ignored: Exception) {}
 
-            // Atomic rename
+            // Atomic rename or copy
             if (tempFile.renameTo(destinationFile)) {
                 return true
             } else {
@@ -467,7 +475,7 @@ object OverlayRenderer {
                 return true
             }
         } catch (e: Exception) {
-            tempFile.delete()
+            try { tempFile.delete() } catch (ignored: Exception) {}
             return false
         }
     }

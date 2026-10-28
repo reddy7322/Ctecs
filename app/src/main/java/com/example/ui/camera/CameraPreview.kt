@@ -122,8 +122,8 @@ fun CameraPreview(
         }
     }
 
-    // Configure Use Cases: In Photo mode, only enable IMAGE_CAPTURE.
-    // In Video mode, check if video encoder profiles exist before attempting VIDEO_CAPTURE.
+    // Configure Use Cases: In Photo mode, enable IMAGE_CAPTURE.
+    // In Video mode, reliably enable VIDEO_CAPTURE.
     LaunchedEffect(isVideoMode, hasCameraPermission) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
@@ -131,30 +131,18 @@ fun CameraPreview(
             controller.isTapToFocusEnabled = true
 
             if (isVideoMode) {
-                val canRecordVideo = try {
-                    CamcorderProfile.hasProfile(CamcorderProfile.QUALITY_HIGH) ||
-                    CamcorderProfile.hasProfile(CamcorderProfile.QUALITY_720P) ||
-                    CamcorderProfile.hasProfile(CamcorderProfile.QUALITY_480P) ||
-                    CamcorderProfile.hasProfile(CamcorderProfile.QUALITY_LOW)
+                try {
+                    controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
                 } catch (e: Throwable) {
-                    false
-                }
-
-                if (canRecordVideo) {
                     try {
                         controller.setEnabledUseCases(
                             LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
                         )
-                    } catch (e: Throwable) {
-                        Log.w("CameraPreview", "Failed to enable VIDEO_CAPTURE, falling back to IMAGE_CAPTURE", e)
-                        controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+                    } catch (e2: Throwable) {
+                        Log.w("CameraPreview", "Failed to set VIDEO_CAPTURE use cases", e2)
                     }
-                } else {
-                    Log.i("CameraPreview", "Device/emulator does not support video encoder profiles. Keeping IMAGE_CAPTURE.")
-                    controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
                 }
             } else {
-                // Photo mode: strictly IMAGE_CAPTURE to prevent unnecessary EncoderProfiles query & timeout
                 controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
             }
         } catch (e: Exception) {
@@ -273,6 +261,7 @@ fun CameraPreview(
 fun capturePhoto(
     controller: LifecycleCameraController,
     context: Context,
+    deviceRotationDegrees: Int = 0,
     onSuccess: (Bitmap) -> Unit,
     onError: (Throwable) -> Unit
 ) {
@@ -288,8 +277,15 @@ fun capturePhoto(
                     buffer.get(bytes)
                     val rawBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 
-                    val rotatedBitmap = if (rotationDegrees != 0 && rawBitmap != null) {
-                        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                    // Ensure bitmap is correctly rotated to match orientation
+                    val finalRotation = if (deviceRotationDegrees != 0) {
+                        (rotationDegrees + deviceRotationDegrees) % 360
+                    } else {
+                        rotationDegrees
+                    }
+
+                    val rotatedBitmap = if (finalRotation != 0 && rawBitmap != null) {
+                        val matrix = Matrix().apply { postRotate(finalRotation.toFloat()) }
                         Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
                     } else {
                         rawBitmap
@@ -331,49 +327,86 @@ class VideoRecordingManager(private val context: Context) {
     ) {
         try {
             if (!controller.isVideoCaptureEnabled) {
-                onError(IllegalStateException("Video recording is not supported on this device/emulator profile."))
-                return
+                try {
+                    controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
+                } catch (e: Exception) {
+                    onError(IllegalStateException("Video recording is not supported on this camera profile."))
+                    return
+                }
             }
 
-            val outputDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                "HighwayCamera"
-            ).apply { mkdirs() }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val videoFile = File(outputDir, "VID_${timeStamp}.mp4")
-            val outputOptions = FileOutputOptions.Builder(videoFile).build()
+            val fileName = "VID_${timeStamp}.mp4"
 
             val executor = ContextCompat.getMainExecutor(context)
-            val audioConfig = if (recordAudio && ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.RECORD_AUDIO
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
+            val hasAudioPerm = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+
+            val audioConfig = if (recordAudio && hasAudioPerm) {
                 AudioConfig.create(true)
             } else {
                 AudioConfig.create(false)
             }
 
-            val pendingRecording = controller.startRecording(
-                outputOptions,
-                audioConfig,
-                executor
-            ) { event ->
+            val recordListener = androidx.core.util.Consumer<VideoRecordEvent> { event ->
                 if (event is VideoRecordEvent.Finalize) {
+                    activeRecording = null
                     if (!event.hasError()) {
                         try {
-                            android.media.MediaScannerConnection.scanFile(
-                                context,
-                                arrayOf(videoFile.absolutePath),
-                                arrayOf("video/mp4")
-                            ) { _, _ -> }
+                            val uri = event.outputResults.outputUri
+                            if (uri.scheme == "file") {
+                                uri.path?.let { p ->
+                                    android.media.MediaScannerConnection.scanFile(
+                                        context,
+                                        arrayOf(p),
+                                        arrayOf("video/mp4")
+                                    ) { _, _ -> }
+                                }
+                            }
                         } catch (ignored: Exception) {}
                     }
                 }
                 onEvent(event)
             }
+
+            val pendingRecording = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val contentValues = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(android.provider.MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/HighwayCamera")
+                }
+                val mediaStoreOptions = androidx.camera.video.MediaStoreOutputOptions.Builder(
+                    context.contentResolver,
+                    android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                ).setContentValues(contentValues).build()
+
+                controller.startRecording(
+                    mediaStoreOptions,
+                    audioConfig,
+                    executor,
+                    recordListener
+                )
+            } else {
+                val outputDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "HighwayCamera"
+                ).apply { mkdirs() }
+                val videoFile = File(outputDir, fileName)
+                val fileOptions = FileOutputOptions.Builder(videoFile).build()
+
+                controller.startRecording(
+                    fileOptions,
+                    audioConfig,
+                    executor,
+                    recordListener
+                )
+            }
             activeRecording = pendingRecording
         } catch (e: Throwable) {
+            activeRecording = null
             onError(e)
         }
     }

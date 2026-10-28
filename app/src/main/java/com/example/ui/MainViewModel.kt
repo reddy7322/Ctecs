@@ -107,6 +107,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _toastMessage.value = ToastMessage(message = message, type = type)
     }
 
+    fun showSuccess(message: String) {
+        showToast(message, ToastType.SUCCESS)
+    }
+
     fun clearToast() {
         _toastMessage.value = null
     }
@@ -668,12 +672,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun showInfo(message: String) {
+        showToast(message, ToastType.INFO)
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Info(message))
         }
     }
 
     fun showError(message: String) {
+        showToast(message, ToastType.ERROR)
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Error(message))
         }
