@@ -51,6 +51,9 @@ import androidx.compose.material.icons.filled.CompassCalibration
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Settings
@@ -236,15 +239,15 @@ fun HomeScreen(
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .testTag("home_theme_toggle_shortcut")
                 ) {
-                    androidx.compose.material3.Icon(
+                    Icon(
                         imageVector = when (currentThemeMode) {
-                            "light" -> androidx.compose.material.icons.Icons.Default.Settings
-                            "dark" -> androidx.compose.material.icons.Icons.Default.Settings
-                            else -> androidx.compose.material.icons.Icons.Default.Settings
+                            "light" -> Icons.Default.LightMode
+                            "dark" -> Icons.Default.DarkMode
+                            else -> Icons.Default.Palette
                         },
                         contentDescription = "Toggle Theme",
                         tint = HighlightYellow,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
