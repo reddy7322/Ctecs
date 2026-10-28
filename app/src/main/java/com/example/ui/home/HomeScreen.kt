@@ -239,18 +239,15 @@ fun HomeScreen(
                 )
             }
 
-            // 5. Next Chainage & Telemetry Cards Row (4 Cards below Map)
+            // 5. Prominent Full-Width Next Chainage Card (Single element below Map)
             val curChainage = matchResult.chainage
             val nextChainageValue = if (curChainage != null) {
                 com.example.model.Chainage.fromMetres(((curChainage.metres / 100) + 1) * 100).format()
             } else "198+500"
 
-            NextChainageTelemetryRow(
+            NextChainageCard(
                 nextChainage = nextChainageValue,
                 distanceMetres = "50 m",
-                compassHeadingStr = compassState.displayHeading,
-                speedKmh = speedKmh,
-                accuracy = locationState.accuracy,
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
@@ -927,184 +924,82 @@ fun HighwayProjectCardsRow(
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 4: NEXT CHAINAGE & TELEMETRY CARDS ROW (4 CARDS)
+// COMPONENT 4: PROMINENT FULL-WIDTH NEXT CHAINAGE CARD
 // -------------------------------------------------------------------
 @Composable
-fun NextChainageTelemetryRow(
+fun NextChainageCard(
     nextChainage: String,
     distanceMetres: String,
-    compassHeadingStr: String,
-    speedKmh: Float,
-    accuracy: Float,
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
     subTextColor: Color
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = cardBgColor,
+        border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(68.dp)
+            .testTag("next_chainage_card")
     ) {
-        // Card 1: Next Chainage
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = cardBgColor,
-            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+        Row(
             modifier = Modifier
-                .weight(1.25f)
-                .height(74.dp)
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.AltRoute,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Column(verticalArrangement = Arrangement.Center) {
+                Surface(
+                    shape = CircleShape,
+                    color = HighlightYellow.copy(alpha = 0.2f),
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.AltRoute,
+                            contentDescription = "Next Chainage",
+                            tint = HighlightYellow,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
-                        text = "Chainage (Next)",
+                        text = "NEXT CHAINAGE",
                         color = subTextColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
                     )
                     Text(
-                        text = nextChainage,
+                        text = if (!nextChainage.startsWith("KM") && !nextChainage.contains("-")) "KM $nextChainage" else nextChainage,
                         color = mainTextColor,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Black,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = distanceMetres,
-                        color = subTextColor,
-                        fontSize = 9.sp,
-                        maxLines = 1
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black
                     )
                 }
             }
-        }
 
-        // Card 2: Direction
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = cardBgColor,
-            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
-            modifier = Modifier
-                .weight(1f)
-                .height(74.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = HighlightYellow
             ) {
-                Icon(
-                    imageVector = Icons.Default.Navigation,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Direction",
-                    color = subTextColor,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-                Text(
-                    text = compassHeadingStr,
-                    color = mainTextColor,
-                    fontSize = 11.sp,
+                    text = "$distanceMetres away",
+                    color = Color.Black,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Black,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        // Card 3: Speed
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = cardBgColor,
-            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
-            modifier = Modifier
-                .weight(1f)
-                .height(74.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Speed,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Speed",
-                    color = subTextColor,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-                Text(
-                    text = String.format(Locale.US, "%.0f km/h", speedKmh),
-                    color = mainTextColor,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        // Card 4: Accuracy
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = cardBgColor,
-            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
-            modifier = Modifier
-                .weight(1f)
-                .height(74.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.GpsFixed,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Accuracy",
-                    color = subTextColor,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-                Text(
-                    text = String.format(Locale.US, "±%.0f m", accuracy),
-                    color = mainTextColor,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                 )
             }
         }
