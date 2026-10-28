@@ -104,6 +104,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.CameraGridMode
+import com.example.model.CameraMode
 import com.example.model.CameraSettings
 import com.example.model.CaptureTimer
 import com.example.model.CoordinateFormat
@@ -114,6 +115,7 @@ import com.example.model.OverlayTemplate
 import com.example.model.PreviewRatio
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
+import com.example.model.SpeedUnit
 import com.example.model.VideoQualityOption
 import com.example.overlay.LogoProvider
 import com.example.ui.MainViewModel
@@ -204,6 +206,8 @@ fun SettingsScreen(
     var routeRadiusMeters by remember(currentCameraSettings) { mutableFloatStateOf(currentCameraSettings.routeMatchingRadiusMeters.toFloat()) }
     var coordFormat by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.coordinateFormat) }
     var is24HourFormat by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.is24HourFormat) }
+    var cameraMode by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.cameraMode) }
+    var speedUnit by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.speedUnit) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -312,7 +316,9 @@ fun SettingsScreen(
                                     gpsAccuracyThresholdMeters = gpsAccuracyThreshold,
                                     routeMatchingRadiusMeters = routeRadiusMeters.toDouble(),
                                     coordinateFormat = coordFormat,
-                                    is24HourFormat = is24HourFormat
+                                    is24HourFormat = is24HourFormat,
+                                    cameraMode = cameraMode,
+                                    speedUnit = speedUnit
                                 )
                             )
                         },
@@ -463,8 +469,20 @@ fun SettingsScreen(
             }
 
             // SECTION 1: CAMERA & LENS
-            if (matchesSearch("camera", "lens", "shutter", "mirror", "sound", "volume", "ratio")) {
+            if (matchesSearch("camera", "lens", "shutter", "mirror", "sound", "volume", "ratio", "mode", "speed")) {
                 SettingsSectionCard(title = "1. Camera & Lens", icon = Icons.Default.CameraAlt) {
+                    SettingDropdownRow(
+                        label = "Camera Mode",
+                        current = cameraMode.label,
+                        options = CameraMode.entries.map { it.label },
+                        onSelect = { label -> cameraMode = CameraMode.entries.first { it.label == label } }
+                    )
+                    SettingDropdownRow(
+                        label = "Speed Unit",
+                        current = speedUnit.label,
+                        options = SpeedUnit.entries.map { it.label },
+                        onSelect = { label -> speedUnit = SpeedUnit.entries.first { it.label == label } }
+                    )
                     SettingDropdownRow(
                         label = "Preview Aspect Ratio",
                         current = previewRatio.label,

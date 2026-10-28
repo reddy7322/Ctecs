@@ -66,6 +66,31 @@ enum class CaptureMode(val label: String) {
     VIDEO("Video")
 }
 
+enum class CameraMode(val label: String) {
+    HIGHWAY("Highway"),
+    NORMAL("Normal"),
+    TIMESTAMP("Timestamp"),
+    LOCATION("Location"),
+    CUSTOM("Custom");
+
+    companion object {
+        fun fromString(str: String?): CameraMode {
+            return entries.firstOrNull { it.name.equals(str, ignoreCase = true) } ?: HIGHWAY
+        }
+    }
+}
+
+enum class SpeedUnit(val label: String) {
+    KMH("km/h"),
+    MPH("mph");
+
+    companion object {
+        fun fromString(str: String?): SpeedUnit {
+            return entries.firstOrNull { it.name.equals(str, ignoreCase = true) } ?: KMH
+        }
+    }
+}
+
 data class CameraSettings(
     val captureTimer: CaptureTimer = CaptureTimer.OFF,
     val gridMode: CameraGridMode = CameraGridMode.OFF,
@@ -94,5 +119,9 @@ data class CameraSettings(
 
     // Lens & Exposure
     val defaultLensZoom: Float = 1.0f,
-    val exposureCompensationStep: Int = 0
+    val exposureCompensationStep: Int = 0,
+
+    // Camera Mode & Speed Units
+    val cameraMode: CameraMode = CameraMode.HIGHWAY,
+    val speedUnit: SpeedUnit = SpeedUnit.KMH
 )

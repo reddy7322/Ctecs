@@ -139,36 +139,21 @@ fun RoutesScreen(
                 )
             }
 
-            // 2. Import & Action Buttons
+            // 2. Import Action Button
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Button(
+                    onClick = { filePickerLauncher.launch("*/*") },
+                    enabled = !isImporting,
+                    modifier = Modifier.fillMaxWidth().testTag("import_kmz_button")
                 ) {
-                    Button(
-                        onClick = { filePickerLauncher.launch("*/*") },
-                        enabled = !isImporting,
-                        modifier = Modifier.weight(1f).testTag("import_kmz_button")
-                    ) {
-                        if (isImporting) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.size(6.dp))
-                        } else {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.size(6.dp))
-                        }
-                        Text("Import KMZ/KML")
-                    }
-
-                    OutlinedButton(
-                        onClick = { viewModel.loadBundledSampleRoute() },
-                        enabled = !isImporting,
-                        modifier = Modifier.weight(1f).testTag("load_sample_route_button")
-                    ) {
-                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    if (isImporting) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.size(6.dp))
-                        Text("Load NH-58 KMZ")
+                    } else {
+                        Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(6.dp))
                     }
+                    Text("Import KMZ/KML")
                 }
             }
 
@@ -186,7 +171,7 @@ fun RoutesScreen(
             if (allRoutes.isEmpty()) {
                 item {
                     Text(
-                        text = "No route files imported yet. Tap 'Load NH-58 KMZ' or import your own .kmz/.kml file.",
+                        text = "No route files imported yet. Tap 'Import KMZ/KML' to add your alignment file.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

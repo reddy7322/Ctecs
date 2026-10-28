@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -97,6 +99,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.location.LocationStatus
 import com.example.model.CameraGridMode
+import com.example.model.CameraMode
 import com.example.model.CaptureMode
 import com.example.model.CaptureTimer
 import com.example.model.Chainage
@@ -105,6 +108,7 @@ import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
+import com.example.model.SpeedUnit
 import com.example.overlay.LogoProvider
 import com.example.ui.AppTab
 import com.example.ui.MainViewModel
@@ -518,17 +522,30 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val gpsColor = when (locationState.status) {
-                    LocationStatus.READY -> HighlightYellow
-                    LocationStatus.POOR_ACCURACY -> Color(0xFFF59E0B)
-                    LocationStatus.ACQUIRING -> Color(0xFF38BDF8)
-                    else -> AccentRed
+                val isAcquiring = locationState.status == LocationStatus.ACQUIRING || locationState.point == null
+                val accuracy = if (locationState.point != null) locationState.accuracy else 999f
+
+                val gpsColor = when {
+                    isAcquiring -> Color(0xFF38BDF8) // Acquiring blue/cyan
+                    accuracy <= 5f -> Color(0xFF22C55E) // Green: Excellent (<= 5 m)
+                    accuracy <= 15f -> HighlightYellow // Yellow: Moderate (> 5 m to 15 m)
+                    accuracy <= 30f -> Color(0xFFF97316) // Orange: Low (> 15 m to 30 m)
+                    else -> AccentRed // Red: Poor (> 30 m) or unavailable
                 }
+
+                val infiniteTransition = rememberInfiniteTransition(label = "gps_pulse")
+                val pulseAlpha by infiniteTransition.animateFloat(
+                    initialValue = 0.3f,
+                    targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(tween(700), repeatMode = RepeatMode.Reverse),
+                    label = "gps_pulse"
+                )
+                val indicatorAlpha = if (isAcquiring) pulseAlpha else 1.0f
 
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = SurfaceDark.copy(alpha = 0.85f),
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, BorderColor),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, gpsColor.copy(alpha = 0.6f)),
                     modifier = Modifier
                         .clickable { showSimDialog = true }
                         .testTag("gps_status_pill")
@@ -540,12 +557,17 @@ fun CameraScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(6.dp)
+                                .size(7.dp)
                                 .clip(CircleShape)
                                 .background(gpsColor)
+                                .alpha(indicatorAlpha)
                         )
                         Text(
-                            text = if (locationState.point != null) "GPS ±${locationState.accuracy.toInt()}m" else "GPS Acquiring...",
+                            text = if (locationState.point != null) {
+                                String.format(Locale.US, "GPS ±%.0fm", locationState.accuracy)
+                            } else {
+                                "GPS Acquiring..."
+                            },
                             color = PrimaryText,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
@@ -672,7 +694,7 @@ fun CameraScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 128.dp)
+                .padding(bottom = 150.dp)
         ) {
             // Live Preview Overlay mirroring reference road photo
             Row(
@@ -789,6 +811,41 @@ fun CameraScreen(
                         )
                     }
 
+                    // Speed & Direction Telemetry for Highway / Location mode
+                    if (cameraSettings.cameraMode == CameraMode.HIGHWAY || cameraSettings.cameraMode == CameraMode.LOCATION) {
+                        val speedKmh = if (locationState.speed != null && locationState.speed!! >= 0f) locationState.speed!! * 3.6f else null
+                        val speedMph = if (locationState.speed != null && locationState.speed!! >= 0f) locationState.speed!! * 2.23694f else null
+                        val speedStr = when {
+                            speedKmh == null -> "Speed: Unavailable"
+                            cameraSettings.speedUnit == SpeedUnit.KMH -> String.format(Locale.US, "Speed: %.1f km/h", speedKmh)
+                            else -> String.format(Locale.US, "Speed: %.1f mph", speedMph)
+                        }
+
+                        val directionStr = if (locationState.bearing != null) {
+                            val b = locationState.bearing!!
+                            val directions = arrayOf("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
+                            val index = (((b + 11.25) % 360) / 22.5).toInt()
+                            String.format(Locale.US, "Dir: %.0f° %s", b, directions[index % 16])
+                        } else {
+                            "Dir: Unavailable"
+                        }
+
+                        Text(
+                            text = "$speedStr  |  $directionStr",
+                            color = PrimaryText,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.End,
+                            style = androidx.compose.ui.text.TextStyle(
+                                shadow = androidx.compose.ui.graphics.Shadow(
+                                    color = Color.Black,
+                                    offset = Offset(2f, 2f),
+                                    blurRadius = 4f
+                                )
+                            )
+                        )
+                    }
+
                     // Highway || Package || Chainage || Road Side || Lane || Activity
                     if (overlayConfig.showProjectInfo || overlayConfig.showChainage) {
                         val sep = projectProfile.separator
@@ -831,159 +888,183 @@ fun CameraScreen(
                 }
             }
 
-            // Quick Road Parameter Chips (Side, Lane, Activity, Manual Chainage)
-            Row(
+            // Minimalist Glass Field Selectors (Side, Lane, Activity, Chainage)
+            androidx.compose.foundation.lazy.LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Side chip (RHS / LHS / BOTH)
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = SurfaceDark,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
-                    modifier = Modifier.clickable {
-                        val nextSide = when (projectProfile.roadSide) {
-                            RoadSide.RHS -> RoadSide.LHS
-                            RoadSide.LHS -> RoadSide.MEDIAN
-                            RoadSide.MEDIAN -> RoadSide.BOTH
-                            RoadSide.BOTH -> RoadSide.RHS
-                        }
-                        viewModel.updateSide(nextSide)
-                    }.testTag("side_chip")
-                ) {
-                    Text(
-                        text = projectProfile.roadSide.name,
-                        color = HighlightYellow,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                    )
-                }
-
-                // Lane chip
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = SurfaceDark,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
-                    modifier = Modifier.clickable {
-                        val lanes = ProjectProfile.LANE_PRESETS
-                        val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
-                        viewModel.updateLane(lanes[nextIndex])
-                    }.testTag("lane_chip")
-                ) {
-                    Text(
-                        text = "Lane: ${projectProfile.lane}",
-                        color = PrimaryText,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                    )
-                }
-
-                // Activity chip
-                Box {
+                // Side chip (RHS / LHS / BOTH / MEDIAN)
+                item {
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = SurfaceDark,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
-                        modifier = Modifier.clickable { showActivityMenu = true }.testTag("activity_chip")
-                    ) {
-                        Text(
-                            text = "Act: ${projectProfile.activity}",
-                            color = PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showActivityMenu,
-                        onDismissRequest = { showActivityMenu = false }
-                    ) {
-                        ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
-                            DropdownMenuItem(
-                                text = { Text(act) },
-                                onClick = {
-                                    viewModel.updateActivity(act)
-                                    showActivityMenu = false
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0x701A1A1A), // Translucent dark glass
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .height(38.dp)
+                            .clickable {
+                                val nextSide = when (projectProfile.roadSide) {
+                                    RoadSide.RHS -> RoadSide.LHS
+                                    RoadSide.LHS -> RoadSide.MEDIAN
+                                    RoadSide.MEDIAN -> RoadSide.BOTH
+                                    RoadSide.BOTH -> RoadSide.RHS
                                 }
+                                viewModel.updateSide(nextSide)
+                            }
+                            .testTag("side_chip")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(HighlightYellow)
+                            )
+                            Text(
+                                text = projectProfile.roadSide.name,
+                                color = HighlightYellow,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.weight(1f))
+                // Lane chip
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0x701A1A1A),
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .height(38.dp)
+                            .clickable {
+                                val lanes = ProjectProfile.LANE_PRESETS
+                                val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
+                                viewModel.updateLane(lanes[nextIndex])
+                            }
+                            .testTag("lane_chip")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = PrimaryText,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = projectProfile.lane,
+                                color = PrimaryText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Activity chip
+                item {
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0x701A1A1A),
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
+                            modifier = Modifier
+                                .height(38.dp)
+                                .clickable { showActivityMenu = true }
+                                .testTag("activity_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = null,
+                                    tint = HighlightYellow,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = projectProfile.activity.ifBlank { "Activity" },
+                                    color = PrimaryText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = showActivityMenu,
+                            onDismissRequest = { showActivityMenu = false }
+                        ) {
+                            ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
+                                DropdownMenuItem(
+                                    text = { Text(act) },
+                                    onClick = {
+                                        viewModel.updateActivity(act)
+                                        showActivityMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
 
                 // Chainage quick edit button
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (matchResult.isManual) DeepRed else SurfaceDark,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, if (matchResult.isManual) AccentRed else BorderColor),
-                    modifier = Modifier.clickable { viewModel.openManualChainageDialog() }.testTag("chainage_chip")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (matchResult.isManual) Color(0x99DC2626) else Color(0x701A1A1A),
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, if (matchResult.isManual) AccentRed else BorderColor.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .height(38.dp)
+                            .clickable { viewModel.openManualChainageDialog() }
+                            .testTag("chainage_chip")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Edit Chainage",
-                            tint = PrimaryText,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = if (matchResult.isManual) "Manual: ${matchResult.displayChainage}" else "CH: ${matchResult.displayChainage}",
-                            color = PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit Chainage",
+                                tint = PrimaryText,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = if (matchResult.isManual) "Manual: ${matchResult.displayChainage}" else "CH: ${matchResult.displayChainage}",
+                                color = PrimaryText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // 8. Bottom Controls: Zoom Selector Bar + Shutter + Mode Switch
+        // 8. Bottom Controls: Mode Selector + Zoom Selector Bar + Shutter + Mode Switch
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .background(Color(0xE6000000))
-                .padding(bottom = 12.dp)
+                .padding(bottom = 16.dp)
         ) {
-            // Lens Zoom Preset Selectors (0.6x, 1x, 2x, 5x)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                listOf(0.6f to ".6", 1.0f to "1×", 2.0f to "2×", 5.0f to "5×").forEach { (zoomVal, label) ->
-                    val isSelected = Math.abs(currentZoomRatio - zoomVal) < 0.2f
-                    Box(
-                        modifier = Modifier
-                            .padding(horizontal = 6.dp)
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(if (isSelected) HighlightYellow else SurfaceDark)
-                            .clickable { viewModel.setZoomRatio(zoomVal) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = label,
-                            color = if (isSelected) PrimaryBackground else PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.graphicsLayer { rotationZ = -animatedRotation }
-                        )
-                    }
-                }
-            }
+
+
+
 
             // Mode Selector Pill: PHOTO | VIDEO
             Row(
@@ -995,20 +1076,20 @@ fun CameraScreen(
             ) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = SurfaceDark,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
+                    color = Color(0x501A1A1A),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.White.copy(alpha = 0.25f))
                 ) {
                     Row(modifier = Modifier.padding(2.dp)) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(if (captureMode == CaptureMode.PHOTO) ElevatedSurface else Color.Transparent)
+                                .background(if (captureMode == CaptureMode.PHOTO) HighlightYellow else Color.Transparent)
                                 .clickable { viewModel.setCaptureMode(CaptureMode.PHOTO) }
                                 .padding(horizontal = 16.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = "PHOTO",
-                                color = if (captureMode == CaptureMode.PHOTO) PrimaryText else SecondaryText,
+                                color = if (captureMode == CaptureMode.PHOTO) PrimaryBackground else SecondaryText,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -1044,8 +1125,8 @@ fun CameraScreen(
                     modifier = Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .border(1.5.dp, BorderColor, RoundedCornerShape(12.dp))
-                        .background(SurfaceDark)
+                        .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                        .background(Color(0x501A1A1A))
                         .graphicsLayer { rotationZ = -animatedRotation }
                         .clickable { onNavigateToPhotos() }
                         .testTag("recent_thumbnail_button"),
@@ -1062,7 +1143,7 @@ fun CameraScreen(
                         Icon(
                             imageVector = Icons.Default.PhotoLibrary,
                             contentDescription = "Gallery",
-                            tint = SecondaryText,
+                            tint = PrimaryText,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -1075,7 +1156,7 @@ fun CameraScreen(
                         modifier = Modifier
                             .size(76.dp)
                             .clip(CircleShape)
-                            .border(4.dp, PrimaryText, CircleShape)
+                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
                             .padding(6.dp)
                             .clip(CircleShape)
                             .background(if (isCapturing) AccentRed else PrimaryText)
@@ -1108,7 +1189,7 @@ fun CameraScreen(
                         modifier = Modifier
                             .size(76.dp)
                             .clip(CircleShape)
-                            .border(4.dp, PrimaryText, CircleShape)
+                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
                             .padding(6.dp)
                             .clip(CircleShape)
                             .background(AccentRed)
@@ -1140,8 +1221,8 @@ fun CameraScreen(
                     modifier = Modifier
                         .size(52.dp)
                         .clip(CircleShape)
-                        .background(SurfaceDark)
-                        .border(1.dp, BorderColor, CircleShape)
+                        .background(Color(0x501A1A1A))
+                        .border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                         .graphicsLayer { rotationZ = -animatedRotation }
                         .testTag("gps_sim_button")
                 ) {

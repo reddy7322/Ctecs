@@ -17,11 +17,13 @@ import com.example.location.LocationStatus
 import com.example.location.LocationTracker
 import com.example.model.CaptureSnapshot
 import com.example.model.Chainage
+import com.example.model.CameraMode
 import com.example.model.ChainageMatchResult
 import com.example.model.OverlayConfig
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.RouteData
+import com.example.model.SpeedUnit
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -366,6 +368,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setCaptureMode(mode: com.example.model.CaptureMode) {
         _captureMode.value = mode
+    }
+
+    fun setCameraMode(mode: CameraMode) {
+        viewModelScope.launch {
+            val updatedSettings = cameraSettings.value.copy(cameraMode = mode)
+            preferencesManager.updateCameraSettings(updatedSettings)
+
+            val updatedOverlay = when (mode) {
+                CameraMode.HIGHWAY -> overlayConfig.value.copy(
+                    showTimestamp = true,
+                    showCoordinates = true,
+                    showChainage = true,
+                    showMapInset = true,
+                    showProjectInfo = true,
+                    showCompass = true,
+                    showAltitude = true,
+                    showAccuracy = true
+                )
+                CameraMode.NORMAL -> overlayConfig.value.copy(
+                    showTimestamp = true,
+                    showCoordinates = false,
+                    showChainage = false,
+                    showMapInset = false,
+                    showProjectInfo = false,
+                    showCompass = false,
+                    showAltitude = false,
+                    showAccuracy = false
+                )
+                CameraMode.TIMESTAMP -> overlayConfig.value.copy(
+                    showTimestamp = true,
+                    showCoordinates = false,
+                    showChainage = false,
+                    showMapInset = false,
+                    showProjectInfo = false,
+                    showCompass = false,
+                    showAltitude = false,
+                    showAccuracy = false
+                )
+                CameraMode.LOCATION -> overlayConfig.value.copy(
+                    showTimestamp = true,
+                    showCoordinates = true,
+                    showChainage = false,
+                    showMapInset = true,
+                    showProjectInfo = false,
+                    showCompass = true,
+                    showAltitude = true,
+                    showAccuracy = true
+                )
+                CameraMode.CUSTOM -> overlayConfig.value
+            }
+            preferencesManager.updateOverlayConfig(updatedOverlay)
+            _uiMessages.emit(UiMessage.Info("Mode: ${mode.label}"))
+        }
     }
 
     fun setZoomRatio(ratio: Float) {

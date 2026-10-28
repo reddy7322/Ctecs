@@ -82,6 +82,8 @@ class PreferencesManager(private val context: Context) {
         val KEY_COORD_FORMAT = stringPreferencesKey("camera_coord_format")
         val KEY_IS_24H = booleanPreferencesKey("camera_is_24h")
         val KEY_EXPOSURE_COMP = intPreferencesKey("camera_exposure_comp")
+        val KEY_CAMERA_MODE = stringPreferencesKey("camera_mode")
+        val KEY_SPEED_UNIT = stringPreferencesKey("speed_unit")
     }
 
     val cameraSettingsFlow: Flow<com.example.model.CameraSettings> = context.dataStore.data.map { prefs ->
@@ -104,7 +106,9 @@ class PreferencesManager(private val context: Context) {
             routeMatchingRadiusMeters = (prefs[KEY_ROUTE_RADIUS] ?: 100f).toDouble(),
             coordinateFormat = com.example.model.CoordinateFormat.fromString(prefs[KEY_COORD_FORMAT]),
             is24HourFormat = prefs[KEY_IS_24H] ?: false,
-            exposureCompensationStep = prefs[KEY_EXPOSURE_COMP] ?: 0
+            exposureCompensationStep = prefs[KEY_EXPOSURE_COMP] ?: 0,
+            cameraMode = com.example.model.CameraMode.fromString(prefs[KEY_CAMERA_MODE]),
+            speedUnit = com.example.model.SpeedUnit.fromString(prefs[KEY_SPEED_UNIT])
         )
     }
 
@@ -233,6 +237,8 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_COORD_FORMAT] = settings.coordinateFormat.name
             prefs[KEY_IS_24H] = settings.is24HourFormat
             prefs[KEY_EXPOSURE_COMP] = settings.exposureCompensationStep
+            prefs[KEY_CAMERA_MODE] = settings.cameraMode.name
+            prefs[KEY_SPEED_UNIT] = settings.speedUnit.name
         }
     }
 
