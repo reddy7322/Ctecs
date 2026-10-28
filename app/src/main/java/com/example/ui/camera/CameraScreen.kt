@@ -281,6 +281,7 @@ fun CameraScreen(
             zoomRatio = currentZoomRatio,
             exposureIndex = exposureCompensation,
             isVideoMode = (captureMode == CaptureMode.VIDEO),
+            rotationDegrees = rotationDegrees.toInt(),
             controller = controller,
             modifier = Modifier.fillMaxSize()
         )

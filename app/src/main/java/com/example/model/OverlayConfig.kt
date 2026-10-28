@@ -65,7 +65,12 @@ data class OverlayConfig(
     val fontSizeSp: Float = 24f,
     val hasTextShadow: Boolean = true,
     val textColorHex: String = "#FFFFFF",
-    val saveOriginalImage: Boolean = false
+    val saveOriginalImage: Boolean = false,
+    val fontFamily: String = "Default",
+    val timePosition: String = "Time in above",
+    val showIndexNumber: Boolean = true,
+    val timestampMarginMode: String = "One line",
+    val resolutionOption: String = "1920 x 1080"
 )
 
 /**

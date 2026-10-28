@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.CamcorderProfile
+import android.os.Environment
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -70,6 +71,7 @@ fun CameraPreview(
     zoomRatio: Float,
     exposureIndex: Int,
     isVideoMode: Boolean,
+    rotationDegrees: Int = 0,
     controller: LifecycleCameraController,
     modifier: Modifier = Modifier
 ) {
@@ -333,7 +335,10 @@ class VideoRecordingManager(private val context: Context) {
                 return
             }
 
-            val outputDir = File(context.filesDir, "highway_videos").apply { mkdirs() }
+            val outputDir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                "HighwayCamera"
+            ).apply { mkdirs() }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val videoFile = File(outputDir, "VID_${timeStamp}.mp4")
             val outputOptions = FileOutputOptions.Builder(videoFile).build()
@@ -354,6 +359,17 @@ class VideoRecordingManager(private val context: Context) {
                 audioConfig,
                 executor
             ) { event ->
+                if (event is VideoRecordEvent.Finalize) {
+                    if (!event.hasError()) {
+                        try {
+                            android.media.MediaScannerConnection.scanFile(
+                                context,
+                                arrayOf(videoFile.absolutePath),
+                                arrayOf("video/mp4")
+                            ) { _, _ -> }
+                        } catch (ignored: Exception) {}
+                    }
+                }
                 onEvent(event)
             }
             activeRecording = pendingRecording

@@ -41,10 +41,10 @@ class PhotoRepository(
             }
             val fileName = "$baseName.jpg"
 
-            // Target directory: Pictures/HighwayTimestampCamera
+            // Target directory: Pictures/HighwayCamera (Shared Public Storage)
             val picturesDir = File(
-                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES),
-                "HighwayTimestampCamera"
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                "HighwayCamera"
             ).apply { mkdirs() }
 
             val destinationFile = File(picturesDir, fileName)
@@ -70,6 +70,15 @@ class PhotoRepository(
             if (!savedOk) {
                 return@withContext Result.failure(Exception("Failed to encode or save JPEG to disk"))
             }
+
+            // Scan file to make it instantly visible in Gallery, Google Photos, and MediaStore
+            try {
+                android.media.MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(destinationFile.absolutePath),
+                    arrayOf("image/jpeg")
+                ) { _, _ -> }
+            } catch (ignored: Exception) {}
 
             // Optional: Save original unmodified if enabled alongside stamped image
             if (snapshot.overlayConfig.saveOriginalImage && snapshot.overlayConfig.burnInTimestamp) {

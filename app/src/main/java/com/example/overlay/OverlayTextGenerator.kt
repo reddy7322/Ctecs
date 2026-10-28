@@ -48,11 +48,17 @@ object OverlayTextGenerator {
                 }
             }
             else -> {
-                // 1. Timestamp
-                if (config.showTimestamp) {
+                val timestampStr = if (config.showTimestamp) {
                     val pattern = if (is24HourFormat) "dd MMMM yyyy HH:mm" else config.timestampFormat
                     val sdf = SimpleDateFormat(pattern, Locale.US)
-                    lines.add(sdf.format(Date(timestamp)))
+                    sdf.format(Date(timestamp))
+                } else null
+
+                val isTimeAbove = config.timePosition.equals("Time in above", ignoreCase = true)
+
+                // 1. Timestamp (if above)
+                if (isTimeAbove && timestampStr != null) {
+                    lines.add(timestampStr)
                 }
 
                 // 2. Coordinates, Altitude, Accuracy
@@ -107,11 +113,16 @@ object OverlayTextGenerator {
                 }
 
                 // 5. Project Info / Chainage / Activity / Lane / Side
-                if (config.showProjectInfo || config.showChainage) {
+                if ((config.showProjectInfo || config.showChainage) && config.showIndexNumber) {
                     val highwayLine = project.buildHighwayText(if (config.showChainage) chainageStr else "")
                     if (highwayLine.isNotBlank()) {
                         lines.add(highwayLine)
                     }
+                }
+
+                // 6. Timestamp (if below)
+                if (!isTimeAbove && timestampStr != null) {
+                    lines.add(timestampStr)
                 }
             }
         }

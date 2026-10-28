@@ -177,6 +177,11 @@ fun SettingsScreen(
     var hasTextShadow by remember(currentOverlay) { mutableStateOf(currentOverlay.hasTextShadow) }
     var fontSizeSp by remember(currentOverlay) { mutableFloatStateOf(currentOverlay.fontSizeSp) }
     var saveOriginal by remember(currentOverlay) { mutableStateOf(currentOverlay.saveOriginalImage) }
+    var textColorHex by remember(currentOverlay) { mutableStateOf(currentOverlay.textColorHex) }
+    var fontFamily by remember(currentOverlay) { mutableStateOf(currentOverlay.fontFamily) }
+    var timePosition by remember(currentOverlay) { mutableStateOf(currentOverlay.timePosition) }
+    var showIndexNumber by remember(currentOverlay) { mutableStateOf(currentOverlay.showIndexNumber) }
+    var resolutionOption by remember(currentOverlay) { mutableStateOf(currentOverlay.resolutionOption) }
 
     // Custom Logo State
     var showLogo by remember(currentOverlay) { mutableStateOf(currentOverlay.showLogo) }
@@ -232,6 +237,7 @@ fun SettingsScreen(
         highwayId, packageSection, roadSide, lane, activity, customDescription, inspectorName, separator,
         template, coordPrecision, timestampFormat, showTimestamp, showCoordinates, showChainage, showMapInset,
         showProjectInfo, showCompass, showAltitude, showAccuracy, burnInTimestamp, hasTextShadow, fontSizeSp, saveOriginal,
+        textColorHex, fontFamily, timePosition, showIndexNumber, resolutionOption,
         showLogo, logoPreset, logoPosition, logoSizeDp, logoOpacity, logoShape, logoCornerRadiusDp, logoMarginXDp, logoMarginYDp,
         captureTimer, gridMode, showHorizonLevel, previewRatio, captureSound, volumeButtonShutter, frontCameraMirror,
         jpegQuality, saveOriginalAndStamped, preserveExif, videoQuality, videoFps, recordAudio,
@@ -266,6 +272,11 @@ fun SettingsScreen(
                 hasTextShadow = hasTextShadow,
                 fontSizeSp = fontSizeSp,
                 saveOriginalImage = saveOriginal,
+                textColorHex = textColorHex,
+                fontFamily = fontFamily,
+                timePosition = timePosition,
+                showIndexNumber = showIndexNumber,
+                resolutionOption = resolutionOption,
                 showLogo = showLogo,
                 logoPreset = logoPreset,
                 logoPosition = logoPosition,
@@ -368,6 +379,11 @@ fun SettingsScreen(
                                     hasTextShadow = hasTextShadow,
                                     fontSizeSp = fontSizeSp,
                                     saveOriginalImage = saveOriginal,
+                                    textColorHex = textColorHex,
+                                    fontFamily = fontFamily,
+                                    timePosition = timePosition,
+                                    showIndexNumber = showIndexNumber,
+                                    resolutionOption = resolutionOption,
                                     showLogo = showLogo,
                                     logoPreset = logoPreset,
                                     logoPosition = logoPosition,
@@ -704,13 +720,49 @@ fun SettingsScreen(
             }
 
             // SECTION 6: TIMESTAMP & TEXT
-            if (matchesSearch("timestamp", "date", "time", "font", "shadow", "24h", "text", "format", "burn")) {
+            if (matchesSearch("timestamp", "date", "time", "font", "shadow", "24h", "text", "format", "burn", "color", "resolution", "index")) {
                 SettingsSectionCard(title = "6. Timestamp & Text", icon = Icons.Default.TextFields) {
+                    SettingDropdownRow(
+                        label = "Font Color",
+                        current = when (textColorHex) {
+                            "#FFFF00" -> "Yellow"
+                            "#00FF00" -> "Green"
+                            "#00FFFF" -> "Cyan"
+                            else -> "White"
+                        },
+                        options = listOf("White", "Yellow", "Green", "Cyan"),
+                        onSelect = { colorName ->
+                            textColorHex = when (colorName) {
+                                "Yellow" -> "#FFFF00"
+                                "Green" -> "#00FF00"
+                                "Cyan" -> "#00FFFF"
+                                else -> "#FFFFFF"
+                            }
+                        }
+                    )
+                    SettingDropdownRow(
+                        label = "Font Family",
+                        current = fontFamily,
+                        options = listOf("Default", "Monospace", "Serif", "Noto Sans"),
+                        onSelect = { fontFamily = it }
+                    )
+                    SettingDropdownRow(
+                        label = "Resolution / Aspect Ratio",
+                        current = resolutionOption,
+                        options = listOf("1920 x 1080", "1920 x 864", "1280 x 720"),
+                        onSelect = { resolutionOption = it }
+                    )
                     SettingSwitchRow(
                         label = "Show Date & Time",
                         subtitle = "Prints formatted timestamp on photo",
                         checked = showTimestamp,
                         onCheckedChange = { showTimestamp = it }
+                    )
+                    SettingSwitchRow(
+                        label = "Show Index Number / Chainage",
+                        subtitle = "Displays road chainage and index metadata",
+                        checked = showIndexNumber,
+                        onCheckedChange = { showIndexNumber = it }
                     )
                     SettingSwitchRow(
                         label = "Burn-In Timestamp On Media",
@@ -736,6 +788,25 @@ fun SettingsScreen(
                         checked = is24HourFormat,
                         onCheckedChange = { is24HourFormat = it }
                     )
+                    // Time position selector buttons (Time in above / Time in below)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("Time in above", "Time in below").forEach { pos ->
+                            val isSelected = timePosition.equals(pos, ignoreCase = true)
+                            Button(
+                                onClick = { timePosition = pos },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) HighlightYellow else ElevatedSurface,
+                                    contentColor = if (isSelected) PrimaryBackground else PrimaryText
+                                ),
+                                modifier = Modifier.weight(1f).height(38.dp)
+                            ) {
+                                Text(pos, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                     SettingSwitchRow(
                         label = "High Contrast Text Shadow",
                         subtitle = "Black drop shadow ensures readability against concrete/bright pavement",
