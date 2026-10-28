@@ -25,12 +25,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -422,13 +426,14 @@ fun CameraScreen(
             }
         }
 
-        // 6. Top Bar: Minimal Single-Icon Controls & Status
+        // 6. Top Bar: Fully Transparent Single-Icon Controls & Status
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .background(Color(0x80000000))
-                .padding(top = 24.dp, bottom = 6.dp, start = 8.dp, end = 8.dp)
+                .background(Color.Transparent)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(top = 8.dp, bottom = 6.dp, start = 8.dp, end = 8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1045,11 +1050,12 @@ fun CameraScreen(
                 }
             }
 
-            // Bottom Shutter Bar (Gallery Thumbnail, Prominent Shutter, Quick Simulator)
+            // Bottom Shutter Bar (Gallery Thumbnail, Fixed Shutter, Quick Simulator)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 6.dp),
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1082,23 +1088,32 @@ fun CameraScreen(
                     }
                 }
 
-                // Shutter / Record Button
-                if (captureMode == CaptureMode.PHOTO) {
-                    // White Shutter Button with Camera Icon
-                    Box(
-                        modifier = Modifier
-                            .size(76.dp)
-                            .clip(CircleShape)
-                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                            .padding(6.dp)
-                            .clip(CircleShape)
-                            .background(if (isCapturing) AccentRed else PrimaryText)
-                            .clickable(enabled = !isCapturing && !isCountingDown) {
-                                triggerPhotoCapture()
+                // Fixed Capture Shutter Button (Persistent Box across photo and video modes)
+                Box(
+                    modifier = Modifier
+                        .size(76.dp)
+                        .clip(CircleShape)
+                        .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                        .padding(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (captureMode == CaptureMode.PHOTO) {
+                                if (isCapturing) AccentRed else PrimaryText
+                            } else {
+                                AccentRed
                             }
-                            .testTag("shutter_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
+                        )
+                        .clickable(enabled = (!isCapturing && !isCountingDown) || captureMode == CaptureMode.VIDEO) {
+                            if (captureMode == CaptureMode.PHOTO) {
+                                triggerPhotoCapture()
+                            } else {
+                                toggleVideoRecording()
+                            }
+                        }
+                        .testTag("shutter_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (captureMode == CaptureMode.PHOTO) {
                         if (isCapturing) {
                             CircularProgressIndicator(
                                 color = PrimaryText,
@@ -1115,21 +1130,7 @@ fun CameraScreen(
                                     .graphicsLayer { rotationZ = -animatedRotation }
                             )
                         }
-                    }
-                } else {
-                    // Video Record Button: Red Outer Ring with Red circle or square stop button
-                    Box(
-                        modifier = Modifier
-                            .size(76.dp)
-                            .clip(CircleShape)
-                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                            .padding(6.dp)
-                            .clip(CircleShape)
-                            .background(AccentRed)
-                            .clickable { toggleVideoRecording() }
-                            .testTag("shutter_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    } else {
                         if (isRecording) {
                             Box(
                                 modifier = Modifier

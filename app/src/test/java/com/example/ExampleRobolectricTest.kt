@@ -24,10 +24,10 @@ class ExampleRobolectricTest {
 
   @Test
   fun `generate logo presets on android canvas`() {
-    val cubeTech = LogoProvider.generateCubeTechPreset(240)
-    assertNotNull(cubeTech)
-    assertEquals(240, cubeTech.width)
-    assertTrue(cubeTech.height > 50)
+    val nhai = LogoProvider.generateNhaiPreset(240)
+    assertNotNull(nhai)
+    assertEquals(240, nhai.width)
+    assertTrue(nhai.height > 50)
 
     val ctecs = LogoProvider.generateCtecsPreset(200)
     assertNotNull(ctecs)

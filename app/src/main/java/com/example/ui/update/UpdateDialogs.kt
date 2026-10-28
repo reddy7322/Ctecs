@@ -187,21 +187,9 @@ fun UpdateAvailableDialog(
             }
         },
         dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(releaseInfo.htmlUrl))
-                        context.startActivity(browserIntent)
-                    }
-                ) {
-                    Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("GitHub")
-                }
-                if (!isDownloading) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Later")
-                    }
+            if (!isDownloading) {
+                TextButton(onClick = onDismiss) {
+                    Text("Later")
                 }
             }
         }

@@ -65,7 +65,7 @@ class AppUpdateManager(private val context: Context) {
 
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
-                return@withContext Result.failure(Exception("GitHub API error: HTTP ${response.code}"))
+                return@withContext Result.failure(Exception("Update server error: HTTP ${response.code}"))
             }
 
             val bodyStr = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response body"))

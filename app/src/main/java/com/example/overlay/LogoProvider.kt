@@ -51,10 +51,9 @@ object LogoProvider {
 
         // Return or generate preset bitmap
         return when (config.logoPreset.lowercase()) {
-            "ctecs" -> generateCtecsPreset(targetWidthPx)
             "nhai" -> generateNhaiPreset(targetWidthPx)
             "survey_seal" -> generateSurveySealPreset(targetWidthPx)
-            else -> generateCubeTechPreset(targetWidthPx) // Default "cubetech" matching reference photo
+            else -> generateCtecsPreset(targetWidthPx) // Default "ctecs"
         }
     }
 
@@ -174,98 +173,7 @@ object LogoProvider {
     // BUILT-IN VECTOR/CANVAS LOGO PRESETS
     // =========================================================================
 
-    /**
-     * Generates CubeTech emblem exactly as in reference photograph 1000868329.jpg:
-     * Green/Gold tech tree emblem + "CUBETECH®" + "Cube Highways Technologies Pvt. Ltd."
-     */
-    fun generateCubeTechPreset(width: Int): Bitmap {
-        val height = (width * 0.42f).toInt().coerceAtLeast(60)
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
 
-        val scale = width / 360f
-
-        // Draw Icon on left side
-        val iconSize = height * 0.76f
-        val iconX = height * 0.12f
-        val iconY = (height - iconSize) / 2f
-
-        // Emblem circle
-        val emblemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#15803D") // Forest Green
-            style = Paint.Style.FILL
-        }
-        val iconRadius = iconSize / 2f
-        val iconCenterX = iconX + iconRadius
-        val iconCenterY = iconY + iconRadius
-
-        // Glow ring
-        val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#EAB308") // Amber/Gold accent
-            style = Paint.Style.STROKE
-            strokeWidth = 3f * scale
-        }
-        canvas.drawCircle(iconCenterX, iconCenterY, iconRadius, emblemPaint)
-        canvas.drawCircle(iconCenterX, iconCenterY, iconRadius - 2f * scale, ringPaint)
-
-        // Stylized Highway / Tech tree lines inside icon
-        val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            style = Paint.Style.STROKE
-            strokeWidth = 2.5f * scale
-            strokeCap = Paint.Cap.ROUND
-        }
-        // Trunk / Road
-        canvas.drawLine(iconCenterX, iconCenterY + iconRadius * 0.6f, iconCenterX, iconCenterY - iconRadius * 0.2f, whitePaint)
-        // Branches
-        canvas.drawLine(iconCenterX, iconCenterY + iconRadius * 0.1f, iconCenterX - iconRadius * 0.45f, iconCenterY - iconRadius * 0.35f, whitePaint)
-        canvas.drawLine(iconCenterX, iconCenterY + iconRadius * 0.1f, iconCenterX + iconRadius * 0.45f, iconCenterY - iconRadius * 0.35f, whitePaint)
-        // Dots
-        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#FDE047") // Light yellow
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(iconCenterX, iconCenterY - iconRadius * 0.3f, 3.5f * scale, dotPaint)
-        canvas.drawCircle(iconCenterX - iconRadius * 0.45f, iconCenterY - iconRadius * 0.35f, 3f * scale, dotPaint)
-        canvas.drawCircle(iconCenterX + iconRadius * 0.45f, iconCenterY - iconRadius * 0.35f, 3f * scale, dotPaint)
-
-        // Text: CUBETECH ®
-        val textStartX = iconX + iconSize + 10f * scale
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#E2E8F0")
-            textSize = 28f * scale
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-        }
-        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(200, 0, 0, 0)
-            textSize = 28f * scale
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            style = Paint.Style.STROKE
-            strokeWidth = 3f * scale
-        }
-        val titleY = iconCenterY + 4f * scale
-        canvas.drawText("CUBETECH®", textStartX, titleY, shadowPaint)
-        canvas.drawText("CUBETECH®", textStartX, titleY, titlePaint)
-
-        // Subtitle: Cube Highways Technologies Pvt. Ltd.
-        val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#CBD5E1")
-            textSize = 12f * scale
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-        }
-        val subShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(180, 0, 0, 0)
-            textSize = 12f * scale
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-            style = Paint.Style.STROKE
-            strokeWidth = 2f * scale
-        }
-        val subY = titleY + 16f * scale
-        canvas.drawText("Cube Highways Technologies Pvt. Ltd.", textStartX, subY, subShadow)
-        canvas.drawText("Cube Highways Technologies Pvt. Ltd.", textStartX, subY, subPaint)
-
-        return bitmap
-    }
 
     /**
      * Generates CTECS PRO logo:

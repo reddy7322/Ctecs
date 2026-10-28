@@ -13,7 +13,10 @@ enum class LogoPosition(val displayName: String) {
     TOP_LEFT("Top Left"),
     ABOVE_TEXT("Above Chainage Text"),
     BOTTOM_LEFT("Bottom Left"),
-    BOTTOM_RIGHT("Bottom Right");
+    BOTTOM_RIGHT("Bottom Right"),
+    TOP_CENTER("Top Center"),
+    BOTTOM_CENTER("Bottom Center"),
+    CENTER("Center");
 
     companion object {
         fun fromString(name: String?): LogoPosition {
@@ -56,7 +59,7 @@ data class OverlayConfig(
 
     // Custom Logo & Manual Settings
     val showLogo: Boolean = true,
-    val logoPreset: String = "cubetech",        // "cubetech", "ctecs", "nhai", "survey_seal", "custom"
+    val logoPreset: String = "ctecs",           // "ctecs", "nhai", "survey_seal", "custom"
     val logoUri: String? = null,
     val logoPosition: LogoPosition = LogoPosition.TOP_RIGHT,
     val logoSizeDp: Int = 58,                   // 32 to 140 dp
@@ -67,16 +70,37 @@ data class OverlayConfig(
     val logoBorderColorHex: String = "#FFFFFF",
     val logoMarginXDp: Int = 16,
     val logoMarginYDp: Int = 20,
+    val logoScale: Float = 1.0f,
+    val logoRotationDegrees: Float = 0f,
 
+    // Typography & Styling
     val fontSizeSp: Float = 24f,
+    val fontSizePreset: String = "Medium",      // Tiny (14sp), Small (18sp), Medium (24sp), Big (28sp), Huge (34sp), Huger (42sp), Custom
     val hasTextShadow: Boolean = true,
     val textColorHex: String = "#FFFFFF",
-    val saveOriginalImage: Boolean = false,
-    val fontFamily: String = "Default",
-    val timePosition: String = "Time in above",
-    val showIndexNumber: Boolean = true,
+    val textOpacity: Float = 1.0f,              // 0.10f to 1.0f
+    val fontFamily: String = "Default",         // Default, Noto Sans, Source Sans Pro, Dancing Script, Monospace, Serif
+    val fontStyle: String = "Bold",             // Regular, Medium, Bold, Italic
+    val textStrokeWidthDp: Float = 1.5f,
+
+    // Background style & color
+    val backgroundStyle: String = "Transparent", // Transparent, Solid, Translucent Glass
+    val backgroundOpacity: Float = 0.0f,        // 0.0f to 1.0f
+    val backgroundColorHex: String = "#000000",
+
+    // Placement & Formatting
+    val watermarkPosition: String = "Bottom Right", // Bottom Right, Bottom Center, Bottom Left, Top Right, Top Center, Top Left, Center
+    val timePosition: String = "Time in above", // Time in above vs Time in below
     val timestampMarginMode: String = "One line",
-    val resolutionOption: String = "1920 x 1080"
+    val showIndexNumber: Boolean = true,
+    val resolutionOption: String = "1920 x 1080",
+    val saveOriginalImage: Boolean = false,
+
+    // Address & Location selector (from reference Screenshot 2)
+    val locationAddressOption: String = "None", // None, India, Uttarakhand, Garhwal Division, Rehmadpur, National Highway 58, Sant Niwas, Full Address
+    val customAddressText: String = "",
+    val gpsAccuracyMarginPreset: String = "±5m",
+    val customTag: String = ""
 )
 
 /**

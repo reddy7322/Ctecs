@@ -123,5 +123,18 @@ data class CameraSettings(
 
     // Camera Mode & Speed Units
     val cameraMode: CameraMode = CameraMode.HIGHWAY,
-    val speedUnit: SpeedUnit = SpeedUnit.KMH
+    val speedUnit: SpeedUnit = SpeedUnit.KMH,
+
+    // Additional controls (from user reference settings)
+    val touchToCapture: Boolean = false,
+    val alwaysDisplayZoomSlider: Boolean = true,
+    val batterySaveMode: Boolean = false,
+    val batterySaveBrightness: Float = 0.5f,
+    val easyToggleCameras: Boolean = true,
+    val whiteBalance: String = "auto",
+    val videoSegmentation: String = "None",
+    val customFilenamePrefix: String = "",
+    val filenameFormatPreset: String = "TimePhoto_YYYYMMDD_HHMMSS",
+    val customStoragePath: String = "/storage/emulated/0/DCIM/Camera",
+    val autoRotateUI: Boolean = true
 )

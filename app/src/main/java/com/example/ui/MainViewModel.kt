@@ -556,11 +556,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun removeCustomLogo() {
         viewModelScope.launch {
             val updated = overlayConfig.value.copy(
-                logoPreset = "cubetech",
+                logoPreset = "ctecs",
                 logoUri = null
             )
             preferencesManager.updateOverlayConfig(updated)
-            _uiMessages.emit(UiMessage.Info("Custom logo removed. Switched to CubeTech reference preset."))
+            _uiMessages.emit(UiMessage.Info("Custom logo removed. Switched to CTECS preset."))
         }
     }
 

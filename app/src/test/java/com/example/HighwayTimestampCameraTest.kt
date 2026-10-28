@@ -326,7 +326,7 @@ class HighwayTimestampCameraTest {
 
         val config = com.example.model.OverlayConfig()
         assertTrue(config.showLogo)
-        assertEquals("cubetech", config.logoPreset)
+        assertEquals("ctecs", config.logoPreset)
         assertEquals(com.example.model.LogoPosition.TOP_RIGHT, config.logoPosition)
         assertEquals(58, config.logoSizeDp)
         assertEquals(0.90f, config.logoOpacity, 0.001f)
@@ -428,6 +428,53 @@ class HighwayTimestampCameraTest {
         val noRouteResult = com.example.model.ChainageMatchResult.noRoute()
         assertEquals("---", noRouteResult.displayKmChainage)
         assertEquals("Unknown", noRouteResult.detectedSide)
+    }
+
+    // 16. Testing Custom Filename Presets
+    @Test
+    fun testCustomFilenamePresets() {
+        val timestamp = 1793200000000L // arbitrary fixed time
+        val chainage = "198+450"
+        val address = "NH58"
+        val road = "NH58"
+        val tag = "Survey"
+
+        val f1 = com.example.data.PhotoRepository.buildCustomFileName("TimePhoto_YYYYMMDD_HHMMSS", "", timestamp, chainage, address, road, tag)
+        assertTrue(f1.startsWith("TimePhoto_"))
+        assertTrue(f1.endsWith(".jpg"))
+
+        val f2 = com.example.data.PhotoRepository.buildCustomFileName("YYYYMMDD_HHMMSS_chainage", "", timestamp, chainage, address, road, tag)
+        assertTrue(f2.contains("198+450"))
+
+        val f3 = com.example.data.PhotoRepository.buildCustomFileName("tag_chainage_YYYYMMDD_HHMMSS", "MYPREFIX", timestamp, chainage, address, road, tag)
+        assertTrue(f3.startsWith("MYPREFIX_Survey_198+450"))
+    }
+
+    // 17. Testing Location Address Overlay Option
+    @Test
+    fun testLocationAddressOverlay() {
+        val config = com.example.model.OverlayConfig(
+            locationAddressOption = "National Highway 58",
+            customAddressText = "Sant Niwas, NH 58"
+        )
+        val project = ProjectProfile(highwayId = "MH", packageSection = "MM")
+        val loc = GeoPoint(29.8919, 77.9587)
+
+        val lines = com.example.overlay.OverlayTextGenerator.generateLines(
+            config = config,
+            project = project,
+            location = loc,
+            accuracy = 4.0f,
+            compassHeading = "N",
+            speedMps = null,
+            bearing = null,
+            chainageStr = "198+450",
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = com.example.model.CoordinateFormat.DECIMAL,
+            is24HourFormat = false
+        )
+
+        assertTrue(lines.any { it.contains("Sant Niwas, NH 58") })
     }
 }
 

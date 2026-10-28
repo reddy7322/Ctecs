@@ -4,9 +4,13 @@ import android.Manifest
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.CameraAlt
@@ -93,13 +97,13 @@ fun MainScreen(
         }
     }
 
-    // Collect UI messages
+    // Collect UI messages and route them to top glass notification
     LaunchedEffect(Unit) {
         viewModel.uiMessages.collect { msg ->
             when (msg) {
-                is UiMessage.Success -> snackbarHostState.showSnackbar("✓ ${msg.message}")
-                is UiMessage.Error -> snackbarHostState.showSnackbar("✕ ${msg.message}")
-                is UiMessage.Info -> snackbarHostState.showSnackbar(msg.message)
+                is UiMessage.Success -> viewModel.showToast("✓ ${msg.message}", ToastType.SUCCESS)
+                is UiMessage.Error -> viewModel.showToast("✕ ${msg.message}", ToastType.ERROR)
+                is UiMessage.Info -> viewModel.showToast(msg.message, ToastType.INFO)
             }
         }
     }
@@ -112,7 +116,6 @@ fun MainScreen(
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         containerColor = PrimaryBackground,
         modifier = modifier
@@ -153,6 +156,7 @@ fun MainScreen(
         }
     }
 
+    // Top In-App Glass Toast & Status Notification
     val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
     AnimatedGlassToast(
         toastMessage = toastMessage,
@@ -195,44 +199,73 @@ fun AnimatedGlassToast(
     if (toastMessage == null) return
 
     LaunchedEffect(toastMessage.id) {
-        kotlinx.coroutines.delay(2500L)
+        kotlinx.coroutines.delay(3000L)
         onDismiss()
+    }
+
+    val (accentColor, iconSymbol) = when (toastMessage.type) {
+        ToastType.SUCCESS -> Color(0xFF22C55E) to "✓"
+        ToastType.ERROR -> Color(0xFFEF4444) to "✕"
+        ToastType.WARNING -> HighlightYellow to "⚠"
+        ToastType.SETTINGS_SAVED -> HighlightYellow to "✓"
+        ToastType.MODE_CHANGE -> Color(0xFF38BDF8) to "⚡"
+        ToastType.INFO -> Color(0xFF38BDF8) to "ℹ"
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 48.dp),
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(top = 10.dp, start = 16.dp, end = 16.dp),
         contentAlignment = Alignment.TopCenter
     ) {
         androidx.compose.animation.AnimatedVisibility(
             visible = true,
-            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { -40 }),
-            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically(targetOffsetY = { -40 })
+            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)) +
+                    androidx.compose.animation.slideInVertically(
+                        initialOffsetY = { -it },
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                        )
+                    ),
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(150)) +
+                    androidx.compose.animation.slideOutVertically(targetOffsetY = { -it })
         ) {
             androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0x901A1A1A),
-                border = androidx.compose.foundation.BorderStroke(0.8.dp, HighlightYellow.copy(alpha = 0.5f)),
-                shadowElevation = 8.dp,
-                modifier = Modifier.padding(horizontal = 24.dp)
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xF2111827),
+                border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.65f)),
+                shadowElevation = 10.dp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable { onDismiss() }
+                    .padding(horizontal = 4.dp)
             ) {
-                androidx.compose.foundation.layout.Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
+                            .size(20.dp)
                             .clip(CircleShape)
-                            .background(HighlightYellow)
-                    )
+                            .background(accentColor.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = iconSymbol,
+                            color = accentColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     Text(
                         text = toastMessage.message,
                         color = PrimaryText,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }

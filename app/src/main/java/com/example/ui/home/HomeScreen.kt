@@ -1,6 +1,8 @@
 package com.example.ui.home
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -9,6 +11,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -63,6 +68,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -136,15 +142,39 @@ fun HomeScreen(
         }
     }
 
+    // GPS acquisition pulsing animation
+    val infiniteTransition = rememberInfiniteTransition(label = "gps_dot")
+    val gpsPulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(tween(700), repeatMode = RepeatMode.Reverse),
+        label = "gps_dot_pulse"
+    )
+
+    // Highlight animation on chainage value update
+    var isChainageHighlighted by remember { mutableStateOf(false) }
+    LaunchedEffect(matchResult.displayChainage) {
+        if (matchResult.displayChainage.isNotBlank()) {
+            isChainageHighlighted = true
+            delay(650L)
+            isChainageHighlighted = false
+        }
+    }
+    val animatedChainageColor by animateColorAsState(
+        targetValue = if (isChainageHighlighted) HighlightYellow else PrimaryText,
+        animationSpec = tween(400),
+        label = "chainage_glow"
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(PrimaryBackground)
+            .background(Color(0xFF000000))
     ) {
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
-            // 1. Header Navigation Bar
+            // 1. Header Navigation Bar (Clean & Minimalist)
             HomeTopBar(
                 highwayId = projectProfile.highwayId,
                 packageSection = projectProfile.packageSection,
@@ -153,34 +183,167 @@ fun HomeScreen(
                 onNavigateToSettings = onNavigateToSettings
             )
 
-            // 2. Highway Status & Chainage Dashboard
-            HighwayDashboardCard(
-                routeName = activeRoute?.name ?: "NH-58 Delhi-Dehradun Expressway",
-                highwayTag = projectProfile.highwayId,
-                packageTag = projectProfile.packageSection,
-                displayChainage = matchResult.displayKmChainage,
-                detectedSide = matchResult.detectedSide,
-                confidence = matchResult.confidence,
-                offsetMetres = matchResult.offsetMetres,
-                matchedAlignment = matchResult.matchedAlignmentName,
-                accuracy = locationState.accuracy,
-                speedMps = locationState.speed,
-                bearing = locationState.bearing,
-                point = locationState.point,
-                coordFormat = cameraSettings.coordinateFormat,
-                lastUpdatedText = lastUpdatedText,
-                hasActiveRoute = activeRoute != null,
-                onSelectRoute = onNavigateToRoutes
-            )
+            // 2. Minimalist Centerpiece Hero: Centered Chainage & Telemetry
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Main Focus: Large Centered Chainage with small KM prefix and tiny LHS/RHS
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "KM",
+                        color = HighlightYellow,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(bottom = 7.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    AnimatedContent(
+                        targetState = matchResult.displayChainage.ifBlank { "0+000" },
+                        transitionSpec = {
+                            (slideInVertically(animationSpec = tween(300)) { height -> height / 2 } + fadeIn(tween(250)))
+                                .togetherWith(slideOutVertically(animationSpec = tween(300)) { height -> -height / 2 } + fadeOut(tween(200)))
+                        },
+                        label = "chainage_number_anim"
+                    ) { targetChainage ->
+                        Text(
+                            text = targetChainage,
+                            color = animatedChainageColor,
+                            fontSize = 44.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val sideText = when (matchResult.detectedSide.uppercase(Locale.ROOT)) {
+                        "LHS" -> "LHS"
+                        "RHS" -> "RHS"
+                        else -> "Unknown"
+                    }
+                    val sideColor = when (sideText) {
+                        "RHS" -> HighlightYellow.copy(alpha = 0.9f)
+                        "LHS" -> Color(0xFF60A5FA)
+                        else -> SecondaryText
+                    }
+                    Text(
+                        text = "· $sideText",
+                        color = sideColor,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .padding(bottom = 7.dp)
+                            .testTag("carriageway_badge")
+                    )
+                }
+
+                // Road Name & Optional Alignment Offset
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 1.dp)
+                ) {
+                    val routeDisplay = activeRoute?.name ?: "NH-58 Delhi-Dehradun Expressway"
+                    Text(
+                        text = routeDisplay,
+                        color = SecondaryText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (matchResult.offsetMetres > 0.0) {
+                        Text(
+                            text = String.format(Locale.US, "  ·  Offset: %.1fm", matchResult.offsetMetres),
+                            color = SecondaryText.copy(alpha = 0.7f),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                // Compact Telemetry Status Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isAcquiring = locationState.point == null
+                    val (gpsDotCol, gpsLabel) = when {
+                        isAcquiring -> Color(0xFF38BDF8) to "Acquiring..."
+                        locationState.accuracy <= 5f -> Color(0xFF22C55E) to String.format(Locale.US, "GPS ±%.0fm", locationState.accuracy)
+                        locationState.accuracy <= 15f -> HighlightYellow to String.format(Locale.US, "GPS ±%.0fm", locationState.accuracy)
+                        else -> AccentRed to String.format(Locale.US, "GPS ±%.0fm", locationState.accuracy)
+                    }
+
+                    // GPS Accuracy Pill
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(gpsDotCol)
+                                .alpha(if (isAcquiring) gpsPulseAlpha else 1.0f)
+                        )
+                        Text(
+                            text = gpsLabel,
+                            color = PrimaryText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    // Speed
+                    val currentSpeed = locationState.speed
+                    val speedKmh = if (currentSpeed != null && currentSpeed >= 0f) currentSpeed * 3.6f else 0.0f
+                    Text(
+                        text = String.format(Locale.US, "%.1f km/h", speedKmh),
+                        color = PrimaryText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    // Direction / Heading
+                    val currentBearing = locationState.bearing
+                    val dirText = if (currentBearing != null && currentBearing >= 0f) {
+                        val directions = arrayOf("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
+                        val index = (((currentBearing + 11.25) % 360) / 22.5).toInt()
+                        String.format(Locale.US, "%.0f° %s", currentBearing, directions[index % 16])
+                    } else "Stationary"
+                    Text(
+                        text = dirText,
+                        color = SecondaryText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    // Last Update
+                    Text(
+                        text = lastUpdatedText,
+                        color = SecondaryText,
+                        fontSize = 10.sp
+                    )
+                }
+            }
 
             // 3. Interactive Smart Map & Compass
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+                    .border(0.8.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
             ) {
                 InteractiveSmartMap(
                     location = locationState.point,

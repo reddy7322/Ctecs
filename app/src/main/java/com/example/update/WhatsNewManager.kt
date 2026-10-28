@@ -38,8 +38,8 @@ class WhatsNewManager(private val context: Context) {
                 category = "FIELD"
             ),
             WhatsNewFeature(
-                title = "Smart Inbuilt GitHub Updates",
-                description = "Automatic background update checking from GitHub releases with direct OTA APK installation.",
+                title = "Smart In-App Updates",
+                description = "Automatic background update checking with direct secure in-app OTA installation.",
                 category = "UPDATE"
             )
         )

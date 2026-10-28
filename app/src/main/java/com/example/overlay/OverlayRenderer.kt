@@ -395,6 +395,15 @@ object OverlayRenderer {
                 LogoPosition.ABOVE_TEXT -> {
                     Pair(width - customMarginX - logoWidth, (infoBlockTopY - customMarginY - logoHeight).coerceAtLeast(customMarginY))
                 }
+                LogoPosition.TOP_CENTER -> {
+                    Pair((width - logoWidth) / 2f, customMarginY)
+                }
+                LogoPosition.BOTTOM_CENTER -> {
+                    Pair((width - logoWidth) / 2f, height - customMarginY - logoHeight)
+                }
+                LogoPosition.CENTER -> {
+                    Pair((width - logoWidth) / 2f, (height - logoHeight) / 2f)
+                }
             }
 
             val logoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

@@ -1,10 +1,14 @@
 package com.example.ui.settings
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +17,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,51 +34,46 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.BrandingWatermark
-import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Engineering
-import androidx.compose.material.icons.filled.Exposure
-import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.GridOn
-import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LinearScale
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -84,50 +85,41 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.BuildConfig
 import com.example.model.CameraGridMode
-import com.example.model.CameraMode
 import com.example.model.CameraSettings
 import com.example.model.CaptureTimer
 import com.example.model.CoordinateFormat
 import com.example.model.LogoPosition
-import com.example.model.LogoShape
 import com.example.model.OverlayConfig
-import com.example.model.OverlayTemplate
-import com.example.model.PreviewRatio
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
-import com.example.model.SpeedUnit
 import com.example.model.VideoQualityOption
 import com.example.overlay.LogoProvider
 import com.example.ui.MainViewModel
-import com.example.ui.theme.AccentRed
 import com.example.ui.theme.BorderColor
-import com.example.ui.theme.DarkYellowSurface
-import com.example.ui.theme.DeepRed
 import com.example.ui.theme.DisabledGray
 import com.example.ui.theme.ElevatedSurface
-import com.example.ui.theme.HighlightYellow
 import com.example.ui.theme.PrimaryBackground
 import com.example.ui.theme.PrimaryText
 import com.example.ui.theme.SecondaryBackground
@@ -138,1092 +130,1688 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: MainViewModel,
     onNavigateBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    BackHandler {
+        onNavigateBack()
+    }
+
+    val context = LocalContext.current
     val currentProject by viewModel.projectProfile.collectAsStateWithLifecycle()
     val currentOverlay by viewModel.overlayConfig.collectAsStateWithLifecycle()
     val currentCameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
+    val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
+    val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
+    val manualChainage by viewModel.manualChainage.collectAsStateWithLifecycle()
+
+    // In-App Update States
+    val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
+    val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
+    val isDownloadingUpdate by viewModel.isDownloadingUpdate.collectAsStateWithLifecycle()
+    val updateDownloadProgress by viewModel.updateDownloadProgress.collectAsStateWithLifecycle()
 
     var searchQuery by remember { mutableStateOf("") }
+    var showRestoreDialog by remember { mutableStateOf(false) }
+    var isPreviewLandscape by remember { mutableStateOf(false) }
 
-    // Section 1: Project & Activity state
-    var highwayId by remember(currentProject) { mutableStateOf(currentProject.highwayId) }
-    var packageSection by remember(currentProject) { mutableStateOf(currentProject.packageSection) }
-    var roadSide by remember(currentProject) { mutableStateOf(currentProject.roadSide) }
-    var lane by remember(currentProject) { mutableStateOf(currentProject.lane) }
-    var activity by remember(currentProject) { mutableStateOf(currentProject.activity) }
-    var customDescription by remember(currentProject) { mutableStateOf(currentProject.customDescription) }
-    var inspectorName by remember(currentProject) { mutableStateOf(currentProject.inspectorName) }
-    var separator by remember(currentProject) { mutableStateOf(currentProject.separator) }
+    // Section Expand/Collapse State - Project Settings is open by default at the top
+    val expandedSections = remember {
+        mutableStateMapOf(
+            "project" to true,
+            "camera" to false,
+            "timestamp" to false,
+            "typography" to false,
+            "logo" to false,
+            "metadata" to false,
+            "gps" to false,
+            "filename" to false,
+            "orientation" to false,
+            "map_compass" to false,
+            "update" to false,
+            "about" to false
+        )
+    }
 
-    // Section 2: Timestamp & Text Overlay
-    var template by remember(currentOverlay) { mutableStateOf(currentOverlay.template) }
-    var coordPrecision by remember(currentOverlay) { mutableIntStateOf(currentOverlay.coordinatePrecision) }
-    var timestampFormat by remember(currentOverlay) { mutableStateOf(currentOverlay.timestampFormat) }
-    var showTimestamp by remember(currentOverlay) { mutableStateOf(currentOverlay.showTimestamp) }
-    var showCoordinates by remember(currentOverlay) { mutableStateOf(currentOverlay.showCoordinates) }
-    var showChainage by remember(currentOverlay) { mutableStateOf(currentOverlay.showChainage) }
-    var showMapInset by remember(currentOverlay) { mutableStateOf(currentOverlay.showMapInset) }
-    var showProjectInfo by remember(currentOverlay) { mutableStateOf(currentOverlay.showProjectInfo) }
-    var showCompass by remember(currentOverlay) { mutableStateOf(currentOverlay.showCompass) }
-    var showAltitude by remember(currentOverlay) { mutableStateOf(currentOverlay.showAltitude) }
-    var showAccuracy by remember(currentOverlay) { mutableStateOf(currentOverlay.showAccuracy) }
-    var burnInTimestamp by remember(currentOverlay) { mutableStateOf(currentOverlay.burnInTimestamp) }
-
-    // Speed & Direction Visibility states
-    var showSpeedOnPreview by remember(currentOverlay) { mutableStateOf(currentOverlay.showSpeedOnPreview) }
-    var includeSpeedInCapture by remember(currentOverlay) { mutableStateOf(currentOverlay.includeSpeedInCapture) }
-    var showDirectionOnPreview by remember(currentOverlay) { mutableStateOf(currentOverlay.showDirectionOnPreview) }
-    var includeDirectionInCapture by remember(currentOverlay) { mutableStateOf(currentOverlay.includeDirectionInCapture) }
-
-    var hasTextShadow by remember(currentOverlay) { mutableStateOf(currentOverlay.hasTextShadow) }
-    var fontSizeSp by remember(currentOverlay) { mutableFloatStateOf(currentOverlay.fontSizeSp) }
-    var saveOriginal by remember(currentOverlay) { mutableStateOf(currentOverlay.saveOriginalImage) }
-    var textColorHex by remember(currentOverlay) { mutableStateOf(currentOverlay.textColorHex) }
-    var fontFamily by remember(currentOverlay) { mutableStateOf(currentOverlay.fontFamily) }
-    var timePosition by remember(currentOverlay) { mutableStateOf(currentOverlay.timePosition) }
-    var showIndexNumber by remember(currentOverlay) { mutableStateOf(currentOverlay.showIndexNumber) }
-    var resolutionOption by remember(currentOverlay) { mutableStateOf(currentOverlay.resolutionOption) }
-
-    // Custom Logo State
-    var showLogo by remember(currentOverlay) { mutableStateOf(currentOverlay.showLogo) }
-    var logoPreset by remember(currentOverlay) { mutableStateOf(currentOverlay.logoPreset) }
-    var logoPosition by remember(currentOverlay) { mutableStateOf(currentOverlay.logoPosition) }
-    var logoSizeDp by remember(currentOverlay) { mutableIntStateOf(currentOverlay.logoSizeDp) }
-    var logoOpacity by remember(currentOverlay) { mutableFloatStateOf(currentOverlay.logoOpacity) }
-    var logoShape by remember(currentOverlay) { mutableStateOf(currentOverlay.logoShape) }
-    var logoCornerRadiusDp by remember(currentOverlay) { mutableIntStateOf(currentOverlay.logoCornerRadiusDp) }
-    var logoMarginXDp by remember(currentOverlay) { mutableIntStateOf(currentOverlay.logoMarginXDp) }
-    var logoMarginYDp by remember(currentOverlay) { mutableIntStateOf(currentOverlay.logoMarginYDp) }
-
-    // Camera Hardware Settings
-    var captureTimer by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.captureTimer) }
-    var gridMode by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.gridMode) }
-    var showHorizonLevel by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.showHorizonLevel) }
-    var previewRatio by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.previewRatio) }
-    var captureSound by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.captureSound) }
-    var volumeButtonShutter by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.volumeButtonShutter) }
-    var frontCameraMirror by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.frontCameraMirror) }
-    var jpegQuality by remember(currentCameraSettings) { mutableIntStateOf(currentCameraSettings.jpegQuality) }
-    var saveOriginalAndStamped by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.saveOriginalAndStamped) }
-    var preserveExif by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.preserveExif) }
-    var videoQuality by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.videoQuality) }
-    var videoFps by remember(currentCameraSettings) { mutableIntStateOf(currentCameraSettings.videoFps) }
-    var recordAudio by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.recordAudio) }
-    var gpsIntervalSec by remember(currentCameraSettings) { mutableIntStateOf(currentCameraSettings.gpsUpdateIntervalSec) }
-    var gpsAccuracyThreshold by remember(currentCameraSettings) { mutableFloatStateOf(currentCameraSettings.gpsAccuracyThresholdMeters) }
-    var routeRadiusMeters by remember(currentCameraSettings) { mutableFloatStateOf(currentCameraSettings.routeMatchingRadiusMeters.toFloat()) }
-    var coordFormat by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.coordinateFormat) }
-    var is24HourFormat by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.is24HourFormat) }
-    var cameraMode by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.cameraMode) }
-    var speedUnit by remember(currentCameraSettings) { mutableStateOf(currentCameraSettings.speedUnit) }
-
+    // Photo picker launcher for custom logo
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            viewModel.setCustomLogoImage(uri)
+            try {
+                val input = context.contentResolver.openInputStream(uri)
+                val targetFile = File(context.filesDir, "custom_user_logo.png")
+                input?.use { inStream ->
+                    targetFile.outputStream().use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                viewModel.saveOverlayConfigSilent(
+                    currentOverlay.copy(
+                        showLogo = true,
+                        logoPreset = "custom",
+                        logoUri = targetFile.absolutePath
+                    )
+                )
+                viewModel.showToast("Custom logo imported successfully")
+            } catch (e: Exception) {
+                viewModel.showToast("Failed to load logo image")
+            }
         }
     }
 
-    var showResetDialog by remember { mutableStateOf(false) }
-
-    val showAll = cameraMode == CameraMode.CUSTOM
-    val isHighway = showAll || cameraMode == CameraMode.HIGHWAY
-    val isNormal = showAll || cameraMode == CameraMode.NORMAL
-    val isTimestamp = showAll || cameraMode == CameraMode.TIMESTAMP
-    val isLocation = showAll || cameraMode == CameraMode.LOCATION
-
-    // Automatic Settings Saving
-    LaunchedEffect(
-        highwayId, packageSection, roadSide, lane, activity, customDescription, inspectorName, separator,
-        template, coordPrecision, timestampFormat, showTimestamp, showCoordinates, showChainage, showMapInset,
-        showProjectInfo, showCompass, showAltitude, showAccuracy, burnInTimestamp,
-        showSpeedOnPreview, includeSpeedInCapture, showDirectionOnPreview, includeDirectionInCapture,
-        hasTextShadow, fontSizeSp, saveOriginal,
-        textColorHex, fontFamily, timePosition, showIndexNumber, resolutionOption,
-        showLogo, logoPreset, logoPosition, logoSizeDp, logoOpacity, logoShape, logoCornerRadiusDp, logoMarginXDp, logoMarginYDp,
-        captureTimer, gridMode, showHorizonLevel, previewRatio, captureSound, volumeButtonShutter, frontCameraMirror,
-        jpegQuality, saveOriginalAndStamped, preserveExif, videoQuality, videoFps, recordAudio,
-        gpsIntervalSec, gpsAccuracyThreshold, routeRadiusMeters, coordFormat, is24HourFormat, cameraMode, speedUnit
-    ) {
-        viewModel.saveProjectProfileSilent(
-            currentProject.copy(
-                highwayId = highwayId,
-                packageSection = packageSection,
-                roadSide = roadSide,
-                lane = lane,
-                activity = activity,
-                customDescription = customDescription,
-                inspectorName = inspectorName,
-                separator = separator
-            )
-        )
-        viewModel.saveOverlayConfigSilent(
-            currentOverlay.copy(
-                template = template,
-                timestampFormat = timestampFormat,
-                coordinatePrecision = coordPrecision,
-                showTimestamp = showTimestamp,
-                showCoordinates = showCoordinates,
-                showChainage = showChainage,
-                showMapInset = showMapInset,
-                showProjectInfo = showProjectInfo,
-                showCompass = showCompass,
-                showAltitude = showAltitude,
-                showAccuracy = showAccuracy,
-                burnInTimestamp = burnInTimestamp,
-                showSpeedOnPreview = showSpeedOnPreview,
-                includeSpeedInCapture = includeSpeedInCapture,
-                showDirectionOnPreview = showDirectionOnPreview,
-                includeDirectionInCapture = includeDirectionInCapture,
-                hasTextShadow = hasTextShadow,
-                fontSizeSp = fontSizeSp,
-                saveOriginalImage = saveOriginal,
-                textColorHex = textColorHex,
-                fontFamily = fontFamily,
-                timePosition = timePosition,
-                showIndexNumber = showIndexNumber,
-                resolutionOption = resolutionOption,
-                showLogo = showLogo,
-                logoPreset = logoPreset,
-                logoPosition = logoPosition,
-                logoSizeDp = logoSizeDp,
-                logoOpacity = logoOpacity,
-                logoShape = logoShape,
-                logoCornerRadiusDp = logoCornerRadiusDp,
-                logoMarginXDp = logoMarginXDp,
-                logoMarginYDp = logoMarginYDp
-            )
-        )
-        viewModel.saveCameraSettingsSilent(
-            currentCameraSettings.copy(
-                captureTimer = captureTimer,
-                gridMode = gridMode,
-                showHorizonLevel = showHorizonLevel,
-                previewRatio = previewRatio,
-                captureSound = captureSound,
-                volumeButtonShutter = volumeButtonShutter,
-                frontCameraMirror = frontCameraMirror,
-                jpegQuality = jpegQuality,
-                saveOriginalAndStamped = saveOriginalAndStamped,
-                preserveExif = preserveExif,
-                videoQuality = videoQuality,
-                videoFps = videoFps,
-                recordAudio = recordAudio,
-                gpsUpdateIntervalSec = gpsIntervalSec,
-                gpsAccuracyThresholdMeters = gpsAccuracyThreshold,
-                routeMatchingRadiusMeters = routeRadiusMeters.toDouble(),
-                coordinateFormat = coordFormat,
-                is24HourFormat = is24HourFormat,
-                cameraMode = cameraMode,
-                speedUnit = speedUnit
-            )
-        )
-    }
-
-    // Filter helper
-    fun matchesSearch(vararg terms: String): Boolean {
-        if (searchQuery.isBlank()) return true
-        val q = searchQuery.trim().lowercase()
-        return terms.any { it.lowercase().contains(q) }
+    // KMZ / KML File Picker Launcher
+    val kmzPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val displayName = uri.lastPathSegment?.substringAfterLast('/') ?: "imported_alignment.kmz"
+            viewModel.importRoute(uri, displayName)
+            viewModel.showToast("Importing $displayName...")
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Settings",
-                        fontWeight = FontWeight.Bold,
-                        color = PrimaryText
-                    )
+                    Column {
+                        Text(
+                            text = "Settings",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        )
+                        Text(
+                            text = "Project, Timestamp & Camera Configuration",
+                            style = MaterialTheme.typography.labelSmall.copy(color = SecondaryText)
+                        )
+                    }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.testTag("settings_back_button")
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to Camera",
+                            contentDescription = "Back",
                             tint = PrimaryText
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PrimaryBackground,
-                    titleContentColor = PrimaryText
-                ),
                 actions = {
-                    TextButton(
-                        onClick = {
-                            // Save Project Profile
-                            viewModel.saveProjectProfile(
-                                currentProject.copy(
-                                    highwayId = highwayId,
-                                    packageSection = packageSection,
-                                    roadSide = roadSide,
-                                    lane = lane,
-                                    activity = activity,
-                                    customDescription = customDescription,
-                                    inspectorName = inspectorName,
-                                    separator = separator
-                                )
-                            )
-
-                            // Save Overlay Config
-                            viewModel.saveOverlayConfig(
-                                currentOverlay.copy(
-                                    template = template,
-                                    timestampFormat = timestampFormat,
-                                    coordinatePrecision = coordPrecision,
-                                    showTimestamp = showTimestamp,
-                                    showCoordinates = showCoordinates,
-                                    showChainage = showChainage,
-                                    showMapInset = showMapInset,
-                                    showProjectInfo = showProjectInfo,
-                                    showCompass = showCompass,
-                                    showAltitude = showAltitude,
-                                    showAccuracy = showAccuracy,
-                                    burnInTimestamp = burnInTimestamp,
-                                    hasTextShadow = hasTextShadow,
-                                    fontSizeSp = fontSizeSp,
-                                    saveOriginalImage = saveOriginal,
-                                    textColorHex = textColorHex,
-                                    fontFamily = fontFamily,
-                                    timePosition = timePosition,
-                                    showIndexNumber = showIndexNumber,
-                                    resolutionOption = resolutionOption,
-                                    showLogo = showLogo,
-                                    logoPreset = logoPreset,
-                                    logoPosition = logoPosition,
-                                    logoSizeDp = logoSizeDp,
-                                    logoOpacity = logoOpacity,
-                                    logoShape = logoShape,
-                                    logoCornerRadiusDp = logoCornerRadiusDp,
-                                    logoMarginXDp = logoMarginXDp,
-                                    logoMarginYDp = logoMarginYDp
-                                )
-                            )
-
-                            // Save Camera Settings
-                            viewModel.saveCameraSettings(
-                                currentCameraSettings.copy(
-                                    captureTimer = captureTimer,
-                                    gridMode = gridMode,
-                                    showHorizonLevel = showHorizonLevel,
-                                    previewRatio = previewRatio,
-                                    captureSound = captureSound,
-                                    volumeButtonShutter = volumeButtonShutter,
-                                    frontCameraMirror = frontCameraMirror,
-                                    jpegQuality = jpegQuality,
-                                    saveOriginalAndStamped = saveOriginalAndStamped,
-                                    preserveExif = preserveExif,
-                                    videoQuality = videoQuality,
-                                    videoFps = videoFps,
-                                    recordAudio = recordAudio,
-                                    gpsUpdateIntervalSec = gpsIntervalSec,
-                                    gpsAccuracyThresholdMeters = gpsAccuracyThreshold,
-                                    routeMatchingRadiusMeters = routeRadiusMeters.toDouble(),
-                                    coordinateFormat = coordFormat,
-                                    is24HourFormat = is24HourFormat,
-                                    cameraMode = cameraMode,
-                                    speedUnit = speedUnit
-                                )
-                            )
-                        },
-                        modifier = Modifier.testTag("save_settings_button")
+                    IconButton(
+                        onClick = { showRestoreDialog = true },
+                        modifier = Modifier.testTag("restore_defaults_button")
                     ) {
-                        Text("Save All", color = HighlightYellow, fontWeight = FontWeight.Bold)
+                        Icon(
+                            imageVector = Icons.Default.Restore,
+                            contentDescription = "Restore Defaults",
+                            tint = SecondaryText
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = PrimaryBackground
+                )
+            )
+        },
+        bottomBar = {
+            Surface(
+                color = ElevatedSurface,
+                modifier = Modifier.fillMaxWidth(),
+                tonalElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Settings saved automatically",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF38BDF8)
+                    )
+                    Button(
+                        onClick = onNavigateBack,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00BCD4)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("settings_done_button")
+                    ) {
+                        Text("Done", color = Color.Black, fontWeight = FontWeight.Bold)
                     }
                 }
-            )
+            }
         },
         containerColor = PrimaryBackground,
         modifier = modifier
-    ) { padding ->
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // Search Bar
+            // Instant Search Bar
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Search settings (e.g. video, grid, chainage, logo)...", color = SecondaryText, fontSize = 13.sp) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", tint = HighlightYellow) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_search_input"),
+                placeholder = { Text("Search settings (e.g. project, font, color, gps, chainage)...", color = SecondaryText, fontSize = 13.sp) },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = "Search", tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
+                },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear search", tint = SecondaryText)
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", tint = SecondaryText, modifier = Modifier.size(16.dp))
                         }
                     }
                 },
-                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = HighlightYellow,
+                    focusedBorderColor = Color(0xFF38BDF8),
                     unfocusedBorderColor = BorderColor,
                     focusedTextColor = PrimaryText,
                     unfocusedTextColor = PrimaryText,
-                    cursorColor = HighlightYellow
+                    focusedContainerColor = SurfaceDark,
+                    unfocusedContainerColor = SurfaceDark
                 ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("settings_search_input")
+                singleLine = true
             )
 
-            // LIVE OVERLAY PREVIEW CARD
-            Card(
-                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
-                modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Expand / Collapse All Controls
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                Text(
+                    text = "SETTINGS SECTIONS",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = SecondaryText
+                )
+                Row {
+                    TextButton(
+                        onClick = {
+                            listOf(
+                                "project", "camera", "timestamp", "typography", "logo",
+                                "metadata", "gps", "filename", "orientation", "map_compass", "update", "about"
+                            ).forEach { expandedSections[it] = true }
+                        }
                     ) {
-                        Text(
-                            text = "LIVE OVERLAY PREVIEW",
-                            color = HighlightYellow,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                        Text("Expand All", fontSize = 11.sp, color = Color(0xFF38BDF8))
+                    }
+                    TextButton(
+                        onClick = {
+                            listOf(
+                                "project", "camera", "timestamp", "typography", "logo",
+                                "metadata", "gps", "filename", "orientation", "map_compass", "update", "about"
+                            ).forEach { expandedSections[it] = false }
+                        }
+                    ) {
+                        Text("Collapse All", fontSize = 11.sp, color = SecondaryText)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // ----------------------------------------------------
+            // LIVE WATERMARK PREVIEW CARD (with Portrait / Landscape toggle)
+            // ----------------------------------------------------
+            WatermarkLivePreviewCard(
+                overlay = currentOverlay,
+                project = currentProject,
+                cameraSettings = currentCameraSettings,
+                isLandscape = isPreviewLandscape,
+                onToggleOrientation = { isPreviewLandscape = !isPreviewLandscape }
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // ====================================================
+            // 1. PROJECT SETTINGS (FIRST SECTION AT TOP)
+            // ====================================================
+            if (matchesSearch("project highway road lane activity inspector section separator kmz kml alignment route chainage", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Project Settings",
+                    subtitle = "${currentProject.highwayId.ifBlank { "NH-58" }} • ${currentProject.roadSide.label} • ${currentProject.lane}",
+                    icon = Icons.Default.Engineering,
+                    accentColor = Color(0xFF38BDF8),
+                    isExpanded = expandedSections["project"] ?: true,
+                    onToggleExpand = { expandedSections["project"] = !(expandedSections["project"] ?: true) }
+                ) {
+                    // Highway ID
+                    OutlinedTextField(
+                        value = currentProject.highwayId,
+                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(highwayId = it)) },
+                        label = { Text("Highway / Project Name (e.g. NH-58, MH)") },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    // Package / Section
+                    OutlinedTextField(
+                        value = currentProject.packageSection,
+                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(packageSection = it)) },
+                        label = { Text("Package / Section (e.g. MM, Pkg-1)") },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    // Road Side (LHS / RHS / MED / BHS)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Road Side (Carriageway)", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        RoadSide.entries.forEach { side ->
+                            FilterChip(
+                                selected = currentProject.roadSide == side,
+                                onClick = { viewModel.saveProjectProfileSilent(currentProject.copy(roadSide = side)) },
+                                label = { Text(side.label, fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF38BDF8),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    // Lane
+                    OutlinedTextField(
+                        value = currentProject.lane,
+                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(lane = it)) },
+                        label = { Text("Lane (e.g. I/L, O/L, Shoulder, Median)") },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    // Activity
+                    OutlinedTextField(
+                        value = currentProject.activity,
+                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(activity = it)) },
+                        label = { Text("Pavement Layer / Activity (e.g. DBM, BC, WMM, Subgrade)") },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    // Inspector & Separator
+                    OutlinedTextField(
+                        value = currentProject.inspectorName,
+                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(inspectorName = it)) },
+                        label = { Text("Inspector / Engineer Name (Optional)") },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    OutlinedTextField(
+                        value = currentProject.separator,
+                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(separator = it)) },
+                        label = { Text("Text Separator (Default: ||)") },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                    // KMZ / KML Route Alignment Import & Selection
+                    Text("KMZ / KML Road Alignment & Chainage", style = MaterialTheme.typography.labelMedium, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Active Route: ${activeRoute?.name ?: "Sample NH-58 Alignment"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SecondaryText,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { kmzPickerLauncher.launch(arrayOf("*/*")) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Import KMZ/KML", fontSize = 12.sp)
+                        }
+                    }
+
+                    // Routes Dropdown
+                    if (allRoutes.isNotEmpty()) {
+                        Text("Select Route Alignment:", style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            allRoutes.forEach { route ->
+                                val isSelected = activeRoute?.name == route.name
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { viewModel.selectActiveRoute(route.id) },
+                                    label = { Text(route.name, fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFF38BDF8),
+                                        selectedLabelColor = Color.Black
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    // Manual Chainage Override
+                    if (manualChainage != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Manual Chainage: ${manualChainage!!.format()}", style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFD700))
+                            TextButton(onClick = { viewModel.clearManualChainage() }) {
+                                Text("Switch to Auto GPS", fontSize = 11.sp, color = Color(0xFF38BDF8))
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 2. CAMERA & CAPTURE
+            // ====================================================
+            if (matchesSearch("camera capture timer grid sound resolution ratio zoom video white balance battery", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Camera & Capture",
+                    subtitle = "${currentOverlay.resolutionOption} • ${currentCameraSettings.previewRatio.label} • Timer ${currentCameraSettings.captureTimer.label}",
+                    icon = Icons.Default.CameraAlt,
+                    accentColor = Color(0xFF38BDF8),
+                    isExpanded = expandedSections["camera"] ?: false,
+                    onToggleExpand = { expandedSections["camera"] = !(expandedSections["camera"] ?: false) }
+                ) {
+                    CompactSwitchRow(
+                        title = "Keep original photo",
+                        subtitle = "Save pristine un-watermarked photo alongside stamped copy",
+                        checked = currentOverlay.saveOriginalImage,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(saveOriginalImage = it)) },
+                        tag = "switch_keep_original"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Touch to take photo",
+                        subtitle = "Tap anywhere on preview frame to trigger capture",
+                        checked = currentCameraSettings.touchToCapture,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(touchToCapture = it)) },
+                        tag = "switch_touch_to_capture"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Open shutter sound",
+                        subtitle = "Audible feedback upon photo or video capture",
+                        checked = currentCameraSettings.captureSound,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(captureSound = it)) },
+                        tag = "switch_shutter_sound"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Show Grid",
+                        subtitle = "Display 3×3 rule-of-thirds composition overlay",
+                        checked = currentCameraSettings.gridMode != CameraGridMode.OFF,
+                        onCheckedChange = {
+                            val newMode = if (it) CameraGridMode.GRID_3X3 else CameraGridMode.OFF
+                            viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(gridMode = newMode))
+                        },
+                        tag = "switch_show_grid"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Always display zoom slider",
+                        subtitle = "Keep manual zoom control visible on viewfinder",
+                        checked = currentCameraSettings.alwaysDisplayZoomSlider,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(alwaysDisplayZoomSlider = it)) },
+                        tag = "switch_always_zoom"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Easy to toggle cameras",
+                        subtitle = "One-tap front/back camera switch button",
+                        checked = currentCameraSettings.easyToggleCameras,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(easyToggleCameras = it)) },
+                        tag = "switch_easy_toggle_cameras"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Double-tap switch battery save",
+                        subtitle = "Dim viewfinder screen when battery save mode is active",
+                        checked = currentCameraSettings.batterySaveMode,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(batterySaveMode = it)) },
+                        tag = "switch_battery_save"
+                    )
+
+                    if (currentCameraSettings.batterySaveMode) {
+                        SliderRow(
+                            title = "Battery save brightness",
+                            value = currentCameraSettings.batterySaveBrightness,
+                            onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(batterySaveBrightness = it)) },
+                            valueText = "${(currentCameraSettings.batterySaveBrightness * 100).toInt()}%"
                         )
-                        Text(
-                            text = "Matches Reference Photo",
-                            color = SecondaryText,
-                            fontSize = 11.sp
+                    }
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                    // Capture Timer
+                    Text("Capture Timer", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CaptureTimer.entries.forEach { timer ->
+                            FilterChip(
+                                selected = currentCameraSettings.captureTimer == timer,
+                                onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(captureTimer = timer)) },
+                                label = { Text(timer.label, fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF00BCD4),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    // Resolution Options (from Screenshot 1)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Photo Resolution", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val resolutionOptions = listOf(
+                        "1920 x 864", "1440 x 1080", "1088 x 1088", "1280 x 720",
+                        "960 x 720", "720 x 480", "640 x 480", "640 x 360", "352 x 288"
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        resolutionOptions.forEach { res ->
+                            FilterChip(
+                                selected = currentOverlay.resolutionOption == res,
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(resolutionOption = res)) },
+                                label = { Text(res, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF00BCD4),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    // Preview Ratio
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Preview Aspect Ratio", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        com.example.model.PreviewRatio.entries.forEach { ratio ->
+                            FilterChip(
+                                selected = currentCameraSettings.previewRatio == ratio,
+                                onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(previewRatio = ratio)) },
+                                label = { Text(ratio.label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF38BDF8),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    // Video Quality & White Balance
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Video Quality", style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+                            Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilterChip(
+                                    selected = currentCameraSettings.videoQuality == VideoQualityOption.HD_720P,
+                                    onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(videoQuality = VideoQualityOption.HD_720P)) },
+                                    label = { Text("Normal", fontSize = 11.sp) }
+                                )
+                                FilterChip(
+                                    selected = currentCameraSettings.videoQuality == VideoQualityOption.FHD_1080P,
+                                    onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(videoQuality = VideoQualityOption.FHD_1080P)) },
+                                    label = { Text("High", fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF38BDF8), selectedLabelColor = Color.Black)
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("White Balance", style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+                            Text(
+                                text = currentCameraSettings.whiteBalance.capitalize(Locale.ROOT),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF38BDF8),
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 3. TIMESTAMP & WATERMARK
+            // ====================================================
+            if (matchesSearch("timestamp watermark time format date placement background opacity 24-hour", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Timestamp & Watermark",
+                    subtitle = "${currentOverlay.watermarkPosition} • ${if (currentOverlay.burnInTimestamp) "Enabled" else "Disabled"}",
+                    icon = Icons.Default.BrandingWatermark,
+                    accentColor = Color(0xFFFFD700),
+                    isExpanded = expandedSections["timestamp"] ?: false,
+                    onToggleExpand = { expandedSections["timestamp"] = !(expandedSections["timestamp"] ?: false) }
+                ) {
+                    CompactSwitchRow(
+                        title = "Enable Timestamp & Overlay",
+                        subtitle = "Burn timestamp, chainage, coordinates onto captured media",
+                        checked = currentOverlay.burnInTimestamp,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(burnInTimestamp = it)) },
+                        tag = "switch_burn_in_timestamp"
+                    )
+
+                    CompactSwitchRow(
+                        title = "24-Hour Time Format",
+                        subtitle = "Display 23:45 instead of 11:45 PM",
+                        checked = currentCameraSettings.is24HourFormat,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(is24HourFormat = it)) },
+                        tag = "switch_24_hour"
+                    )
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                    // Timestamp Format Presets (from Screenshot 4)
+                    Text("Timestamp Format Presets", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val timestampPresets = listOf(
+                        "dd MMMM yyyy h:mm a" to "28 October 2026 10:57 pm",
+                        "yyyy-MM-dd HH:mm:ss" to "2026-10-28 22:57:49",
+                        "dd/MM/yyyy HH:mm:ss" to "28/10/2026 22:57:49",
+                        "MM/dd/yyyy h:mm:ss a" to "10/28/2026 10:57:49 PM",
+                        "dd-MMM-yyyy HH:mm" to "28-Oct-2026 22:57",
+                        "EEE, dd MMM yyyy HH:mm" to "Wed, 28 Oct 2026 22:57",
+                        "dd MMMM yyyy" to "28 October 2026",
+                        "HH:mm:ss" to "22:57:49"
+                    )
+
+                    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        timestampPresets.forEach { (pattern, sample) ->
+                            val isSelected = currentOverlay.timestampFormat == pattern
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timestampFormat = pattern)) }
+                                    .padding(vertical = 5.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timestampFormat = pattern)) },
+                                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFFFD700))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(sample, fontSize = 13.sp, color = if (isSelected) Color(0xFFFFD700) else PrimaryText)
+                                    Text(pattern, fontSize = 10.sp, color = SecondaryText)
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                    // Time Placement (above vs below)
+                    Text("Time Placement", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = currentOverlay.timePosition.equals("Time in above", ignoreCase = true),
+                            onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timePosition = "Time in above")) },
+                            label = { Text("Time in above", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFFFFD700),
+                                selectedLabelColor = Color.Black
+                            )
+                        )
+                        FilterChip(
+                            selected = currentOverlay.timePosition.equals("Time in below", ignoreCase = true),
+                            onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timePosition = "Time in below")) },
+                            label = { Text("Time in below", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFFFFD700),
+                                selectedLabelColor = Color.Black
+                            )
                         )
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Simulated Camera HUD box
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(130.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF181C24))
-                            .padding(10.dp)
+                    // Watermark Position Presets
+                    Text("Watermark Position", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val positions = listOf(
+                        "Bottom Right", "Bottom Center", "Bottom Left",
+                        "Top Right", "Top Center", "Top Left", "Center"
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Logo if enabled and top
-                        if (showLogo && logoPosition == LogoPosition.TOP_RIGHT) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(DarkYellowSurface),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("LOGO", color = HighlightYellow, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        // Bottom-Left Mini Map representation
-                        if (showMapInset) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .size(width = 65.dp, height = 75.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF2C3E50))
-                                    .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("MAP", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        // Bottom-Right text
-                        Column(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(start = 75.dp),
-                            horizontalAlignment = Alignment.End
-                        ) {
-                            if (showTimestamp) {
-                                Text(
-                                    text = if (is24HourFormat) "26 October 2026 17:32" else "26 October 2026 5:32 pm",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                        positions.forEach { pos ->
+                            FilterChip(
+                                selected = currentOverlay.watermarkPosition.equals(pos, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(watermarkPosition = pos)) },
+                                label = { Text(pos, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
                                 )
-                            }
-                            if (showCoordinates) {
-                                Text(
-                                    text = "29.9183°N 78.1064°E",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            if (showProjectInfo || showChainage) {
-                                val s = separator
-                                Text(
-                                    text = "$highwayId $s $packageSection $s 196+040 ${roadSide.name} $lane $activity",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Black
-                                )
-                            }
+                            )
                         }
                     }
-                }
-            }
 
-            // SECTION 1: CAMERA & LENS
-            if (matchesSearch("camera", "lens", "shutter", "mirror", "sound", "volume", "ratio", "mode", "speed")) {
-                SettingsSectionCard(title = "1. Camera & Lens", icon = Icons.Default.CameraAlt) {
-                    SettingDropdownRow(
-                        label = "Camera Mode",
-                        current = cameraMode.label,
-                        options = CameraMode.entries.map { it.label },
-                        onSelect = { label -> cameraMode = CameraMode.entries.first { it.label == label } }
-                    )
-                    SettingDropdownRow(
-                        label = "Speed Unit",
-                        current = speedUnit.label,
-                        options = SpeedUnit.entries.map { it.label },
-                        onSelect = { label -> speedUnit = SpeedUnit.entries.first { it.label == label } }
-                    )
-                    SettingDropdownRow(
-                        label = "Preview Aspect Ratio",
-                        current = previewRatio.label,
-                        options = PreviewRatio.entries.map { it.label },
-                        onSelect = { label -> previewRatio = PreviewRatio.entries.first { it.label == label } }
-                    )
-                    SettingSwitchRow(
-                        label = "Volume Button Shutter",
-                        subtitle = "Press volume up/down to take photo or start recording",
-                        checked = volumeButtonShutter,
-                        onCheckedChange = { volumeButtonShutter = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Front Camera Mirroring",
-                        subtitle = "Mirror selfie image to match preview viewfinder",
-                        checked = frontCameraMirror,
-                        onCheckedChange = { frontCameraMirror = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Shutter Sound",
-                        subtitle = "Play audio shutter click feedback upon capture",
-                        checked = captureSound,
-                        onCheckedChange = { captureSound = it }
-                    )
-                }
-            }
+                    Spacer(modifier = Modifier.height(10.dp))
 
-            // SECTION 2: RESOLUTION & IMAGE QUALITY
-            if (matchesSearch("resolution", "image", "quality", "jpeg", "raw", "save", "original")) {
-                SettingsSectionCard(title = "2. Resolution & Image Quality", icon = Icons.Default.HighQuality) {
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("JPEG Quality", color = PrimaryText, fontSize = 13.sp)
-                            Text("$jpegQuality%", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                        Slider(
-                            value = jpegQuality.toFloat(),
-                            onValueChange = { jpegQuality = it.toInt() },
-                            valueRange = 60f..100f,
-                            steps = 7,
-                            colors = SliderDefaults.colors(thumbColor = HighlightYellow, activeTrackColor = HighlightYellow)
-                        )
-                    }
-                    SettingSwitchRow(
-                        label = "Save Both Original & Stamped",
-                        subtitle = "Saves clean RAW frame alongside final stamped photo",
-                        checked = saveOriginalAndStamped,
-                        onCheckedChange = { saveOriginalAndStamped = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Preserve EXIF Metadata",
-                        subtitle = "Embed GPS coordinates, altitude, timestamp and camera model into EXIF",
-                        checked = preserveExif,
-                        onCheckedChange = { preserveExif = it }
-                    )
-                }
-            }
-
-            // SECTION 3: EXPOSURE & FOCUS
-            if (matchesSearch("exposure", "focus", "ev", "iso", "white balance")) {
-                SettingsSectionCard(title = "3. Exposure & Focus", icon = Icons.Default.Exposure) {
-                    Text(
-                        text = "Hardware exposure compensation (-4 to +4 EV) can be adjusted on-screen or via quick sliders. Auto-exposure locks upon touch-to-focus.",
-                        color = SecondaryText,
-                        fontSize = 12.sp
-                    )
+                    // Background Style & Opacity
+                    Text("Background Style", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Active Focus Mode", color = PrimaryText, fontSize = 13.sp)
-                        Text("Continuous Auto Focus (AF)", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Touch-to-Focus", color = PrimaryText, fontSize = 13.sp)
-                        Text("Enabled (Tap Viewfinder)", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                }
-            }
-
-            // SECTION 4: FLASH, ZOOM & GRID
-            if (matchesSearch("flash", "zoom", "grid", "horizon", "level", "timer")) {
-                SettingsSectionCard(title = "4. Flash, Zoom & Grid", icon = Icons.Default.GridOn) {
-                    SettingDropdownRow(
-                        label = "Default Capture Timer",
-                        current = captureTimer.label,
-                        options = CaptureTimer.entries.map { it.label },
-                        onSelect = { label -> captureTimer = CaptureTimer.entries.first { it.label == label } }
-                    )
-                    SettingDropdownRow(
-                        label = "Composition Grid",
-                        current = gridMode.label,
-                        options = CameraGridMode.entries.map { it.label },
-                        onSelect = { label -> gridMode = CameraGridMode.entries.first { it.label == label } }
-                    )
-                    SettingSwitchRow(
-                        label = "Electronic Horizon Level",
-                        subtitle = "Displays pitch/roll alignment bar to keep road photos straight",
-                        checked = showHorizonLevel,
-                        onCheckedChange = { showHorizonLevel = it }
-                    )
-                }
-            }
-
-            // SECTION 5: VIDEO RECORDING
-            if (matchesSearch("video", "recording", "fps", "audio", "microphone")) {
-                SettingsSectionCard(title = "5. Video Recording", icon = Icons.Default.Videocam) {
-                    SettingDropdownRow(
-                        label = "Video Quality",
-                        current = videoQuality.label,
-                        options = VideoQualityOption.entries.map { it.label },
-                        onSelect = { label -> videoQuality = VideoQualityOption.entries.first { it.label == label } }
-                    )
-                    SettingDropdownRow(
-                        label = "Framerate (FPS)",
-                        current = "$videoFps FPS",
-                        options = listOf("24 FPS", "30 FPS", "60 FPS"),
-                        onSelect = { fpsStr -> videoFps = fpsStr.take(2).toIntOrNull() ?: 30 }
-                    )
-                    SettingSwitchRow(
-                        label = "Record Microphone Audio",
-                        subtitle = "Includes ambient audio/voice commentary during video capture",
-                        checked = recordAudio,
-                        onCheckedChange = { recordAudio = it }
-                    )
-                }
-            }
-
-            // SECTION 6: TIMESTAMP & TEXT
-            if (matchesSearch("timestamp", "date", "time", "font", "shadow", "24h", "text", "format", "burn", "color", "resolution", "index")) {
-                SettingsSectionCard(title = "6. Timestamp & Text", icon = Icons.Default.TextFields) {
-                    SettingDropdownRow(
-                        label = "Font Color",
-                        current = when (textColorHex) {
-                            "#FFFF00" -> "Yellow"
-                            "#00FF00" -> "Green"
-                            "#00FFFF" -> "Cyan"
-                            else -> "White"
-                        },
-                        options = listOf("White", "Yellow", "Green", "Cyan"),
-                        onSelect = { colorName ->
-                            textColorHex = when (colorName) {
-                                "Yellow" -> "#FFFF00"
-                                "Green" -> "#00FF00"
-                                "Cyan" -> "#00FFFF"
-                                else -> "#FFFFFF"
-                            }
-                        }
-                    )
-                    SettingDropdownRow(
-                        label = "Font Family",
-                        current = fontFamily,
-                        options = listOf("Default", "Monospace", "Serif", "Noto Sans"),
-                        onSelect = { fontFamily = it }
-                    )
-                    SettingDropdownRow(
-                        label = "Resolution / Aspect Ratio",
-                        current = resolutionOption,
-                        options = listOf("1920 x 1080", "1920 x 864", "1280 x 720"),
-                        onSelect = { resolutionOption = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Show Date & Time",
-                        subtitle = "Prints formatted timestamp on photo",
-                        checked = showTimestamp,
-                        onCheckedChange = { showTimestamp = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Show Index Number / Chainage",
-                        subtitle = "Displays road chainage and index metadata",
-                        checked = showIndexNumber,
-                        onCheckedChange = { showIndexNumber = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Burn-In Timestamp On Media",
-                        subtitle = "When disabled, keeps pristine image with metadata-only timestamps in EXIF",
-                        checked = burnInTimestamp,
-                        onCheckedChange = { burnInTimestamp = it }
-                    )
-                    SettingDropdownRow(
-                        label = "Timestamp Format",
-                        current = timestampFormat,
-                        options = listOf(
-                            "dd-MM-yyyy HH:mm:ss",
-                            "dd/MM/yyyy HH:mm:ss",
-                            "yyyy-MM-dd HH:mm:ss",
-                            "yyyy-MM-dd'T'HH:mm:ss",
-                            "dd MMMM yyyy h:mm a"
-                        ),
-                        onSelect = { timestampFormat = it }
-                    )
-                    SettingSwitchRow(
-                        label = "24-Hour Time Format",
-                        subtitle = "Display 17:32 instead of 5:32 pm",
-                        checked = is24HourFormat,
-                        onCheckedChange = { is24HourFormat = it }
-                    )
-                    // Time position selector buttons (Time in above / Time in below)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf("Time in above", "Time in below").forEach { pos ->
-                            val isSelected = timePosition.equals(pos, ignoreCase = true)
-                            Button(
-                                onClick = { timePosition = pos },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isSelected) HighlightYellow else ElevatedSurface,
-                                    contentColor = if (isSelected) PrimaryBackground else PrimaryText
-                                ),
-                                modifier = Modifier.weight(1f).height(38.dp)
-                            ) {
-                                Text(pos, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                    SettingSwitchRow(
-                        label = "High Contrast Text Shadow",
-                        subtitle = "Black drop shadow ensures readability against concrete/bright pavement",
-                        checked = hasTextShadow,
-                        onCheckedChange = { hasTextShadow = it }
-                    )
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Font Size", color = PrimaryText, fontSize = 13.sp)
-                            Text("${fontSizeSp.toInt()} sp", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                        Slider(
-                            value = fontSizeSp,
-                            onValueChange = { fontSizeSp = it },
-                            valueRange = 16f..36f,
-                            steps = 9,
-                            colors = SliderDefaults.colors(thumbColor = HighlightYellow, activeTrackColor = HighlightYellow)
-                        )
-                    }
-                }
-            }
-
-            // SECTION 7: GPS & CHAINAGE
-            if (matchesSearch("gps", "chainage", "dms", "accuracy", "radius", "precision", "utm", "compass", "altitude")) {
-                SettingsSectionCard(title = "7. GPS, Compass & Chainage", icon = Icons.Default.MyLocation) {
-                    SettingDropdownRow(
-                        label = "Coordinate Format",
-                        current = coordFormat.label,
-                        options = CoordinateFormat.entries.map { it.label },
-                        onSelect = { label -> coordFormat = CoordinateFormat.entries.first { it.label == label } }
-                    )
-                    SettingSwitchRow(
-                        label = "Show Compass Heading",
-                        subtitle = "Displays device direction in degrees and cardinal heading (e.g. 184° S)",
-                        checked = showCompass,
-                        onCheckedChange = { showCompass = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Show Altitude",
-                        subtitle = "Displays elevation in meters above sea level",
-                        checked = showAltitude,
-                        onCheckedChange = { showAltitude = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Show GPS Accuracy",
-                        subtitle = "Displays accuracy margin indicator (e.g. ±3m)",
-                        checked = showAccuracy,
-                        onCheckedChange = { showAccuracy = it }
-                    )
-                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f), thickness = 0.8.dp)
-                    SettingSwitchRow(
-                        label = "Show Speed on Camera Preview",
-                        subtitle = "Display live speed telemetry on camera preview HUD (OFF by default)",
-                        checked = showSpeedOnPreview,
-                        onCheckedChange = { showSpeedOnPreview = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Include Speed in Captured Media",
-                        subtitle = "Burn speed watermark into captured photos and videos (OFF by default)",
-                        checked = includeSpeedInCapture,
-                        onCheckedChange = { includeSpeedInCapture = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Show Direction on Camera Preview",
-                        subtitle = "Display travel bearing/direction on camera preview HUD (OFF by default)",
-                        checked = showDirectionOnPreview,
-                        onCheckedChange = { showDirectionOnPreview = it }
-                    )
-                    SettingSwitchRow(
-                        label = "Include Direction in Captured Media",
-                        subtitle = "Burn travel direction watermark into captured photos and videos (OFF by default)",
-                        checked = includeDirectionInCapture,
-                        onCheckedChange = { includeDirectionInCapture = it }
-                    )
-                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f), thickness = 0.8.dp)
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Coordinate Decimal Precision", color = PrimaryText, fontSize = 13.sp)
-                            Text("$coordPrecision Decimals", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                        Slider(
-                            value = coordPrecision.toFloat(),
-                            onValueChange = { coordPrecision = it.toInt() },
-                            valueRange = 4f..7f,
-                            steps = 2,
-                            colors = SliderDefaults.colors(thumbColor = HighlightYellow, activeTrackColor = HighlightYellow)
-                        )
-                    }
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Route Matching Search Radius", color = PrimaryText, fontSize = 13.sp)
-                            Text("${routeRadiusMeters.toInt()} meters", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                        Slider(
-                            value = routeRadiusMeters,
-                            onValueChange = { routeRadiusMeters = it },
-                            valueRange = 30f..250f,
-                            steps = 10,
-                            colors = SliderDefaults.colors(thumbColor = HighlightYellow, activeTrackColor = HighlightYellow)
-                        )
-                    }
-                }
-            }
-
-            // SECTION 8: MINI-MAP
-            if (matchesSearch("mini-map", "map", "inset", "satellite")) {
-                SettingsSectionCard(title = "8. Mini-map Inset", icon = Icons.Default.Map) {
-                    SettingSwitchRow(
-                        label = "Show Mini-map Inset",
-                        subtitle = "Renders highway alignment route and current GPS position pin",
-                        checked = showMapInset,
-                        onCheckedChange = { showMapInset = it }
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Map Appearance", color = PrimaryText, fontSize = 13.sp)
-                        Text("Google Satellite (Offline Cached)", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                }
-            }
-
-            // SECTION 9: PROJECT & ACTIVITY
-            if (matchesSearch("project", "activity", "highway", "package", "lane", "side", "inspector", "separator")) {
-                SettingsSectionCard(title = "9. Project & Activity Parameters", icon = Icons.Default.Engineering) {
-                    OutlinedTextField(
-                        value = highwayId,
-                        onValueChange = { highwayId = it },
-                        label = { Text("Highway ID (e.g. MH, NH-58)") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HighlightYellow, unfocusedBorderColor = BorderColor),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = packageSection,
-                        onValueChange = { packageSection = it },
-                        label = { Text("Package / Section (e.g. MM, Pkg-01)") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HighlightYellow, unfocusedBorderColor = BorderColor),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    SettingDropdownRow(
-                        label = "Road Carriageway / Side",
-                        current = roadSide.name,
-                        options = RoadSide.entries.map { it.name },
-                        onSelect = { name -> roadSide = RoadSide.valueOf(name) }
-                    )
-                    // Lane Specification with manual input + presets dropdown
-                    var showLanePresets by remember { mutableStateOf(false) }
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = lane,
-                            onValueChange = { lane = it },
-                            label = { Text("Lane Specification (Type or Select)") },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = HighlightYellow,
-                                unfocusedBorderColor = BorderColor,
-                                focusedTextColor = PrimaryText,
-                                unfocusedTextColor = PrimaryText
-                            ),
-                            trailingIcon = {
-                                IconButton(onClick = { showLanePresets = true }) {
-                                    Icon(Icons.Default.ExpandMore, contentDescription = "Select Lane Preset", tint = HighlightYellow)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        DropdownMenu(
-                            expanded = showLanePresets,
-                            onDismissRequest = { showLanePresets = false },
-                            modifier = Modifier.background(SurfaceDark)
-                        ) {
-                            ProjectProfile.LANE_PRESETS.forEach { preset ->
-                                DropdownMenuItem(
-                                    text = { Text(preset, color = PrimaryText) },
-                                    onClick = {
-                                        lane = preset
-                                        showLanePresets = false
+                        listOf("Transparent", "Solid", "Translucent Glass").forEach { style ->
+                            FilterChip(
+                                selected = currentOverlay.backgroundStyle.equals(style, ignoreCase = true),
+                                onClick = {
+                                    val newAlpha = when (style) {
+                                        "Solid" -> 1.0f
+                                        "Translucent Glass" -> 0.5f
+                                        else -> 0.0f
                                     }
+                                    viewModel.saveOverlayConfigSilent(
+                                        currentOverlay.copy(
+                                            backgroundStyle = style,
+                                            backgroundOpacity = newAlpha
+                                        )
+                                    )
+                                },
+                                label = { Text(style, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
                                 )
-                            }
+                            )
                         }
                     }
 
-                    // Pavement Layer / Activity with manual input + presets dropdown
-                    var showActivityPresets by remember { mutableStateOf(false) }
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = activity,
-                            onValueChange = { activity = it },
-                            label = { Text("Pavement Layer / Activity (Type or Select)") },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = HighlightYellow,
-                                unfocusedBorderColor = BorderColor,
-                                focusedTextColor = PrimaryText,
-                                unfocusedTextColor = PrimaryText
-                            ),
-                            trailingIcon = {
-                                IconButton(onClick = { showActivityPresets = true }) {
-                                    Icon(Icons.Default.ExpandMore, contentDescription = "Select Activity Preset", tint = HighlightYellow)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        DropdownMenu(
-                            expanded = showActivityPresets,
-                            onDismissRequest = { showActivityPresets = false },
-                            modifier = Modifier.background(SurfaceDark)
-                        ) {
-                            ProjectProfile.ACTIVITY_PRESETS.forEach { preset ->
-                                DropdownMenuItem(
-                                    text = { Text(preset, color = PrimaryText) },
-                                    onClick = {
-                                        activity = preset
-                                        showActivityPresets = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    OutlinedTextField(
-                        value = inspectorName,
-                        onValueChange = { inspectorName = it },
-                        label = { Text("Inspector / Engineer Name") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HighlightYellow, unfocusedBorderColor = BorderColor),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = separator,
-                        onValueChange = { separator = it },
-                        label = { Text("Field Separator (e.g. || or |)") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HighlightYellow, unfocusedBorderColor = BorderColor),
-                        modifier = Modifier.fillMaxWidth()
+                    SliderRow(
+                        title = "Background Opacity",
+                        value = currentOverlay.backgroundOpacity,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundOpacity = it)) },
+                        valueText = "${(currentOverlay.backgroundOpacity * 100).toInt()}%"
                     )
                 }
             }
 
-            // SECTION 10: STORAGE & FILE NAMING
-            if (matchesSearch("storage", "file", "naming", "folder", "exif", "memory")) {
-                SettingsSectionCard(title = "10. Storage & File Naming", icon = Icons.Default.Folder) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Output Directory", color = PrimaryText, fontSize = 13.sp)
-                        Text("Pictures/HighwayCamera", color = HighlightYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Text(
-                        text = "Naming Pattern: {Highway}--{Package}--{Chainage}-{Side}-{Lane}-{Activity}_{timestamp}.jpg",
-                        color = SecondaryText,
-                        fontSize = 12.sp
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // SECTION 11: PRIVACY & PERMISSIONS
-            if (matchesSearch("privacy", "permission", "security", "offline")) {
-                SettingsSectionCard(title = "11. Privacy & Hardware Permissions", icon = Icons.Default.Security) {
-                    Text(
-                        text = "This application is 100% offline-capable. No photos, GPS positions, or telemetry leave your device.",
-                        color = PrimaryText,
-                        fontSize = 12.sp
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Camera Hardware", color = PrimaryText, fontSize = 13.sp)
-                        Text("GRANTED", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Precise GPS Location", color = PrimaryText, fontSize = 13.sp)
-                        Text("GRANTED", color = HighlightYellow, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                }
-            }
-
-            // SECTION 12: ADVANCED SETTINGS & LOGO CUSTOMIZER
-            if (matchesSearch("advanced", "logo", "preset", "custom", "update", "whatsnew")) {
-                SettingsSectionCard(title = "12. Advanced Settings & Logo Customizer", icon = Icons.Default.Tune) {
-                    SettingSwitchRow(
-                        label = "Show Watermark Logo",
-                        subtitle = "Display company/project logo on photo overlay",
-                        checked = showLogo,
-                        onCheckedChange = { showLogo = it }
-                    )
-                    if (showLogo) {
-                        SettingDropdownRow(
-                            label = "Logo Preset",
-                            current = logoPreset.uppercase(),
-                            options = listOf("CUBETECH", "CTECS", "NHAI", "SURVEY_SEAL", "CUSTOM"),
-                            onSelect = { logoPreset = it.lowercase() }
-                        )
-                        OutlinedButton(
-                            onClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = HighlightYellow)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Upload Custom Logo from Device", color = PrimaryText)
-                        }
-                    }
-
-                    Divider(color = BorderColor, modifier = Modifier.padding(vertical = 4.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("App Version", color = PrimaryText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Ctecs v${com.example.BuildConfig.VERSION_NAME} (Build ${com.example.BuildConfig.VERSION_CODE})", color = SecondaryText, fontSize = 11.sp)
-                        }
-                        Button(
-                            onClick = { viewModel.checkForAppUpdate(isManual = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = ElevatedSurface, contentColor = HighlightYellow)
-                        ) {
-                            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Check Update", fontSize = 12.sp)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Box(
+            // ====================================================
+            // 4. TYPOGRAPHY & COLOURS
+            // ====================================================
+            if (matchesSearch("typography font color size style shadow opacity palette", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Typography & Colours",
+                    subtitle = "${currentOverlay.fontFamily} • ${currentOverlay.fontSizePreset} (${currentOverlay.fontSizeSp.toInt()}sp)",
+                    icon = Icons.Default.TextFields,
+                    accentColor = Color(0xFF00BCD4),
+                    isExpanded = expandedSections["typography"] ?: false,
+                    onToggleExpand = { expandedSections["typography"] = !(expandedSections["typography"] ?: false) }
+                ) {
+                    // Font Family Selector (from Screenshot 10)
+                    Text("Font Family", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val fontFamilies = listOf("Default", "Noto Sans", "Source Sans Pro", "Dancing Script", "Monospace", "Serif")
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        contentAlignment = Alignment.Center
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(
-                            text = "Made with ❤️ madhureddyainala",
-                            color = SecondaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center
+                        fontFamilies.forEach { font ->
+                            FilterChip(
+                                selected = currentOverlay.fontFamily.equals(font, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontFamily = font)) },
+                                label = { Text(font, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF00BCD4),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    // Font Style
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Font Style", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("Regular", "Medium", "Bold", "Italic").forEach { style ->
+                            FilterChip(
+                                selected = currentOverlay.fontStyle.equals(style, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontStyle = style)) },
+                                label = { Text(style, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF00BCD4),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                    // Font Size Presets (from Screenshot 12)
+                    Text("Text Size Presets", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val sizePresets = listOf(
+                        "Tiny" to 14f,
+                        "Small" to 18f,
+                        "Medium" to 22f,
+                        "Big" to 26f,
+                        "Huge" to 32f,
+                        "Huger" to 40f
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        sizePresets.forEach { (label, spVal) ->
+                            FilterChip(
+                                selected = currentOverlay.fontSizePreset.equals(label, ignoreCase = true),
+                                onClick = {
+                                    viewModel.saveOverlayConfigSilent(
+                                        currentOverlay.copy(
+                                            fontSizePreset = label,
+                                            fontSizeSp = spVal
+                                        )
+                                    )
+                                },
+                                label = { Text("$label (${spVal.toInt()}sp)", fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF00BCD4),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    SliderRow(
+                        title = "Custom Font Size Slider",
+                        value = (currentOverlay.fontSizeSp - 12f) / 36f,
+                        onValueChange = { norm ->
+                            val sp = 12f + (norm * 36f)
+                            viewModel.saveOverlayConfigSilent(
+                                currentOverlay.copy(
+                                    fontSizeSp = sp,
+                                    fontSizePreset = "Custom"
+                                )
+                            )
+                        },
+                        valueText = "${currentOverlay.fontSizeSp.toInt()} sp"
+                    )
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                    // Color Palette Swatches (from Screenshot 5)
+                    Text("Font Color Palette", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val swatches = listOf(
+                        "#FFFFFF" to "White",
+                        "#FFEB3B" to "Yellow",
+                        "#CDDC39" to "Lime",
+                        "#4CAF50" to "Green",
+                        "#1B5E20" to "Dark Green",
+                        "#00BCD4" to "Cyan",
+                        "#03A9F4" to "Sky Blue",
+                        "#FF9800" to "Orange",
+                        "#F44336" to "Red",
+                        "#E91E63" to "Pink",
+                        "#9C27B0" to "Purple",
+                        "#000000" to "Black"
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        swatches.forEach { (hex, name) ->
+                            val color = try { Color(android.graphics.Color.parseColor(hex)) } catch (e: Exception) { Color.White }
+                            val isSelected = currentOverlay.textColorHex.equals(hex, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) Color(0xFF00BCD4) else Color.Gray,
+                                        shape = CircleShape
+                                    )
+                                    .clickable { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textColorHex = hex)) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = name,
+                                        tint = if (hex == "#FFFFFF" || hex == "#FFEB3B" || hex == "#CDDC39") Color.Black else Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    SliderRow(
+                        title = "Text Opacity",
+                        value = currentOverlay.textOpacity,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textOpacity = it)) },
+                        valueText = "${(currentOverlay.textOpacity * 100).toInt()}%"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Text Outline / Shadow",
+                        subtitle = "Render dark shadow behind text for outdoor legibility",
+                        checked = currentOverlay.hasTextShadow,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(hasTextShadow = it)) },
+                        tag = "switch_text_shadow"
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 5. CUSTOM LOGO & BRANDING
+            // ====================================================
+            if (matchesSearch("logo custom branding image stamp png ctecs nhai survey", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Custom Logo",
+                    subtitle = if (currentOverlay.showLogo) "Active: ${currentOverlay.logoPreset.uppercase()}" else "Disabled",
+                    icon = Icons.Default.AddPhotoAlternate,
+                    accentColor = Color(0xFFE53935),
+                    isExpanded = expandedSections["logo"] ?: false,
+                    onToggleExpand = { expandedSections["logo"] = !(expandedSections["logo"] ?: false) }
+                ) {
+                    CompactSwitchRow(
+                        title = "Show Logo on Watermark",
+                        subtitle = "Display company, project, or department seal on captured media",
+                        checked = currentOverlay.showLogo,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showLogo = it)) },
+                        tag = "switch_show_logo"
+                    )
+
+                    if (currentOverlay.showLogo) {
+                        HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                        // Logo Presets: ctecs, nhai, survey_seal, custom
+                        Text("Logo Preset", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                        val logoPresets = listOf("ctecs", "nhai", "survey_seal", "custom")
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            logoPresets.forEach { preset ->
+                                FilterChip(
+                                    selected = currentOverlay.logoPreset.equals(preset, ignoreCase = true),
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoPreset = preset)) },
+                                    label = { Text(preset.uppercase(Locale.ROOT), fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFFE53935),
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                            }
+                        }
+
+                        // Logo Import & Preview Box
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val previewBmp = LogoProvider.getProcessedLogo(
+                                        context = context,
+                                        config = currentOverlay,
+                                        targetWidthPx = 64
+                                    )
+                                    if (previewBmp != null) {
+                                        Image(
+                                            bitmap = previewBmp.asImageBitmap(),
+                                            contentDescription = "Logo Preview",
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color.Black.copy(alpha = 0.4f))
+                                                .border(1.dp, Color(0xFFE53935), RoundedCornerShape(8.dp))
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .background(ElevatedSurface, RoundedCornerShape(8.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = SecondaryText)
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = "Active: ${currentOverlay.logoPreset.uppercase()}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PrimaryText
+                                        )
+                                        Text(
+                                            text = if (currentOverlay.logoUri != null) "Custom PNG file attached" else "Built-in vector asset",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SecondaryText
+                                        )
+                                    }
+                                }
+
+                                Row {
+                                    OutlinedButton(
+                                        onClick = {
+                                            photoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("import_logo_button")
+                                    ) {
+                                        Text("Import PNG", fontSize = 11.sp, color = Color(0xFF38BDF8))
+                                    }
+                                    if (currentOverlay.logoUri != null) {
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.saveOverlayConfigSilent(
+                                                    currentOverlay.copy(
+                                                        logoPreset = "ctecs",
+                                                        logoUri = null
+                                                    )
+                                                )
+                                            }
+                                        ) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Remove Custom", tint = Color(0xFFE53935))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Logo Position Presets
+                        Text("Logo Placement", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                        val logoPositions = LogoPosition.entries
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            logoPositions.forEach { pos ->
+                                FilterChip(
+                                    selected = currentOverlay.logoPosition == pos,
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoPosition = pos)) },
+                                    label = { Text(pos.displayName, fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFFE53935),
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                            }
+                        }
+
+                        SliderRow(
+                            title = "Logo Size",
+                            value = (currentOverlay.logoSizeDp - 32f) / (140f - 32f),
+                            onValueChange = { norm ->
+                                val dp = (32f + (norm * (140f - 32f))).toInt()
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoSizeDp = dp))
+                            },
+                            valueText = "${currentOverlay.logoSizeDp} dp"
+                        )
+
+                        SliderRow(
+                            title = "Logo Opacity",
+                            value = currentOverlay.logoOpacity,
+                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoOpacity = it)) },
+                            valueText = "${(currentOverlay.logoOpacity * 100).toInt()}%"
                         )
                     }
-
-                    OutlinedButton(
-                        onClick = { viewModel.openWhatsNew() },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.NewReleases, contentDescription = null, tint = HighlightYellow)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("View What's New Release Notes", color = PrimaryText)
-                    }
                 }
             }
 
-            // SECTION 13: RESET SETTINGS
-            if (matchesSearch("reset", "restore", "defaults", "clear")) {
-                SettingsSectionCard(title = "13. Reset Settings", icon = Icons.Default.Restore) {
-                    Text(
-                        text = "Reset all camera hardware parameters, overlay positions and project profiles back to default settings.",
-                        color = SecondaryText,
-                        fontSize = 12.sp
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 6. METADATA & FIELD SELECTORS
+            // ====================================================
+            if (matchesSearch("metadata fields selector date coordinates chainage map project info compass altitude accuracy speed direction", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Metadata & Field Selectors",
+                    subtitle = "Chainage, Coordinates, Telemetry & Tags",
+                    icon = Icons.Default.Layers,
+                    accentColor = Color(0xFF38BDF8),
+                    isExpanded = expandedSections["metadata"] ?: false,
+                    onToggleExpand = { expandedSections["metadata"] = !(expandedSections["metadata"] ?: false) }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = {
+                                viewModel.saveOverlayConfigSilent(
+                                    currentOverlay.copy(
+                                        showTimestamp = true,
+                                        showCoordinates = true,
+                                        showChainage = true,
+                                        showMapInset = true,
+                                        showProjectInfo = true,
+                                        showCompass = true,
+                                        showAltitude = true,
+                                        showAccuracy = true
+                                    )
+                                )
+                            }
+                        ) {
+                            Text("Select All", fontSize = 12.sp, color = Color(0xFF38BDF8))
+                        }
+                        TextButton(
+                            onClick = {
+                                viewModel.saveOverlayConfigSilent(
+                                    currentOverlay.copy(
+                                        showTimestamp = false,
+                                        showCoordinates = false,
+                                        showChainage = false,
+                                        showMapInset = false,
+                                        showProjectInfo = false,
+                                        showCompass = false,
+                                        showAltitude = false,
+                                        showAccuracy = false
+                                    )
+                                )
+                            }
+                        ) {
+                            Text("Deselect All", fontSize = 12.sp, color = SecondaryText)
+                        }
+                    }
+
+                    CompactSwitchRow(
+                        title = "Date & Time",
+                        subtitle = "Display live timestamp on overlay",
+                        checked = currentOverlay.showTimestamp,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showTimestamp = it)) },
+                        tag = "switch_field_timestamp"
                     )
-                    Button(
-                        onClick = { showResetDialog = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = DeepRed, contentColor = PrimaryText),
-                        modifier = Modifier.fillMaxWidth().testTag("reset_all_settings_button")
+
+                    CompactSwitchRow(
+                        title = "GPS Coordinates (Lat / Long)",
+                        subtitle = "Geographic coordinates from device GPS",
+                        checked = currentOverlay.showCoordinates,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showCoordinates = it)) },
+                        tag = "switch_field_coordinates"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Highway Chainage (KM 198+450)",
+                        subtitle = "Real-time KMZ calculated chainage along road alignment",
+                        checked = currentOverlay.showChainage,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showChainage = it)) },
+                        tag = "switch_field_chainage"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Lower-Left Mini-Map Inset",
+                        subtitle = "Miniature route overview map with alignment indicator",
+                        checked = currentOverlay.showMapInset,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showMapInset = it)) },
+                        tag = "switch_field_map"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Project Profile Info",
+                        subtitle = "Highway number, package, section, lane, activity",
+                        checked = currentOverlay.showProjectInfo,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showProjectInfo = it)) },
+                        tag = "switch_field_project"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Compass Heading",
+                        subtitle = "Directional azimuth (e.g. 142° SE)",
+                        checked = currentOverlay.showCompass,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showCompass = it)) },
+                        tag = "switch_field_compass"
+                    )
+
+                    CompactSwitchRow(
+                        title = "GPS Accuracy & Altitude",
+                        subtitle = "Estimated horizontal error in metres and elevation",
+                        checked = currentOverlay.showAccuracy,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAccuracy = it, showAltitude = it)) },
+                        tag = "switch_field_accuracy"
+                    )
+
+                    // Speed & Direction: strictly governed by user settings; OFF by default
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "Speed & Travel Direction (Optional Telemetry)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700)
+                    )
+                    Text(
+                        text = "Hidden by default. Enable independently for live preview or captured photos.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SecondaryText,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    CompactSwitchRow(
+                        title = "Show Speed on Live Camera Preview",
+                        subtitle = "Display km/h on active camera viewfinder",
+                        checked = currentOverlay.showSpeedOnPreview,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showSpeedOnPreview = it)) },
+                        tag = "switch_speed_preview"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Burn Speed onto Captured Photo/Video",
+                        subtitle = "Permanently imprint speed watermark onto media",
+                        checked = currentOverlay.includeSpeedInCapture,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(includeSpeedInCapture = it)) },
+                        tag = "switch_speed_capture"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Show Direction on Live Camera Preview",
+                        subtitle = "Display travel bearing on active viewfinder",
+                        checked = currentOverlay.showDirectionOnPreview,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showDirectionOnPreview = it)) },
+                        tag = "switch_dir_preview"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Burn Direction onto Captured Media",
+                        subtitle = "Permanently imprint travel bearing onto photo",
+                        checked = currentOverlay.includeDirectionInCapture,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(includeDirectionInCapture = it)) },
+                        tag = "switch_dir_capture"
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 7. GPS & LOCATION BREAKDOWN
+            // ====================================================
+            if (matchesSearch("gps location address coordinate precision dms utm format margin interval", searchQuery)) {
+                SmartDropdownSection(
+                    title = "GPS & Location",
+                    subtitle = "${currentCameraSettings.coordinateFormat.label} • Margin ${currentOverlay.gpsAccuracyMarginPreset}",
+                    icon = Icons.Default.MyLocation,
+                    accentColor = Color(0xFFFFD700),
+                    isExpanded = expandedSections["gps"] ?: false,
+                    onToggleExpand = { expandedSections["gps"] = !(expandedSections["gps"] ?: false) }
+                ) {
+                    Text("Coordinate Format", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Reset All Settings to Defaults", fontWeight = FontWeight.Bold)
+                        CoordinateFormat.entries.forEach { fmt ->
+                            FilterChip(
+                                selected = currentCameraSettings.coordinateFormat == fmt,
+                                onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(coordinateFormat = fmt)) },
+                                label = { Text(fmt.label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("GPS Accuracy Margin Suffix", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val marginPresets = listOf("Off", "±3m", "±5m", "±10m", "Auto")
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        marginPresets.forEach { m ->
+                            FilterChip(
+                                selected = currentOverlay.gpsAccuracyMarginPreset.equals(m, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(gpsAccuracyMarginPreset = m)) },
+                                label = { Text(m, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                    Text("Address / Location Option", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text(
+                        text = "Select geographical detail level or pick None to hide.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SecondaryText,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+
+                    val addressLevels = listOf(
+                        "None",
+                        "India",
+                        "Uttarakhand",
+                        "Garhwal Division",
+                        "Rehmadpur",
+                        "National Highway 58",
+                        "Sant Niwas",
+                        "Sant Niwas, National Highway 58, Rehm...",
+                        "Sant Niwas \nNational Highway 58 \nRehmadpur \nUttarakhand 247667 \nIndia"
+                    )
+
+                    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        addressLevels.forEach { opt ->
+                            val isSelected = currentOverlay.locationAddressOption == opt
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.saveOverlayConfigSilent(currentOverlay.copy(locationAddressOption = opt)) }
+                                    .padding(vertical = 5.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(locationAddressOption = opt)) },
+                                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFFFD700))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = opt,
+                                    fontSize = 12.sp,
+                                    color = if (isSelected) Color(0xFFFFD700) else PrimaryText,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = currentOverlay.customAddressText,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(customAddressText = it)) },
+                        label = { Text("Custom Address / Site Location Text (Optional)") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFFFD700), unfocusedBorderColor = BorderColor)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 8. FILENAME & STORAGE
+            // ====================================================
+            if (matchesSearch("filename storage path folder format naming dcim pictures media tag", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Filename & Storage",
+                    subtitle = currentCameraSettings.filenameFormatPreset,
+                    icon = Icons.Default.Folder,
+                    accentColor = Color(0xFF38BDF8),
+                    isExpanded = expandedSections["filename"] ?: false,
+                    onToggleExpand = { expandedSections["filename"] = !(expandedSections["filename"] ?: false) }
+                ) {
+                    Text("Filename Format Presets", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val filenamePresets = listOf(
+                        "TimePhoto_YYYYMMDD_HHMMSS",
+                        "YYYYMMDD_HHMMSS",
+                        "YYYYMMDDHHMMSS",
+                        "YYYYMMDD_HHMMSS_address",
+                        "YYYYMMDD_HHMMSS_chainage",
+                        "IndexNumber_YYYYMMDD_HHMMSS_address",
+                        "chainage_address_YYYYMMDD_HHMMSS",
+                        "tag_chainage_YYYYMMDD_HHMMSS"
+                    )
+
+                    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        filenamePresets.forEach { preset ->
+                            val isSelected = currentCameraSettings.filenameFormatPreset == preset
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(filenameFormatPreset = preset)) }
+                                    .padding(vertical = 5.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(filenameFormatPreset = preset)) },
+                                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF38BDF8))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = preset,
+                                    fontSize = 12.sp,
+                                    color = if (isSelected) Color(0xFF38BDF8) else PrimaryText
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = currentCameraSettings.customFilenamePrefix,
+                        onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customFilenamePrefix = it)) },
+                        label = { Text("Custom Filename Prefix (e.g. NH58_SURVEY)") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    OutlinedTextField(
+                        value = currentOverlay.customTag,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(customTag = it)) },
+                        label = { Text("Survey Tag / Job Identifier") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                    )
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Storage Destination", style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+                            Text(
+                                text = "Path: ${currentCameraSettings.customStoragePath}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = PrimaryText,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                            Text(
+                                text = "Auto-indexed into Android Gallery & Pictures/HighwayCamera shared storage",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF38BDF8),
+                                modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
+                            )
+                            Button(
+                                onClick = { viewModel.showToast("Default storage folder: Pictures/HighwayCamera") },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00BCD4)),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("Select Folder", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 9. ORIENTATION & ALIGNMENT
+            // ====================================================
+            if (matchesSearch("orientation sensor rotation portrait landscape tilt override exif", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Orientation",
+                    subtitle = if (currentCameraSettings.autoRotateUI) "Auto-Override Active" else "Locked",
+                    icon = Icons.Default.RotateRight,
+                    accentColor = Color(0xFFFFD700),
+                    isExpanded = expandedSections["orientation"] ?: false,
+                    onToggleExpand = { expandedSections["orientation"] = !(expandedSections["orientation"] ?: false) }
+                ) {
+                    CompactSwitchRow(
+                        title = "Automatic Orientation Override",
+                        subtitle = "Switch portrait/landscape dynamically using device sensors even when Android Auto-Rotate is locked",
+                        checked = currentCameraSettings.autoRotateUI,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(autoRotateUI = it)) },
+                        tag = "switch_auto_rotate_ui"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Preserve Sensor EXIF Orientation",
+                        subtitle = "Imprint sensor rotation tag without double-rotating picture",
+                        checked = currentCameraSettings.preserveExif,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(preserveExif = it)) },
+                        tag = "switch_preserve_exif"
+                    )
+
+                    Text(
+                        text = "Supports Portrait (0°), Landscape Right (90°), Reverse Portrait (180°), and Landscape Left (270°). Watermark text rotates gracefully to remain readable in all orientations.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SecondaryText,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 10. SMART MAP & COMPASS
+            // ====================================================
+            if (matchesSearch("map compass horizon inset level telemetry navigation", searchQuery)) {
+                SmartDropdownSection(
+                    title = "Smart Map & Compass",
+                    subtitle = "Mini-Map ${if (currentOverlay.showMapInset) "On" else "Off"} • Compass ${if (currentOverlay.showCompass) "On" else "Off"}",
+                    icon = Icons.Default.Map,
+                    accentColor = Color(0xFF38BDF8),
+                    isExpanded = expandedSections["map_compass"] ?: false,
+                    onToggleExpand = { expandedSections["map_compass"] = !(expandedSections["map_compass"] ?: false) }
+                ) {
+                    CompactSwitchRow(
+                        title = "In-Camera Vector Mini-Map Inset",
+                        subtitle = "Display live road alignment, nearby chainage ticks, and location pin",
+                        checked = currentOverlay.showMapInset,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showMapInset = it)) },
+                        tag = "switch_map_inset"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Compass Sensor Heading",
+                        subtitle = "Show live compass degrees and cardinal direction",
+                        checked = currentOverlay.showCompass,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showCompass = it)) },
+                        tag = "switch_compass"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Electronic Horizon Level",
+                        subtitle = "Visual horizon level guide in camera preview to prevent tilted photos",
+                        checked = currentCameraSettings.showHorizonLevel,
+                        onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(showHorizonLevel = it)) },
+                        tag = "switch_horizon_level"
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 11. APP UPDATES
+            // ====================================================
+            if (matchesSearch("update version release ota download install built-in", searchQuery)) {
+                SmartDropdownSection(
+                    title = "App Updates",
+                    subtitle = "Current Version: v${BuildConfig.VERSION_NAME}",
+                    icon = Icons.Default.SystemUpdate,
+                    accentColor = Color(0xFF38BDF8),
+                    isExpanded = expandedSections["update"] ?: false,
+                    onToggleExpand = { expandedSections["update"] = !(expandedSections["update"] ?: false) }
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("Installed Version", style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+                                Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = PrimaryText)
+                            }
+
+                            Button(
+                                onClick = { viewModel.checkForAppUpdate(isManual = true) },
+                                enabled = !isCheckingUpdate && !isDownloadingUpdate,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                if (isCheckingUpdate) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Checking...", fontSize = 11.sp)
+                                } else {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Check for Updates", fontSize = 11.sp)
+                                }
+                            }
+                        }
+
+                        if (isDownloadingUpdate) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text("Downloading update: ${(updateDownloadProgress * 100).toInt()}%", fontSize = 12.sp, color = Color(0xFF38BDF8))
+                            LinearProgressIndicator(
+                                progress = { updateDownloadProgress },
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).padding(top = 4.dp)
+                            )
+                        }
+
+                        if (availableUpdate != null && availableUpdate!!.isUpdateAvailable) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF0369A1).copy(alpha = 0.2f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text("New Version Available: ${availableUpdate!!.tagName}", fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), fontSize = 13.sp)
+                                    Text(availableUpdate!!.releaseNotes, fontSize = 11.sp, color = SecondaryText, modifier = Modifier.padding(vertical = 4.dp))
+                                    Button(
+                                        onClick = { viewModel.downloadAndInstallUpdate() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8)),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    ) {
+                                        Text("Download & Install Update", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 12. APP INFORMATION
+            // ====================================================
+            if (matchesSearch("about info application ctecs developer version build", searchQuery)) {
+                SmartDropdownSection(
+                    title = "App Information",
+                    subtitle = "Ctecs Highway Camera • v${BuildConfig.VERSION_NAME}",
+                    icon = Icons.Default.Info,
+                    accentColor = Color(0xFF38BDF8),
+                    isExpanded = expandedSections["about"] ?: false,
+                    onToggleExpand = { expandedSections["about"] = !(expandedSections["about"] ?: false) }
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Application Name", style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                            Text("Ctecs", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PrimaryText)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Build Version", style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                            Text("v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall, color = PrimaryText)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Target Architecture", style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                            Text("ARM64 / Android 14+ Ready", style = MaterialTheme.typography.bodySmall, color = PrimaryText)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Offline KMZ Engine", style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                            Text("High-Precision Geodesic Matcher", style = MaterialTheme.typography.bodySmall, color = Color(0xFF38BDF8))
+                        }
+                        Text(
+                            text = "Professional timestamp and highway chainage documentation camera for highway engineers, quality control teams, and survey inspectors.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SecondaryText,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(30.dp))
         }
     }
 
-    if (showResetDialog) {
+    // Restore Defaults Dialog
+    if (showRestoreDialog) {
         AlertDialog(
-            onDismissRequest = { showResetDialog = false },
-            containerColor = SurfaceDark,
-            title = { Text("Reset All Settings?", color = PrimaryText, fontWeight = FontWeight.Bold) },
+            onDismissRequest = { showRestoreDialog = false },
+            title = { Text("Restore Default Settings?", color = PrimaryText, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "This will restore all 13 settings sections back to initial factory values. Saved route files and photos will NOT be deleted.",
+                    "This will reset all watermark, camera, typography, and telemetry options to factory defaults. Your saved photos and KMZ routes will not be deleted.",
                     color = SecondaryText,
                     fontSize = 13.sp
                 )
@@ -1232,140 +1820,387 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         viewModel.resetAllSettings()
-                        showResetDialog = false
+                        showRestoreDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed, contentColor = PrimaryText)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
                 ) {
-                    Text("Confirm Reset")
+                    Text("Reset All", color = Color.White)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showResetDialog = false }) {
+                TextButton(onClick = { showRestoreDialog = false }) {
                     Text("Cancel", color = PrimaryText)
                 }
-            }
+            },
+            containerColor = ElevatedSurface
         )
     }
 }
 
+// ----------------------------------------------------
+// SMART DROPDOWN ACCORDION COMPONENT
+// ----------------------------------------------------
+
 @Composable
-private fun SettingsSectionCard(
+fun SmartDropdownSection(
     title: String,
+    subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accentColor: Color,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
     content: @Composable () -> Unit
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-        border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp)
+            .animateContentSize(animationSpec = tween(250)),
+        colors = CardDefaults.cardColors(containerColor = SecondaryBackground),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleExpand() }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(DarkYellowSurface),
-                    contentAlignment = Alignment.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp)
                 ) {
-                    Icon(icon, contentDescription = null, tint = HighlightYellow, modifier = Modifier.size(18.dp))
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = PrimaryText
+                            )
+                        )
+                        if (subtitle.isNotBlank()) {
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.labelSmall.copy(color = SecondaryText),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
-                Text(
-                    text = title,
-                    color = PrimaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = SecondaryText,
+                    modifier = Modifier.size(20.dp)
                 )
             }
-            Divider(color = BorderColor)
-            content()
+
+            AnimatedVisibility(visible = isExpanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f), modifier = Modifier.padding(bottom = 8.dp))
+                    content()
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------
+// UI COMPONENTS & LIVE PREVIEW
+// ----------------------------------------------------
+
+@Composable
+fun WatermarkLivePreviewCard(
+    overlay: OverlayConfig,
+    project: ProjectProfile,
+    cameraSettings: CameraSettings,
+    isLandscape: Boolean,
+    onToggleOrientation: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("watermark_preview_card"),
+        colors = CardDefaults.cardColors(containerColor = ElevatedSurface),
+        shape = RoundedCornerShape(14.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.BrandingWatermark,
+                        contentDescription = null,
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "LIVE WATERMARK PREVIEW",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                    )
+                }
+
+                FilterChip(
+                    selected = isLandscape,
+                    onClick = onToggleOrientation,
+                    label = { Text(if (isLandscape) "Landscape 16:9" else "Portrait 9:16", fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF38BDF8),
+                        selectedLabelColor = Color.Black
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Simulated Viewfinder Frame
+            val previewHeight = if (isLandscape) 150.dp else 220.dp
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(previewHeight)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF1E293B))
+                    .border(1.dp, BorderColor, RoundedCornerShape(10.dp))
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val strokeW = 1.dp.toPx()
+                    val c = Color.White.copy(alpha = 0.12f)
+                    drawLine(c, Offset(size.width / 3f, 0f), Offset(size.width / 3f, size.height), strokeW)
+                    drawLine(c, Offset(size.width * 2f / 3f, 0f), Offset(size.width * 2f / 3f, size.height), strokeW)
+                    drawLine(c, Offset(0f, size.height / 3f), Offset(size.width, size.height / 3f), strokeW)
+                    drawLine(c, Offset(0f, size.height * 2f / 3f), Offset(size.width, size.height * 2f / 3f), strokeW)
+                }
+
+                val textColor = try {
+                    Color(android.graphics.Color.parseColor(overlay.textColorHex)).copy(alpha = overlay.textOpacity)
+                } catch (e: Exception) {
+                    Color.White.copy(alpha = overlay.textOpacity)
+                }
+
+                val bgColor = try {
+                    Color(android.graphics.Color.parseColor(overlay.backgroundColorHex)).copy(alpha = overlay.backgroundOpacity)
+                } catch (e: Exception) {
+                    Color.Black.copy(alpha = overlay.backgroundOpacity)
+                }
+
+                val alignment = when (overlay.watermarkPosition.lowercase()) {
+                    "top left" -> Alignment.TopStart
+                    "top center" -> Alignment.TopCenter
+                    "top right" -> Alignment.TopEnd
+                    "bottom left" -> Alignment.BottomStart
+                    "bottom center" -> Alignment.BottomCenter
+                    "center" -> Alignment.Center
+                    else -> Alignment.BottomEnd
+                }
+
+                val sampleDate = SimpleDateFormat(
+                    if (cameraSettings.is24HourFormat) "dd MMMM yyyy HH:mm" else overlay.timestampFormat,
+                    Locale.US
+                ).format(Date())
+
+                val sampleFontFamily = when (overlay.fontFamily.lowercase()) {
+                    "serif" -> FontFamily.Serif
+                    "monospace" -> FontFamily.Monospace
+                    else -> FontFamily.SansSerif
+                }
+
+                val sampleFontStyle = when (overlay.fontStyle.lowercase()) {
+                    "italic" -> FontStyle.Italic
+                    else -> FontStyle.Normal
+                }
+
+                val sampleFontWeight = when (overlay.fontStyle.lowercase()) {
+                    "bold" -> FontWeight.Bold
+                    "medium" -> FontWeight.Medium
+                    else -> FontWeight.Normal
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(10.dp),
+                    contentAlignment = alignment
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(bgColor)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalAlignment = if (alignment == Alignment.BottomStart || alignment == Alignment.TopStart) Alignment.Start else Alignment.End
+                    ) {
+                        if (overlay.timePosition.equals("Time in above", ignoreCase = true) && overlay.showTimestamp) {
+                            Text(
+                                text = sampleDate,
+                                color = textColor,
+                                fontSize = (overlay.fontSizeSp * 0.45f).coerceIn(9f, 16f).sp,
+                                fontFamily = sampleFontFamily,
+                                fontStyle = sampleFontStyle,
+                                fontWeight = sampleFontWeight
+                            )
+                        }
+
+                        if (overlay.showCoordinates) {
+                            Text(
+                                text = "29.8919°N 77.9587°E Alt: 268m (${overlay.gpsAccuracyMarginPreset})",
+                                color = textColor,
+                                fontSize = (overlay.fontSizeSp * 0.42f).coerceIn(8.5f, 15f).sp,
+                                fontFamily = sampleFontFamily,
+                                fontStyle = sampleFontStyle,
+                                fontWeight = sampleFontWeight
+                            )
+                        }
+
+                        if (overlay.locationAddressOption.isNotBlank() && overlay.locationAddressOption != "None") {
+                            val addr = if (overlay.customAddressText.isNotBlank()) overlay.customAddressText else overlay.locationAddressOption
+                            Text(
+                                text = addr,
+                                color = textColor,
+                                fontSize = (overlay.fontSizeSp * 0.40f).coerceIn(8f, 14f).sp,
+                                fontFamily = sampleFontFamily,
+                                fontStyle = sampleFontStyle,
+                                fontWeight = sampleFontWeight,
+                                maxLines = 2
+                            )
+                        }
+
+                        if (overlay.showCompass) {
+                            Text(
+                                text = "Compass: 142° SE",
+                                color = textColor,
+                                fontSize = (overlay.fontSizeSp * 0.40f).coerceIn(8f, 14f).sp,
+                                fontFamily = sampleFontFamily,
+                                fontStyle = sampleFontStyle,
+                                fontWeight = sampleFontWeight
+                            )
+                        }
+
+                        if (overlay.showSpeedOnPreview || overlay.includeSpeedInCapture) {
+                            Text(
+                                text = "Speed: 42.5 km/h",
+                                color = Color(0xFFFFD700),
+                                fontSize = (overlay.fontSizeSp * 0.40f).coerceIn(8f, 14f).sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (overlay.showProjectInfo || overlay.showChainage) {
+                            val chainText = if (overlay.showChainage) "KM 198+450" else ""
+                            Text(
+                                text = project.buildHighwayText(chainText),
+                                color = textColor,
+                                fontSize = (overlay.fontSizeSp * 0.45f).coerceIn(9f, 16f).sp,
+                                fontFamily = sampleFontFamily,
+                                fontStyle = sampleFontStyle,
+                                fontWeight = sampleFontWeight
+                            )
+                        }
+
+                        if (!overlay.timePosition.equals("Time in above", ignoreCase = true) && overlay.showTimestamp) {
+                            Text(
+                                text = sampleDate,
+                                color = textColor,
+                                fontSize = (overlay.fontSizeSp * 0.45f).coerceIn(9f, 16f).sp,
+                                fontFamily = sampleFontFamily,
+                                fontStyle = sampleFontStyle,
+                                fontWeight = sampleFontWeight
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SettingSwitchRow(
-    label: String,
-    subtitle: String? = null,
+fun CompactSwitchRow(
+    title: String,
+    subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    tag: String
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(text = label, color = PrimaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            if (subtitle != null) {
-                Text(text = subtitle, color = SecondaryText, fontSize = 11.sp)
-            }
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = PrimaryText)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = SecondaryText)
         }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = PrimaryBackground,
-                checkedTrackColor = HighlightYellow,
-                uncheckedThumbColor = SecondaryText,
-                uncheckedTrackColor = ElevatedSurface
+                checkedThumbColor = Color.Black,
+                checkedTrackColor = Color(0xFF00BCD4),
+                uncheckedThumbColor = DisabledGray,
+                uncheckedTrackColor = SurfaceDark
+            ),
+            modifier = Modifier.testTag(tag)
+        )
+    }
+}
+
+@Composable
+fun SliderRow(
+    title: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueText: String
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(title, style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+            Text(valueText, style = MaterialTheme.typography.labelMedium, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+        }
+        Slider(
+            value = value.coerceIn(0f, 1f),
+            onValueChange = onValueChange,
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFF38BDF8),
+                activeTrackColor = Color(0xFF00BCD4),
+                inactiveTrackColor = BorderColor
             )
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SettingDropdownRow(
-    label: String,
-    current: String,
-    options: List<String>,
-    onSelect: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(text = label, color = PrimaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
-        Box {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = ElevatedSurface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
-                modifier = Modifier.clickable { expanded = true }
-            ) {
-                Text(
-                    text = current,
-                    color = HighlightYellow,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
-            }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.background(SurfaceDark)
-            ) {
-                options.forEach { opt ->
-                    DropdownMenuItem(
-                        text = { Text(opt, color = PrimaryText) },
-                        onClick = {
-                            onSelect(opt)
-                            expanded = false
-                        }
-                    )
-                }
-            }
-        }
-    }
+fun matchesSearch(haystack: String, query: String): Boolean {
+    if (query.isBlank()) return true
+    val words = query.trim().lowercase().split("\\s+".toRegex())
+    val text = haystack.lowercase()
+    return words.any { text.contains(it) }
 }

@@ -42,7 +42,6 @@ class PreferencesManager(private val context: Context) {
         val KEY_SHOW_ALTITUDE = booleanPreferencesKey("show_altitude")
         val KEY_SHOW_ACCURACY = booleanPreferencesKey("show_accuracy")
         val KEY_BURN_IN_TIMESTAMP = booleanPreferencesKey("burn_in_timestamp")
-        val KEY_AUTO_ROTATE_UI = booleanPreferencesKey("auto_rotate_ui")
 
         // Speed & Direction visibility keys (default false)
         val KEY_SHOW_SPEED_PREVIEW = booleanPreferencesKey("show_speed_preview")
@@ -63,9 +62,28 @@ class PreferencesManager(private val context: Context) {
         val KEY_LOGO_BORDER_COLOR_HEX = stringPreferencesKey("logo_border_color_hex")
         val KEY_LOGO_MARGIN_X_DP = intPreferencesKey("logo_margin_x_dp")
         val KEY_LOGO_MARGIN_Y_DP = intPreferencesKey("logo_margin_y_dp")
+        val KEY_LOGO_SCALE = floatPreferencesKey("logo_scale")
+        val KEY_LOGO_ROTATION = floatPreferencesKey("logo_rotation")
 
+        // Typography, Colors & Watermark styling
         val KEY_FONT_SIZE_SP = floatPreferencesKey("font_size_sp")
+        val KEY_FONT_SIZE_PRESET = stringPreferencesKey("font_size_preset")
         val KEY_HAS_TEXT_SHADOW = booleanPreferencesKey("has_text_shadow")
+        val KEY_TEXT_COLOR_HEX = stringPreferencesKey("text_color_hex")
+        val KEY_TEXT_OPACITY = floatPreferencesKey("text_opacity")
+        val KEY_FONT_FAMILY = stringPreferencesKey("font_family")
+        val KEY_FONT_STYLE = stringPreferencesKey("font_style")
+        val KEY_BACKGROUND_STYLE = stringPreferencesKey("background_style")
+        val KEY_BACKGROUND_OPACITY = floatPreferencesKey("background_opacity")
+        val KEY_BACKGROUND_COLOR_HEX = stringPreferencesKey("background_color_hex")
+        val KEY_WATERMARK_POSITION = stringPreferencesKey("watermark_position")
+        val KEY_TIME_POSITION = stringPreferencesKey("time_position")
+        val KEY_RESOLUTION_OPTION = stringPreferencesKey("resolution_option")
+        val KEY_LOCATION_ADDRESS_OPTION = stringPreferencesKey("location_address_option")
+        val KEY_CUSTOM_ADDRESS_TEXT = stringPreferencesKey("custom_address_text")
+        val KEY_CUSTOM_TAG = stringPreferencesKey("custom_tag")
+        val KEY_GPS_ACCURACY_MARGIN_PRESET = stringPreferencesKey("gps_accuracy_margin_preset")
+
         val KEY_ACTIVE_ROUTE_ID = stringPreferencesKey("active_route_id")
 
         // Camera settings keys
@@ -90,6 +108,19 @@ class PreferencesManager(private val context: Context) {
         val KEY_EXPOSURE_COMP = intPreferencesKey("camera_exposure_comp")
         val KEY_CAMERA_MODE = stringPreferencesKey("camera_mode")
         val KEY_SPEED_UNIT = stringPreferencesKey("speed_unit")
+
+        // New functional camera settings
+        val KEY_TOUCH_TO_CAPTURE = booleanPreferencesKey("touch_to_capture")
+        val KEY_ALWAYS_DISPLAY_ZOOM_SLIDER = booleanPreferencesKey("always_display_zoom_slider")
+        val KEY_BATTERY_SAVE_MODE = booleanPreferencesKey("battery_save_mode")
+        val KEY_BATTERY_SAVE_BRIGHTNESS = floatPreferencesKey("battery_save_brightness")
+        val KEY_EASY_TOGGLE_CAMERAS = booleanPreferencesKey("easy_toggle_cameras")
+        val KEY_WHITE_BALANCE = stringPreferencesKey("white_balance")
+        val KEY_VIDEO_SEGMENTATION = stringPreferencesKey("video_segmentation")
+        val KEY_CUSTOM_FILENAME_PREFIX = stringPreferencesKey("custom_filename_prefix")
+        val KEY_FILENAME_FORMAT_PRESET = stringPreferencesKey("filename_format_preset")
+        val KEY_CUSTOM_STORAGE_PATH = stringPreferencesKey("custom_storage_path")
+        val KEY_AUTO_ROTATE_UI = booleanPreferencesKey("auto_rotate_ui")
     }
 
     val cameraSettingsFlow: Flow<com.example.model.CameraSettings> = context.dataStore.data.map { prefs ->
@@ -114,7 +145,18 @@ class PreferencesManager(private val context: Context) {
             is24HourFormat = prefs[KEY_IS_24H] ?: false,
             exposureCompensationStep = prefs[KEY_EXPOSURE_COMP] ?: 0,
             cameraMode = com.example.model.CameraMode.fromString(prefs[KEY_CAMERA_MODE]),
-            speedUnit = com.example.model.SpeedUnit.fromString(prefs[KEY_SPEED_UNIT])
+            speedUnit = com.example.model.SpeedUnit.fromString(prefs[KEY_SPEED_UNIT]),
+            touchToCapture = prefs[KEY_TOUCH_TO_CAPTURE] ?: false,
+            alwaysDisplayZoomSlider = prefs[KEY_ALWAYS_DISPLAY_ZOOM_SLIDER] ?: true,
+            batterySaveMode = prefs[KEY_BATTERY_SAVE_MODE] ?: false,
+            batterySaveBrightness = prefs[KEY_BATTERY_SAVE_BRIGHTNESS] ?: 0.5f,
+            easyToggleCameras = prefs[KEY_EASY_TOGGLE_CAMERAS] ?: true,
+            whiteBalance = prefs[KEY_WHITE_BALANCE] ?: "auto",
+            videoSegmentation = prefs[KEY_VIDEO_SEGMENTATION] ?: "None",
+            customFilenamePrefix = prefs[KEY_CUSTOM_FILENAME_PREFIX] ?: "",
+            filenameFormatPreset = prefs[KEY_FILENAME_FORMAT_PRESET] ?: "TimePhoto_YYYYMMDD_HHMMSS",
+            customStoragePath = prefs[KEY_CUSTOM_STORAGE_PATH] ?: "/storage/emulated/0/DCIM/Camera",
+            autoRotateUI = prefs[KEY_AUTO_ROTATE_UI] ?: true
         )
     }
 
@@ -155,7 +197,7 @@ class PreferencesManager(private val context: Context) {
 
             // Logo manual settings
             showLogo = prefs[KEY_SHOW_LOGO] ?: true,
-            logoPreset = prefs[KEY_LOGO_PRESET] ?: "cubetech",
+            logoPreset = prefs[KEY_LOGO_PRESET] ?: "ctecs",
             logoUri = prefs[KEY_LOGO_URI],
             logoPosition = LogoPosition.fromString(prefs[KEY_LOGO_POSITION]),
             logoSizeDp = prefs[KEY_LOGO_SIZE_DP] ?: 58,
@@ -166,9 +208,26 @@ class PreferencesManager(private val context: Context) {
             logoBorderColorHex = prefs[KEY_LOGO_BORDER_COLOR_HEX] ?: "#FFFFFF",
             logoMarginXDp = prefs[KEY_LOGO_MARGIN_X_DP] ?: 16,
             logoMarginYDp = prefs[KEY_LOGO_MARGIN_Y_DP] ?: 20,
+            logoScale = prefs[KEY_LOGO_SCALE] ?: 1.0f,
+            logoRotationDegrees = prefs[KEY_LOGO_ROTATION] ?: 0f,
 
             fontSizeSp = prefs[KEY_FONT_SIZE_SP] ?: 24f,
-            hasTextShadow = prefs[KEY_HAS_TEXT_SHADOW] ?: true
+            fontSizePreset = prefs[KEY_FONT_SIZE_PRESET] ?: "Medium",
+            hasTextShadow = prefs[KEY_HAS_TEXT_SHADOW] ?: true,
+            textColorHex = prefs[KEY_TEXT_COLOR_HEX] ?: "#FFFFFF",
+            textOpacity = prefs[KEY_TEXT_OPACITY] ?: 1.0f,
+            fontFamily = prefs[KEY_FONT_FAMILY] ?: "Default",
+            fontStyle = prefs[KEY_FONT_STYLE] ?: "Bold",
+            backgroundStyle = prefs[KEY_BACKGROUND_STYLE] ?: "Transparent",
+            backgroundOpacity = prefs[KEY_BACKGROUND_OPACITY] ?: 0.0f,
+            backgroundColorHex = prefs[KEY_BACKGROUND_COLOR_HEX] ?: "#000000",
+            watermarkPosition = prefs[KEY_WATERMARK_POSITION] ?: "Bottom Right",
+            timePosition = prefs[KEY_TIME_POSITION] ?: "Time in above",
+            resolutionOption = prefs[KEY_RESOLUTION_OPTION] ?: "1920 x 1080",
+            locationAddressOption = prefs[KEY_LOCATION_ADDRESS_OPTION] ?: "None",
+            customAddressText = prefs[KEY_CUSTOM_ADDRESS_TEXT] ?: "",
+            customTag = prefs[KEY_CUSTOM_TAG] ?: "",
+            gpsAccuracyMarginPreset = prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] ?: "±5m"
         )
     }
 
@@ -226,9 +285,26 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_LOGO_BORDER_COLOR_HEX] = config.logoBorderColorHex
             prefs[KEY_LOGO_MARGIN_X_DP] = config.logoMarginXDp
             prefs[KEY_LOGO_MARGIN_Y_DP] = config.logoMarginYDp
+            prefs[KEY_LOGO_SCALE] = config.logoScale
+            prefs[KEY_LOGO_ROTATION] = config.logoRotationDegrees
 
             prefs[KEY_FONT_SIZE_SP] = config.fontSizeSp
+            prefs[KEY_FONT_SIZE_PRESET] = config.fontSizePreset
             prefs[KEY_HAS_TEXT_SHADOW] = config.hasTextShadow
+            prefs[KEY_TEXT_COLOR_HEX] = config.textColorHex
+            prefs[KEY_TEXT_OPACITY] = config.textOpacity
+            prefs[KEY_FONT_FAMILY] = config.fontFamily
+            prefs[KEY_FONT_STYLE] = config.fontStyle
+            prefs[KEY_BACKGROUND_STYLE] = config.backgroundStyle
+            prefs[KEY_BACKGROUND_OPACITY] = config.backgroundOpacity
+            prefs[KEY_BACKGROUND_COLOR_HEX] = config.backgroundColorHex
+            prefs[KEY_WATERMARK_POSITION] = config.watermarkPosition
+            prefs[KEY_TIME_POSITION] = config.timePosition
+            prefs[KEY_RESOLUTION_OPTION] = config.resolutionOption
+            prefs[KEY_LOCATION_ADDRESS_OPTION] = config.locationAddressOption
+            prefs[KEY_CUSTOM_ADDRESS_TEXT] = config.customAddressText
+            prefs[KEY_CUSTOM_TAG] = config.customTag
+            prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] = config.gpsAccuracyMarginPreset
         }
     }
 
@@ -255,6 +331,18 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_EXPOSURE_COMP] = settings.exposureCompensationStep
             prefs[KEY_CAMERA_MODE] = settings.cameraMode.name
             prefs[KEY_SPEED_UNIT] = settings.speedUnit.name
+
+            prefs[KEY_TOUCH_TO_CAPTURE] = settings.touchToCapture
+            prefs[KEY_ALWAYS_DISPLAY_ZOOM_SLIDER] = settings.alwaysDisplayZoomSlider
+            prefs[KEY_BATTERY_SAVE_MODE] = settings.batterySaveMode
+            prefs[KEY_BATTERY_SAVE_BRIGHTNESS] = settings.batterySaveBrightness
+            prefs[KEY_EASY_TOGGLE_CAMERAS] = settings.easyToggleCameras
+            prefs[KEY_WHITE_BALANCE] = settings.whiteBalance
+            prefs[KEY_VIDEO_SEGMENTATION] = settings.videoSegmentation
+            prefs[KEY_CUSTOM_FILENAME_PREFIX] = settings.customFilenamePrefix
+            prefs[KEY_FILENAME_FORMAT_PRESET] = settings.filenameFormatPreset
+            prefs[KEY_CUSTOM_STORAGE_PATH] = settings.customStoragePath
+            prefs[KEY_AUTO_ROTATE_UI] = settings.autoRotateUI
         }
     }
 

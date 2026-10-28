@@ -26,24 +26,62 @@ class PhotoRepository(
     fun searchPhotos(query: String): Flow<List<PhotoRecordEntity>> =
         photoRecordDao.searchPhotos(query)
 
+    companion object {
+        fun buildCustomFileName(
+            preset: String,
+            prefix: String,
+            timestamp: Long,
+            chainage: String,
+            address: String,
+            roadName: String,
+            tag: String
+        ): String {
+            val dateFmtUnder = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+            val dateFmtPlain = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
+            val dUnder = dateFmtUnder.format(Date(timestamp))
+            val dPlain = dateFmtPlain.format(Date(timestamp))
+
+            val cleanChain = chainage.replace("[^a-zA-Z0-9+]".toRegex(), "").ifBlank { "0+000" }
+            val cleanAddr = address.replace("[^a-zA-Z0-9]".toRegex(), "").ifBlank { "Location" }
+            val cleanTag = tag.replace("[^a-zA-Z0-9]".toRegex(), "").ifBlank { "Survey" }
+
+            val rawName = when (preset) {
+                "YYYYMMDD_HHMMSS" -> dUnder
+                "YYYYMMDDHHMMSS" -> dPlain
+                "YYYYMMDD_HHMMSS_address" -> "${dUnder}_$cleanAddr"
+                "YYYYMMDD_HHMMSS_chainage" -> "${dUnder}_$cleanChain"
+                "IndexNumber_YYYYMMDD_HHMMSS_address" -> "IMG_${dUnder}_$cleanAddr"
+                "chainage_address_YYYYMMDD_HHMMSS" -> "${cleanChain}_${cleanAddr}_$dUnder"
+                "tag_chainage_YYYYMMDD_HHMMSS" -> "${cleanTag}_${cleanChain}_$dUnder"
+                else -> "TimePhoto_$dUnder"
+            }
+
+            val pfx = prefix.trim().replace("[^a-zA-Z0-9_-]".toRegex(), "")
+            val finalName = if (pfx.isNotBlank()) "${pfx}_$rawName" else rawName
+            return "$finalName.jpg"
+        }
+    }
+
     suspend fun saveCapturedPhoto(
         sourceBitmap: Bitmap,
         snapshot: CaptureSnapshot
     ): Result<PhotoRecordEntity> = withContext(Dispatchers.IO) {
         try {
-            // 1. Generate filename: e.g. NH58_196+040_RHS_20261026_173200.jpg
-            val dateFmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-            val dateStr = dateFmt.format(Date(snapshot.timestamp))
-            val highwayClean = snapshot.projectProfile.highwayId.replace("[^a-zA-Z0-9]".toRegex(), "")
-            val chainageClean = snapshot.displayChainage.replace("[^a-zA-Z0-9+]".toRegex(), "")
-            val sideClean = snapshot.projectProfile.roadSide.label
-
-            val baseName = if (chainageClean.isNotBlank() && chainageClean != "---") {
-                "${highwayClean}_${chainageClean}_${sideClean}_$dateStr"
+            // 1. Generate filename using active format preset
+            val addrText = if (snapshot.overlayConfig.locationAddressOption != "None") {
+                snapshot.overlayConfig.customAddressText.ifBlank { snapshot.overlayConfig.locationAddressOption }
             } else {
-                "${highwayClean}_$dateStr"
+                snapshot.projectProfile.highwayId
             }
-            val fileName = "$baseName.jpg"
+            val fileName = buildCustomFileName(
+                preset = "TimePhoto_YYYYMMDD_HHMMSS",
+                prefix = "",
+                timestamp = snapshot.timestamp,
+                chainage = snapshot.displayChainage,
+                address = addrText,
+                roadName = snapshot.projectProfile.highwayId,
+                tag = snapshot.overlayConfig.customTag
+            )
 
             // Reliable App-Specific Storage (guaranteed writable across all Android versions)
             val localDir = File(
@@ -113,57 +151,44 @@ class PhotoRepository(
                         resolver.update(itemUri, contentValues, null, null)
                     }
                 }
-            } catch (e: Exception) {
-                Log.w("PhotoRepository", "MediaStore insert exception: ${e.message}")
+            } catch (mediaStoreEx: Exception) {
+                Log.w("PhotoRepository", "Shared storage publish error (saved locally): ${mediaStoreEx.message}")
             }
 
-            // 5. Also copy to shared public directory if accessible and trigger MediaScanner
-            try {
-                val publicDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                    "HighwayCamera"
-                )
-                if (publicDir.exists() || publicDir.mkdirs()) {
-                    val publicFile = File(publicDir, fileName)
-                    localFile.copyTo(publicFile, overwrite = true)
-                    recordedPath = publicFile.absolutePath
-                    android.media.MediaScannerConnection.scanFile(
-                        context,
-                        arrayOf(publicFile.absolutePath, localFile.absolutePath),
-                        arrayOf("image/jpeg")
-                    ) { _, _ -> }
-                }
-            } catch (ignored: Exception) {}
-
-            // Optional: Save original unmodified if enabled alongside stamped image
-            if (snapshot.overlayConfig.saveOriginalImage && snapshot.overlayConfig.burnInTimestamp) {
+            // 5. Also save un-watermarked original if user selected "Save original and stamped"
+            if (snapshot.overlayConfig.burnInTimestamp && snapshot.overlayConfig.saveOriginalImage) {
                 try {
-                    val origFileName = "${baseName}_ORIGINAL.jpg"
+                    val origFileName = "ORIG_$fileName"
                     val origLocal = File(localDir, origFileName)
-                    OverlayRenderer.saveBitmapWithExif(sourceBitmap, origLocal, snapshot, context = context)
-
-                    val resolver = context.contentResolver
-                    val origCv = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, origFileName)
-                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                        put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-                        put(MediaStore.Images.Media.DATE_TAKEN, snapshot.timestamp)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HighwayCamera")
-                        }
-                    }
-                    val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                    } else {
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                    }
-                    val origUri = resolver.insert(collection, origCv)
-                    if (origUri != null) {
-                        resolver.openOutputStream(origUri)?.use { outStream ->
-                            origLocal.inputStream().use { inStream ->
-                                inStream.copyTo(outStream)
+                    val origSaved = OverlayRenderer.saveBitmapWithExif(
+                        bitmap = sourceBitmap,
+                        destinationFile = origLocal,
+                        snapshot = snapshot,
+                        context = context
+                    )
+                    if (origSaved) {
+                        val resolver = context.contentResolver
+                        val origCv = ContentValues().apply {
+                            put(MediaStore.Images.Media.DISPLAY_NAME, origFileName)
+                            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                            put(MediaStore.Images.Media.DATE_TAKEN, snapshot.timestamp)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HighwayCamera")
                             }
-                            outStream.flush()
+                        }
+                        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                        } else {
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                        }
+                        val origUri = resolver.insert(collection, origCv)
+                        if (origUri != null) {
+                            resolver.openOutputStream(origUri)?.use { outStream ->
+                                origLocal.inputStream().use { inStream ->
+                                    inStream.copyTo(outStream)
+                                }
+                                outStream.flush()
+                            }
                         }
                     }
                 } catch (ignored: Exception) {}

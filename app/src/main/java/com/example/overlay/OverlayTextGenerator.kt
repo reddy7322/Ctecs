@@ -79,17 +79,28 @@ object OverlayTextGenerator {
                         coordLine += " Alt: ${location.altitude.toInt()}m"
                     }
                     if (config.showAccuracy && accuracy > 0f) {
-                        coordLine += " (±${accuracy.toInt()}m)"
+                        val accMargin = if (config.gpsAccuracyMarginPreset != "Off") " (${config.gpsAccuracyMarginPreset})" else " (±${accuracy.toInt()}m)"
+                        coordLine += accMargin
                     }
                     lines.add(coordLine)
                 }
 
-                // 3. Compass
+                // 3. Location / Address breakdown (from Screenshot 2)
+                if (config.locationAddressOption.isNotBlank() && config.locationAddressOption != "None") {
+                    val displayAddr = if (config.customAddressText.isNotBlank()) {
+                        config.customAddressText
+                    } else {
+                        config.locationAddressOption
+                    }
+                    lines.add(displayAddr)
+                }
+
+                // 4. Compass
                 if (config.showCompass && compassHeading.isNotBlank() && compassHeading != "---") {
                     lines.add("Compass: $compassHeading")
                 }
 
-                // 4. Speed & Direction (STRICTLY governed by user settings; OFF by default for preview & capture)
+                // 5. Speed & Direction (STRICTLY governed by user settings; OFF by default for preview & capture)
                 val shouldShowSpeed = if (isForCapture) config.includeSpeedInCapture else config.showSpeedOnPreview
                 val shouldShowDirection = if (isForCapture) config.includeDirectionInCapture else config.showDirectionOnPreview
 
@@ -113,7 +124,7 @@ object OverlayTextGenerator {
                     lines.add(telemetryParts.joinToString("  |  "))
                 }
 
-                // 5. Project Info / Chainage / Activity / Lane / Side
+                // 6. Project Info / Chainage / Activity / Lane / Side
                 if ((config.showProjectInfo || config.showChainage) && config.showIndexNumber) {
                     val highwayLine = project.buildHighwayText(if (config.showChainage) chainageStr else "")
                     if (highwayLine.isNotBlank()) {
@@ -121,7 +132,7 @@ object OverlayTextGenerator {
                     }
                 }
 
-                // 6. Timestamp (if below)
+                // 7. Timestamp (if below)
                 if (!isTimeAbove && timestampStr != null) {
                     lines.add(timestampStr)
                 }
