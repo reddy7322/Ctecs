@@ -48,6 +48,16 @@ sealed class UiMessage {
     data class Info(val message: String) : UiMessage()
 }
 
+enum class ToastType {
+    SUCCESS, ERROR, WARNING, INFO, SETTINGS_SAVED, MODE_CHANGE
+}
+
+data class ToastMessage(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val message: String,
+    val type: ToastType = ToastType.INFO
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
@@ -89,6 +99,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiMessages = MutableSharedFlow<UiMessage>()
     val uiMessages: SharedFlow<UiMessage> = _uiMessages.asSharedFlow()
+
+    private val _toastMessage = MutableStateFlow<ToastMessage?>(null)
+    val toastMessage: StateFlow<ToastMessage?> = _toastMessage.asStateFlow()
+
+    fun showToast(message: String, type: ToastType = ToastType.INFO) {
+        _toastMessage.value = ToastMessage(message = message, type = type)
+    }
+
+    fun clearToast() {
+        _toastMessage.value = null
+    }
 
     // Location State
     val locationState: StateFlow<LocationState> = locationTracker.locationState
@@ -352,6 +373,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveProjectProfileSilent(profile: ProjectProfile) {
+        viewModelScope.launch {
+            preferencesManager.updateProjectProfile(profile)
+        }
+    }
+
     fun saveOverlayConfig(config: OverlayConfig) {
         viewModelScope.launch {
             preferencesManager.updateOverlayConfig(config)
@@ -359,10 +386,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveOverlayConfigSilent(config: OverlayConfig) {
+        viewModelScope.launch {
+            preferencesManager.updateOverlayConfig(config)
+        }
+    }
+
     fun saveCameraSettings(settings: com.example.model.CameraSettings) {
         viewModelScope.launch {
             preferencesManager.updateCameraSettings(settings)
             _uiMessages.emit(UiMessage.Success("Camera settings saved"))
+        }
+    }
+
+    fun saveCameraSettingsSilent(settings: com.example.model.CameraSettings) {
+        viewModelScope.launch {
+            preferencesManager.updateCameraSettings(settings)
         }
     }
 

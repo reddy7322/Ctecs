@@ -16,6 +16,7 @@ import com.example.geo.GeoUtils
 import com.example.model.CaptureSnapshot
 import com.example.model.GeoPoint
 import com.example.model.LogoPosition
+import com.example.model.CoordinateFormat
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.RouteData
@@ -140,49 +141,20 @@ object OverlayRenderer {
             strokeJoin = Paint.Join.ROUND
         }
 
-        val lines = mutableListOf<String>()
-
-        when (config.template) {
-            OverlayTemplate.GPS_COORDINATES_ONLY -> {
-                val sdf = SimpleDateFormat(config.timestampFormat, Locale.US)
-                lines.add(sdf.format(Date(snapshot.timestamp)))
-                if (location != null) {
-                    lines.add(location.formatReference(config.coordinatePrecision))
-                }
-            }
-            OverlayTemplate.MINIMAL_TIMESTAMP -> {
-                val sdf = SimpleDateFormat(config.timestampFormat, Locale.US)
-                lines.add(sdf.format(Date(snapshot.timestamp)))
-            }
-            else -> {
-                // Highway Construction / Site Inspection / QC
-                if (config.showTimestamp) {
-                    val sdf = SimpleDateFormat(config.timestampFormat, Locale.US)
-                    lines.add(sdf.format(Date(snapshot.timestamp)))
-                }
-
-                if (config.showCoordinates && location != null) {
-                    var coordLine = location.formatReference(config.coordinatePrecision)
-                    if (config.showAltitude && location.altitude != 0.0) {
-                        coordLine += " Alt: ${location.altitude.toInt()}m"
-                    }
-                    if (config.showAccuracy && snapshot.gpsAccuracy > 0f) {
-                        coordLine += " (±${snapshot.gpsAccuracy.toInt()}m)"
-                    }
-                    lines.add(coordLine)
-                }
-
-                if (config.showCompass && snapshot.compassHeading.isNotBlank() && snapshot.compassHeading != "---") {
-                    lines.add("Compass: ${snapshot.compassHeading}")
-                }
-
-                if (config.showProjectInfo || config.showChainage) {
-                    val chainageStr = match.displayChainage
-                    val highwayLine = project.buildHighwayText(chainageStr)
-                    lines.add(highwayLine)
-                }
-            }
-        }
+        val lines = OverlayTextGenerator.generateLines(
+            config = config,
+            project = project,
+            location = location,
+            accuracy = snapshot.gpsAccuracy,
+            compassHeading = snapshot.compassHeading,
+            speedMps = null,
+            bearing = snapshot.bearing,
+            chainageStr = match.displayChainage,
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = CoordinateFormat.DECIMAL,
+            is24HourFormat = false,
+            timestamp = snapshot.timestamp
+        )
 
         val rightX = width - marginX
         var currentY = height - marginY

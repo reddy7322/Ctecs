@@ -25,6 +25,17 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -133,6 +144,12 @@ fun MainScreen(
         }
     }
 
+    val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
+    AnimatedGlassToast(
+        toastMessage = toastMessage,
+        onDismiss = { viewModel.clearToast() }
+    )
+
     // App Update Dialog
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
     val isDownloadingUpdate by viewModel.isDownloadingUpdate.collectAsStateWithLifecycle()
@@ -158,5 +175,58 @@ fun MainScreen(
             features = whatsNewFeatures,
             onDismiss = { viewModel.dismissWhatsNew() }
         )
+    }
+}
+
+@Composable
+fun AnimatedGlassToast(
+    toastMessage: ToastMessage?,
+    onDismiss: () -> Unit
+) {
+    if (toastMessage == null) return
+
+    LaunchedEffect(toastMessage.id) {
+        kotlinx.coroutines.delay(2500L)
+        onDismiss()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 48.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = true,
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { -40 }),
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically(targetOffsetY = { -40 })
+        ) {
+            androidx.compose.material3.Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0x901A1A1A),
+                border = androidx.compose.foundation.BorderStroke(0.8.dp, HighlightYellow.copy(alpha = 0.5f)),
+                shadowElevation = 8.dp,
+                modifier = Modifier.padding(horizontal = 24.dp)
+            ) {
+                androidx.compose.foundation.layout.Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(HighlightYellow)
+                    )
+                    Text(
+                        text = toastMessage.message,
+                        color = PrimaryText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
     }
 }

@@ -34,6 +34,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import com.example.ui.ToastType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.Camera
@@ -173,6 +176,7 @@ fun CameraScreen(
 
     var showSimDialog by remember { mutableStateOf(false) }
     var showActivityMenu by remember { mutableStateOf(false) }
+    var showManualActivityDialog by remember { mutableStateOf(false) }
     var showExposureSlider by remember { mutableStateOf(false) }
     var showZoomSlider by remember { mutableStateOf(false) }
 
@@ -730,157 +734,34 @@ fun CameraScreen(
                         )
                     }
 
-                    // Date & Time
-                    if (overlayConfig.showTimestamp) {
-                        val pattern = if (cameraSettings.is24HourFormat) "dd MMMM yyyy HH:mm" else overlayConfig.timestampFormat
-                        val dateText = try {
-                            SimpleDateFormat(pattern, Locale.US).format(Date(currentTimeMillis))
-                        } catch (e: Exception) {
-                            SimpleDateFormat("dd MMMM yyyy h:mm a", Locale.US).format(Date(currentTimeMillis))
-                        }
+                    val liveLines = com.example.overlay.OverlayTextGenerator.generateLines(
+                        config = overlayConfig,
+                        project = projectProfile,
+                        location = locationState.point,
+                        accuracy = locationState.accuracy,
+                        compassHeading = compassState.displayHeading,
+                        speedMps = locationState.speed,
+                        bearing = locationState.bearing,
+                        chainageStr = matchResult.displayChainage,
+                        cameraMode = cameraSettings.cameraMode,
+                        coordinateFormat = cameraSettings.coordinateFormat,
+                        is24HourFormat = cameraSettings.is24HourFormat,
+                        timestamp = currentTimeMillis
+                    )
+
+                    liveLines.forEachIndexed { index, line ->
+                        val isLast = index == liveLines.lastIndex
                         Text(
-                            text = dateText,
+                            text = line,
                             color = PrimaryText,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontSize = if (isLast) 19.sp else 17.sp,
+                            fontWeight = if (isLast) FontWeight.Black else FontWeight.Bold,
                             textAlign = TextAlign.End,
                             style = androidx.compose.ui.text.TextStyle(
                                 shadow = androidx.compose.ui.graphics.Shadow(
                                     color = Color.Black,
                                     offset = Offset(2f, 2f),
                                     blurRadius = 4f
-                                )
-                            )
-                        )
-                    }
-
-                    // GPS Coordinates
-                    if (overlayConfig.showCoordinates && locationState.point != null) {
-                        val p = locationState.point!!
-                        val coordText = when (cameraSettings.coordinateFormat) {
-                            com.example.model.CoordinateFormat.DMS -> {
-                                val latDms = toDms(p.latitude, true)
-                                val lngDms = toDms(p.longitude, false)
-                                "$latDms $lngDms"
-                            }
-                            else -> {
-                                String.format(Locale.US, "%.4f°N %.4f°E", p.latitude, p.longitude)
-                            }
-                        }
-                        Text(
-                            text = coordText,
-                            color = PrimaryText,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.End,
-                            style = androidx.compose.ui.text.TextStyle(
-                                shadow = androidx.compose.ui.graphics.Shadow(
-                                    color = Color.Black,
-                                    offset = Offset(2f, 2f),
-                                    blurRadius = 4f
-                                )
-                            )
-                        )
-                    }
-
-                    // Telemetry: Altitude, Accuracy & Compass Heading
-                    val telemetryItems = mutableListOf<String>()
-                    if (overlayConfig.showCompass) {
-                        telemetryItems.add(compassState.displayHeading)
-                    }
-                    if (overlayConfig.showAltitude && locationState.point != null && locationState.altitude != 0.0) {
-                        telemetryItems.add(String.format(Locale.US, "%.0f m", locationState.altitude))
-                    }
-                    if (overlayConfig.showAccuracy && locationState.point != null && locationState.accuracy > 0f) {
-                        telemetryItems.add(String.format(Locale.US, "±%.0fm", locationState.accuracy))
-                    }
-                    if (telemetryItems.isNotEmpty()) {
-                        Text(
-                            text = telemetryItems.joinToString("  |  "),
-                            color = HighlightYellow,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.End,
-                            style = androidx.compose.ui.text.TextStyle(
-                                shadow = androidx.compose.ui.graphics.Shadow(
-                                    color = Color.Black,
-                                    offset = Offset(2f, 2f),
-                                    blurRadius = 4f
-                                )
-                            )
-                        )
-                    }
-
-                    // Speed & Direction Telemetry for Highway / Location mode
-                    if (cameraSettings.cameraMode == CameraMode.HIGHWAY || cameraSettings.cameraMode == CameraMode.LOCATION) {
-                        val speedKmh = if (locationState.speed != null && locationState.speed!! >= 0f) locationState.speed!! * 3.6f else null
-                        val speedMph = if (locationState.speed != null && locationState.speed!! >= 0f) locationState.speed!! * 2.23694f else null
-                        val speedStr = when {
-                            speedKmh == null -> "Speed: Unavailable"
-                            cameraSettings.speedUnit == SpeedUnit.KMH -> String.format(Locale.US, "Speed: %.1f km/h", speedKmh)
-                            else -> String.format(Locale.US, "Speed: %.1f mph", speedMph)
-                        }
-
-                        val directionStr = if (locationState.bearing != null) {
-                            val b = locationState.bearing!!
-                            val directions = arrayOf("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
-                            val index = (((b + 11.25) % 360) / 22.5).toInt()
-                            String.format(Locale.US, "Dir: %.0f° %s", b, directions[index % 16])
-                        } else {
-                            "Dir: Unavailable"
-                        }
-
-                        Text(
-                            text = "$speedStr  |  $directionStr",
-                            color = PrimaryText,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.End,
-                            style = androidx.compose.ui.text.TextStyle(
-                                shadow = androidx.compose.ui.graphics.Shadow(
-                                    color = Color.Black,
-                                    offset = Offset(2f, 2f),
-                                    blurRadius = 4f
-                                )
-                            )
-                        )
-                    }
-
-                    // Highway || Package || Chainage || Road Side || Lane || Activity
-                    if (overlayConfig.showProjectInfo || overlayConfig.showChainage) {
-                        val sep = projectProfile.separator
-                        val lineBuilder = StringBuilder()
-
-                        if (projectProfile.highwayId.isNotBlank()) lineBuilder.append("${projectProfile.highwayId} $sep ")
-                        if (projectProfile.packageSection.isNotBlank()) lineBuilder.append("${projectProfile.packageSection} $sep ")
-
-                        if (overlayConfig.showChainage) {
-                            lineBuilder.append("${matchResult.displayChainage} ")
-                        }
-
-                        if (projectProfile.roadSide != RoadSide.BOTH) {
-                            lineBuilder.append("${projectProfile.roadSide.name} ")
-                        }
-
-                        if (projectProfile.lane.isNotBlank()) {
-                            lineBuilder.append("${projectProfile.lane} ")
-                        }
-
-                        if (projectProfile.activity.isNotBlank()) {
-                            lineBuilder.append(projectProfile.activity)
-                        }
-
-                        Text(
-                            text = lineBuilder.toString(),
-                            color = PrimaryText,
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.Black,
-                            textAlign = TextAlign.End,
-                            style = androidx.compose.ui.text.TextStyle(
-                                shadow = androidx.compose.ui.graphics.Shadow(
-                                    color = Color.Black,
-                                    offset = Offset(3f, 3f),
-                                    blurRadius = 5f
                                 )
                             )
                         )
@@ -1017,6 +898,14 @@ fun CameraScreen(
                                     }
                                 )
                             }
+                            HorizontalDivider(color = BorderColor)
+                            DropdownMenuItem(
+                                text = { Text("Custom / Manual...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                                onClick = {
+                                    showActivityMenu = false
+                                    showManualActivityDialog = true
+                                }
+                            )
                         }
                     }
                 }
@@ -1278,6 +1167,59 @@ fun CameraScreen(
                         TextButton(onClick = { viewModel.closeManualChainageDialog() }) {
                             Text("Cancel", color = SecondaryText)
                         }
+                    }
+                }
+            )
+        }
+
+        // Manual Activity / Layer Dialog
+        if (showManualActivityDialog) {
+            var activityInput by remember { mutableStateOf(projectProfile.activity) }
+            AlertDialog(
+                onDismissRequest = { showManualActivityDialog = false },
+                containerColor = SurfaceDark,
+                title = { Text("Custom Activity / Pavement Layer", color = PrimaryText, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Type custom activity or pavement layer (e.g. Main CW to MCW):",
+                            fontSize = 13.sp,
+                            color = SecondaryText
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = activityInput,
+                            onValueChange = { activityInput = it },
+                            label = { Text("Activity / Layer Name") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = HighlightYellow,
+                                unfocusedBorderColor = BorderColor,
+                                focusedTextColor = PrimaryText,
+                                unfocusedTextColor = PrimaryText
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("manual_activity_input")
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (activityInput.isNotBlank()) {
+                                viewModel.updateActivity(activityInput.trim())
+                                viewModel.showToast("Activity updated: ${activityInput.trim()}", ToastType.SUCCESS)
+                            }
+                            showManualActivityDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = HighlightYellow, contentColor = PrimaryBackground),
+                        modifier = Modifier.testTag("save_manual_activity_button")
+                    ) {
+                        Text("Apply", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showManualActivityDialog = false }) {
+                        Text("Cancel", color = PrimaryText)
                     }
                 }
             )

@@ -50,11 +50,25 @@ data class ProjectProfile(
     }
 
     companion object {
-        val LANE_PRESETS = listOf("I/L", "M/L", "O/L", "Shoulder", "Service Rd", "Main CW")
+        val LANE_PRESETS = listOf("None", "I/L", "M/L", "O/L", "Shoulder", "Service Rd", "Main CW")
         val ACTIVITY_PRESETS = listOf(
-            "DBM", "BC", "GSB", "WMM", "Milling", "Embankment",
-            "Subgrade", "DLC", "PQC", "Drainage", "Kerb",
-            "Road Marking", "Safety Barrier", "Site Inspection", "General Progress"
+            "None",
+            "DBM",
+            "BC",
+            "GSB",
+            "WMM",
+            "Milling",
+            "Embankment",
+            "Subgrade",
+            "DLC",
+            "PQC",
+            "Drainage",
+            "Kerb",
+            "Road Marking",
+            "Safety Barrier",
+            "Site Inspection",
+            "General Progress",
+            "Main CW to MCW"
         )
     }
 }

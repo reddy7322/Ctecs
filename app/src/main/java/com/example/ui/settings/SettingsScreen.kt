@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.BrandingWatermark
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CameraAlt
@@ -83,6 +84,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -218,6 +220,88 @@ fun SettingsScreen(
     }
 
     var showResetDialog by remember { mutableStateOf(false) }
+
+    val showAll = cameraMode == CameraMode.CUSTOM
+    val isHighway = showAll || cameraMode == CameraMode.HIGHWAY
+    val isNormal = showAll || cameraMode == CameraMode.NORMAL
+    val isTimestamp = showAll || cameraMode == CameraMode.TIMESTAMP
+    val isLocation = showAll || cameraMode == CameraMode.LOCATION
+
+    // Automatic Settings Saving
+    LaunchedEffect(
+        highwayId, packageSection, roadSide, lane, activity, customDescription, inspectorName, separator,
+        template, coordPrecision, timestampFormat, showTimestamp, showCoordinates, showChainage, showMapInset,
+        showProjectInfo, showCompass, showAltitude, showAccuracy, burnInTimestamp, hasTextShadow, fontSizeSp, saveOriginal,
+        showLogo, logoPreset, logoPosition, logoSizeDp, logoOpacity, logoShape, logoCornerRadiusDp, logoMarginXDp, logoMarginYDp,
+        captureTimer, gridMode, showHorizonLevel, previewRatio, captureSound, volumeButtonShutter, frontCameraMirror,
+        jpegQuality, saveOriginalAndStamped, preserveExif, videoQuality, videoFps, recordAudio,
+        gpsIntervalSec, gpsAccuracyThreshold, routeRadiusMeters, coordFormat, is24HourFormat, cameraMode, speedUnit
+    ) {
+        viewModel.saveProjectProfileSilent(
+            currentProject.copy(
+                highwayId = highwayId,
+                packageSection = packageSection,
+                roadSide = roadSide,
+                lane = lane,
+                activity = activity,
+                customDescription = customDescription,
+                inspectorName = inspectorName,
+                separator = separator
+            )
+        )
+        viewModel.saveOverlayConfigSilent(
+            currentOverlay.copy(
+                template = template,
+                timestampFormat = timestampFormat,
+                coordinatePrecision = coordPrecision,
+                showTimestamp = showTimestamp,
+                showCoordinates = showCoordinates,
+                showChainage = showChainage,
+                showMapInset = showMapInset,
+                showProjectInfo = showProjectInfo,
+                showCompass = showCompass,
+                showAltitude = showAltitude,
+                showAccuracy = showAccuracy,
+                burnInTimestamp = burnInTimestamp,
+                hasTextShadow = hasTextShadow,
+                fontSizeSp = fontSizeSp,
+                saveOriginalImage = saveOriginal,
+                showLogo = showLogo,
+                logoPreset = logoPreset,
+                logoPosition = logoPosition,
+                logoSizeDp = logoSizeDp,
+                logoOpacity = logoOpacity,
+                logoShape = logoShape,
+                logoCornerRadiusDp = logoCornerRadiusDp,
+                logoMarginXDp = logoMarginXDp,
+                logoMarginYDp = logoMarginYDp
+            )
+        )
+        viewModel.saveCameraSettingsSilent(
+            currentCameraSettings.copy(
+                captureTimer = captureTimer,
+                gridMode = gridMode,
+                showHorizonLevel = showHorizonLevel,
+                previewRatio = previewRatio,
+                captureSound = captureSound,
+                volumeButtonShutter = volumeButtonShutter,
+                frontCameraMirror = frontCameraMirror,
+                jpegQuality = jpegQuality,
+                saveOriginalAndStamped = saveOriginalAndStamped,
+                preserveExif = preserveExif,
+                videoQuality = videoQuality,
+                videoFps = videoFps,
+                recordAudio = recordAudio,
+                gpsUpdateIntervalSec = gpsIntervalSec,
+                gpsAccuracyThresholdMeters = gpsAccuracyThreshold,
+                routeMatchingRadiusMeters = routeRadiusMeters.toDouble(),
+                coordinateFormat = coordFormat,
+                is24HourFormat = is24HourFormat,
+                cameraMode = cameraMode,
+                speedUnit = speedUnit
+            )
+        )
+    }
 
     // Filter helper
     fun matchesSearch(vararg terms: String): Boolean {
@@ -784,18 +868,81 @@ fun SettingsScreen(
                         options = RoadSide.entries.map { it.name },
                         onSelect = { name -> roadSide = RoadSide.valueOf(name) }
                     )
-                    SettingDropdownRow(
-                        label = "Lane Specification",
-                        current = lane,
-                        options = ProjectProfile.LANE_PRESETS,
-                        onSelect = { lane = it }
-                    )
-                    SettingDropdownRow(
-                        label = "Pavement Layer / Activity",
-                        current = activity,
-                        options = ProjectProfile.ACTIVITY_PRESETS,
-                        onSelect = { activity = it }
-                    )
+                    // Lane Specification with manual input + presets dropdown
+                    var showLanePresets by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = lane,
+                            onValueChange = { lane = it },
+                            label = { Text("Lane Specification (Type or Select)") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = HighlightYellow,
+                                unfocusedBorderColor = BorderColor,
+                                focusedTextColor = PrimaryText,
+                                unfocusedTextColor = PrimaryText
+                            ),
+                            trailingIcon = {
+                                IconButton(onClick = { showLanePresets = true }) {
+                                    Icon(Icons.Default.ExpandMore, contentDescription = "Select Lane Preset", tint = HighlightYellow)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        DropdownMenu(
+                            expanded = showLanePresets,
+                            onDismissRequest = { showLanePresets = false },
+                            modifier = Modifier.background(SurfaceDark)
+                        ) {
+                            ProjectProfile.LANE_PRESETS.forEach { preset ->
+                                DropdownMenuItem(
+                                    text = { Text(preset, color = PrimaryText) },
+                                    onClick = {
+                                        lane = preset
+                                        showLanePresets = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Pavement Layer / Activity with manual input + presets dropdown
+                    var showActivityPresets by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = activity,
+                            onValueChange = { activity = it },
+                            label = { Text("Pavement Layer / Activity (Type or Select)") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = HighlightYellow,
+                                unfocusedBorderColor = BorderColor,
+                                focusedTextColor = PrimaryText,
+                                unfocusedTextColor = PrimaryText
+                            ),
+                            trailingIcon = {
+                                IconButton(onClick = { showActivityPresets = true }) {
+                                    Icon(Icons.Default.ExpandMore, contentDescription = "Select Activity Preset", tint = HighlightYellow)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        DropdownMenu(
+                            expanded = showActivityPresets,
+                            onDismissRequest = { showActivityPresets = false },
+                            modifier = Modifier.background(SurfaceDark)
+                        ) {
+                            ProjectProfile.ACTIVITY_PRESETS.forEach { preset ->
+                                DropdownMenuItem(
+                                    text = { Text(preset, color = PrimaryText) },
+                                    onClick = {
+                                        activity = preset
+                                        showActivityPresets = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                     OutlinedTextField(
                         value = inspectorName,
                         onValueChange = { inspectorName = it },
