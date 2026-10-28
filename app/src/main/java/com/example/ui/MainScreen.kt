@@ -5,6 +5,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.animation.animateColorAsState
@@ -152,20 +154,21 @@ fun MainScreen(
                         tabs.forEach { (tab, icon, contentDesc) ->
                             val isSelected = currentTab == tab
                             val iconTint by animateColorAsState(
-                                targetValue = if (isSelected) HighlightYellow else MaterialTheme.colorScheme.onSurfaceVariant,
+                                targetValue = if (isSelected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant,
                                 animationSpec = tween(200),
                                 label = "icon_tint"
                             )
                             val bgTint by animateColorAsState(
-                                targetValue = if (isSelected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f) else Color.Transparent,
+                                targetValue = if (isSelected) HighlightYellow else Color.Transparent,
                                 animationSpec = tween(200),
                                 label = "icon_bg"
                             )
 
                             Box(
                                 modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
+                                    .height(44.dp)
+                                    .width(if (isSelected) 64.dp else 44.dp)
+                                    .clip(RoundedCornerShape(22.dp))
                                     .background(bgTint)
                                     .clickable {
                                         viewModel.setTab(tab)
@@ -177,7 +180,7 @@ fun MainScreen(
                                     imageVector = icon,
                                     contentDescription = contentDesc,
                                     tint = iconTint,
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
