@@ -81,7 +81,9 @@ object GeoUtils {
         return SegmentProjection(
             projectedPoint = projPoint,
             t = t,
-            perpendicularDistance = perpDist
+            perpendicularDistance = perpDist,
+            p1 = a,
+            p2 = b
         )
     }
 
@@ -103,5 +105,7 @@ object GeoUtils {
 data class SegmentProjection(
     val projectedPoint: GeoPoint,
     val t: Double,
-    val perpendicularDistance: Double
+    val perpendicularDistance: Double,
+    val p1: GeoPoint? = null,
+    val p2: GeoPoint? = null
 )

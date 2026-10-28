@@ -168,6 +168,51 @@ object ChainageMatcher {
             }
         }
 
+        // 4. Carriageway LHS / RHS detection based on road alignment geometry & travel direction
+        var detectedSide = "Unknown"
+        if (confidence == MatchConfidence.HIGH || confidence == MatchConfidence.MEDIUM) {
+            val lowerAlign = matchedAlignmentName.lowercase(Locale.ROOT)
+            val lowerRouteName = routeData.name.lowercase(Locale.ROOT)
+
+            if (lowerAlign.contains("lhs") || lowerAlign.contains("left") || lowerRouteName.contains("lhs")) {
+                detectedSide = "LHS"
+            } else if (lowerAlign.contains("rhs") || lowerAlign.contains("right") || lowerRouteName.contains("rhs")) {
+                detectedSide = "RHS"
+            } else if (bestProjection != null && bestProjection.p1 != null && bestProjection.p2 != null && effectiveOffset >= 1.5) {
+                val p1 = bestProjection.p1!!
+                val p2 = bestProjection.p2!!
+                val midLat = Math.toRadians((p1.latitude + p2.latitude + gpsPoint.latitude) / 3.0)
+                val cosMidLat = kotlin.math.cos(midLat)
+
+                val segDx = Math.toRadians(p2.longitude - p1.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
+                val segDy = Math.toRadians(p2.latitude - p1.latitude) * GeoUtils.EARTH_RADIUS_METRES
+
+                val px = Math.toRadians(gpsPoint.longitude - bestProjection.projectedPoint.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
+                val py = Math.toRadians(gpsPoint.latitude - bestProjection.projectedPoint.latitude) * GeoUtils.EARTH_RADIUS_METRES
+
+                // 2D cross product: segDx * py - segDy * px
+                // In East-North coordinates, looking along segment (p1 -> p2),
+                // cross < 0 corresponds to being on the right side of the centerline.
+                val cross = segDx * py - segDy * px
+                val isRightOfAlignment = cross < 0.0
+
+                var isReverseTravel = false
+                if (bearing != null && bearing >= 0f) {
+                    val segBearing = GeoUtils.bearingDegrees(p1, p2)
+                    val diff = (abs(bearing - segBearing) % 360)
+                    val acuteDiff = if (diff > 180) 360 - diff else diff
+                    if (acuteDiff > 90) {
+                        isReverseTravel = true
+                    }
+                }
+
+                detectedSide = when {
+                    isReverseTravel -> if (isRightOfAlignment) "LHS" else "RHS"
+                    else -> if (isRightOfAlignment) "RHS" else "LHS"
+                }
+            }
+        }
+
         return ChainageMatchResult(
             chainage = Chainage(estimatedChainageMetres),
             projectedPoint = finalProjectionPoint,
@@ -176,7 +221,8 @@ object ChainageMatcher {
             confidence = confidence,
             statusMessage = statusMessage,
             isManual = false,
-            matchedAlignmentName = matchedAlignmentName
+            matchedAlignmentName = matchedAlignmentName,
+            detectedSide = detectedSide
         )
     }
 }

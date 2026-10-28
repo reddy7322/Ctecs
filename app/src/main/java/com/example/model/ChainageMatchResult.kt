@@ -19,24 +19,30 @@ data class ChainageMatchResult(
     val statusMessage: String = "No route loaded",
     val isManual: Boolean = false,
     val matchedAlignmentName: String = "",
+    val detectedSide: String = "Unknown", // "LHS", "RHS", or "Unknown"
     val timestamp: Long = System.currentTimeMillis()
 ) {
     val displayChainage: String
         get() = chainage?.format() ?: if (isManual) "Manual" else "---"
 
+    val displayKmChainage: String
+        get() = if (chainage != null) "KM ${chainage.format()}" else if (isManual) "Manual" else "---"
+
     companion object {
         fun noRoute(accuracy: Float = 0f) = ChainageMatchResult(
             confidence = MatchConfidence.NO_MATCH,
             gpsAccuracy = accuracy,
-            statusMessage = "No route loaded"
+            statusMessage = "No route loaded",
+            detectedSide = "Unknown"
         )
 
-        fun manual(chainage: Chainage, point: GeoPoint? = null) = ChainageMatchResult(
+        fun manual(chainage: Chainage, point: GeoPoint? = null, side: String = "Unknown") = ChainageMatchResult(
             chainage = chainage,
             projectedPoint = point,
             confidence = MatchConfidence.HIGH,
             isManual = true,
-            statusMessage = "Manual Entry"
+            statusMessage = "Manual Entry",
+            detectedSide = side
         )
     }
 }

@@ -44,6 +44,12 @@ class PreferencesManager(private val context: Context) {
         val KEY_BURN_IN_TIMESTAMP = booleanPreferencesKey("burn_in_timestamp")
         val KEY_AUTO_ROTATE_UI = booleanPreferencesKey("auto_rotate_ui")
 
+        // Speed & Direction visibility keys (default false)
+        val KEY_SHOW_SPEED_PREVIEW = booleanPreferencesKey("show_speed_preview")
+        val KEY_INCLUDE_SPEED_CAPTURE = booleanPreferencesKey("include_speed_capture")
+        val KEY_SHOW_DIRECTION_PREVIEW = booleanPreferencesKey("show_direction_preview")
+        val KEY_INCLUDE_DIRECTION_CAPTURE = booleanPreferencesKey("include_direction_capture")
+
         // Logo manual settings keys
         val KEY_SHOW_LOGO = booleanPreferencesKey("show_logo")
         val KEY_LOGO_PRESET = stringPreferencesKey("logo_preset")
@@ -142,6 +148,11 @@ class PreferencesManager(private val context: Context) {
             showAccuracy = prefs[KEY_SHOW_ACCURACY] ?: true,
             burnInTimestamp = prefs[KEY_BURN_IN_TIMESTAMP] ?: true,
 
+            showSpeedOnPreview = prefs[KEY_SHOW_SPEED_PREVIEW] ?: false,
+            includeSpeedInCapture = prefs[KEY_INCLUDE_SPEED_CAPTURE] ?: false,
+            showDirectionOnPreview = prefs[KEY_SHOW_DIRECTION_PREVIEW] ?: false,
+            includeDirectionInCapture = prefs[KEY_INCLUDE_DIRECTION_CAPTURE] ?: false,
+
             // Logo manual settings
             showLogo = prefs[KEY_SHOW_LOGO] ?: true,
             logoPreset = prefs[KEY_LOGO_PRESET] ?: "cubetech",
@@ -192,6 +203,11 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_SHOW_ALTITUDE] = config.showAltitude
             prefs[KEY_SHOW_ACCURACY] = config.showAccuracy
             prefs[KEY_BURN_IN_TIMESTAMP] = config.burnInTimestamp
+
+            prefs[KEY_SHOW_SPEED_PREVIEW] = config.showSpeedOnPreview
+            prefs[KEY_INCLUDE_SPEED_CAPTURE] = config.includeSpeedInCapture
+            prefs[KEY_SHOW_DIRECTION_PREVIEW] = config.showDirectionOnPreview
+            prefs[KEY_INCLUDE_DIRECTION_CAPTURE] = config.includeDirectionInCapture
 
             // Logo settings
             prefs[KEY_SHOW_LOGO] = config.showLogo

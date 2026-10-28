@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.camera.CameraScreen
+import com.example.ui.home.HomeScreen
 import com.example.ui.photos.PhotosScreen
 import com.example.ui.routes.RoutesScreen
 import com.example.ui.settings.SettingsScreen
@@ -103,10 +104,10 @@ fun MainScreen(
         }
     }
 
-    // BackHandler to return to Camera if on another tab
-    if (currentTab != AppTab.CAMERA) {
+    // BackHandler to return to Home if on another tab
+    if (currentTab != AppTab.HOME) {
         BackHandler {
-            viewModel.setTab(AppTab.CAMERA)
+            viewModel.setTab(AppTab.HOME)
         }
     }
 
@@ -122,23 +123,31 @@ fun MainScreen(
                 .padding(innerPadding)
         ) {
             when (currentTab) {
+                AppTab.HOME -> HomeScreen(
+                    viewModel = viewModel,
+                    onNavigateToCamera = { viewModel.setTab(AppTab.CAMERA) },
+                    onNavigateToPhotos = { viewModel.setTab(AppTab.PHOTOS) },
+                    onNavigateToRoutes = { viewModel.setTab(AppTab.ROUTES) },
+                    onNavigateToSettings = { viewModel.setTab(AppTab.SETTINGS) }
+                )
                 AppTab.CAMERA -> CameraScreen(
                     viewModel = viewModel,
+                    onNavigateToHome = { viewModel.setTab(AppTab.HOME) },
                     onNavigateToPhotos = { viewModel.setTab(AppTab.PHOTOS) },
                     onNavigateToRoutes = { viewModel.setTab(AppTab.ROUTES) },
                     onNavigateToSettings = { viewModel.setTab(AppTab.SETTINGS) }
                 )
                 AppTab.PHOTOS -> PhotosScreen(
                     viewModel = viewModel,
-                    onNavigateBack = { viewModel.setTab(AppTab.CAMERA) }
+                    onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )
                 AppTab.ROUTES -> RoutesScreen(
                     viewModel = viewModel,
-                    onNavigateBack = { viewModel.setTab(AppTab.CAMERA) }
+                    onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )
                 AppTab.SETTINGS -> SettingsScreen(
                     viewModel = viewModel,
-                    onNavigateBack = { viewModel.setTab(AppTab.CAMERA) }
+                    onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )
             }
         }

@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class AppTab(val label: String) {
+    HOME("Home"),
     CAMERA("Camera"),
     PHOTOS("Photos"),
     ROUTES("Routes"),
@@ -73,7 +74,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val deviceOrientation: StateFlow<com.example.sensor.DeviceOrientation> = compassTracker.deviceOrientation
     val rotationDegrees: StateFlow<Float> = compassTracker.rotationDegrees
 
-    private val _currentTab = MutableStateFlow(AppTab.CAMERA)
+    private val _currentTab = MutableStateFlow(AppTab.HOME)
     val currentTab: StateFlow<AppTab> = _currentTab.asStateFlow()
 
     // App Update & What's New State

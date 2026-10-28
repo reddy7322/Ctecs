@@ -136,6 +136,7 @@ import java.util.Locale
 @Composable
 fun CameraScreen(
     viewModel: MainViewModel,
+    onNavigateToHome: () -> Unit = {},
     onNavigateToPhotos: () -> Unit,
     onNavigateToRoutes: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},

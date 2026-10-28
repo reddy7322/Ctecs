@@ -174,6 +174,13 @@ fun SettingsScreen(
     var showAltitude by remember(currentOverlay) { mutableStateOf(currentOverlay.showAltitude) }
     var showAccuracy by remember(currentOverlay) { mutableStateOf(currentOverlay.showAccuracy) }
     var burnInTimestamp by remember(currentOverlay) { mutableStateOf(currentOverlay.burnInTimestamp) }
+
+    // Speed & Direction Visibility states
+    var showSpeedOnPreview by remember(currentOverlay) { mutableStateOf(currentOverlay.showSpeedOnPreview) }
+    var includeSpeedInCapture by remember(currentOverlay) { mutableStateOf(currentOverlay.includeSpeedInCapture) }
+    var showDirectionOnPreview by remember(currentOverlay) { mutableStateOf(currentOverlay.showDirectionOnPreview) }
+    var includeDirectionInCapture by remember(currentOverlay) { mutableStateOf(currentOverlay.includeDirectionInCapture) }
+
     var hasTextShadow by remember(currentOverlay) { mutableStateOf(currentOverlay.hasTextShadow) }
     var fontSizeSp by remember(currentOverlay) { mutableFloatStateOf(currentOverlay.fontSizeSp) }
     var saveOriginal by remember(currentOverlay) { mutableStateOf(currentOverlay.saveOriginalImage) }
@@ -236,7 +243,9 @@ fun SettingsScreen(
     LaunchedEffect(
         highwayId, packageSection, roadSide, lane, activity, customDescription, inspectorName, separator,
         template, coordPrecision, timestampFormat, showTimestamp, showCoordinates, showChainage, showMapInset,
-        showProjectInfo, showCompass, showAltitude, showAccuracy, burnInTimestamp, hasTextShadow, fontSizeSp, saveOriginal,
+        showProjectInfo, showCompass, showAltitude, showAccuracy, burnInTimestamp,
+        showSpeedOnPreview, includeSpeedInCapture, showDirectionOnPreview, includeDirectionInCapture,
+        hasTextShadow, fontSizeSp, saveOriginal,
         textColorHex, fontFamily, timePosition, showIndexNumber, resolutionOption,
         showLogo, logoPreset, logoPosition, logoSizeDp, logoOpacity, logoShape, logoCornerRadiusDp, logoMarginXDp, logoMarginYDp,
         captureTimer, gridMode, showHorizonLevel, previewRatio, captureSound, volumeButtonShutter, frontCameraMirror,
@@ -269,6 +278,10 @@ fun SettingsScreen(
                 showAltitude = showAltitude,
                 showAccuracy = showAccuracy,
                 burnInTimestamp = burnInTimestamp,
+                showSpeedOnPreview = showSpeedOnPreview,
+                includeSpeedInCapture = includeSpeedInCapture,
+                showDirectionOnPreview = showDirectionOnPreview,
+                includeDirectionInCapture = includeDirectionInCapture,
                 hasTextShadow = hasTextShadow,
                 fontSizeSp = fontSizeSp,
                 saveOriginalImage = saveOriginal,
@@ -859,6 +872,32 @@ fun SettingsScreen(
                         checked = showAccuracy,
                         onCheckedChange = { showAccuracy = it }
                     )
+                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f), thickness = 0.8.dp)
+                    SettingSwitchRow(
+                        label = "Show Speed on Camera Preview",
+                        subtitle = "Display live speed telemetry on camera preview HUD (OFF by default)",
+                        checked = showSpeedOnPreview,
+                        onCheckedChange = { showSpeedOnPreview = it }
+                    )
+                    SettingSwitchRow(
+                        label = "Include Speed in Captured Media",
+                        subtitle = "Burn speed watermark into captured photos and videos (OFF by default)",
+                        checked = includeSpeedInCapture,
+                        onCheckedChange = { includeSpeedInCapture = it }
+                    )
+                    SettingSwitchRow(
+                        label = "Show Direction on Camera Preview",
+                        subtitle = "Display travel bearing/direction on camera preview HUD (OFF by default)",
+                        checked = showDirectionOnPreview,
+                        onCheckedChange = { showDirectionOnPreview = it }
+                    )
+                    SettingSwitchRow(
+                        label = "Include Direction in Captured Media",
+                        subtitle = "Burn travel direction watermark into captured photos and videos (OFF by default)",
+                        checked = includeDirectionInCapture,
+                        onCheckedChange = { includeDirectionInCapture = it }
+                    )
+                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f), thickness = 0.8.dp)
                     Column {
                         Row(
                             modifier = Modifier.fillMaxWidth(),

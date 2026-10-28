@@ -331,5 +331,103 @@ class HighwayTimestampCameraTest {
         assertEquals(58, config.logoSizeDp)
         assertEquals(0.90f, config.logoOpacity, 0.001f)
     }
+
+    // 13. Testing Speed and Direction Hidden By Default (Preview & Capture)
+    @Test
+    fun testSpeedAndDirectionHiddenByDefault() {
+        val defaultConfig = com.example.model.OverlayConfig()
+        org.junit.Assert.assertFalse(defaultConfig.showSpeedOnPreview)
+        org.junit.Assert.assertFalse(defaultConfig.includeSpeedInCapture)
+        org.junit.Assert.assertFalse(defaultConfig.showDirectionOnPreview)
+        org.junit.Assert.assertFalse(defaultConfig.includeDirectionInCapture)
+
+        val project = ProjectProfile(highwayId = "MH", packageSection = "MM", activity = "DBM")
+        val loc = GeoPoint(29.9118, 78.0125)
+
+        // Preview HUD: isForCapture = false
+        val previewLines = com.example.overlay.OverlayTextGenerator.generateLines(
+            config = defaultConfig,
+            project = project,
+            location = loc,
+            accuracy = 3.0f,
+            compassHeading = "180° S",
+            speedMps = 15.0f, // 54 km/h
+            bearing = 180.0f,
+            chainageStr = "198+450",
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = com.example.model.CoordinateFormat.DECIMAL,
+            is24HourFormat = false,
+            isForCapture = false
+        )
+        // Ensure neither Speed nor Dir appears in preview
+        org.junit.Assert.assertTrue(previewLines.none { it.contains("Speed:", ignoreCase = true) })
+        org.junit.Assert.assertTrue(previewLines.none { it.contains("Dir:", ignoreCase = true) })
+
+        // Captured Photo/Video: isForCapture = true
+        val captureLines = com.example.overlay.OverlayTextGenerator.generateLines(
+            config = defaultConfig,
+            project = project,
+            location = loc,
+            accuracy = 3.0f,
+            compassHeading = "180° S",
+            speedMps = 15.0f,
+            bearing = 180.0f,
+            chainageStr = "198+450",
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = com.example.model.CoordinateFormat.DECIMAL,
+            is24HourFormat = false,
+            isForCapture = true
+        )
+        // Ensure neither Speed nor Dir appears in capture
+        org.junit.Assert.assertTrue(captureLines.none { it.contains("Speed:", ignoreCase = true) })
+        org.junit.Assert.assertTrue(captureLines.none { it.contains("Dir:", ignoreCase = true) })
+    }
+
+    // 14. Testing Speed and Direction Shown When Enabled
+    @Test
+    fun testSpeedAndDirectionShownWhenEnabled() {
+        val enabledConfig = com.example.model.OverlayConfig(
+            showSpeedOnPreview = true,
+            showDirectionOnPreview = true,
+            includeSpeedInCapture = true,
+            includeDirectionInCapture = true
+        )
+        val project = ProjectProfile(highwayId = "MH", packageSection = "MM", activity = "DBM")
+        val loc = GeoPoint(29.9118, 78.0125)
+
+        val previewLines = com.example.overlay.OverlayTextGenerator.generateLines(
+            config = enabledConfig,
+            project = project,
+            location = loc,
+            accuracy = 3.0f,
+            compassHeading = "180° S",
+            speedMps = 15.0f, // 54.0 km/h
+            bearing = 180.0f,
+            chainageStr = "198+450",
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = com.example.model.CoordinateFormat.DECIMAL,
+            is24HourFormat = false,
+            isForCapture = false
+        )
+        org.junit.Assert.assertTrue(previewLines.any { it.contains("Speed: 54.0 km/h") })
+        org.junit.Assert.assertTrue(previewLines.any { it.contains("Dir: 180° S") })
+    }
+
+    // 15. Testing KM Chainage and Carriageway Result
+    @Test
+    fun testKmChainageAndCarriagewayResult() {
+        val matchResult = com.example.model.ChainageMatchResult(
+            chainage = Chainage(198450L),
+            detectedSide = "RHS",
+            confidence = MatchConfidence.HIGH
+        )
+        assertEquals("KM 198+450", matchResult.displayKmChainage)
+        assertEquals("198+450", matchResult.displayChainage)
+        assertEquals("RHS", matchResult.detectedSide)
+
+        val noRouteResult = com.example.model.ChainageMatchResult.noRoute()
+        assertEquals("---", noRouteResult.displayKmChainage)
+        assertEquals("Unknown", noRouteResult.detectedSide)
+    }
 }
 

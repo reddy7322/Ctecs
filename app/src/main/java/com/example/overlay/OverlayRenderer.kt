@@ -147,13 +147,14 @@ object OverlayRenderer {
             location = location,
             accuracy = snapshot.gpsAccuracy,
             compassHeading = snapshot.compassHeading,
-            speedMps = null,
+            speedMps = snapshot.speedMps,
             bearing = snapshot.bearing,
             chainageStr = match.displayChainage,
             cameraMode = com.example.model.CameraMode.HIGHWAY,
             coordinateFormat = CoordinateFormat.DECIMAL,
             is24HourFormat = false,
-            timestamp = snapshot.timestamp
+            timestamp = snapshot.timestamp,
+            isForCapture = true
         )
 
         val rightX = width - marginX

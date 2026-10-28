@@ -25,7 +25,8 @@ object OverlayTextGenerator {
         cameraMode: CameraMode,
         coordinateFormat: CoordinateFormat,
         is24HourFormat: Boolean,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = System.currentTimeMillis(),
+        isForCapture: Boolean = false
     ): List<String> {
         val lines = mutableListOf<String>()
 
@@ -88,28 +89,28 @@ object OverlayTextGenerator {
                     lines.add("Compass: $compassHeading")
                 }
 
-                // 4. Speed & Direction (only if valid speed/bearing and camera mode is Highway or Location)
-                if (cameraMode == CameraMode.HIGHWAY || cameraMode == CameraMode.LOCATION) {
-                    val speedValid = speedMps != null && speedMps >= 0f
-                    val bearingValid = bearing != null
-                    if (speedValid || bearingValid) {
-                        val speedKmh = if (speedValid) speedMps!! * 3.6f else null
-                        val speedStr = if (speedKmh != null) String.format(Locale.US, "Speed: %.1f km/h", speedKmh) else null
+                // 4. Speed & Direction (STRICTLY governed by user settings; OFF by default for preview & capture)
+                val shouldShowSpeed = if (isForCapture) config.includeSpeedInCapture else config.showSpeedOnPreview
+                val shouldShowDirection = if (isForCapture) config.includeDirectionInCapture else config.showDirectionOnPreview
 
-                        val directionStr = if (bearingValid) {
-                            val b = bearing!!
-                            val directions = arrayOf("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
-                            val index = (((b + 11.25) % 360) / 22.5).toInt()
-                            String.format(Locale.US, "Dir: %.0f° %s", b, directions[index % 16])
-                        } else {
-                            null
-                        }
+                val speedValid = speedMps != null && speedMps >= 0f
+                val bearingValid = bearing != null
 
-                        val telemetryParts = listOfNotNull(speedStr, directionStr)
-                        if (telemetryParts.isNotEmpty()) {
-                            lines.add(telemetryParts.joinToString("  |  "))
-                        }
-                    }
+                val speedStr = if (shouldShowSpeed && speedValid) {
+                    val speedKmh = speedMps!! * 3.6f
+                    String.format(Locale.US, "Speed: %.1f km/h", speedKmh)
+                } else null
+
+                val directionStr = if (shouldShowDirection && bearingValid) {
+                    val b = bearing!!
+                    val directions = arrayOf("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
+                    val index = (((b + 11.25) % 360) / 22.5).toInt()
+                    String.format(Locale.US, "Dir: %.0f° %s", b, directions[index % 16])
+                } else null
+
+                val telemetryParts = listOfNotNull(speedStr, directionStr)
+                if (telemetryParts.isNotEmpty()) {
+                    lines.add(telemetryParts.joinToString("  |  "))
                 }
 
                 // 5. Project Info / Chainage / Activity / Lane / Side

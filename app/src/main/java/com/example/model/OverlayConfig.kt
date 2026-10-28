@@ -48,6 +48,12 @@ data class OverlayConfig(
     val showAccuracy: Boolean = true,
     val burnInTimestamp: Boolean = true,        // When false: pristine photo with metadata-only timestamp
 
+    // Speed & Direction Visibility (OFF by default for preview and captured media)
+    val showSpeedOnPreview: Boolean = false,
+    val includeSpeedInCapture: Boolean = false,
+    val showDirectionOnPreview: Boolean = false,
+    val includeDirectionInCapture: Boolean = false,
+
     // Custom Logo & Manual Settings
     val showLogo: Boolean = true,
     val logoPreset: String = "cubetech",        // "cubetech", "ctecs", "nhai", "survey_seal", "custom"
@@ -87,7 +93,8 @@ data class CaptureSnapshot(
     val activeRoute: RouteData?,
     val deviceRotationDegrees: Int = 0,
     val compassHeading: String = "",
-    val compassAzimuth: Float = 0f
+    val compassAzimuth: Float = 0f,
+    val speedMps: Float? = null
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage
