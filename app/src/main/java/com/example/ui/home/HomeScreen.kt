@@ -54,7 +54,8 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Place
-import androidx.compose.material.icons.filled.PowerSettingsNew
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SatelliteAlt
 import androidx.compose.material.icons.filled.Speed
@@ -67,6 +68,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -119,6 +121,14 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val activity = context as? Activity
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
@@ -175,11 +185,6 @@ fun HomeScreen(
                     }
                     viewModel.setThemeMode(nextMode)
                     viewModel.showToast("Theme: ${nextMode.uppercase()}")
-                },
-                onScreenOff = {
-                    com.example.util.ScreenOffUtil.turnScreenOff(context) { msg ->
-                        viewModel.showToast(msg)
-                    }
                 },
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
@@ -281,7 +286,6 @@ fun TopTelemetryHeaderRow(
     compassHeadingStr: String,
     currentThemeMode: String,
     onToggleTheme: () -> Unit,
-    onScreenOff: () -> Unit = {},
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
@@ -456,28 +460,6 @@ fun TopTelemetryHeaderRow(
                             )
                         }
                     }
-
-                    // Card 5: Screen Off Button
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF0F172A),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clickable { onScreenOff() }
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PowerSettingsNew,
-                                contentDescription = "Turn Screen Off",
-                                tint = AccentRed,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
                 }
             }
         } else {
@@ -631,28 +613,6 @@ fun TopTelemetryHeaderRow(
                             contentDescription = "Toggle Theme",
                             tint = Color.White.copy(alpha = 0.7f),
                             modifier = Modifier.size(14.dp)
-                        )
-                    }
-                }
-
-                // Card 5: Screen Off Button
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF0F172A),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clickable { onScreenOff() }
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PowerSettingsNew,
-                            contentDescription = "Turn Screen Off",
-                            tint = AccentRed,
-                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

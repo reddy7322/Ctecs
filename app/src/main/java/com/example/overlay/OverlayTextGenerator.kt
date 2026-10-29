@@ -85,14 +85,14 @@ object OverlayTextGenerator {
                     lines.add(coordLine)
                 }
 
-                // 3. Location / Address breakdown (from Screenshot 2)
-                if (config.locationAddressOption.isNotBlank() && config.locationAddressOption != "None") {
-                    val displayAddr = if (config.customAddressText.isNotBlank()) {
-                        config.customAddressText
-                    } else {
-                        config.locationAddressOption
-                    }
-                    lines.add(displayAddr)
+                // 3. Location / Address breakdown
+                val displayAddr = if (config.customAddressText.isNotBlank()) {
+                    config.customAddressText
+                } else {
+                    config.locationAddressOption
+                }
+                if (displayAddr.isNotBlank() && !displayAddr.equals("None", ignoreCase = true) && !displayAddr.equals("Null", ignoreCase = true)) {
+                    lines.add(displayAddr.trim())
                 }
 
                 // 4. Compass

@@ -26,26 +26,40 @@ data class ProjectProfile(
     val separator: String = "||"               // Default "||" separator
 ) {
     /**
-     * Builds the structured 3rd line:
-     * e.g. "MH || MM || 196+040 RHS I/L DBM"
+     * Builds the structured highway text line:
+     * e.g. "MH | 168+400 RHS Milling" or "MH | 168+400 RHS" or "MH | MM | 196+040 RHS I/L DBM"
      */
     fun buildHighwayText(chainageFormatted: String): String {
-        val parts = mutableListOf<String>()
-        if (highwayId.isNotBlank()) parts.add(highwayId.trim())
-        if (packageSection.isNotBlank()) parts.add(packageSection.trim())
+        fun isValid(s: String?): Boolean {
+            if (s == null) return false
+            val t = s.trim()
+            if (t.isEmpty()) return false
+            if (t.equals("None", ignoreCase = true)) return false
+            if (t.equals("Null", ignoreCase = true)) return false
+            if (t.equals("N/A", ignoreCase = true)) return false
+            return true
+        }
 
-        // Chainage with road side, lane, and activity
+        val parts = mutableListOf<String>()
+
+        if (isValid(highwayId)) parts.add(highwayId.trim())
+        if (isValid(packageSection)) parts.add(packageSection.trim())
+
+        // Chainage with road side, lane, activity, and custom description
         val workParts = mutableListOf<String>()
-        if (chainageFormatted.isNotBlank()) workParts.add(chainageFormatted)
-        workParts.add(roadSide.label)
-        if (lane.isNotBlank()) workParts.add(lane.trim())
-        if (activity.isNotBlank()) workParts.add(activity.trim())
-        if (customDescription.isNotBlank()) workParts.add(customDescription.trim())
+        if (isValid(chainageFormatted)) workParts.add(chainageFormatted.trim())
+        if (isValid(roadSide.label)) workParts.add(roadSide.label.trim())
+        if (isValid(lane)) workParts.add(lane.trim())
+        if (isValid(activity)) workParts.add(activity.trim())
+        if (isValid(customDescription)) workParts.add(customDescription.trim())
 
         val workStr = workParts.joinToString(" ")
-        if (workStr.isNotBlank()) parts.add(workStr)
+        if (workStr.isNotBlank()) {
+            parts.add(workStr)
+        }
 
-        val sep = " $separator "
+        val effectiveSep = if (separator.trim() == "||") "|" else separator.trim()
+        val sep = " $effectiveSep "
         return parts.joinToString(sep)
     }
 
