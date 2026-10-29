@@ -1,6 +1,7 @@
 package com.example.model
 
 enum class OverlayTemplate(val title: String) {
+    NONE("None / Clean"),
     HIGHWAY_CONSTRUCTION("Highway Construction (Reference)"),
     GPS_COORDINATES_ONLY("GPS Coordinates Only"),
     SITE_INSPECTION("Site Inspection"),

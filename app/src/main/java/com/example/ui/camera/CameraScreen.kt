@@ -227,7 +227,7 @@ fun CameraScreen(
         videoManager.startRecording(
             controller = controller,
             recordAudio = cameraSettings.recordAudio,
-            onEvent = { event ->
+            onEvent = { event, recFile ->
                 when (event) {
                     is androidx.camera.video.VideoRecordEvent.Start -> {
                         viewModel.onVideoRecordingStarted()
@@ -237,6 +237,8 @@ fun CameraScreen(
                         viewModel.onVideoRecordingStopped()
                         if (event.hasError()) {
                             viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
+                        } else if (recFile != null && recFile.exists()) {
+                            viewModel.processRecordedVideo(context, recFile)
                         } else {
                             viewModel.showSuccess("Video saved to Movies/HighwayCamera")
                         }
@@ -302,7 +304,7 @@ fun CameraScreen(
                 videoManager.startRecording(
                     controller = controller,
                     recordAudio = cameraSettings.recordAudio,
-                    onEvent = { event ->
+                    onEvent = { event, recFile ->
                         when (event) {
                             is androidx.camera.video.VideoRecordEvent.Start -> {
                                 viewModel.onVideoRecordingStarted()
@@ -312,6 +314,8 @@ fun CameraScreen(
                                 viewModel.onVideoRecordingStopped()
                                 if (event.hasError()) {
                                     viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
+                                } else if (recFile != null && recFile.exists()) {
+                                    viewModel.processRecordedVideo(context, recFile)
                                 } else {
                                     viewModel.showSuccess("Video saved to Movies/HighwayCamera")
                                 }
@@ -339,6 +343,8 @@ fun CameraScreen(
             exposureIndex = exposureCompensation,
             isVideoMode = (captureMode == CaptureMode.VIDEO),
             rotationDegrees = rotationDegrees.toInt(),
+            photoResolution = cameraSettings.photoResolution,
+            videoResolution = cameraSettings.videoResolution,
             controller = controller,
             modifier = Modifier.fillMaxSize()
         )
@@ -1063,6 +1069,7 @@ fun CameraScreen(
             Spacer(modifier = Modifier.height(4.dp))
 
             // Bottom Shutter Bar (Gallery Thumbnail, Fixed Shutter, Quick Location Simulator)
+            // Bottom Shutter Bar (Normal Mode vs Active Video Recording Mode)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1070,85 +1077,165 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Recent Thumbnail / Gallery Button
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                        .background(Color(0x501A1A1A))
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .clickable { onNavigateToPhotos() }
-                        .testTag("recent_thumbnail_button"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
-                        AsyncImage(
-                            model = File(lastPhoto!!.filePath),
-                            contentDescription = "Recent Photo",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
+                if (isRecording) {
+                    // 1. Quick Photo Capture Button during video recording
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x701A1A1A))
+                            .border(1.dp, HighlightYellow, CircleShape)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .clickable {
+                                capturePhoto(
+                                    controller = controller,
+                                    context = context,
+                                    deviceRotationDegrees = rotationDegrees.toInt(),
+                                    onSuccess = { bitmap ->
+                                        viewModel.processCapture(bitmap)
+                                        viewModel.showSuccess("Quick photo captured!")
+                                    },
+                                    onError = {
+                                        val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
+                                        viewModel.processCapture(fallback)
+                                        viewModel.showSuccess("Quick photo captured!")
+                                    }
+                                )
+                            }
+                            .testTag("quick_photo_capture_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Icon(
-                            imageVector = Icons.Default.PhotoLibrary,
-                            contentDescription = "Gallery",
-                            tint = PrimaryText,
+                            imageVector = Icons.Default.Camera,
+                            contentDescription = "Quick Photo Capture",
+                            tint = HighlightYellow,
                             modifier = Modifier.size(24.dp)
                         )
                     }
-                }
 
-                // Fixed Capture Shutter Button
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                        .padding(5.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (captureMode == CaptureMode.PHOTO) {
-                                if (isCapturing) AccentRed else PrimaryText
-                            } else {
-                                AccentRed
-                            }
+                    // 2. Fixed Stop Video Recording Button
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                            .padding(5.dp)
+                            .clip(CircleShape)
+                            .background(AccentRed)
+                            .clickable { toggleVideoRecording() }
+                            .testTag("stop_video_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(PrimaryText)
                         )
-                        .clickable(enabled = (!isCapturing && !isCountingDown) || captureMode == CaptureMode.VIDEO) {
-                            if (captureMode == CaptureMode.PHOTO) {
-                                triggerPhotoCapture()
-                            } else {
-                                toggleVideoRecording()
+                    }
+
+                    // 3. Pause / Resume Video Recording Button
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x701A1A1A))
+                            .border(1.dp, if (isRecordingPaused) HighlightYellow else Color.White.copy(alpha = 0.5f), CircleShape)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .clickable {
+                                if (isRecordingPaused) {
+                                    videoManager.resume()
+                                    viewModel.onVideoRecordingPaused(false)
+                                    viewModel.showInfo("Video recording resumed")
+                                } else {
+                                    videoManager.pause()
+                                    viewModel.onVideoRecordingPaused(true)
+                                    viewModel.showInfo("Video recording paused")
+                                }
                             }
-                        }
-                        .testTag("shutter_button"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (captureMode == CaptureMode.PHOTO) {
-                        if (isCapturing) {
-                            CircularProgressIndicator(
-                                color = PrimaryText,
-                                modifier = Modifier.size(28.dp),
-                                strokeWidth = 3.dp
+                            .testTag("pause_resume_video_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (isRecordingPaused) "Resume Recording" else "Pause Recording",
+                            tint = if (isRecordingPaused) HighlightYellow else PrimaryText,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                } else {
+                    // Normal Shutter Bar (When NOT recording video)
+                    // Recent Thumbnail / Gallery Button
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                            .background(Color(0x501A1A1A))
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .clickable { onNavigateToPhotos() }
+                            .testTag("recent_thumbnail_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
+                            AsyncImage(
+                                model = File(lastPhoto!!.filePath),
+                                contentDescription = "Recent Photo",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
                             )
                         } else {
                             Icon(
-                                imageVector = Icons.Default.Camera,
-                                contentDescription = "Take Photo",
-                                tint = PrimaryBackground,
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                imageVector = Icons.Default.PhotoLibrary,
+                                contentDescription = "Gallery",
+                                tint = PrimaryText,
+                                modifier = Modifier.size(24.dp)
                             )
                         }
-                    } else {
-                        if (isRecording) {
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(PrimaryText)
+                    }
+
+                    // Fixed Capture Shutter Button
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                            .padding(5.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (captureMode == CaptureMode.PHOTO) {
+                                    if (isCapturing) AccentRed else PrimaryText
+                                } else {
+                                    AccentRed
+                                }
                             )
+                            .clickable(enabled = (!isCapturing && !isCountingDown) || captureMode == CaptureMode.VIDEO) {
+                                if (captureMode == CaptureMode.PHOTO) {
+                                    triggerPhotoCapture()
+                                } else {
+                                    toggleVideoRecording()
+                                }
+                            }
+                            .testTag("shutter_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (captureMode == CaptureMode.PHOTO) {
+                            if (isCapturing) {
+                                CircularProgressIndicator(
+                                    color = PrimaryText,
+                                    modifier = Modifier.size(28.dp),
+                                    strokeWidth = 3.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Camera,
+                                    contentDescription = "Take Photo",
+                                    tint = PrimaryBackground,
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .graphicsLayer { rotationZ = -animatedRotation }
+                                )
+                            }
                         } else {
                             Box(
                                 modifier = Modifier
@@ -1158,25 +1245,25 @@ fun CameraScreen(
                             )
                         }
                     }
-                }
 
-                // GPS Simulator / Preset Button
-                IconButton(
-                    onClick = { showSimDialog = true },
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(Color(0x501A1A1A))
-                        .border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-                        .graphicsLayer { rotationZ = -animatedRotation }
-                        .testTag("gps_sim_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.GpsFixed,
-                        contentDescription = "Simulate Location",
-                        tint = HighlightYellow,
-                        modifier = Modifier.size(22.dp)
-                    )
+                    // GPS Simulator / Preset Button
+                    IconButton(
+                        onClick = { showSimDialog = true },
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x501A1A1A))
+                            .border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("gps_sim_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.GpsFixed,
+                            contentDescription = "Simulate Location",
+                            tint = HighlightYellow,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
         }

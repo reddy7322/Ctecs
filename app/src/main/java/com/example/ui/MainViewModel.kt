@@ -518,10 +518,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val videoSnapshotsTimeline = mutableListOf<CaptureSnapshot>()
+    private var videoTickerJob: kotlinx.coroutines.Job? = null
+
+    fun createCurrentSnapshot(): CaptureSnapshot {
+        return CaptureSnapshot(
+            timestamp = System.currentTimeMillis(),
+            location = locationState.value.point,
+            gpsAccuracy = locationState.value.accuracy,
+            bearing = locationState.value.bearing,
+            matchResult = liveMatchResult.value,
+            projectProfile = projectProfile.value,
+            overlayConfig = overlayConfig.value,
+            activeRoute = activeRouteData.value,
+            deviceRotationDegrees = rotationDegrees.value.toInt(),
+            compassHeading = compassState.value.displayHeading,
+            compassAzimuth = compassState.value.azimuthDegrees
+        )
+    }
+
     fun onVideoRecordingStarted() {
         _isRecording.value = true
         _isRecordingPaused.value = false
         _recordingDurationSeconds.value = 0
+        synchronized(videoSnapshotsTimeline) {
+            videoSnapshotsTimeline.clear()
+            videoSnapshotsTimeline.add(createCurrentSnapshot())
+        }
+        videoTickerJob?.cancel()
+        videoTickerJob = viewModelScope.launch {
+            while (_isRecording.value) {
+                kotlinx.coroutines.delay(1000L)
+                if (_isRecording.value && !_isRecordingPaused.value) {
+                    synchronized(videoSnapshotsTimeline) {
+                        videoSnapshotsTimeline.add(createCurrentSnapshot())
+                    }
+                }
+            }
+        }
     }
 
     fun onVideoRecordingTick(seconds: Int) {
@@ -536,6 +570,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isRecording.value = false
         _isRecordingPaused.value = false
         _recordingDurationSeconds.value = 0
+        videoTickerJob?.cancel()
+    }
+
+    fun processRecordedVideo(context: android.content.Context, rawVideoFile: java.io.File) {
+        viewModelScope.launch {
+            showToast("Embedding dynamic overlays in video...", ToastType.INFO)
+            val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
+            val defaultSnapshot = createCurrentSnapshot()
+
+            val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+            val fileName = "VID_${timeStamp}.mp4"
+
+            val outputDir = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES),
+                "HighwayCamera"
+            ).apply { mkdirs() }
+
+            val finalFile = java.io.File(outputDir, fileName)
+
+            val success = com.example.overlay.VideoOverlayProcessor.applyOverlayToVideo(
+                context = context,
+                inputFile = rawVideoFile,
+                outputFile = finalFile,
+                snapshotsTimeline = timelineCopy,
+                defaultSnapshot = defaultSnapshot
+            )
+
+            if (success && finalFile.exists() && finalFile.length() > 0) {
+                android.media.MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(finalFile.absolutePath),
+                    arrayOf("video/mp4")
+                ) { _, _ -> }
+
+                showToast("Video saved with dynamic overlays to Movies/HighwayCamera", ToastType.SUCCESS)
+
+                try { rawVideoFile.delete() } catch (ignored: Exception) {}
+            } else {
+                showToast("Video saved to Movies/HighwayCamera", ToastType.SUCCESS)
+            }
+        }
     }
 
     fun resetAllSettings() {
@@ -669,6 +744,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiMessages.emit(UiMessage.Error("Capture failed: ${e.message}"))
             } finally {
                 _isCapturing.value = false
+            }
+        }
+    }
+
+    fun refreshLocation() {
+        viewModelScope.launch {
+            _uiMessages.emit(UiMessage.Info("Refreshing GPS location & chainage..."))
+            locationTracker.forceRefreshLocation { success ->
+                viewModelScope.launch {
+                    if (success) {
+                        _uiMessages.emit(UiMessage.Success("GPS location & chainage refreshed"))
+                        showToast("GPS location & chainage refreshed", ToastType.SUCCESS)
+                    } else {
+                        _uiMessages.emit(UiMessage.Error("Failed to refresh GPS location"))
+                        showToast("Failed to refresh GPS location", ToastType.ERROR)
+                    }
+                }
             }
         }
     }

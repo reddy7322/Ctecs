@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Refresh
 import android.app.Activity
 import android.view.WindowManager
 import androidx.compose.material.icons.filled.Remove
@@ -248,6 +249,7 @@ fun HomeScreen(
                     compassHeadingStr = compassState.displayHeading,
                     routeData = activeRoute,
                     matchedProjectedPoint = matchResult.projectedPoint,
+                    onRefreshLocation = { viewModel.refreshLocation() },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -1051,6 +1053,7 @@ fun InteractiveSmartMap(
     compassHeadingStr: String = "359° N",
     routeData: RouteData?,
     matchedProjectedPoint: GeoPoint?,
+    onRefreshLocation: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var panOffsetX by remember { mutableFloatStateOf(0f) }
@@ -1203,7 +1206,7 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Left Map Tools (Layers, Re-center/Follow, Pin)
+        // Left Map Tools (Layers, Refresh Location, Re-center/Follow, Pin)
         Column(
             modifier = Modifier
                 .align(Alignment.CenterStart)
@@ -1211,6 +1214,22 @@ fun InteractiveSmartMap(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             MapToolButton(icon = Icons.Default.Layers, contentDesc = "Layers", tag = "map_layers_btn")
+            IconButton(
+                onClick = { onRefreshLocation?.invoke() },
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xD0121212))
+                    .border(0.8.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                    .testTag("map_refresh_location_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh Location",
+                    tint = HighlightYellow,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
             IconButton(
                 onClick = {
                     isFollowingUser = true

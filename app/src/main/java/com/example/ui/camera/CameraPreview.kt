@@ -73,6 +73,8 @@ fun CameraPreview(
     exposureIndex: Int,
     isVideoMode: Boolean,
     rotationDegrees: Int = 0,
+    photoResolution: String = "1920 x 1080",
+    videoResolution: String = "1920 x 1080",
     controller: LifecycleCameraController,
     modifier: Modifier = Modifier
 ) {
@@ -191,6 +193,30 @@ fun CameraPreview(
         try {
             controller.cameraControl?.setExposureCompensationIndex(exposureIndex)
         } catch (ignored: Exception) {}
+    }
+
+    LaunchedEffect(photoResolution, videoResolution, hasCameraPermission) {
+        if (!hasCameraPermission) return@LaunchedEffect
+        try {
+            val photoParts = photoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
+            if (photoParts.size == 2) {
+                val size = android.util.Size(photoParts[0], photoParts[1])
+                controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(size)
+            }
+            val videoParts = videoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
+            if (videoParts.size == 2) {
+                val w = Math.max(videoParts[0], videoParts[1])
+                val quality = when {
+                    w >= 3840 -> androidx.camera.video.Quality.UHD
+                    w >= 1920 -> androidx.camera.video.Quality.FHD
+                    w >= 1280 -> androidx.camera.video.Quality.HD
+                    else -> androidx.camera.video.Quality.SD
+                }
+                controller.videoCaptureQualitySelector = androidx.camera.video.QualitySelector.from(quality)
+            }
+        } catch (e: Exception) {
+            Log.w("CameraPreview", "Setting resolution target size error", e)
+        }
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
@@ -353,13 +379,15 @@ fun capturePhoto(
  */
 class VideoRecordingManager(private val context: Context) {
     private var activeRecording: Recording? = null
+    var currentRecordingFile: File? = null
+        private set
 
     fun isRecordingActive(): Boolean = activeRecording != null
 
     fun startRecording(
         controller: LifecycleCameraController,
         recordAudio: Boolean,
-        onEvent: (VideoRecordEvent) -> Unit,
+        onEvent: (VideoRecordEvent, File?) -> Unit,
         onError: (Throwable) -> Unit
     ) {
         try {
@@ -372,8 +400,10 @@ class VideoRecordingManager(private val context: Context) {
                 }
             }
 
+            val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val fileName = "VID_${timeStamp}.mp4"
+            val tempFile = File(tempDir, "RAW_${timeStamp}.mp4")
+            currentRecordingFile = tempFile
 
             val executor = ContextCompat.getMainExecutor(context)
             val hasAudioPerm = ContextCompat.checkSelfPermission(
@@ -387,63 +417,26 @@ class VideoRecordingManager(private val context: Context) {
                 AudioConfig.create(false)
             }
 
+            val fileOptions = FileOutputOptions.Builder(tempFile).build()
+
             val recordListener = androidx.core.util.Consumer<VideoRecordEvent> { event ->
+                val recFile = currentRecordingFile
                 if (event is VideoRecordEvent.Finalize) {
                     activeRecording = null
-                    if (!event.hasError()) {
-                        try {
-                            val uri = event.outputResults.outputUri
-                            if (uri.scheme == "file") {
-                                uri.path?.let { p ->
-                                    android.media.MediaScannerConnection.scanFile(
-                                        context,
-                                        arrayOf(p),
-                                        arrayOf("video/mp4")
-                                    ) { _, _ -> }
-                                }
-                            }
-                        } catch (ignored: Exception) {}
-                    }
                 }
-                onEvent(event)
+                onEvent(event, recFile)
             }
 
-            val pendingRecording = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                val contentValues = android.content.ContentValues().apply {
-                    put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, fileName)
-                    put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(android.provider.MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-                    put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/HighwayCamera")
-                }
-                val mediaStoreOptions = androidx.camera.video.MediaStoreOutputOptions.Builder(
-                    context.contentResolver,
-                    android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                ).setContentValues(contentValues).build()
-
-                controller.startRecording(
-                    mediaStoreOptions,
-                    audioConfig,
-                    executor,
-                    recordListener
-                )
-            } else {
-                val outputDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                    "HighwayCamera"
-                ).apply { mkdirs() }
-                val videoFile = File(outputDir, fileName)
-                val fileOptions = FileOutputOptions.Builder(videoFile).build()
-
-                controller.startRecording(
-                    fileOptions,
-                    audioConfig,
-                    executor,
-                    recordListener
-                )
-            }
+            val pendingRecording = controller.startRecording(
+                fileOptions,
+                audioConfig,
+                executor,
+                recordListener
+            )
             activeRecording = pendingRecording
         } catch (e: Throwable) {
             activeRecording = null
+            currentRecordingFile = null
             onError(e)
         }
     }

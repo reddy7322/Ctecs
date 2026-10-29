@@ -149,6 +149,38 @@ class LocationTracker(private val context: Context) {
     }
 
     /**
+     * Forces an immediate high-accuracy GPS fix update.
+     */
+    @SuppressLint("MissingPermission")
+    fun forceRefreshLocation(onComplete: ((Boolean) -> Unit)? = null) {
+        try {
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        handleNewLocation(loc)
+                        onComplete?.invoke(true)
+                    } else {
+                        fusedClient.lastLocation.addOnSuccessListener { lastLoc ->
+                            if (lastLoc != null) {
+                                handleNewLocation(lastLoc)
+                                onComplete?.invoke(true)
+                            } else {
+                                onComplete?.invoke(false)
+                            }
+                        }.addOnFailureListener {
+                            onComplete?.invoke(false)
+                        }
+                    }
+                }
+                .addOnFailureListener {
+                    onComplete?.invoke(false)
+                }
+        } catch (e: Exception) {
+            onComplete?.invoke(false)
+        }
+    }
+
+    /**
      * Injects synthetic location (used for testing or emulator field simulation).
      */
     fun injectLocation(lat: Double, lng: Double, accuracy: Float = 2.5f, altitude: Double = 270.0) {

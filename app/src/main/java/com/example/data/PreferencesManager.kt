@@ -122,6 +122,8 @@ class PreferencesManager(private val context: Context) {
         val KEY_CUSTOM_STORAGE_PATH = stringPreferencesKey("custom_storage_path")
         val KEY_AUTO_ROTATE_UI = booleanPreferencesKey("auto_rotate_ui")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
+        val KEY_PHOTO_RESOLUTION = stringPreferencesKey("photo_resolution")
+        val KEY_VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
     }
 
     val themeModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -167,7 +169,9 @@ class PreferencesManager(private val context: Context) {
             customFilenamePrefix = prefs[KEY_CUSTOM_FILENAME_PREFIX] ?: "",
             filenameFormatPreset = prefs[KEY_FILENAME_FORMAT_PRESET] ?: "TimePhoto_YYYYMMDD_HHMMSS",
             customStoragePath = prefs[KEY_CUSTOM_STORAGE_PATH] ?: "/storage/emulated/0/DCIM/Camera",
-            autoRotateUI = prefs[KEY_AUTO_ROTATE_UI] ?: true
+            autoRotateUI = prefs[KEY_AUTO_ROTATE_UI] ?: true,
+            photoResolution = prefs[KEY_PHOTO_RESOLUTION] ?: "1920 x 1080",
+            videoResolution = prefs[KEY_VIDEO_RESOLUTION] ?: "1920 x 1080"
         )
     }
 
@@ -354,6 +358,8 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_FILENAME_FORMAT_PRESET] = settings.filenameFormatPreset
             prefs[KEY_CUSTOM_STORAGE_PATH] = settings.customStoragePath
             prefs[KEY_AUTO_ROTATE_UI] = settings.autoRotateUI
+            prefs[KEY_PHOTO_RESOLUTION] = settings.photoResolution
+            prefs[KEY_VIDEO_RESOLUTION] = settings.videoResolution
         }
     }
 
