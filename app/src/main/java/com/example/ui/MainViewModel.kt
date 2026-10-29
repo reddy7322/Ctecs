@@ -184,13 +184,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _manualChainage = MutableStateFlow<Chainage?>(null)
     val manualChainage: StateFlow<Chainage?> = _manualChainage.asStateFlow()
 
+    private val progressionTracker = com.example.geo.ChainageProgressionTracker()
+
     // Combined live match result
     val liveMatchResult: StateFlow<ChainageMatchResult> = combine(
         locationState,
         activeRouteData,
         manualChainage
     ) { loc, route, manual ->
-        if (manual != null) {
+        val rawResult = if (manual != null) {
             ChainageMatchResult.manual(manual, loc.point)
         } else if (loc.point != null) {
             ChainageMatcher.match(
@@ -202,6 +204,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             ChainageMatchResult.noRoute(loc.accuracy)
         }
+        progressionTracker.processResult(rawResult)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
