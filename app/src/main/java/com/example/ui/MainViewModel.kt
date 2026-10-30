@@ -379,7 +379,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isFlashOn.value = !_isFlashOn.value
     }
 
+    fun toggleRecordAudio() {
+        val current = cameraSettings.value.recordAudio
+        val updated = cameraSettings.value.copy(recordAudio = !current)
+        saveCameraSettingsSilent(updated)
+        viewModelScope.launch {
+            _uiMessages.emit(UiMessage.Info(if (!current) "Video Audio Enabled 🎤" else "Video Audio Disabled 🔇"))
+        }
+    }
+
+
     fun toggleCameraFacing() {
+
         _isFrontCamera.value = !_isFrontCamera.value
     }
 

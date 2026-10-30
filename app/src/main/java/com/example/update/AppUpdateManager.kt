@@ -99,6 +99,35 @@ class AppUpdateManager(private val context: Context) {
                 return false
             }
         }
+
+        /**
+         * Dynamically derives a numerical Version Code from a semantic version name.
+         * For "1.0.16-beta.3" -> 101603.
+         * For "1.0.16" -> 101699.
+         */
+        fun deriveVersionCode(versionName: String): Long {
+            try {
+                val clean = versionName.removePrefix("v").trim()
+                val base = clean.substringBefore("-")
+                val pre = clean.substringAfter("-", "")
+
+                val parts = base.split(".").mapNotNull { it.toIntOrNull() }
+                val major = parts.getOrElse(0) { 1 }
+                val minor = parts.getOrElse(1) { 0 }
+                val patch = parts.getOrElse(2) { 0 }
+
+                val baseCode = major * 100000L + minor * 10000L + patch * 100L
+
+                return if (pre.isNotBlank()) {
+                    val betaNum = pre.filter { it.isDigit() }.toLongOrNull() ?: 1L
+                    baseCode + (betaNum % 99L)
+                } else {
+                    baseCode + 99L
+                }
+            } catch (e: Exception) {
+                return 100163L
+            }
+        }
     }
 
 
@@ -143,10 +172,17 @@ class AppUpdateManager(private val context: Context) {
      */
     private fun fetchFromMetadataFeed(feedUrl: String, expectedChannel: String): AppReleaseInfo? {
         return try {
+            val cacheBustUrl = if (feedUrl.contains("?")) {
+                "$feedUrl&t=${System.currentTimeMillis()}"
+            } else {
+                "$feedUrl?t=${System.currentTimeMillis()}"
+            }
+
             val request = Request.Builder()
-                .url(feedUrl)
+                .url(cacheBustUrl)
                 .header("User-Agent", "CTECS-Android-$expectedChannel")
-                .header("Cache-Control", "no-cache")
+                .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                .header("Pragma", "no-cache")
                 .build()
 
             val response = httpClient.newCall(request).execute()
@@ -163,7 +199,8 @@ class AppUpdateManager(private val context: Context) {
             }
 
             val versionName = json.optString("version_name", "")
-            val versionCode = json.optLong("version_code", 0L)
+            val rawCode = json.optLong("version_code", 0L)
+            val versionCode = if (rawCode > 0L) rawCode else deriveVersionCode(versionName)
             val releaseTag = json.optString("release_tag", json.optString("tag_name", "v$versionName"))
             val apkDownloadUrl = json.optString("apk_download_url", json.optString("apk_url", ""))
             val apkSize = json.optLong("apk_size_bytes", json.optLong("apk_size", 0L))
@@ -178,6 +215,7 @@ class AppUpdateManager(private val context: Context) {
             val isCodeNewer = versionCode > currentVersionCode
             val isNameNewer = isNewerVersion(versionName, currentVersionName)
             val isUpdateAvailable = isNameNewer || isCodeNewer
+
 
 
             AppReleaseInfo(
@@ -278,15 +316,21 @@ class AppUpdateManager(private val context: Context) {
             }
 
             val currentVersion = BuildConfig.VERSION_NAME
-            val isUpdateAvailable = isNewerVersion(cleanRemoteVersion, currentVersion)
+            val currentVersionCode = BuildConfig.VERSION_CODE.toLong()
+            val remoteVersionCode = deriveVersionCode(cleanRemoteVersion)
+
+            val isNameNewer = isNewerVersion(cleanRemoteVersion, currentVersion)
+            val isCodeNewer = remoteVersionCode > currentVersionCode
+            val isUpdateAvailable = isNameNewer || isCodeNewer
 
             val releaseInfo = AppReleaseInfo(
                 channel = channel,
                 tagName = tagName,
                 versionName = cleanRemoteVersion,
-                versionCode = 0L,
+                versionCode = remoteVersionCode,
                 releaseName = releaseName,
                 releaseNotes = releaseNotes,
+
                 publishedAt = publishedAt,
                 apkDownloadUrl = apkUrl,
                 apkSize = apkSize,

@@ -58,7 +58,10 @@ import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Pause
+
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -476,7 +479,27 @@ fun CameraScreen(
                     }
                 }
                 item {
+                    // Video Audio Mic On/Off Toggle Button
+                    IconButton(
+                        onClick = { viewModel.toggleRecordAudio() },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (cameraSettings.recordAudio) DarkYellowSurface else ElevatedSurface)
+                            .graphicsLayer { rotationZ = -animatedRotation }
+                            .testTag("audio_toggle_button")
+                    ) {
+                        Icon(
+                            imageVector = if (cameraSettings.recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
+                            contentDescription = if (cameraSettings.recordAudio) "Audio Enabled" else "Audio Disabled",
+                            tint = if (cameraSettings.recordAudio) HighlightYellow else SecondaryText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                item {
                     // Timer cycle button (single compact icon)
+
                     IconButton(
                         onClick = { viewModel.cycleTimer() },
                         modifier = Modifier

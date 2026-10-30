@@ -189,12 +189,12 @@ object VideoOverlayProcessor {
                 }
             }
 
-            // Balanced 20-25 fps ensures smooth playback and rapid transcode
-            val targetFps = 20
+            val targetFps = 25
             val frameIntervalMs = 1000L / targetFps
             val totalFrames = max(1, (durationMs / frameIntervalMs).toInt())
 
             val outputMime = MediaFormat.MIMETYPE_VIDEO_AVC
+
             val bitRate = (videoWidth * videoHeight * 3.0f).toInt().coerceIn(1_500_000, 8_000_000)
 
             encoder = MediaCodec.createEncoderByType(outputMime)
@@ -217,6 +217,7 @@ object VideoOverlayProcessor {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(inputFile.absolutePath)
 
+
             // Reusable buffers for frame drawing and YUV encoding
             val reusableBitmap = Bitmap.createBitmap(videoWidth, videoHeight, Bitmap.Config.ARGB_8888)
             val reusableCanvas = Canvas(reusableBitmap)
@@ -226,40 +227,31 @@ object VideoOverlayProcessor {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             val dstRect = Rect(0, 0, videoWidth, videoHeight)
 
-            // High-speed keyframe pre-fetch: pre-samples sync I-frames every 1000ms to bypass IPC seek latency
-            val sampleIntervalMs = 1000L
-            val keyframeCache = mutableMapOf<Long, Bitmap>()
-            var sampleTimeMs = 0L
-            while (sampleTimeMs <= durationMs + 1000L) {
-                val frameUs = sampleTimeMs * 1000L
-                val bmp = try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        retriever.getScaledFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_PREVIOUS_SYNC, videoWidth, videoHeight)
-                            ?: retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_PREVIOUS_SYNC)
-                    } else {
-                        retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_PREVIOUS_SYNC)
-                    }
-                } catch (ignored: Exception) {
-                    null
-                }
-                if (bmp != null) {
-                    keyframeCache[sampleTimeMs] = bmp
-                }
-                sampleTimeMs += sampleIntervalMs
-            }
-
             var lastGoodBitmap: Bitmap? = null
             var currentMs = 0L
             var frameCount = 0
 
             while (currentMs < durationMs) {
                 val frameUs = currentMs * 1000L
-                val keyTime = (currentMs / sampleIntervalMs) * sampleIntervalMs
-                val frameBitmap = keyframeCache[keyTime] ?: keyframeCache.values.firstOrNull() ?: lastGoodBitmap
+                val retrieved = try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                        retriever.getScaledFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST, videoWidth, videoHeight)
+                            ?: retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                    } else {
+                        retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                    }
+                } catch (ignored: Exception) {
+                    null
+                }
 
-                // 1. Draw video background
+                val frameBitmap = retrieved ?: lastGoodBitmap
+                if (retrieved != null && retrieved != lastGoodBitmap) {
+                    lastGoodBitmap?.recycle()
+                    lastGoodBitmap = retrieved
+                }
+
+                // 1. Draw smooth video background frame
                 if (frameBitmap != null) {
-                    lastGoodBitmap = frameBitmap
                     val srcRect = Rect(0, 0, frameBitmap.width, frameBitmap.height)
                     reusableCanvas.drawBitmap(frameBitmap, srcRect, dstRect, paint)
                 } else {
@@ -297,11 +289,10 @@ object VideoOverlayProcessor {
                 currentMs += frameIntervalMs
             }
 
-            keyframeCache.values.forEach { if (!it.isRecycled) try { it.recycle() } catch (ignored: Exception) {} }
-            keyframeCache.clear()
-
+            lastGoodBitmap?.recycle()
             retriever.release()
             reusableBitmap.recycle()
+
 
 
             // Signal End of Stream and drain remaining frames
