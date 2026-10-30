@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build & Publish ${{ github.event.inputs.release_channel || 'Release' }}
+    name: Build & Publish Release
     runs-on: ubuntu-latest
 
     steps:
@@ -47,7 +47,6 @@ jobs:
           echo "        CTECS RELEASE CHANNEL & VERSION CALCULATION       "
           echo "=========================================================="
           
-          # Fetch full tags and history for accurate version increments
           git fetch --unshallow 2>/dev/null || git fetch --tags 2>/dev/null || true
           
           # 1. Determine Release Channel
@@ -59,7 +58,6 @@ jobs:
             CHANNEL="stable"
           fi
           
-          # Validate channel strictly
           if [ "$CHANNEL" != "beta" ] && [ "$CHANNEL" != "stable" ]; then
             echo "::error::Invalid release_channel '$CHANNEL'. Must be exactly 'beta' or 'stable'."
             exit 1
@@ -69,22 +67,19 @@ jobs:
           # 2. Determine Base Semantic Version (MAJOR.MINOR.PATCH)
           INPUT_VERSION="${{ github.event.inputs.version_name }}"
           INPUT_VERSION="${INPUT_VERSION#v}"
-          INPUT_VERSION="${INPUT_VERSION#"${INPUT_VERSION%%[![:space:]]*}"}" # trim leading
-          INPUT_VERSION="${INPUT_VERSION%"${INPUT_VERSION##*[![:space:]]}"}" # trim trailing
+          INPUT_VERSION="${INPUT_VERSION#"${INPUT_VERSION%%[![:space:]]*}"}"
+          INPUT_VERSION="${INPUT_VERSION%"${INPUT_VERSION##*[![:space:]]}"}"
           
           if [ -n "$INPUT_VERSION" ]; then
-            # Clean possible suffix from user input
             CLEAN_BASE=$(echo "$INPUT_VERSION" | sed -E 's/-.*//')
             if [[ ! "$CLEAN_BASE" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
               echo "::error::Invalid manual version format '$INPUT_VERSION'. Must be semantic format like 1.0.0 or 1.1."
               exit 1
             fi
-            # Ensure 3-segment semantic format
             IFS='.' read -r M1 M2 M3 <<< "$CLEAN_BASE"
             BASE_VERSION="${M1:-1}.${M2:-0}.${M3:-0}"
             echo "Using developer specified base version: $BASE_VERSION"
           elif [[ "${{ github.ref }}" =~ refs/tags/v ]]; then
-            # Pushed tag
             TAG_RAW="${{ github.ref_name }}"
             TAG_RAW="${TAG_RAW#v}"
             CLEAN_BASE=$(echo "$TAG_RAW" | sed -E 's/-.*//')
@@ -92,7 +87,6 @@ jobs:
             BASE_VERSION="${M1:-1}.${M2:-0}.${M3:-0}"
             echo "Using base version from pushed tag: $BASE_VERSION"
           else
-            # Auto-detect from git tags or app/build.gradle.kts
             LATEST_STABLE_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v "-" | sort -V | tail -n 1 || true)
             if [ -n "$LATEST_STABLE_TAG" ]; then
               TAG_CLEAN="${LATEST_STABLE_TAG#v}"
@@ -103,7 +97,6 @@ jobs:
               BASE_VERSION="${M1:-1}.${M2:-0}.${M3:-0}"
               echo "Derived base version from git history ($LATEST_STABLE_TAG): $BASE_VERSION"
             else
-              # Fallback to app/build.gradle.kts
               GRADLE_VER=$(grep -E 'versionName\s*=\s*"[^"]+"' app/build.gradle.kts | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
               GRADLE_VER="${GRADLE_VER:-1.0.0}"
               IFS='.' read -r M1 M2 M3 <<< "$GRADLE_VER"
@@ -112,7 +105,6 @@ jobs:
             fi
           fi
           
-          # Split major, minor, patch
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
           MAJOR=${MAJOR:-1}
           MINOR=${MINOR:-0}
@@ -125,16 +117,13 @@ jobs:
             RELEASE_TITLE="CTECS Stable v${NEW_VERSION}"
             IS_PRERELEASE="false"
             
-            # Stable Safety Rule: Prevent accidental reuse or overwriting of existing stable version tag
             if git rev-parse -q --verify "refs/tags/${NEW_TAG}" >/dev/null; then
               echo "::error::Stable release tag '${NEW_TAG}' already exists! Cannot overwrite an existing stable release."
               exit 1
             fi
             
-            # Version code for stable
             VERSION_CODE=$(( MAJOR * 100000 + MINOR * 10000 + PATCH * 100 + 99 ))
           else
-            # Beta Channel: Calculate unique beta build number
             LATEST_BETA_NUM=$(git tag -l "v${BASE_VERSION}-beta.*" | sed -E 's/.*-beta\.([0-9]+)/\1/' | sort -n | tail -n 1 || true)
             if [ -n "$LATEST_BETA_NUM" ]; then
               BETA_NUM=$((LATEST_BETA_NUM + 1))
@@ -142,7 +131,6 @@ jobs:
               BETA_NUM=1
             fi
             
-            # Ensure unique beta tag even if concurrent builds occur
             while git rev-parse -q --verify "refs/tags/v${BASE_VERSION}-beta.${BETA_NUM}" >/dev/null; do
               BETA_NUM=$((BETA_NUM + 1))
             done
@@ -152,11 +140,9 @@ jobs:
             RELEASE_TITLE="CTECS Beta v${NEW_VERSION}"
             IS_PRERELEASE="true"
             
-            # Monotonic Version code for beta
             VERSION_CODE=$(( MAJOR * 100000 + MINOR * 10000 + PATCH * 100 + (BETA_NUM % 99) ))
           fi
           
-          # APK and AAB filenames matching specification
           APK_NAME="CTECS-${NEW_VERSION}.apk"
           AAB_NAME="CTECS-${NEW_VERSION}.aab"
           
@@ -171,7 +157,6 @@ jobs:
           echo "Target AAB Name:  $AAB_NAME"
           echo "----------------------------------------------------------"
           
-          # Synchronize build.gradle.kts
           if [ -f "app/build.gradle.kts" ]; then
             sed -i "s/versionCode = [0-9]\+/versionCode = $VERSION_CODE/g" app/build.gradle.kts
             sed -i "s/versionName = \"[^\"]*\"/versionName = \"$NEW_VERSION\"/g" app/build.gradle.kts
@@ -182,7 +167,6 @@ jobs:
             exit 1
           fi
           
-          # Export to environment
           echo "RELEASE_CHANNEL=$CHANNEL" >> $GITHUB_ENV
           echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
           echo "NEW_CODE=$VERSION_CODE" >> $GITHUB_ENV
@@ -226,29 +210,26 @@ jobs:
             exit 1
           fi
           
-          # Maintain compatibility with rootDir paths in build.gradle.kts
           cp upload-keystore.jks my-upload-key.jks
           
-          # Validate keystore file integrity
           if [ ! -s "upload-keystore.jks" ]; then
             echo "::error::Decoded upload-keystore.jks is empty or corrupted!"
             exit 1
           fi
-          echo "Signing Keystore confirmed ready at $(pwd)/upload-keystore.jks (${bytes:-$(wc -c < upload-keystore.jks)} bytes)"
+          echo "Signing Keystore confirmed ready at $(pwd)/upload-keystore.jks ($(wc -c < upload-keystore.jks) bytes)"
 
       - name: 6. Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
       - name: 7. Run Unit Tests & Build Validation
         run: |
-          echo "Running unit test suite to ensure release integrity..."
+          echo "Running unit test suite..."
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew :app:testDebugUnitTest --no-daemon
           else
             gradle :app:testDebugUnitTest --no-daemon
           fi
-          echo "All unit tests and validation checks passed successfully."
 
       - name: 8. Build Release APK and AAB
         env:
@@ -256,7 +237,7 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || 'ctecs123456' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD || 'ctecs123456' }}
         run: |
-          echo "Compiling signed release APK and AAB with channel '${{ env.RELEASE_CHANNEL }}'..."
+          echo "Compiling signed release APK and AAB for channel '${{ env.RELEASE_CHANNEL }}'..."
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew :app:assembleRelease :app:bundleRelease -PupdateChannel=${{ env.RELEASE_CHANNEL }} --no-daemon
@@ -269,7 +250,6 @@ jobs:
         run: |
           mkdir -p release_artifacts
           
-          # Locate built release APK
           RAW_APK=$(find app/build -name "*release*.apk" | head -n 1)
           if [ -z "$RAW_APK" ]; then
             RAW_APK=$(find app/build -name "*.apk" | head -n 1)
@@ -281,30 +261,25 @@ jobs:
           fi
           
           echo "Validating APK signature on: $RAW_APK"
-          # Locate apksigner tool
           APKSIGNER=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -name apksigner | sort -V | tail -n 1 || true)
           if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
-            echo "Using apksigner: $APKSIGNER"
             "$APKSIGNER" verify --verbose "$RAW_APK" || {
-              echo "::error::APK signature verification failed! Do not publish unsigned APK."
+              echo "::error::APK signature verification failed!"
               exit 1
             }
           else
-            echo "Falling back to jarsigner signature verification..."
             jarsigner -verify -certs "$RAW_APK" || {
-              echo "::error::APK signature verification failed! Do not publish unsigned APK."
+              echo "::error::APK signature verification failed!"
               exit 1
             }
           fi
           echo "APK signature successfully verified."
           
-          # Copy to standardized filenames
           FINAL_APK="release_artifacts/${{ env.APK_NAME }}"
           cp "$RAW_APK" "$FINAL_APK"
           APK_SIZE_BYTES=$(wc -c < "$FINAL_APK")
           APK_SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $APK_SIZE_BYTES/1048576}")
           
-          # Locate built release AAB
           RAW_AAB=$(find app/build -name "*release*.aab" | head -n 1)
           if [ -n "$RAW_AAB" ] && [ -f "$RAW_AAB" ]; then
             FINAL_AAB="release_artifacts/${{ env.AAB_NAME }}"
@@ -316,12 +291,13 @@ jobs:
           
           echo "Packaged APK: $FINAL_APK ($APK_SIZE_MB MB)"
           echo "apk_size=$APK_SIZE_MB MB" >> $GITHUB_OUTPUT
+          echo "apk_bytes=$APK_SIZE_BYTES" >> $GITHUB_ENV
 
       - name: 10. Generate Release Notes & Channel Metadata
         run: |
           cat << 'EOF' > release_notes.md
           ## CTECS Release Summary
-          
+
           EOF
           
           echo "- **Channel:** \`${{ env.RELEASE_CHANNEL }}\`" >> release_notes.md
@@ -349,7 +325,6 @@ jobs:
           git log -n 8 --pretty=format:"* %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" >> release_notes.md || true
           echo "" >> release_notes.md
           
-          # Generate channel-specific update metadata feed
           mkdir -p "updates/${{ env.RELEASE_CHANNEL }}" "${{ env.RELEASE_CHANNEL }}"
           
           CLEAN_NOTES=$(echo "${CUSTOM_NOTES:-Release update available.}" | tr '\n' ' ' | sed 's/"/\\"/g')
@@ -361,7 +336,7 @@ jobs:
   "version_code": ${{ env.NEW_CODE }},
   "release_tag": "${{ env.NEW_TAG }}",
   "apk_download_url": "https://github.com/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${{ env.APK_NAME }}",
-  "apk_size_bytes": 18456200,
+  "apk_size_bytes": ${{ env.apk_bytes }},
   "release_notes": "$CLEAN_NOTES",
   "min_supported_version": 1,
   "published_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -369,18 +344,17 @@ jobs:
 EOF
           cp "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json"
           cp "updates/${{ env.RELEASE_CHANNEL }}/update.json" "release_artifacts/update.json"
-          echo "Generated channel update feed:"
-          cat "updates/${{ env.RELEASE_CHANNEL }}/update.json"
 
-      - name: 11. Create & Push Git Tag and Update Metadata
+      - name: 11. Commit & Push Channel Metadata Feed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json"
-          git commit -m "Update ${{ env.RELEASE_CHANNEL }} channel metadata feed to v${{ env.NEW_VERSION }}" || true
-          git push origin HEAD:main 2>/dev/null || git push origin HEAD:master 2>/dev/null || true
-          git tag -a "${{ env.NEW_TAG }}" -m "${{ env.RELEASE_TITLE }}"
-          git push origin "${{ env.NEW_TAG }}" || echo "Tag pushed or handled by action-gh-release."
+          if git commit -m "Update ${{ env.RELEASE_CHANNEL }} channel metadata feed to v${{ env.NEW_VERSION }}"; then
+            git push origin HEAD:main 2>/dev/null || git push origin HEAD:master 2>/dev/null || true
+          else
+            echo "No changes to commit for metadata feed."
+          fi
 
       - name: 12. Publish GitHub Release
         id: create_release
@@ -388,6 +362,7 @@ EOF
         with:
           name: ${{ env.RELEASE_TITLE }}
           tag_name: ${{ env.NEW_TAG }}
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           body_path: release_notes.md
