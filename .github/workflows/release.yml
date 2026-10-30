@@ -295,12 +295,12 @@ jobs:
           echo "apk_bytes=$APK_SIZE_BYTES" >> $GITHUB_ENV
 
       - name: 10. Generate Release Notes & Channel Metadata
+        env:
+          CUSTOM_NOTES: ${{ github.event.inputs.release_notes }}
+          APK_BYTES_VAL: ${{ env.apk_bytes }}
         run: |
-          cat << 'EOF' > release_notes.md
-          ## CTECS Release Summary
-
-          EOF
-          
+          echo "## CTECS Release Summary" > release_notes.md
+          echo "" >> release_notes.md
           echo "- **Channel:** \`${{ env.RELEASE_CHANNEL }}\`" >> release_notes.md
           echo "- **Version Name:** \`${{ env.NEW_VERSION }}\`" >> release_notes.md
           echo "- **Version Code:** \`${{ env.NEW_CODE }}\`" >> release_notes.md
@@ -310,7 +310,6 @@ jobs:
           echo "- **Commit Hash:** \`${{ github.sha }}\`" >> release_notes.md
           echo "" >> release_notes.md
           
-          CUSTOM_NOTES="${{ github.event.inputs.release_notes }}"
           if [ -n "$CUSTOM_NOTES" ]; then
             echo "### Release Notes" >> release_notes.md
             echo "$CUSTOM_NOTES" >> release_notes.md
@@ -326,25 +325,52 @@ jobs:
           git log -n 8 --pretty=format:"* %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" >> release_notes.md || true
           echo "" >> release_notes.md
           
-          mkdir -p "updates/${{ env.RELEASE_CHANNEL }}" "${{ env.RELEASE_CHANNEL }}"
-          
-          CLEAN_NOTES=$(echo "${CUSTOM_NOTES:-Release update available.}" | tr '\n' ' ' | sed 's/"/\\"/g')
-          
-          cat << EOF > "updates/${{ env.RELEASE_CHANNEL }}/update.json"
-{
-  "release_channel": "${{ env.RELEASE_CHANNEL }}",
-  "version_name": "${{ env.NEW_VERSION }}",
-  "version_code": ${{ env.NEW_CODE }},
-  "release_tag": "${{ env.NEW_TAG }}",
-  "apk_download_url": "https://github.com/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${{ env.APK_NAME }}",
-  "apk_size_bytes": ${{ env.apk_bytes }},
-  "release_notes": "$CLEAN_NOTES",
-  "min_supported_version": 1,
-  "published_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-EOF
-          cp "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json"
-          cp "updates/${{ env.RELEASE_CHANNEL }}/update.json" "release_artifacts/update.json"
+          python3 -c '
+          import json, os, time
+
+          channel = os.environ.get("RELEASE_CHANNEL", "stable")
+          version = os.environ.get("NEW_VERSION", "1.0.0")
+          try:
+              code = int(os.environ.get("NEW_CODE", "100099"))
+          except ValueError:
+              code = 100099
+          tag = os.environ.get("NEW_TAG", "v1.0.0")
+          repo = os.environ.get("GITHUB_REPOSITORY", "reddy7322/Ctecs")
+          apk = os.environ.get("APK_NAME", "CTECS-1.0.0.apk")
+          try:
+              bytes_val = int(os.environ.get("APK_BYTES_VAL", "0"))
+          except ValueError:
+              bytes_val = 0
+          notes = os.environ.get("CUSTOM_NOTES", "").strip() or "Release update available."
+
+          data = {
+            "release_channel": channel,
+            "version_name": version,
+            "version_code": code,
+            "release_tag": tag,
+            "apk_download_url": "https://github.com/" + repo + "/releases/download/" + tag + "/" + apk,
+            "apk_size_bytes": bytes_val,
+            "release_notes": notes,
+            "min_supported_version": 1,
+            "published_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+          }
+
+          dir1 = "updates/" + channel
+          dir2 = channel
+          os.makedirs(dir1, exist_ok=True)
+          os.makedirs(dir2, exist_ok=True)
+          os.makedirs("release_artifacts", exist_ok=True)
+
+          with open(dir1 + "/update.json", "w") as f:
+              json.dump(data, f, indent=2)
+          with open(dir2 + "/update.json", "w") as f:
+              json.dump(data, f, indent=2)
+          with open("release_artifacts/update.json", "w") as f:
+              json.dump(data, f, indent=2)
+
+          print("Generated update.json for channel " + channel + " successfully.")
+          '
+
 
       - name: 11. Commit & Push Channel Metadata Feed
         run: |
