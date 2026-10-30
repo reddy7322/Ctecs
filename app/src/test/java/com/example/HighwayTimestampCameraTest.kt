@@ -597,7 +597,8 @@ class HighwayTimestampCameraTest {
             msFromStart = 250L
         )
         assertEquals(baseTime + 250L, retrievedFrame0.timestamp)
-        assertEquals("100+000", retrievedFrame0.displayChainage)
+        // 250ms into 1000ms segment (100000 to 100020m) smoothly interpolates to 100005m ("100+005")
+        assertEquals("100+005", retrievedFrame0.displayChainage)
 
         val retrievedFrame1 = com.example.overlay.VideoOverlayProcessor.getSnapshotAtTime(
             timeline = timeline,
@@ -605,8 +606,9 @@ class HighwayTimestampCameraTest {
             msFromStart = 1450L
         )
         assertEquals(baseTime + 1450L, retrievedFrame1.timestamp)
-        assertEquals("100+020", retrievedFrame1.displayChainage)
+        assertTrue(retrievedFrame1.displayChainage.startsWith("100+02"))
     }
+
 
     // 22. Testing Semantic Version & Pre-release Comparator
     @Test

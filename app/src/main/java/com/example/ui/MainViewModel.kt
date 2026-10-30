@@ -283,7 +283,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             checkForAppUpdate(isManual = false)
         }
+
+        // Collect live telemetry snapshots during active video recording
+        viewModelScope.launch {
+            liveMatchResult.collect {
+                if (_isRecording.value && !_isRecordingPaused.value) {
+                    synchronized(videoSnapshotsTimeline) {
+                        videoSnapshotsTimeline.add(createCurrentSnapshot())
+                    }
+                }
+            }
+        }
     }
+
 
     fun checkForAppUpdate(isManual: Boolean = false) {
         viewModelScope.launch {
@@ -565,8 +577,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             activeRoute = activeRouteData.value,
             deviceRotationDegrees = rotationDegrees.value.toInt(),
             compassHeading = compassState.value.displayHeading,
-            compassAzimuth = compassState.value.azimuthDegrees
+            compassAzimuth = compassState.value.azimuthDegrees,
+            speedMps = locationState.value.speed
         )
+
     }
 
     fun onVideoRecordingStarted() {
@@ -579,10 +593,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         videoTickerJob?.cancel()
         videoTickerJob = viewModelScope.launch {
+            var msAccumulator = 0L
             while (_isRecording.value) {
-                kotlinx.coroutines.delay(1000L)
+                kotlinx.coroutines.delay(200L) // 5 Hz high-frequency sampling
                 if (_isRecording.value && !_isRecordingPaused.value) {
-                    _recordingDurationSeconds.value += 1
+                    msAccumulator += 200L
+                    if (msAccumulator >= 1000L) {
+                        _recordingDurationSeconds.value += 1
+                        msAccumulator = 0L
+                    }
                     synchronized(videoSnapshotsTimeline) {
                         videoSnapshotsTimeline.add(createCurrentSnapshot())
                     }
@@ -590,6 +609,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
 
     fun onVideoRecordingTick(seconds: Int) {
         _recordingDurationSeconds.value = seconds

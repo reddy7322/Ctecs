@@ -314,28 +314,198 @@ object VideoOverlayProcessor {
     }
 
     /**
-     * Finds the exact snapshot for this millisecond of active video recording.
-     * Maps each recorded active second to its live snapshot, dynamically updating the clock.
+     * Finds and interpolates the exact snapshot for this millisecond of active video recording.
+     * Smoothly updates timestamp, GPS coordinates, chainage, speed, compass heading, and bearing frame-by-frame.
      */
     fun getSnapshotAtTime(
         timeline: List<CaptureSnapshot>,
         defaultSnapshot: CaptureSnapshot,
         msFromStart: Long
     ): CaptureSnapshot {
+        val baseSnapshot = if (timeline.isNotEmpty()) timeline[0] else defaultSnapshot
+        val baseTimestamp = baseSnapshot.timestamp
+        val frameTimestamp = baseTimestamp + msFromStart
+
         if (timeline.isEmpty()) {
-            val targetTime = defaultSnapshot.timestamp + msFromStart
-            return defaultSnapshot.copy(timestamp = targetTime)
+            val loc = defaultSnapshot.location
+            val chainage = defaultSnapshot.matchResult.chainage
+            val speed = defaultSnapshot.speedMps ?: 0f
+
+            val newLoc = if (loc != null && speed > 0f) {
+                val distMetres = (msFromStart / 1000.0) * speed
+                val bRad = Math.toRadians((defaultSnapshot.bearing ?: defaultSnapshot.compassAzimuth).toDouble())
+                val dLat = (distMetres * Math.cos(bRad)) / com.example.geo.GeoUtils.EARTH_RADIUS_METRES
+                val dLng = (distMetres * Math.sin(bRad)) / (com.example.geo.GeoUtils.EARTH_RADIUS_METRES * Math.cos(Math.toRadians(loc.latitude)))
+                com.example.model.GeoPoint(loc.latitude + Math.toDegrees(dLat), loc.longitude + Math.toDegrees(dLng), loc.altitude)
+            } else loc
+
+            val newMetres = if (chainage != null && speed > 0f) {
+                chainage.metres + ((msFromStart / 1000.0) * speed).toLong()
+            } else chainage?.metres
+
+            val newMatch = if (newMetres != null) {
+                defaultSnapshot.matchResult.copy(chainage = com.example.model.Chainage(newMetres))
+            } else defaultSnapshot.matchResult
+
+            return defaultSnapshot.copy(
+                timestamp = frameTimestamp,
+                location = newLoc,
+                matchResult = newMatch
+            )
         }
 
-        val secondIndex = (msFromStart / 1000L).toInt().coerceIn(0, timeline.size - 1)
-        val activeSnapshot = timeline[secondIndex]
+        if (timeline.size == 1) {
+            val snap = timeline[0]
+            val loc = snap.location
+            val chainage = snap.matchResult.chainage
+            val speed = snap.speedMps ?: 0f
 
-        // Dynamic clock precision: update timestamp to reflect millisecond progress within the second
-        val msOffset = msFromStart % 1000L
-        val frameClockTime = activeSnapshot.timestamp + msOffset
+            val newLoc = if (loc != null && speed > 0f) {
+                val distMetres = (msFromStart / 1000.0) * speed
+                val bRad = Math.toRadians((snap.bearing ?: snap.compassAzimuth).toDouble())
+                val dLat = (distMetres * Math.cos(bRad)) / com.example.geo.GeoUtils.EARTH_RADIUS_METRES
+                val dLng = (distMetres * Math.sin(bRad)) / (com.example.geo.GeoUtils.EARTH_RADIUS_METRES * Math.cos(Math.toRadians(loc.latitude)))
+                com.example.model.GeoPoint(loc.latitude + Math.toDegrees(dLat), loc.longitude + Math.toDegrees(dLng), loc.altitude)
+            } else loc
 
-        return activeSnapshot.copy(timestamp = frameClockTime)
+            val newMetres = if (chainage != null && speed > 0f) {
+                chainage.metres + ((msFromStart / 1000.0) * speed).toLong()
+            } else chainage?.metres
+
+            val newMatch = if (newMetres != null) {
+                snap.matchResult.copy(chainage = com.example.model.Chainage(newMetres))
+            } else snap.matchResult
+
+            return snap.copy(
+                timestamp = frameTimestamp,
+                location = newLoc,
+                matchResult = newMatch
+            )
+        }
+
+        val startTime = timeline[0].timestamp
+        val targetEpoch = startTime + msFromStart
+
+        // Find snapA (last snapshot with timestamp <= targetEpoch) and snapB
+        var snapA = timeline[0]
+        var snapB = timeline.last()
+        var idxA = 0
+
+        for (i in 0 until timeline.size - 1) {
+            if (timeline[i].timestamp <= targetEpoch) {
+                idxA = i
+                snapA = timeline[i]
+                snapB = timeline[i + 1]
+            }
+        }
+
+        val timeA = snapA.timestamp
+        val timeB = snapB.timestamp
+        val durationMs = timeB - timeA
+
+        if (durationMs <= 0L || targetEpoch < timeA) {
+            return snapA.copy(timestamp = frameTimestamp)
+        }
+
+        if (targetEpoch >= timeB && idxA == timeline.size - 2) {
+            val speed = snapB.speedMps ?: 0f
+            val extraMs = targetEpoch - timeB
+            val loc = snapB.location
+            val chainage = snapB.matchResult.chainage
+
+            val newLoc = if (loc != null && speed > 0f) {
+                val distMetres = (extraMs / 1000.0) * speed
+                val bRad = Math.toRadians((snapB.bearing ?: snapB.compassAzimuth).toDouble())
+                val dLat = (distMetres * Math.cos(bRad)) / com.example.geo.GeoUtils.EARTH_RADIUS_METRES
+                val dLng = (distMetres * Math.sin(bRad)) / (com.example.geo.GeoUtils.EARTH_RADIUS_METRES * Math.cos(Math.toRadians(loc.latitude)))
+                com.example.model.GeoPoint(loc.latitude + Math.toDegrees(dLat), loc.longitude + Math.toDegrees(dLng), loc.altitude)
+            } else loc
+
+            val newMetres = if (chainage != null && speed > 0f) {
+                chainage.metres + ((extraMs / 1000.0) * speed).toLong()
+            } else chainage?.metres
+
+            val newMatch = if (newMetres != null) {
+                snapB.matchResult.copy(chainage = com.example.model.Chainage(newMetres))
+            } else snapB.matchResult
+
+            return snapB.copy(
+                timestamp = frameTimestamp,
+                location = newLoc,
+                matchResult = newMatch
+            )
+        }
+
+        val t = ((targetEpoch - timeA).toDouble() / durationMs.toDouble()).coerceIn(0.0, 1.0).toFloat()
+
+        // Interpolate Location (Lat, Lng, Alt)
+        val locA = snapA.location
+        val locB = snapB.location
+        val interpLoc = if (locA != null && locB != null) {
+            val lat = locA.latitude + t * (locB.latitude - locA.latitude)
+            val lng = locA.longitude + t * (locB.longitude - locA.longitude)
+            val alt = locA.altitude + t * (locB.altitude - locA.altitude)
+            com.example.model.GeoPoint(lat, lng, alt)
+        } else locA ?: locB
+
+        // Interpolate Accuracy
+        val interpAcc = snapA.gpsAccuracy + t * (snapB.gpsAccuracy - snapA.gpsAccuracy)
+
+        // Interpolate Speed
+        val speedA = snapA.speedMps ?: 0f
+        val speedB = snapB.speedMps ?: 0f
+        val interpSpeed = speedA + t * (speedB - speedA)
+
+        // Interpolate Bearing
+        val bearingA = snapA.bearing
+        val bearingB = snapB.bearing
+        val interpBearing = if (bearingA != null && bearingB != null) {
+            lerpAngle(bearingA, bearingB, t)
+        } else bearingA ?: bearingB
+
+        // Interpolate Compass Azimuth & Heading
+        val interpAzimuth = lerpAngle(snapA.compassAzimuth, snapB.compassAzimuth, t)
+        val interpHeading = formatHeading(interpAzimuth)
+
+        // Interpolate Chainage Metres
+        val cA = snapA.matchResult.chainage?.metres
+        val cB = snapB.matchResult.chainage?.metres
+        val interpMatch = if (cA != null && cB != null) {
+            val m = (cA + t * (cB - cA)).toLong()
+            snapA.matchResult.copy(chainage = com.example.model.Chainage(m))
+        } else if (cA != null && interpSpeed > 0f) {
+            val elapsedSec = (targetEpoch - timeA) / 1000.0
+            val m = cA + (elapsedSec * interpSpeed).toLong()
+            snapA.matchResult.copy(chainage = com.example.model.Chainage(m))
+        } else snapA.matchResult
+
+        return snapA.copy(
+            timestamp = frameTimestamp,
+            location = interpLoc,
+            gpsAccuracy = interpAcc,
+            bearing = interpBearing,
+            matchResult = interpMatch,
+            compassHeading = interpHeading,
+            compassAzimuth = interpAzimuth,
+            speedMps = interpSpeed
+        )
     }
+
+    private fun lerpAngle(a: Float, b: Float, t: Float): Float {
+        var diff = (b - a) % 360f
+        if (diff > 180f) diff -= 360f
+        if (diff < -180f) diff += 360f
+        var result = (a + diff * t) % 360f
+        if (result < 0f) result += 360f
+        return result
+    }
+
+    private fun formatHeading(azimuthDegrees: Float): String {
+        val directions = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+        val index = ((azimuthDegrees + 22.5f) % 360f / 45f).toInt().coerceIn(0, 7)
+        return "${azimuthDegrees.toInt()}° ${directions[index]}"
+    }
+
 
     private fun feedEncoder(encoder: MediaCodec, yuvData: ByteArray, presentationTimeUs: Long) {
         val timeoutUs = 10_000L
