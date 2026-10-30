@@ -19,8 +19,9 @@ android {
         ?: System.getenv("UPDATE_CHANNEL")
         ?: "beta"
 
-    versionCode = if (updateChannel == "beta") 100163 else 100169
-    versionName = if (updateChannel == "beta") "1.0.16-beta.3" else "1.0.16"
+    versionCode = if (updateChannel == "beta") 101605 else 101699
+    versionName = if (updateChannel == "beta") "1.0.16-beta.5" else "1.0.16"
+
 
 
     buildConfigField("String", "UPDATE_CHANNEL", "\"$updateChannel\"")

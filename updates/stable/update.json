@@ -1,12 +1,13 @@
 {
   "release_channel": "stable",
   "version_name": "1.0.16",
-  "version_code": 100169,
+  "version_code": 101699,
   "release_tag": "v1.0.16",
   "apk_download_url": "https://github.com/reddy7322/Ctecs/releases/download/v1.0.16/CTECS-1.0.16.apk",
   "apk_size_bytes": 18500000,
   "release_notes": "CTECS Official Stable release v1.0.16 with validated highway survey camera and metadata burn-in.",
   "min_supported_version": 1,
-  "published_timestamp": "2026-10-30T09:30:00Z"
+  "published_timestamp": "2026-10-30T10:15:00Z"
 }
+
 
