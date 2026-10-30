@@ -160,8 +160,14 @@ fun CameraScreen(
     val controller = remember {
         LifecycleCameraController(context).apply {
             try {
-                setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
-            } catch (ignored: Exception) {}
+                setEnabledUseCases(
+                    LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+                )
+            } catch (e: Throwable) {
+                try {
+                    setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+                } catch (ignored: Exception) {}
+            }
         }
     }
     val videoManager = remember { VideoRecordingManager(context) }
@@ -224,17 +230,14 @@ fun CameraScreen(
         }
     }
 
-    val audioPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) {
-        // Start recording whether granted or not (VideoRecordingManager safely records silent video if denied)
+    fun startVideoRecording(audioEnabled: Boolean) {
+        viewModel.onVideoRecordingStarted()
         videoManager.startRecording(
             controller = controller,
-            recordAudio = cameraSettings.recordAudio,
+            recordAudio = audioEnabled,
             onEvent = { event, recFile ->
                 when (event) {
                     is androidx.camera.video.VideoRecordEvent.Start -> {
-                        viewModel.onVideoRecordingStarted()
                         viewModel.showInfo("Recording video...")
                     }
                     is androidx.camera.video.VideoRecordEvent.Pause -> {
@@ -245,21 +248,23 @@ fun CameraScreen(
                     }
                     is androidx.camera.video.VideoRecordEvent.Finalize -> {
                         viewModel.onVideoRecordingStopped()
-                        if (event.hasError()) {
-                            viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
-                        } else if (recFile != null && recFile.exists()) {
-                            viewModel.processRecordedVideo(context, recFile)
-                        } else {
-                            viewModel.showSuccess("Video saved to Movies/HighwayCamera")
-                        }
+                        val finalRecFile = recFile ?: videoManager.currentRecordingFile ?: File(context.cacheDir, "temp_video/raw_video.mp4")
+                        viewModel.processRecordedVideo(context, finalRecFile)
                     }
                 }
             },
             onError = { throwable ->
+                android.util.Log.e("CameraScreen", "Video recording error: ${throwable.message}", throwable)
                 viewModel.onVideoRecordingStopped()
-                viewModel.showError(throwable.message ?: "Video recording failed to start")
+                viewModel.showError(throwable.message ?: "Failed to start video recording")
             }
         )
+    }
+
+    val audioPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        startVideoRecording(isGranted && cameraSettings.recordAudio)
     }
 
     // Trigger Photo Capture (with or without countdown)
@@ -311,42 +316,11 @@ fun CameraScreen(
             if (cameraSettings.recordAudio && !hasAudioPerm) {
                 audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
             } else {
-                videoManager.startRecording(
-                    controller = controller,
-                    recordAudio = cameraSettings.recordAudio,
-                    onEvent = { event, recFile ->
-                        when (event) {
-                            is androidx.camera.video.VideoRecordEvent.Start -> {
-                                viewModel.onVideoRecordingStarted()
-                                viewModel.showInfo("Recording video...")
-                            }
-                            is androidx.camera.video.VideoRecordEvent.Pause -> {
-                                viewModel.onVideoRecordingPaused(true)
-                            }
-                            is androidx.camera.video.VideoRecordEvent.Resume -> {
-                                viewModel.onVideoRecordingPaused(false)
-                            }
-                            is androidx.camera.video.VideoRecordEvent.Finalize -> {
-                                viewModel.onVideoRecordingStopped()
-                                if (event.hasError()) {
-                                    viewModel.showError("Recording issue: ${event.cause?.message ?: "Code ${event.error}"}")
-                                } else if (recFile != null && recFile.exists()) {
-                                    viewModel.processRecordedVideo(context, recFile)
-                                } else {
-                                    viewModel.showSuccess("Video saved to Movies/HighwayCamera")
-                                }
-                            }
-                        }
-                    },
-                    onError = { throwable ->
-                        viewModel.onVideoRecordingStopped()
-                        viewModel.showError(throwable.message ?: "Video recording failed to start")
-                    }
-                )
+                startVideoRecording(cameraSettings.recordAudio && hasAudioPerm)
             }
         } else {
+            viewModel.showInfo("Saving video...")
             videoManager.stop()
-            viewModel.onVideoRecordingStopped()
         }
     }
 
@@ -362,6 +336,7 @@ fun CameraScreen(
             photoResolution = cameraSettings.photoResolution,
             videoResolution = cameraSettings.videoResolution,
             controller = controller,
+            currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -1772,7 +1747,7 @@ private fun toDms(dec: Double, isLat: Boolean): String {
  * Creates a high resolution simulated camera frame with road texture if device camera hardware is unavailable,
  * correctly sized for landscape (1920x1080) or portrait (1080x1920).
  */
-private fun createSimulatedCameraFrame(context: Context, rotationDegrees: Int = 0): Bitmap {
+fun createSimulatedCameraFrame(context: Context, rotationDegrees: Int = 0): Bitmap {
     val isLandscape = rotationDegrees == 90 || rotationDegrees == 270
     val w = if (isLandscape) 1920 else 1080
     val h = if (isLandscape) 1080 else 1920

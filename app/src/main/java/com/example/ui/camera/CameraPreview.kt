@@ -18,6 +18,8 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoRecordEvent
+import androidx.camera.core.CameraEffect
+import androidx.camera.effects.OverlayEffect
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.camera.view.video.AudioConfig
@@ -42,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +59,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.model.CaptureSnapshot
+import com.example.model.OverlayTemplate
+import com.example.overlay.OverlayRenderer
 import com.example.ui.theme.HighlightYellow
 import com.example.ui.theme.PrimaryBackground
 import com.example.ui.theme.PrimaryText
@@ -76,10 +82,12 @@ fun CameraPreview(
     photoResolution: String = "1920 x 1080",
     videoResolution: String = "1920 x 1080",
     controller: LifecycleCameraController,
+    currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val latestSnapshotProvider by rememberUpdatedState(currentSnapshotProvider)
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -125,34 +133,54 @@ fun CameraPreview(
         }
     }
 
-    // Configure Use Cases: In Photo mode, enable IMAGE_CAPTURE.
-    // In Video mode, reliably enable IMAGE_CAPTURE or VIDEO_CAPTURE.
-    LaunchedEffect(isVideoMode, hasCameraPermission) {
+    // Configure Use Cases: Enable IMAGE_CAPTURE and VIDEO_CAPTURE so switching between
+    // photo and video modes is instantaneous with no camera unbinding or lag.
+    LaunchedEffect(hasCameraPermission) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
             controller.isPinchToZoomEnabled = true
             controller.isTapToFocusEnabled = true
 
-            if (isVideoMode) {
+            try {
+                controller.setEnabledUseCases(
+                    LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+                )
+            } catch (e: Throwable) {
                 try {
-                    controller.setEnabledUseCases(
-                        LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
-                    )
-                } catch (e: Throwable) {
-                    try {
-                        controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
-                    } catch (e2: Throwable) {
-                        Log.w("CameraPreview", "Failed to set VIDEO_CAPTURE use cases", e2)
-                    }
-                }
-            } else {
-                controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+                    controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+                } catch (ignored: Exception) {}
             }
+            try {
+                val effect = OverlayEffect(
+                    CameraEffect.VIDEO_CAPTURE,
+                    0,
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                ) { error ->
+                    Log.w("CameraPreview", "OverlayEffect notice: ${error.message}")
+                }
+                effect.setOnDrawListener { frameData ->
+                    try {
+                        val canvas = frameData.overlayCanvas
+                        canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+                        val snapshot = latestSnapshotProvider()
+                        if (snapshot != null && snapshot.overlayConfig.template != OverlayTemplate.NONE && snapshot.overlayConfig.burnInTimestamp) {
+                            OverlayRenderer.drawOverlayOnCanvas(
+                                context = context,
+                                canvas = canvas,
+                                width = canvas.width,
+                                height = canvas.height,
+                                snapshot = snapshot.copy(timestamp = System.currentTimeMillis())
+                            )
+                        }
+                    } catch (e: Exception) {
+                        Log.w("CameraPreview", "Frame overlay draw error: ${e.message}")
+                    }
+                    true
+                }
+                controller.setEffects(setOf(effect))
+            } catch (ignored: Exception) {}
         } catch (e: Exception) {
             Log.w("CameraPreview", "Setting use cases fallback", e)
-            try {
-                controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
-            } catch (ignored: Exception) {}
         }
     }
 
@@ -380,6 +408,22 @@ fun buildSafeQualitySelector(
     videoResolution: String = "1920 x 1080",
     cameraInfo: androidx.camera.core.CameraInfo? = null
 ): androidx.camera.video.QualitySelector {
+    val supported = if (cameraInfo != null) {
+        try {
+            androidx.camera.video.QualitySelector.getSupportedQualities(cameraInfo)
+        } catch (ignored: Exception) {
+            emptyList()
+        }
+    } else {
+        emptyList()
+    }
+
+    // If device/emulator camera HAL does not report any EncoderProfiles,
+    // return Recorder's DEFAULT_QUALITY_SELECTOR to let CameraX negotiate safe fallback internally
+    if (supported.isEmpty()) {
+        return androidx.camera.video.Recorder.DEFAULT_QUALITY_SELECTOR
+    }
+
     val videoParts = videoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
     val w = if (videoParts.size == 2) Math.max(videoParts[0], videoParts[1]) else 1920
     val preferredQuality = when {
@@ -414,27 +458,13 @@ fun buildSafeQualitySelector(
         )
     }
 
-    val supported = if (cameraInfo != null) {
-        try {
-            androidx.camera.video.QualitySelector.getSupportedQualities(cameraInfo)
-        } catch (ignored: Exception) {
-            emptyList()
-        }
-    } else {
-        emptyList()
-    }
-
-    val finalQualityList = if (supported.isNotEmpty()) {
-        val matching = preferredList.filter { supported.contains(it) }
-        if (matching.isNotEmpty()) matching else supported
-    } else {
-        preferredList
-    }
+    val matching = preferredList.filter { supported.contains(it) }
+    val finalQualityList = if (matching.isNotEmpty()) matching else supported
 
     return androidx.camera.video.QualitySelector.fromOrderedList(
         finalQualityList,
         androidx.camera.video.FallbackStrategy.lowerQualityOrHigherThan(
-            androidx.camera.video.Quality.SD
+            finalQualityList.last()
         )
     )
 }
@@ -465,14 +495,10 @@ class VideoRecordingManager(private val context: Context) {
                     try {
                         controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
                     } catch (e2: Exception) {
-                        onError(IllegalStateException("Video recording is not supported on this camera profile."))
-                        return
+                        Log.w("VideoRecordingManager", "VIDEO_CAPTURE usecase enable failed: ${e2.message}")
                     }
                 }
             }
-            try {
-                controller.videoCaptureQualitySelector = buildSafeQualitySelector("1920 x 1080", controller.cameraInfo)
-            } catch (ignored: Exception) {}
 
             val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -486,9 +512,13 @@ class VideoRecordingManager(private val context: Context) {
             ) == PackageManager.PERMISSION_GRANTED
 
             val audioConfig = if (recordAudio && hasAudioPerm) {
-                AudioConfig.create(true)
+                try {
+                    AudioConfig.create(true)
+                } catch (e: Exception) {
+                    AudioConfig.AUDIO_DISABLED
+                }
             } else {
-                AudioConfig.create(false)
+                AudioConfig.AUDIO_DISABLED
             }
 
             val fileOptions = FileOutputOptions.Builder(tempFile).build()
@@ -501,16 +531,25 @@ class VideoRecordingManager(private val context: Context) {
                 onEvent(event, recFile)
             }
 
-            val pendingRecording = controller.startRecording(
-                fileOptions,
-                audioConfig,
-                executor,
-                recordListener
-            )
+            val pendingRecording = try {
+                controller.startRecording(
+                    fileOptions,
+                    audioConfig,
+                    executor,
+                    recordListener
+                )
+            } catch (e: SecurityException) {
+                Log.w("VideoRecordingManager", "Audio recording permission error, retrying without audio", e)
+                controller.startRecording(
+                    fileOptions,
+                    AudioConfig.AUDIO_DISABLED,
+                    executor,
+                    recordListener
+                )
+            }
             activeRecording = pendingRecording
         } catch (e: Throwable) {
             activeRecording = null
-            currentRecordingFile = null
             onError(e)
         }
     }
@@ -530,7 +569,7 @@ class VideoRecordingManager(private val context: Context) {
     fun stop() {
         try {
             activeRecording?.stop()
-            activeRecording = null
         } catch (ignored: Exception) {}
+        activeRecording = null
     }
 }

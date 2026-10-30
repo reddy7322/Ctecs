@@ -600,7 +600,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun processRecordedVideo(context: android.content.Context, rawVideoFile: java.io.File) {
         viewModelScope.launch {
-            showToast("Embedding dynamic overlays in video...", ToastType.INFO)
             val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
             val defaultSnapshot = createCurrentSnapshot()
 
