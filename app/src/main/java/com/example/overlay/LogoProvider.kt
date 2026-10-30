@@ -59,11 +59,16 @@ object LogoProvider {
 
     private fun loadCustomImage(context: Context, uriString: String): Bitmap? {
         return try {
+            val file = File(uriString)
+            if (file.exists() && file.isFile && file.length() > 0) {
+                val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                if (bitmap != null) return bitmap
+            }
             val uri = Uri.parse(uriString)
             if (uri.scheme == "file") {
-                val file = File(uri.path ?: uriString)
-                if (file.exists()) {
-                    BitmapFactory.decodeFile(file.absolutePath)
+                val f = File(uri.path ?: uriString)
+                if (f.exists()) {
+                    BitmapFactory.decodeFile(f.absolutePath)
                 } else null
             } else {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -74,6 +79,7 @@ object LogoProvider {
             null
         }
     }
+
 
     /**
      * Shapes and borders the bitmap according to user config.

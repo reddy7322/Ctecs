@@ -115,6 +115,22 @@ object OverlayRenderer {
         }
     }
 
+    private fun resolveTypeface(fontFamily: String, fontStyle: String): Typeface {
+        val style = when (fontStyle.lowercase()) {
+            "bold" -> Typeface.BOLD
+            "italic" -> Typeface.ITALIC
+            "medium" -> Typeface.BOLD
+            else -> Typeface.NORMAL
+        }
+        val family = when (fontFamily.lowercase()) {
+            "monospace" -> Typeface.MONOSPACE
+            "serif" -> Typeface.SERIF
+            "noto sans", "source sans pro", "sans-serif" -> Typeface.SANS_SERIF
+            else -> Typeface.DEFAULT
+        }
+        return Typeface.create(family, style)
+    }
+
     private fun renderInformationBlock(
         canvas: Canvas,
         width: Int,
@@ -131,26 +147,43 @@ object OverlayRenderer {
 
         val isLandscape = width > height
         val baseFontSize = if (isLandscape) {
-            (config.fontSizeSp * 1.55f * scale).coerceIn(20f, 62f)
+            (config.fontSizeSp * 1.55f * scale).coerceIn(18f, 68f)
         } else {
-            (config.fontSizeSp * 1.8f * scale).coerceIn(24f, 84f)
+            (config.fontSizeSp * 1.8f * scale).coerceIn(20f, 90f)
         }
         val lineSpacing = baseFontSize * 0.35f
 
+        val customTypeface = resolveTypeface(config.fontFamily, config.fontStyle)
+
+        val posLower = config.watermarkPosition.lowercase()
+        val isLeft = posLower.contains("left")
+        val isCenter = posLower.contains("center") && !posLower.contains("right") && !posLower.contains("left")
+        val isTop = posLower.contains("top")
+
+        val align = when {
+            isLeft -> Paint.Align.LEFT
+            isCenter -> Paint.Align.CENTER
+            else -> Paint.Align.RIGHT
+        }
+
+        val baseColor = try { Color.parseColor(config.textColorHex) } catch (e: Exception) { Color.WHITE }
+        val alphaVal = (config.textOpacity.coerceIn(0.1f, 1f) * 255).toInt()
+        val textColorWithAlpha = Color.argb(alphaVal, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
+
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = try { Color.parseColor(config.textColorHex) } catch (e: Exception) { Color.WHITE }
+            color = textColorWithAlpha
             textSize = baseFontSize
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            textAlign = Paint.Align.RIGHT
+            typeface = customTypeface
+            textAlign = align
         }
 
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(220, 0, 0, 0)
+            color = Color.argb((alphaVal * 0.85f).toInt(), 0, 0, 0)
             textSize = baseFontSize
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            textAlign = Paint.Align.RIGHT
+            typeface = customTypeface
+            textAlign = align
             style = Paint.Style.STROKE
-            strokeWidth = (baseFontSize * 0.12f).coerceAtLeast(3f)
+            strokeWidth = (baseFontSize * (config.textStrokeWidthDp / 20f)).coerceAtLeast(2f * scale)
             strokeJoin = Paint.Join.ROUND
         }
 
@@ -170,21 +203,70 @@ object OverlayRenderer {
             isForCapture = true
         )
 
-        val rightX = width - marginX
-        var currentY = height - marginY
+        if (lines.isEmpty()) return height - marginY
 
-        // Draw lines from bottom to top
-        for (i in lines.indices.reversed()) {
-            val line = lines[i]
-            if (config.hasTextShadow) {
-                canvas.drawText(line, rightX, currentY, strokePaint)
-            }
-            canvas.drawText(line, rightX, currentY, textPaint)
-            currentY -= (baseFontSize + lineSpacing)
+        val targetX = when {
+            isLeft -> marginX
+            isCenter -> width / 2f
+            else -> width - marginX
         }
 
-        return currentY
+        val totalBlockHeight = lines.size * baseFontSize + (lines.size - 1) * lineSpacing
+
+        // Background card panel if configured
+        val showBgPanel = config.backgroundStyle != "Transparent" || config.backgroundOpacity > 0f
+        if (showBgPanel) {
+            val bgAlpha = if (config.backgroundStyle == "Solid") 220 else (config.backgroundOpacity.coerceIn(0.1f, 1f) * 255).toInt()
+            val bgColor = try { Color.parseColor(config.backgroundColorHex) } catch (e: Exception) { Color.BLACK }
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(bgAlpha, Color.red(bgColor), Color.green(bgColor), Color.blue(bgColor))
+                style = Paint.Style.FILL
+            }
+
+            var maxLineWidth = 0f
+            for (line in lines) {
+                val w = textPaint.measureText(line)
+                if (w > maxLineWidth) maxLineWidth = w
+            }
+
+            val padX = 16f * scale
+            val padY = 12f * scale
+
+            val bgRect = when {
+                isLeft -> RectF(marginX - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, marginX + maxLineWidth + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
+                isCenter -> RectF(width / 2f - maxLineWidth / 2f - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, width / 2f + maxLineWidth / 2f + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
+                else -> RectF(width - marginX - maxLineWidth - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, width - marginX + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
+            }
+
+            canvas.drawRoundRect(bgRect, 12f * scale, 12f * scale, bgPaint)
+        }
+
+        var currentY = if (isTop) marginY + baseFontSize else height - marginY
+
+        if (isTop) {
+            // Draw top to bottom
+            for (line in lines) {
+                if (config.hasTextShadow) {
+                    canvas.drawText(line, targetX, currentY, strokePaint)
+                }
+                canvas.drawText(line, targetX, currentY, textPaint)
+                currentY += (baseFontSize + lineSpacing)
+            }
+            return currentY
+        } else {
+            // Draw bottom to top
+            for (i in lines.indices.reversed()) {
+                val line = lines[i]
+                if (config.hasTextShadow) {
+                    canvas.drawText(line, targetX, currentY, strokePaint)
+                }
+                canvas.drawText(line, targetX, currentY, textPaint)
+                currentY -= (baseFontSize + lineSpacing)
+            }
+            return currentY
+        }
     }
+
 
     private fun renderMiniMap(
         canvas: Canvas,

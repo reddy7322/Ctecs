@@ -15,17 +15,18 @@ android {
   defaultConfig {
     applicationId = "com.aistudio.ctecshighwaycam.pqzrt"
     minSdk = 26
-    targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
-
     val updateChannel = project.findProperty("updateChannel") as? String
         ?: System.getenv("UPDATE_CHANNEL")
         ?: "stable"
+
+    versionCode = if (updateChannel == "beta") 100001 else 100099
+    versionName = if (updateChannel == "beta") "1.0.0-beta.1" else "1.0.0"
+
     buildConfigField("String", "UPDATE_CHANNEL", "\"$updateChannel\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
+
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
   // and updating Android apps in AI Studio.

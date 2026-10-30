@@ -42,12 +42,15 @@ class AppUpdateManager(private val context: Context) {
 
         /**
          * Semantic version comparator. Returns true if remoteVersion > currentVersion.
-         * Correctly handles pre-release suffixes (e.g. "1.0.0-beta.2" > "1.0.0-beta.1", "1.0.1" > "1.0.0").
+         * Correctly handles pre-release suffixes (e.g. "1.0.0-beta.2" > "1.0.0-beta.1", "1.0.0-beta.1" > "1.0.0").
          */
         fun isNewerVersion(remoteVersion: String, currentVersion: String): Boolean {
             try {
+                if (remoteVersion.isBlank()) return false
                 val cleanRemote = remoteVersion.removePrefix("v").trim()
                 val cleanCurrent = currentVersion.removePrefix("v").trim()
+
+                if (cleanRemote.equals(cleanCurrent, ignoreCase = true)) return false
 
                 val remoteBase = cleanRemote.substringBefore("-")
                 val currentBase = cleanCurrent.substringBefore("-")
@@ -63,14 +66,32 @@ class AppUpdateManager(private val context: Context) {
                     if (r < c) return false
                 }
 
-                // If base versions are identical, compare pre-release build numbers (e.g. beta.2 vs beta.1)
+                // Base versions are equal (e.g. 1.0.0 vs 1.0.0)
                 val remotePre = cleanRemote.substringAfter("-", "")
                 val currentPre = cleanCurrent.substringAfter("-", "")
 
+                // Case A: Both have pre-release tags (e.g. "beta.2" vs "beta.1")
                 if (remotePre.isNotBlank() && currentPre.isNotBlank()) {
                     val remotePreNum = remotePre.filter { it.isDigit() }.toIntOrNull() ?: 0
                     val currentPreNum = currentPre.filter { it.isDigit() }.toIntOrNull() ?: 0
-                    return remotePreNum > currentPreNum
+                    if (remotePreNum != currentPreNum) {
+                        return remotePreNum > currentPreNum
+                    }
+                    return remotePre > currentPre
+                }
+
+                // Case B: Remote has pre-release tag ("beta.1") and current does NOT have a pre-release tag ("1.0" or "1.0.0")
+                if (remotePre.isNotBlank() && currentPre.isBlank()) {
+                    // For a Beta channel installation, a Beta release tag is a valid update
+                    if (isBetaChannel()) {
+                        return true
+                    }
+                    return false
+                }
+
+                // Case C: Remote is stable (no pre-release) and current is pre-release ("beta.1")
+                if (remotePre.isBlank() && currentPre.isNotBlank()) {
+                    return true // Stable release is newer than a pre-release of the same base
                 }
 
                 return false
@@ -79,6 +100,7 @@ class AppUpdateManager(private val context: Context) {
             }
         }
     }
+
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -155,7 +177,8 @@ class AppUpdateManager(private val context: Context) {
             // Strict anti-downgrade & version validation
             val isCodeNewer = versionCode > currentVersionCode
             val isNameNewer = isNewerVersion(versionName, currentVersionName)
-            val isUpdateAvailable = (isCodeNewer || isNameNewer) && (versionCode >= currentVersionCode)
+            val isUpdateAvailable = isNameNewer || isCodeNewer
+
 
             AppReleaseInfo(
                 channel = expectedChannel,
@@ -359,15 +382,21 @@ class AppUpdateManager(private val context: Context) {
                 @Suppress("DEPRECATION")
                 archiveInfo.versionCode.toLong()
             }
+            val apkVersionName = archiveInfo.versionName ?: ""
             val currentVersionCode = BuildConfig.VERSION_CODE.toLong()
+            val currentVersionName = BuildConfig.VERSION_NAME
+            val isNameNewer = isNewerVersion(apkVersionName, currentVersionName)
 
-            if (apkVersionCode < currentVersionCode) {
+
+            if (apkVersionCode < currentVersionCode && !isNameNewer) {
                 return Result.failure(SecurityException("Downgrade blocked: APK version code ($apkVersionCode) is older than installed version ($currentVersionCode)."))
             }
 
+
+
             // 3. Verify Channel Isolation
-            val apkVersionName = archiveInfo.versionName ?: ""
             val isApkBeta = apkVersionName.contains("beta", ignoreCase = true) || apkFile.name.contains("beta", ignoreCase = true)
+
 
             if (expectedChannel == "stable" && isApkBeta) {
                 return Result.failure(SecurityException("Cross-channel installation blocked: Cannot install Beta APK ('$apkVersionName') on Stable release channel."))

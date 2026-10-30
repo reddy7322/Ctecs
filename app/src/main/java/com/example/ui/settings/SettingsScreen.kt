@@ -1008,6 +1008,83 @@ fun SettingsScreen(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Text Color", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val colorOptions = listOf(
+                        "White" to "#FFFFFF",
+                        "Yellow" to "#FFD700",
+                        "Cyan" to "#38BDF8",
+                        "Green" to "#4ADE80",
+                        "Orange" to "#FB923C",
+                        "Red" to "#F87171"
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        colorOptions.forEach { (label, hex) ->
+                            val chipColor = try { Color(android.graphics.Color.parseColor(hex)) } catch (e: Exception) { Color.White }
+                            FilterChip(
+                                selected = currentOverlay.textColorHex.equals(hex, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textColorHex = hex)) },
+                                label = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(modifier = Modifier.size(10.dp).background(chipColor, CircleShape))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(label, fontSize = 11.sp)
+                                    }
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Font Family", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val fontFamilies = listOf("Default", "Monospace", "Serif", "Noto Sans", "Source Sans Pro")
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        fontFamilies.forEach { family ->
+                            FilterChip(
+                                selected = currentOverlay.fontFamily.equals(family, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontFamily = family)) },
+                                label = { Text(family, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Font Style", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val fontStyles = listOf("Bold", "Medium", "Regular", "Italic")
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        fontStyles.forEach { style ->
+                            FilterChip(
+                                selected = currentOverlay.fontStyle.equals(style, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontStyle = style)) },
+                                label = { Text(style, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
                     SliderRow(
                         title = "Font Size (SP)",
                         value = currentOverlay.fontSizeSp,
@@ -1015,8 +1092,87 @@ fun SettingsScreen(
                         onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontSizeSp = it)) },
                         valueText = "${currentOverlay.fontSizeSp.toInt()} sp"
                     )
+
+                    SliderRow(
+                        title = "Text Opacity",
+                        value = currentOverlay.textOpacity,
+                        valueRange = 0.2f..1.0f,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textOpacity = it)) },
+                        valueText = "${(currentOverlay.textOpacity * 100).toInt()}%"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Text Outline & Shadow",
+                        subtitle = "Draw dark contrast outline around text for bright backgrounds",
+                        checked = currentOverlay.hasTextShadow,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(hasTextShadow = it)) },
+                        tag = "switch_text_shadow"
+                    )
+
+                    if (currentOverlay.hasTextShadow) {
+                        SliderRow(
+                            title = "Outline Stroke Width",
+                            value = currentOverlay.textStrokeWidthDp,
+                            valueRange = 1f..5f,
+                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textStrokeWidthDp = it)) },
+                            valueText = String.format(Locale.US, "%.1f dp", currentOverlay.textStrokeWidthDp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Background Panel Style", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val bgStyles = listOf("Transparent", "Translucent Glass", "Solid")
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        bgStyles.forEach { style ->
+                            FilterChip(
+                                selected = currentOverlay.backgroundStyle.equals(style, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundStyle = style)) },
+                                label = { Text(style, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    if (currentOverlay.backgroundStyle != "Transparent") {
+                        SliderRow(
+                            title = "Background Panel Opacity",
+                            value = currentOverlay.backgroundOpacity,
+                            valueRange = 0.1f..1.0f,
+                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundOpacity = it)) },
+                            valueText = "${(currentOverlay.backgroundOpacity * 100).toInt()}%"
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Timestamp Position", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    val timePositions = listOf("Time in above", "Time in below")
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        timePositions.forEach { timePos ->
+                            FilterChip(
+                                selected = currentOverlay.timePosition.equals(timePos, ignoreCase = true),
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timePosition = timePos)) },
+                                label = { Text(if (timePos == "Time in above") "Time Above Block" else "Time Below Block", fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
                 }
             }
+
 
             Spacer(modifier = Modifier.height(10.dp))
 
