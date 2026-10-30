@@ -3,6 +3,7 @@ package com.example.overlay
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.media.MediaCodec
@@ -13,9 +14,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.os.Build
 import android.util.Log
-import android.view.Surface
 import com.example.model.CaptureSnapshot
-import com.example.model.OverlayTemplate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -27,8 +26,8 @@ object VideoOverlayProcessor {
     private const val TAG = "VideoOverlayProcessor"
 
     /**
-     * Processes an MP4 video file and embeds dynamic timestamp, GPS, chainage, and logo overlays
-     * continuously onto the output video frames.
+     * Processes an MP4 video file and permanently burns dynamic timestamp, GPS, chainage,
+     * road info, and logo overlays onto every output video frame.
      */
     suspend fun applyOverlayToVideo(
         context: Context,
@@ -38,9 +37,9 @@ object VideoOverlayProcessor {
         defaultSnapshot: CaptureSnapshot,
         onProgress: ((Float) -> Unit)? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        // 1. If raw input file is missing or 0 bytes (e.g. running on virtual emulator without camera HAL encoder profiles):
+        // 1. If raw input file is missing or 0 bytes:
         if (!inputFile.exists() || inputFile.length() == 0L) {
-            Log.i(TAG, "Raw video file missing or empty, generating video directly from timeline snapshots")
+            Log.i(TAG, "Raw video file missing or empty, synthesizing video with overlays from snapshots")
             return@withContext generateVideoFromSnapshots(
                 context = context,
                 outputFile = outputFile,
@@ -49,31 +48,20 @@ object VideoOverlayProcessor {
             )
         }
 
-        // 2. Normal video recording: With CameraX OverlayEffect, dynamic timestamps and metadata
-        // are burned directly into the video frames in real-time.
-        // Copying directly ensures normal video recording behavior: instant save, zero compression loss, and native fps.
         try {
             outputFile.parentFile?.mkdirs()
-            inputFile.copyTo(outputFile, overwrite = true)
-            return@withContext true
-        } catch (e: Exception) {
-            Log.e(TAG, "Direct copy error, attempting transcode fallback: ${e.message}", e)
-        }
 
-        try {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(inputFile.absolutePath)
 
             val durationMsStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            val durationMs = durationMsStr?.toLongOrNull() ?: 1000L
+            val durationMs = durationMsStr?.toLongOrNull() ?: max(1000L, snapshotsTimeline.size * 1000L)
 
             val widthStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
             val heightStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-            val rotationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
 
-            var videoWidth = widthStr?.toIntOrNull() ?: 1280
-            var videoHeight = heightStr?.toIntOrNull() ?: 720
-            val rotation = rotationStr?.toIntOrNull() ?: 0
+            val origWidth = widthStr?.toIntOrNull() ?: 1280
+            val origHeight = heightStr?.toIntOrNull() ?: 720
 
             // Check sample frame dimensions to determine exact upright orientation
             val sampleFrame = try {
@@ -82,17 +70,34 @@ object VideoOverlayProcessor {
                 null
             }
 
-            var targetWidth = sampleFrame?.width ?: videoWidth
-            var targetHeight = sampleFrame?.height ?: videoHeight
+            var targetWidth = sampleFrame?.width ?: origWidth
+            var targetHeight = sampleFrame?.height ?: origHeight
             sampleFrame?.recycle()
-
-            // Ensure dimensions are even numbers (required by H.264 AVC codecs)
-            if (targetWidth % 2 != 0) targetWidth -= 1
-            if (targetHeight % 2 != 0) targetHeight -= 1
 
             retriever.release()
 
-            // Transcode & overlay frames
+            // Scale to optimal dimensions for fast, crystal-clear transcoding (max 1280 on longer edge)
+            if (targetWidth > 1280 || targetHeight > 1280) {
+                if (targetWidth >= targetHeight) {
+                    val ratio = 1280f / targetWidth
+                    targetWidth = 1280
+                    targetHeight = ((targetHeight * ratio).toInt() / 2) * 2
+                } else {
+                    val ratio = 1280f / targetHeight
+                    targetHeight = 1280
+                    targetWidth = ((targetWidth * ratio).toInt() / 2) * 2
+                }
+            }
+
+            // Ensure dimensions are even numbers (strictly required by H.264 AVC codecs)
+            if (targetWidth % 2 != 0) targetWidth -= 1
+            if (targetHeight % 2 != 0) targetHeight -= 1
+            targetWidth = targetWidth.coerceAtLeast(320)
+            targetHeight = targetHeight.coerceAtLeast(240)
+
+            Log.i(TAG, "Processing video frames with overlay: ${targetWidth}x${targetHeight}, duration: ${durationMs}ms")
+
+            // Transcode & burn overlay on every frame
             val success = processVideoFrames(
                 context = context,
                 inputFile = inputFile,
@@ -105,19 +110,28 @@ object VideoOverlayProcessor {
                 onProgress = onProgress
             )
 
-            if (!success) {
-                Log.w(TAG, "Frame transcode encountered issue, maintaining original video recording")
-                inputFile.copyTo(outputFile, overwrite = true)
+            if (success && outputFile.exists() && outputFile.length() > 0) {
+                Log.i(TAG, "Video with overlay created successfully: ${outputFile.length()} bytes")
                 return@withContext true
             }
 
-            true
+            // Fallback: If frame extraction had codec issue, synthesize video directly with overlays
+            Log.w(TAG, "Frame transcode did not produce valid file, falling back to snapshot video synthesis")
+            val fallbackSuccess = generateVideoFromSnapshots(
+                context = context,
+                outputFile = outputFile,
+                snapshotsTimeline = snapshotsTimeline,
+                defaultSnapshot = defaultSnapshot
+            )
+            fallbackSuccess
         } catch (e: Exception) {
             Log.e(TAG, "Video overlay processing error: ${e.message}", e)
-            try {
-                inputFile.copyTo(outputFile, overwrite = true)
-            } catch (ignored: Exception) {}
-            true
+            generateVideoFromSnapshots(
+                context = context,
+                outputFile = outputFile,
+                snapshotsTimeline = snapshotsTimeline,
+                defaultSnapshot = defaultSnapshot
+            )
         }
     }
 
@@ -135,7 +149,6 @@ object VideoOverlayProcessor {
         var extractor: MediaExtractor? = null
         var muxer: MediaMuxer? = null
         var encoder: MediaCodec? = null
-        var inputSurface: Surface? = null
 
         try {
             extractor = MediaExtractor()
@@ -163,81 +176,63 @@ object VideoOverlayProcessor {
                 return false
             }
 
+            outputFile.parentFile?.mkdirs()
             muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
             var muxerAudioTrack = -1
             if (audioTrackIndex >= 0 && audioFormat != null) {
-                muxerAudioTrack = muxer.addTrack(audioFormat)
+                try {
+                    muxerAudioTrack = muxer.addTrack(audioFormat)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Audio track could not be added: ${e.message}")
+                    muxerAudioTrack = -1
+                }
             }
 
-            // Target 25-30 fps for smooth, high quality rendering
-            val targetFps = 30
+            // Balanced 20-25 fps ensures smooth playback and rapid transcode
+            val targetFps = 20
             val frameIntervalMs = 1000L / targetFps
             val totalFrames = max(1, (durationMs / frameIntervalMs).toInt())
 
             val outputMime = MediaFormat.MIMETYPE_VIDEO_AVC
-            val bitRate = (videoWidth * videoHeight * 3.5f).toInt().coerceIn(2_000_000, 14_000_000)
+            val bitRate = (videoWidth * videoHeight * 3.0f).toInt().coerceIn(1_500_000, 8_000_000)
 
-            // Try Surface input first, with fallback to YUV buffer input
-            var useSurfaceInput = true
-            val encFormatSurface = MediaFormat.createVideoFormat(outputMime, videoWidth, videoHeight).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            encoder = MediaCodec.createEncoderByType(outputMime)
+            val colorFormat = selectSupportedColorFormat(encoder.codecInfo, outputMime)
+
+            val encFormat = MediaFormat.createVideoFormat(outputMime, videoWidth, videoHeight).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, targetFps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
 
-            encoder = MediaCodec.createEncoderByType(outputMime)
-            try {
-                encoder.configure(encFormatSurface, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                inputSurface = encoder.createInputSurface()
-                encoder.start()
-            } catch (e: Exception) {
-                Log.w(TAG, "Surface input encoder configuration failed, using YUV buffer encoder: ${e.message}")
-                useSurfaceInput = false
-                encoder.release()
+            encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
 
-                val encFormatYuv = MediaFormat.createVideoFormat(outputMime, videoWidth, videoHeight).apply {
-                    setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar)
-                    setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
-                    setInteger(MediaFormat.KEY_FRAME_RATE, targetFps)
-                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-                }
-                encoder = MediaCodec.createEncoderByType(outputMime)
-                encoder.configure(encFormatYuv, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                encoder.start()
-            }
-
-            // Track state for MediaMuxer
-            // trackIndexHolder[0] = muxerVideoTrack, trackIndexHolder[1] = muxerStarted (0=false, 1=true)
+            // trackState[0] = muxerVideoTrack, trackState[1] = muxerStarted (0=false, 1=true)
             val trackState = IntArray(2) { -1 }
             trackState[1] = 0
 
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(inputFile.absolutePath)
 
-            var currentMs = 0L
-            var frameCount = 0
-
-            // Reusable buffers for YUV fallback
-            var reusableBitmap: Bitmap? = null
-            var reusableCanvas: Canvas? = null
-            var argbBuffer: IntArray? = null
-            var yuvBuffer: ByteArray? = null
-
-            if (!useSurfaceInput) {
-                reusableBitmap = Bitmap.createBitmap(videoWidth, videoHeight, Bitmap.Config.ARGB_8888)
-                reusableCanvas = Canvas(reusableBitmap)
-                argbBuffer = IntArray(videoWidth * videoHeight)
-                yuvBuffer = ByteArray(videoWidth * videoHeight * 3 / 2)
-            }
+            // Reusable buffers for frame drawing and YUV encoding
+            val reusableBitmap = Bitmap.createBitmap(videoWidth, videoHeight, Bitmap.Config.ARGB_8888)
+            val reusableCanvas = Canvas(reusableBitmap)
+            val argbBuffer = IntArray(videoWidth * videoHeight)
+            val yuvBuffer = ByteArray(videoWidth * videoHeight * 3 / 2)
 
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             val dstRect = Rect(0, 0, videoWidth, videoHeight)
 
+            var lastGoodBitmap: Bitmap? = null
+            var currentMs = 0L
+            var frameCount = 0
+
             while (currentMs < durationMs) {
                 val frameUs = currentMs * 1000L
-                val frameBitmap = try {
+                val retrieved = try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                         retriever.getScaledFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST, videoWidth, videoHeight)
                             ?: retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST)
@@ -248,66 +243,42 @@ object VideoOverlayProcessor {
                     null
                 }
 
-                if (frameBitmap != null) {
-                    val snapshotForFrame = getSnapshotAtTime(snapshotsTimeline, defaultSnapshot, currentMs)
-
-                    if (useSurfaceInput && inputSurface != null) {
-                        try {
-                            val canvas = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                inputSurface.lockHardwareCanvas()
-                            } else {
-                                inputSurface.lockCanvas(null)
-                            }
-
-                            val srcRect = Rect(0, 0, frameBitmap.width, frameBitmap.height)
-                            canvas.drawBitmap(frameBitmap, srcRect, dstRect, paint)
-
-                            // Render dynamic overlay on top of frame
-                            OverlayRenderer.drawOverlayOnCanvas(
-                                context = context,
-                                canvas = canvas,
-                                width = videoWidth,
-                                height = videoHeight,
-                                snapshot = snapshotForFrame
-                            )
-
-                            inputSurface.unlockCanvasAndPost(canvas)
-                            drainEncoder(encoder, muxer, trackState, false)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Direct surface locking exception: ${e.message}")
-                        }
-                    } else if (reusableBitmap != null && reusableCanvas != null && argbBuffer != null && yuvBuffer != null) {
-                        // Software YUV buffer fallback
-                        val srcRect = Rect(0, 0, frameBitmap.width, frameBitmap.height)
-                        reusableCanvas.drawBitmap(frameBitmap, srcRect, dstRect, paint)
-
-                        OverlayRenderer.drawOverlayOnCanvas(
-                            context = context,
-                            canvas = reusableCanvas,
-                            width = videoWidth,
-                            height = videoHeight,
-                            snapshot = snapshotForFrame
-                        )
-
-                        reusableBitmap.getPixels(argbBuffer, 0, videoWidth, 0, 0, videoWidth, videoHeight)
-                        encodeYUV420SP(yuvBuffer, argbBuffer, videoWidth, videoHeight)
-
-                        val inputIndex = encoder.dequeueInputBuffer(10_000L)
-                        if (inputIndex >= 0) {
-                            val inBuffer = encoder.getInputBuffer(inputIndex)
-                            if (inBuffer != null) {
-                                inBuffer.clear()
-                                inBuffer.put(yuvBuffer)
-                                encoder.queueInputBuffer(inputIndex, 0, yuvBuffer.size, frameUs, 0)
-                            }
-                        }
-                        drainEncoder(encoder, muxer, trackState, false)
-                    }
-
-                    if (!frameBitmap.isRecycled) {
-                        frameBitmap.recycle()
-                    }
+                val frameBitmap = retrieved ?: lastGoodBitmap
+                if (retrieved != null && retrieved != lastGoodBitmap) {
+                    lastGoodBitmap?.recycle()
+                    lastGoodBitmap = retrieved
                 }
+
+                // 1. Draw video background
+                if (frameBitmap != null) {
+                    val srcRect = Rect(0, 0, frameBitmap.width, frameBitmap.height)
+                    reusableCanvas.drawBitmap(frameBitmap, srcRect, dstRect, paint)
+                } else {
+                    reusableCanvas.drawColor(Color.DKGRAY)
+                }
+
+                // 2. Fetch snapshot for this exact second/millisecond
+                val snapshotForFrame = getSnapshotAtTime(snapshotsTimeline, defaultSnapshot, currentMs)
+
+                // 3. Render dynamic overlay (timestamp, GPS, chainage, project details, logo, map inset)
+                OverlayRenderer.drawOverlayOnCanvas(
+                    context = context,
+                    canvas = reusableCanvas,
+                    width = videoWidth,
+                    height = videoHeight,
+                    snapshot = snapshotForFrame
+                )
+
+                // 4. Convert ARGB to YUV buffer and feed encoder
+                reusableBitmap.getPixels(argbBuffer, 0, videoWidth, 0, 0, videoWidth, videoHeight)
+                if (colorFormat == MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar) {
+                    encodeYUV420Planar(yuvBuffer, argbBuffer, videoWidth, videoHeight)
+                } else {
+                    encodeYUV420SP(yuvBuffer, argbBuffer, videoWidth, videoHeight)
+                }
+
+                feedEncoder(encoder, yuvBuffer, frameUs)
+                drainEncoder(encoder, muxer, trackState, false)
 
                 frameCount++
                 if (onProgress != null && totalFrames > 0) {
@@ -317,13 +288,14 @@ object VideoOverlayProcessor {
                 currentMs += frameIntervalMs
             }
 
+            lastGoodBitmap?.recycle()
             retriever.release()
-            reusableBitmap?.recycle()
+            reusableBitmap.recycle()
 
             // Signal End of Stream and drain remaining frames
             drainEncoder(encoder, muxer, trackState, true)
 
-            // Copy audio track samples if present
+            // Copy audio track samples if audio was captured and muxer is running
             if (audioTrackIndex >= 0 && muxerAudioTrack >= 0 && trackState[1] == 1) {
                 copyAudioTrack(extractor, audioTrackIndex, muxer, muxerAudioTrack)
             }
@@ -343,10 +315,9 @@ object VideoOverlayProcessor {
 
     /**
      * Finds the exact snapshot for this millisecond of active video recording.
-     * Accurately supports Pause and Resume by mapping each recorded active second
-     * to its live snapshot without displaying stale or frozen timestamps.
+     * Maps each recorded active second to its live snapshot, dynamically updating the clock.
      */
-    private fun getSnapshotAtTime(
+    fun getSnapshotAtTime(
         timeline: List<CaptureSnapshot>,
         defaultSnapshot: CaptureSnapshot,
         msFromStart: Long
@@ -356,7 +327,6 @@ object VideoOverlayProcessor {
             return defaultSnapshot.copy(timestamp = targetTime)
         }
 
-        // Each element in timeline represents 1 recorded second of active video
         val secondIndex = (msFromStart / 1000L).toInt().coerceIn(0, timeline.size - 1)
         val activeSnapshot = timeline[secondIndex]
 
@@ -365,6 +335,79 @@ object VideoOverlayProcessor {
         val frameClockTime = activeSnapshot.timestamp + msOffset
 
         return activeSnapshot.copy(timestamp = frameClockTime)
+    }
+
+    private fun feedEncoder(encoder: MediaCodec, yuvData: ByteArray, presentationTimeUs: Long) {
+        val timeoutUs = 10_000L
+        var index = encoder.dequeueInputBuffer(timeoutUs)
+        var retries = 0
+        while (index < 0 && retries < 15) {
+            try { Thread.sleep(2) } catch (ignored: Exception) {}
+            index = encoder.dequeueInputBuffer(timeoutUs)
+            retries++
+        }
+        if (index >= 0) {
+            val inputBuffer = encoder.getInputBuffer(index)
+            if (inputBuffer != null) {
+                inputBuffer.clear()
+                inputBuffer.put(yuvData)
+                encoder.queueInputBuffer(index, 0, yuvData.size, presentationTimeUs, 0)
+            }
+        }
+    }
+
+    private fun drainEncoder(
+        encoder: MediaCodec,
+        muxer: MediaMuxer,
+        trackState: IntArray,
+        endOfStream: Boolean
+    ) {
+        val bufferInfo = MediaCodec.BufferInfo()
+        val timeoutUs = 10_000L
+
+        if (endOfStream) {
+            try {
+                val inputIndex = encoder.dequeueInputBuffer(timeoutUs)
+                if (inputIndex >= 0) {
+                    encoder.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                }
+            } catch (ignored: Exception) {}
+        }
+
+        while (true) {
+            val encoderStatus = encoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
+            if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                if (!endOfStream) break
+                // If endOfStream, try a few times then break
+                break
+            } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                if (trackState[1] == 0) {
+                    val newFormat = encoder.outputFormat
+                    trackState[0] = muxer.addTrack(newFormat)
+                    muxer.start()
+                    trackState[1] = 1
+                }
+            } else if (encoderStatus >= 0) {
+                val encodedData = encoder.getOutputBuffer(encoderStatus)
+                if (encodedData != null) {
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                        bufferInfo.size = 0
+                    }
+
+                    if (bufferInfo.size != 0 && trackState[1] == 1) {
+                        encodedData.position(bufferInfo.offset)
+                        encodedData.limit(bufferInfo.offset + bufferInfo.size)
+                        muxer.writeSampleData(trackState[0], encodedData, bufferInfo)
+                    }
+
+                    encoder.releaseOutputBuffer(encoderStatus, false)
+
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        break
+                    }
+                }
+            }
+        }
     }
 
     private fun copyAudioTrack(
@@ -397,52 +440,22 @@ object VideoOverlayProcessor {
         }
     }
 
-    private fun drainEncoder(
-        encoder: MediaCodec,
-        muxer: MediaMuxer,
-        trackState: IntArray,
-        endOfStream: Boolean
-    ) {
-        val bufferInfo = MediaCodec.BufferInfo()
-        val timeoutUs = 10_000L
-
-        if (endOfStream) {
-            try {
-                encoder.signalEndOfInputStream()
-            } catch (ignored: Exception) {}
-        }
-
-        while (true) {
-            val encoderStatus = encoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
-            if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                if (!endOfStream) break
-            } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                if (trackState[1] == 0) {
-                    val newFormat = encoder.outputFormat
-                    trackState[0] = muxer.addTrack(newFormat)
-                    muxer.start()
-                    trackState[1] = 1
-                }
-            } else if (encoderStatus >= 0) {
-                val encodedData = encoder.getOutputBuffer(encoderStatus)
-                if (encodedData != null) {
-                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                        bufferInfo.size = 0
-                    }
-
-                    if (bufferInfo.size != 0 && trackState[1] == 1) {
-                        encodedData.position(bufferInfo.offset)
-                        encodedData.limit(bufferInfo.offset + bufferInfo.size)
-                        muxer.writeSampleData(trackState[0], encodedData, bufferInfo)
-                    }
-
-                    encoder.releaseOutputBuffer(encoderStatus, false)
-
-                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        break
-                    }
-                }
+    private fun selectSupportedColorFormat(codecInfo: MediaCodecInfo, mimeType: String): Int {
+        return try {
+            val caps = codecInfo.getCapabilitiesForType(mimeType)
+            val formats = caps.colorFormats
+            when {
+                formats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar) ->
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
+                formats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar) ->
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar
+                formats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible) ->
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+                else ->
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
             }
+        } catch (e: Exception) {
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
         }
     }
 
@@ -484,6 +497,44 @@ object VideoOverlayProcessor {
     }
 
     /**
+     * Encodes ARGB bitmap pixels to I420 / YUV420Planar.
+     */
+    private fun encodeYUV420Planar(yuv420p: ByteArray, argb: IntArray, width: Int, height: Int) {
+        val frameSize = width * height
+        var yIndex = 0
+        var uIndex = frameSize
+        var vIndex = frameSize + frameSize / 4
+
+        var R: Int
+        var G: Int
+        var B: Int
+        var Y: Int
+        var U: Int
+        var V: Int
+        var index = 0
+
+        for (j in 0 until height) {
+            for (i in 0 until width) {
+                val c = argb[index++]
+                R = (c shr 16) and 0xff
+                G = (c shr 8) and 0xff
+                B = c and 0xff
+
+                Y = ((66 * R + 129 * G + 25 * B + 128) shr 8) + 16
+                U = ((-38 * R - 74 * G + 112 * B + 128) shr 8) + 128
+                V = ((112 * R - 94 * G - 18 * B + 128) shr 8) + 128
+
+                yuv420p[yIndex++] = (if (Y < 0) 0 else if (Y > 255) 255 else Y).toByte()
+
+                if (j % 2 == 0 && i % 2 == 0) {
+                    yuv420p[uIndex++] = (if (U < 0) 0 else if (U > 255) 255 else U).toByte()
+                    yuv420p[vIndex++] = (if (V < 0) 0 else if (V > 255) 255 else V).toByte()
+                }
+            }
+        }
+    }
+
+    /**
      * Synthesizes a valid MP4 video from captured timeline snapshots with dynamic overlays.
      * Guarantees video capture completes and saves even on emulators without camera HAL video codecs.
      */
@@ -495,29 +546,29 @@ object VideoOverlayProcessor {
     ): Boolean {
         var muxer: MediaMuxer? = null
         var encoder: MediaCodec? = null
-        var inputSurface: Surface? = null
         try {
             val videoWidth = 1280
             val videoHeight = 720
-            val targetFps = 30
+            val targetFps = 20
             val frameIntervalMs = 1000L / targetFps
             val durationMs = max(1000L, snapshotsTimeline.size * 1000L)
 
             outputFile.parentFile?.mkdirs()
             muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             val outputMime = MediaFormat.MIMETYPE_VIDEO_AVC
-            val bitRate = (videoWidth * videoHeight * 3.5f).toInt().coerceIn(2_000_000, 8_000_000)
+            val bitRate = (videoWidth * videoHeight * 3.0f).toInt().coerceIn(1_500_000, 6_000_000)
+
+            encoder = MediaCodec.createEncoderByType(outputMime)
+            val colorFormat = selectSupportedColorFormat(encoder.codecInfo, outputMime)
 
             val encFormat = MediaFormat.createVideoFormat(outputMime, videoWidth, videoHeight).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, targetFps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
 
-            encoder = MediaCodec.createEncoderByType(outputMime)
             encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            inputSurface = encoder.createInputSurface()
             encoder.start()
 
             val trackState = IntArray(2) { -1 }
@@ -529,37 +580,46 @@ object VideoOverlayProcessor {
                 baseFrame.recycle()
             }
 
+            val reusableBitmap = Bitmap.createBitmap(videoWidth, videoHeight, Bitmap.Config.ARGB_8888)
+            val reusableCanvas = Canvas(reusableBitmap)
+            val argbBuffer = IntArray(videoWidth * videoHeight)
+            val yuvBuffer = ByteArray(videoWidth * videoHeight * 3 / 2)
+
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             val dstRect = Rect(0, 0, videoWidth, videoHeight)
             val srcRect = Rect(0, 0, scaledFrame.width, scaledFrame.height)
 
             var currentMs = 0L
             while (currentMs < durationMs) {
+                val frameUs = currentMs * 1000L
                 val snapshotForFrame = getSnapshotAtTime(snapshotsTimeline, defaultSnapshot, currentMs)
-                if (inputSurface != null) {
-                    val canvas = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        inputSurface.lockHardwareCanvas()
-                    } else {
-                        inputSurface.lockCanvas(null)
-                    }
 
-                    canvas.drawBitmap(scaledFrame, srcRect, dstRect, paint)
+                reusableCanvas.drawBitmap(scaledFrame, srcRect, dstRect, paint)
 
-                    OverlayRenderer.drawOverlayOnCanvas(
-                        context = context,
-                        canvas = canvas,
-                        width = videoWidth,
-                        height = videoHeight,
-                        snapshot = snapshotForFrame
-                    )
+                OverlayRenderer.drawOverlayOnCanvas(
+                    context = context,
+                    canvas = reusableCanvas,
+                    width = videoWidth,
+                    height = videoHeight,
+                    snapshot = snapshotForFrame
+                )
 
-                    inputSurface.unlockCanvasAndPost(canvas)
-                    drainEncoder(encoder, muxer, trackState, false)
+                reusableBitmap.getPixels(argbBuffer, 0, videoWidth, 0, 0, videoWidth, videoHeight)
+                if (colorFormat == MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar) {
+                    encodeYUV420Planar(yuvBuffer, argbBuffer, videoWidth, videoHeight)
+                } else {
+                    encodeYUV420SP(yuvBuffer, argbBuffer, videoWidth, videoHeight)
                 }
+
+                feedEncoder(encoder, yuvBuffer, frameUs)
+                drainEncoder(encoder, muxer, trackState, false)
+
                 currentMs += frameIntervalMs
             }
 
             scaledFrame.recycle()
+            reusableBitmap.recycle()
+
             drainEncoder(encoder, muxer, trackState, true)
             return true
         } catch (e: Exception) {

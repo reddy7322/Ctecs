@@ -600,6 +600,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun processRecordedVideo(context: android.content.Context, rawVideoFile: java.io.File) {
         viewModelScope.launch {
+            showToast("Saving video with dynamic overlays...", ToastType.INFO)
+
             val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
             val defaultSnapshot = createCurrentSnapshot()
 
@@ -627,6 +629,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     arrayOf(finalFile.absolutePath),
                     arrayOf("video/mp4")
                 ) { _, _ -> }
+
+                try {
+                    val record = com.example.data.PhotoRecordEntity(
+                        filePath = finalFile.absolutePath,
+                        fileName = fileName,
+                        timestamp = defaultSnapshot.timestamp,
+                        latitude = defaultSnapshot.location?.latitude ?: 0.0,
+                        longitude = defaultSnapshot.location?.longitude ?: 0.0,
+                        accuracy = defaultSnapshot.gpsAccuracy,
+                        altitude = defaultSnapshot.location?.altitude ?: 0.0,
+                        chainageMetres = defaultSnapshot.matchResult.chainage?.metres,
+                        chainageLabel = defaultSnapshot.displayChainage,
+                        chainageConfidence = defaultSnapshot.matchResult.confidence.name,
+                        isManualChainage = defaultSnapshot.matchResult.isManual,
+                        offsetMetres = defaultSnapshot.matchResult.offsetMetres.toFloat(),
+                        highwayId = defaultSnapshot.projectProfile.highwayId,
+                        packageSection = defaultSnapshot.projectProfile.packageSection,
+                        roadSide = defaultSnapshot.projectProfile.roadSide.label,
+                        lane = defaultSnapshot.projectProfile.lane,
+                        activity = defaultSnapshot.projectProfile.activity,
+                        customDescription = defaultSnapshot.projectProfile.customDescription,
+                        inspectorName = defaultSnapshot.projectProfile.inspectorName,
+                        formattedOverlayText = defaultSnapshot.projectProfile.buildHighwayText(defaultSnapshot.displayChainage)
+                    )
+                    photoRepository.insertRecord(record)
+                } catch (ignored: Exception) {}
 
                 showToast("Video saved with dynamic overlays to Movies/HighwayCamera", ToastType.SUCCESS)
 

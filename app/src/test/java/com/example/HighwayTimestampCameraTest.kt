@@ -572,5 +572,40 @@ class HighwayTimestampCameraTest {
         assertNotNull(highwayLine)
         assertEquals("MH | 168+400 RHS", highwayLine)
     }
+
+    // 21. Testing VideoOverlayProcessor getSnapshotAtTime with dynamic timeline
+    @Test
+    fun testVideoOverlayProcessorGetSnapshotAtTime() {
+        val baseTime = 1700000000000L
+        val snap1 = com.example.model.CaptureSnapshot(
+            timestamp = baseTime,
+            location = GeoPoint(29.8350, 77.8910),
+            projectProfile = ProjectProfile("NH-44"),
+            matchResult = com.example.model.ChainageMatchResult(chainage = Chainage(100000))
+        )
+        val snap2 = com.example.model.CaptureSnapshot(
+            timestamp = baseTime + 1000L,
+            location = GeoPoint(29.8355, 77.8915),
+            projectProfile = ProjectProfile("NH-44"),
+            matchResult = com.example.model.ChainageMatchResult(chainage = Chainage(100020))
+        )
+        val timeline = listOf(snap1, snap2)
+
+        val retrievedFrame0 = com.example.overlay.VideoOverlayProcessor.getSnapshotAtTime(
+            timeline = timeline,
+            defaultSnapshot = snap1,
+            msFromStart = 250L
+        )
+        assertEquals(baseTime + 250L, retrievedFrame0.timestamp)
+        assertEquals("100+000", retrievedFrame0.displayChainage)
+
+        val retrievedFrame1 = com.example.overlay.VideoOverlayProcessor.getSnapshotAtTime(
+            timeline = timeline,
+            defaultSnapshot = snap1,
+            msFromStart = 1450L
+        )
+        assertEquals(baseTime + 1450L, retrievedFrame1.timestamp)
+        assertEquals("100+020", retrievedFrame1.displayChainage)
+    }
 }
 

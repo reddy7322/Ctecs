@@ -225,6 +225,10 @@ class PhotoRepository(
         }
     }
 
+    suspend fun insertRecord(record: PhotoRecordEntity): Long = withContext(Dispatchers.IO) {
+        photoRecordDao.insertPhoto(record)
+    }
+
     suspend fun deletePhoto(photo: PhotoRecordEntity) = withContext(Dispatchers.IO) {
         val file = File(photo.filePath)
         if (file.exists()) {
