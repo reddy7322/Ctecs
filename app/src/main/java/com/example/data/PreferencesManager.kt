@@ -124,6 +124,29 @@ class PreferencesManager(private val context: Context) {
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_PHOTO_RESOLUTION = stringPreferencesKey("photo_resolution")
         val KEY_VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
+        val KEY_GALLERY_VIEW_MODE = stringPreferencesKey("gallery_view_mode")
+        val KEY_GALLERY_SORT_OPTION = stringPreferencesKey("gallery_sort_option")
+        val KEY_GALLERY_GROUP_OPTION = stringPreferencesKey("gallery_group_option")
+    }
+
+    val galleryViewModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_GALLERY_VIEW_MODE] ?: "grid"
+    }
+
+    val gallerySortOptionFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_GALLERY_SORT_OPTION] ?: "Newest first"
+    }
+
+    val galleryGroupOptionFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_GALLERY_GROUP_OPTION] ?: "None"
+    }
+
+    suspend fun updateGalleryPreferences(viewMode: String? = null, sortOption: String? = null, groupOption: String? = null) {
+        context.dataStore.edit { prefs ->
+            if (viewMode != null) prefs[KEY_GALLERY_VIEW_MODE] = viewMode
+            if (sortOption != null) prefs[KEY_GALLERY_SORT_OPTION] = sortOption
+            if (groupOption != null) prefs[KEY_GALLERY_GROUP_OPTION] = groupOption
+        }
     }
 
     val themeModeFlow: Flow<String> = context.dataStore.data.map { prefs ->

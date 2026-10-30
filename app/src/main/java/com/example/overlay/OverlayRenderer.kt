@@ -41,16 +41,26 @@ object OverlayRenderer {
         sourceBitmap: Bitmap,
         snapshot: CaptureSnapshot
     ): Bitmap {
-        val width = sourceBitmap.width
-        val height = sourceBitmap.height
-
         val resultBitmap = sourceBitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(resultBitmap)
+        drawOverlayOnCanvas(context, canvas, sourceBitmap.width, sourceBitmap.height, snapshot)
+        return resultBitmap
+    }
 
+    /**
+     * Draws permanent overlay directly onto the provided Canvas without allocating a new Bitmap copy.
+     * Highly optimized for video frame transcoding and live rendering pipelines.
+     */
+    fun drawOverlayOnCanvas(
+        context: Context,
+        canvas: Canvas,
+        width: Int,
+        height: Int,
+        snapshot: CaptureSnapshot
+    ) {
         val config = snapshot.overlayConfig
         val project = snapshot.projectProfile
         val location = snapshot.location
-        val match = snapshot.matchResult
 
         // Scale factors relative to 1080p height
         val scale = max(width, height) / 1920f
@@ -103,8 +113,6 @@ object OverlayRenderer {
                 mapInsetRect = mapRect
             )
         }
-
-        return resultBitmap
     }
 
     private fun renderInformationBlock(

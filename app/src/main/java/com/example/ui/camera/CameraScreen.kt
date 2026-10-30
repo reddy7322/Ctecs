@@ -157,7 +157,13 @@ fun CameraScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val controller = remember { LifecycleCameraController(context) }
+    val controller = remember {
+        LifecycleCameraController(context).apply {
+            try {
+                setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+            } catch (ignored: Exception) {}
+        }
+    }
     val videoManager = remember { VideoRecordingManager(context) }
 
     val isFlashOn by viewModel.isFlashOn.collectAsStateWithLifecycle()
@@ -208,15 +214,13 @@ fun CameraScreen(
         }
     }
 
-    // Video Recording Timer ticker
-    LaunchedEffect(isRecording, isRecordingPaused) {
-        if (isRecording && !isRecordingPaused) {
-            var elapsed = recordingDurationSec
-            while (isRecording && !isRecordingPaused) {
-                delay(1000L)
-                elapsed++
-                viewModel.onVideoRecordingTick(elapsed)
-            }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var showQuickCaptureFlash by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showQuickCaptureFlash) {
+        if (showQuickCaptureFlash) {
+            delay(120L)
+            showQuickCaptureFlash = false
         }
     }
 
@@ -232,6 +236,12 @@ fun CameraScreen(
                     is androidx.camera.video.VideoRecordEvent.Start -> {
                         viewModel.onVideoRecordingStarted()
                         viewModel.showInfo("Recording video...")
+                    }
+                    is androidx.camera.video.VideoRecordEvent.Pause -> {
+                        viewModel.onVideoRecordingPaused(true)
+                    }
+                    is androidx.camera.video.VideoRecordEvent.Resume -> {
+                        viewModel.onVideoRecordingPaused(false)
                     }
                     is androidx.camera.video.VideoRecordEvent.Finalize -> {
                         viewModel.onVideoRecordingStopped()
@@ -310,6 +320,12 @@ fun CameraScreen(
                                 viewModel.onVideoRecordingStarted()
                                 viewModel.showInfo("Recording video...")
                             }
+                            is androidx.camera.video.VideoRecordEvent.Pause -> {
+                                viewModel.onVideoRecordingPaused(true)
+                            }
+                            is androidx.camera.video.VideoRecordEvent.Resume -> {
+                                viewModel.onVideoRecordingPaused(false)
+                            }
                             is androidx.camera.video.VideoRecordEvent.Finalize -> {
                                 viewModel.onVideoRecordingStopped()
                                 if (event.hasError()) {
@@ -348,6 +364,15 @@ fun CameraScreen(
             controller = controller,
             modifier = Modifier.fillMaxSize()
         )
+
+        // Visual flash feedback on capture (photo capture & quick photo during video)
+        if (showQuickCaptureFlash) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White.copy(alpha = 0.5f))
+            )
+        }
 
         // 2. Composition Grid Lines (Off, 3x3, 4x4)
         if (cameraSettings.gridMode != CameraGridMode.OFF) {
@@ -1087,18 +1112,22 @@ fun CameraScreen(
                             .border(1.dp, HighlightYellow, CircleShape)
                             .graphicsLayer { rotationZ = -animatedRotation }
                             .clickable {
+                                try {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                } catch (ignored: Exception) {}
+                                showQuickCaptureFlash = true
                                 capturePhoto(
                                     controller = controller,
                                     context = context,
                                     deviceRotationDegrees = rotationDegrees.toInt(),
                                     onSuccess = { bitmap ->
                                         viewModel.processCapture(bitmap)
-                                        viewModel.showSuccess("Quick photo captured!")
+                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
                                     },
                                     onError = {
                                         val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
                                         viewModel.processCapture(fallback)
-                                        viewModel.showSuccess("Quick photo captured!")
+                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
                                     }
                                 )
                             }

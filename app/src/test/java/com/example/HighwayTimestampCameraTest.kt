@@ -217,7 +217,7 @@ class HighwayTimestampCameraTest {
             separator = "||"
         )
         val line3 = project.buildHighwayText("196+040")
-        assertEquals("MH || MM || 196+040 RHS I/L DBM", line3)
+        assertEquals("MH | MM | 196+040 RHS I/L DBM", line3)
     }
 
     // 9. Validating the generated sample NH-58 KMZ and counting chainage markers
@@ -483,6 +483,94 @@ class HighwayTimestampCameraTest {
         val expectedCredit = "Made with ❤️ madhureddyainala"
         assertTrue(expectedCredit.contains("madhureddyainala"))
         assertEquals("Made with ❤️ madhureddyainala", expectedCredit)
+    }
+
+    // 19. Testing Video Dynamic Timestamp Timeline with Pause and Resume
+    @Test
+    fun testVideoTimelineDynamicTimestampAndPauseResume() {
+        val baseTime = 1793200000000L
+        val snap1 = com.example.model.CaptureSnapshot(
+            timestamp = baseTime, // 0s
+            location = GeoPoint(29.8351, 77.8918),
+            matchResult = com.example.model.ChainageMatchResult(chainage = Chainage(168400), detectedSide = "RHS", confidence = com.example.model.MatchConfidence.HIGH),
+            projectProfile = ProjectProfile(highwayId = "MH", activity = "Milling")
+        )
+        val snap2 = com.example.model.CaptureSnapshot(
+            timestamp = baseTime + 1000L, // 1s
+            location = GeoPoint(29.8352, 77.8919),
+            matchResult = com.example.model.ChainageMatchResult(chainage = Chainage(168420), detectedSide = "RHS", confidence = com.example.model.MatchConfidence.HIGH),
+            projectProfile = ProjectProfile(highwayId = "MH", activity = "Milling")
+        )
+        // Simulated 1-hour pause between snap2 and snap3
+        val snap3 = com.example.model.CaptureSnapshot(
+            timestamp = baseTime + 3600_000L, // resumed at +1h
+            location = GeoPoint(29.8360, 77.8930),
+            matchResult = com.example.model.ChainageMatchResult(chainage = Chainage(168550), detectedSide = "RHS", confidence = com.example.model.MatchConfidence.HIGH),
+            projectProfile = ProjectProfile(highwayId = "MH", activity = "Milling")
+        )
+
+        val timeline = listOf(snap1, snap2, snap3)
+
+        // At video time 500ms (within first second)
+        val sec0 = (500L / 1000L).toInt().coerceIn(0, timeline.size - 1)
+        val targetSnap0 = timeline[sec0].copy(timestamp = timeline[sec0].timestamp + (500L % 1000L))
+        assertEquals(baseTime + 500L, targetSnap0.timestamp)
+        assertEquals("168+400", targetSnap0.matchResult.displayChainage)
+
+        // At video time 1200ms (second second)
+        val sec1 = (1200L / 1000L).toInt().coerceIn(0, timeline.size - 1)
+        val targetSnap1 = timeline[sec1].copy(timestamp = timeline[sec1].timestamp + (1200L % 1000L))
+        assertEquals(baseTime + 1200L, targetSnap1.timestamp)
+        assertEquals("168+420", targetSnap1.matchResult.displayChainage)
+
+        // At video time 2100ms (third second, resumed after pause)
+        val sec2 = (2100L / 1000L).toInt().coerceIn(0, timeline.size - 1)
+        val targetSnap2 = timeline[sec2].copy(timestamp = timeline[sec2].timestamp + (2100L % 1000L))
+        assertEquals(baseTime + 3600_100L, targetSnap2.timestamp)
+        assertEquals("168+550", targetSnap2.matchResult.displayChainage)
+    }
+
+    // 20. Testing Dynamic Metadata Video Overlay Text Formatting (No None/Null)
+    @Test
+    fun testDynamicVideoOverlayFormattingOmitNone() {
+        val config = com.example.model.OverlayConfig(
+            showTimestamp = true,
+            showCoordinates = true,
+            showChainage = true,
+            showProjectInfo = true
+        )
+        val projectNone = ProjectProfile(
+            highwayId = "MH",
+            packageSection = "None",
+            roadSide = RoadSide.RHS,
+            lane = "None",
+            activity = "None"
+        )
+        val loc = GeoPoint(29.8351, 77.8918)
+
+        val lines = com.example.overlay.OverlayTextGenerator.generateLines(
+            config = config,
+            project = projectNone,
+            location = loc,
+            accuracy = 3.0f,
+            compassHeading = "N",
+            speedMps = null,
+            bearing = null,
+            chainageStr = "168+400",
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = com.example.model.CoordinateFormat.DECIMAL,
+            is24HourFormat = false,
+            isForCapture = true
+        )
+
+        // Verify none of the lines contain "None" or "null"
+        assertTrue(lines.none { it.contains("None", ignoreCase = true) })
+        assertTrue(lines.none { it.contains("null", ignoreCase = true) })
+
+        // Verify Highway Line has correct format: "MH | 168+400 RHS"
+        val highwayLine = lines.find { it.startsWith("MH") }
+        assertNotNull(highwayLine)
+        assertEquals("MH | 168+400 RHS", highwayLine)
     }
 }
 

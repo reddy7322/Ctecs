@@ -126,7 +126,7 @@ fun CameraPreview(
     }
 
     // Configure Use Cases: In Photo mode, enable IMAGE_CAPTURE.
-    // In Video mode, reliably enable VIDEO_CAPTURE.
+    // In Video mode, reliably enable IMAGE_CAPTURE or VIDEO_CAPTURE.
     LaunchedEffect(isVideoMode, hasCameraPermission) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
@@ -135,12 +135,12 @@ fun CameraPreview(
 
             if (isVideoMode) {
                 try {
-                    controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
+                    controller.setEnabledUseCases(
+                        LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+                    )
                 } catch (e: Throwable) {
                     try {
-                        controller.setEnabledUseCases(
-                            LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
-                        )
+                        controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
                     } catch (e2: Throwable) {
                         Log.w("CameraPreview", "Failed to set VIDEO_CAPTURE use cases", e2)
                     }
@@ -195,7 +195,7 @@ fun CameraPreview(
         } catch (ignored: Exception) {}
     }
 
-    LaunchedEffect(photoResolution, videoResolution, hasCameraPermission) {
+    LaunchedEffect(photoResolution, hasCameraPermission) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
             val photoParts = photoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
@@ -203,19 +203,17 @@ fun CameraPreview(
                 val size = android.util.Size(photoParts[0], photoParts[1])
                 controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(size)
             }
-            val videoParts = videoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
-            if (videoParts.size == 2) {
-                val w = Math.max(videoParts[0], videoParts[1])
-                val quality = when {
-                    w >= 3840 -> androidx.camera.video.Quality.UHD
-                    w >= 1920 -> androidx.camera.video.Quality.FHD
-                    w >= 1280 -> androidx.camera.video.Quality.HD
-                    else -> androidx.camera.video.Quality.SD
-                }
-                controller.videoCaptureQualitySelector = androidx.camera.video.QualitySelector.from(quality)
-            }
         } catch (e: Exception) {
-            Log.w("CameraPreview", "Setting resolution target size error", e)
+            Log.w("CameraPreview", "Setting photo resolution error", e)
+        }
+    }
+
+    LaunchedEffect(videoResolution, isVideoMode, hasCameraPermission) {
+        if (!hasCameraPermission || !isVideoMode) return@LaunchedEffect
+        try {
+            controller.videoCaptureQualitySelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
+        } catch (e: Exception) {
+            Log.w("CameraPreview", "Setting video quality error", e)
         }
     }
 
@@ -375,6 +373,73 @@ fun capturePhoto(
 }
 
 /**
+ * Safely constructs a QualitySelector with ordered fallback to prevent
+ * "No supported EncoderProfiles" errors on emulators and unsupported devices.
+ */
+fun buildSafeQualitySelector(
+    videoResolution: String = "1920 x 1080",
+    cameraInfo: androidx.camera.core.CameraInfo? = null
+): androidx.camera.video.QualitySelector {
+    val videoParts = videoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
+    val w = if (videoParts.size == 2) Math.max(videoParts[0], videoParts[1]) else 1920
+    val preferredQuality = when {
+        w >= 3840 -> androidx.camera.video.Quality.UHD
+        w >= 1920 -> androidx.camera.video.Quality.FHD
+        w >= 1280 -> androidx.camera.video.Quality.HD
+        else -> androidx.camera.video.Quality.SD
+    }
+
+    val preferredList = when (preferredQuality) {
+        androidx.camera.video.Quality.UHD -> listOf(
+            androidx.camera.video.Quality.UHD,
+            androidx.camera.video.Quality.FHD,
+            androidx.camera.video.Quality.HD,
+            androidx.camera.video.Quality.SD,
+            androidx.camera.video.Quality.LOWEST
+        )
+        androidx.camera.video.Quality.FHD -> listOf(
+            androidx.camera.video.Quality.FHD,
+            androidx.camera.video.Quality.HD,
+            androidx.camera.video.Quality.SD,
+            androidx.camera.video.Quality.LOWEST
+        )
+        androidx.camera.video.Quality.HD -> listOf(
+            androidx.camera.video.Quality.HD,
+            androidx.camera.video.Quality.SD,
+            androidx.camera.video.Quality.LOWEST
+        )
+        else -> listOf(
+            androidx.camera.video.Quality.SD,
+            androidx.camera.video.Quality.LOWEST
+        )
+    }
+
+    val supported = if (cameraInfo != null) {
+        try {
+            androidx.camera.video.QualitySelector.getSupportedQualities(cameraInfo)
+        } catch (ignored: Exception) {
+            emptyList()
+        }
+    } else {
+        emptyList()
+    }
+
+    val finalQualityList = if (supported.isNotEmpty()) {
+        val matching = preferredList.filter { supported.contains(it) }
+        if (matching.isNotEmpty()) matching else supported
+    } else {
+        preferredList
+    }
+
+    return androidx.camera.video.QualitySelector.fromOrderedList(
+        finalQualityList,
+        androidx.camera.video.FallbackStrategy.lowerQualityOrHigherThan(
+            androidx.camera.video.Quality.SD
+        )
+    )
+}
+
+/**
  * Manages video recording with start/pause/resume/stop lifecycle
  */
 class VideoRecordingManager(private val context: Context) {
@@ -393,12 +458,21 @@ class VideoRecordingManager(private val context: Context) {
         try {
             if (!controller.isVideoCaptureEnabled) {
                 try {
-                    controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
+                    controller.setEnabledUseCases(
+                        LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+                    )
                 } catch (e: Exception) {
-                    onError(IllegalStateException("Video recording is not supported on this camera profile."))
-                    return
+                    try {
+                        controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
+                    } catch (e2: Exception) {
+                        onError(IllegalStateException("Video recording is not supported on this camera profile."))
+                        return
+                    }
                 }
             }
+            try {
+                controller.videoCaptureQualitySelector = buildSafeQualitySelector("1920 x 1080", controller.cameraInfo)
+            } catch (ignored: Exception) {}
 
             val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())

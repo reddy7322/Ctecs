@@ -140,6 +140,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = OverlayConfig()
     )
 
+    val galleryViewMode: StateFlow<String> = preferencesManager.galleryViewModeFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "grid"
+    )
+
+    val gallerySortOption: StateFlow<String> = preferencesManager.gallerySortOptionFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "Newest first"
+    )
+
+    val galleryGroupOption: StateFlow<String> = preferencesManager.galleryGroupOptionFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "None"
+    )
+
+    fun updateGalleryPrefs(viewMode: String? = null, sortOption: String? = null, groupOption: String? = null) {
+        viewModelScope.launch {
+            preferencesManager.updateGalleryPreferences(viewMode, sortOption, groupOption)
+        }
+    }
+
     val themeMode: StateFlow<String> = preferencesManager.themeModeFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -550,6 +574,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             while (_isRecording.value) {
                 kotlinx.coroutines.delay(1000L)
                 if (_isRecording.value && !_isRecordingPaused.value) {
+                    _recordingDurationSeconds.value += 1
                     synchronized(videoSnapshotsTimeline) {
                         videoSnapshotsTimeline.add(createCurrentSnapshot())
                     }
@@ -706,6 +731,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             photoRepository.deletePhoto(photo)
             _uiMessages.emit(UiMessage.Info("Photo deleted"))
+        }
+    }
+
+    fun deletePhotos(photos: List<PhotoRecordEntity>) {
+        viewModelScope.launch {
+            var count = 0
+            photos.forEach { p ->
+                try {
+                    photoRepository.deletePhoto(p)
+                    count++
+                } catch (ignored: Exception) {}
+            }
+            _uiMessages.emit(UiMessage.Info("Deleted $count photos"))
+            showToast("Deleted $count photos", ToastType.SUCCESS)
         }
     }
 
