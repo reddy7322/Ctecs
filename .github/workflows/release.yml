@@ -154,8 +154,10 @@ jobs:
           echo "----------------------------------------------------------"
           
           if [ -f "app/build.gradle.kts" ]; then
-            sed -i "s/versionCode = [0-9]\+/versionCode = $VERSION_CODE/g" app/build.gradle.kts
-            sed -i "s/versionName = \"[^\"]*\"/versionName = \"$NEW_VERSION\"/g" app/build.gradle.kts
+            sed -i -E "s/versionCode = [0-9]+/versionCode = $VERSION_CODE/g" app/build.gradle.kts
+            sed -i -E "s/versionName = \"[^\"]+\"/versionName = \"$NEW_VERSION\"/g" app/build.gradle.kts
+            sed -i -E "s/versionCode = if \(updateChannel == \"beta\"\) [0-9]+ else [0-9]+/versionCode = if (updateChannel == \"beta\") $VERSION_CODE else 101699/g" app/build.gradle.kts
+            sed -i -E "s/versionName = if \(updateChannel == \"beta\"\) \"[^\"]+\" else \"[^\"]+\"/versionName = if (updateChannel == \"beta\") \"$NEW_VERSION\" else \"1.0.16\"/g" app/build.gradle.kts
             echo "Updated app/build.gradle.kts with synchronized version properties:"
             grep -E "versionCode|versionName" app/build.gradle.kts
           else
@@ -367,12 +369,12 @@ jobs:
           '
 
 
-      - name: 11. Commit & Push Channel Metadata Feed
+      - name: 11. Commit & Push Channel Metadata Feed & Version Properties
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json"
-          if git commit -m "Update ${{ env.RELEASE_CHANNEL }} channel metadata feed to v${{ env.NEW_VERSION }}"; then
+          git add "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json" app/build.gradle.kts
+          if git commit -m "Update ${{ env.RELEASE_CHANNEL }} channel metadata feed & version properties to v${{ env.NEW_VERSION }} (Build ${{ env.NEW_CODE }}) [skip ci]"; then
             git push origin HEAD:main 2>/dev/null || git push origin HEAD:master 2>/dev/null || true
           else
             echo "No changes to commit for metadata feed."
