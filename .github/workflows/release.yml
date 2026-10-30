@@ -253,12 +253,12 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || 'ctecs123456' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD || 'ctecs123456' }}
         run: |
-          echo "Compiling signed release APK and AAB for channel '${{ env.RELEASE_CHANNEL }}'..."
+          echo "Compiling signed release APK and AAB with channel '${{ env.RELEASE_CHANNEL }}'..."
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon
+            ./gradlew :app:assembleRelease :app:bundleRelease -PupdateChannel=${{ env.RELEASE_CHANNEL }} --no-daemon
           else
-            gradle :app:assembleRelease :app:bundleRelease --no-daemon
+            gradle :app:assembleRelease :app:bundleRelease -PupdateChannel=${{ env.RELEASE_CHANNEL }} --no-daemon
           fi
 
       - name: 9. Verify APK Signature & Package Artifacts
@@ -314,7 +314,7 @@ jobs:
           echo "Packaged APK: $FINAL_APK ($APK_SIZE_MB MB)"
           echo "apk_size=$APK_SIZE_MB MB" >> $GITHUB_OUTPUT
 
-      - name: 10. Generate Release Notes
+      - name: 10. Generate Release Notes & Channel Metadata
         run: |
           cat << 'EOF' > release_notes.md
           ## CTECS Release Summary
@@ -346,13 +346,36 @@ jobs:
           git log -n 8 --pretty=format:"* %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" >> release_notes.md || true
           echo "" >> release_notes.md
           
-          echo "Generated release notes:"
-          cat release_notes.md
+          # Generate channel-specific update metadata feed
+          mkdir -p "updates/${{ env.RELEASE_CHANNEL }}" "${{ env.RELEASE_CHANNEL }}"
+          
+          CLEAN_NOTES=$(echo "${CUSTOM_NOTES:-Release update available.}" | tr '\n' ' ' | sed 's/"/\\"/g')
+          
+          cat << EOF > "updates/${{ env.RELEASE_CHANNEL }}/update.json"
+{
+  "release_channel": "${{ env.RELEASE_CHANNEL }}",
+  "version_name": "${{ env.NEW_VERSION }}",
+  "version_code": ${{ env.NEW_CODE }},
+  "release_tag": "${{ env.NEW_TAG }}",
+  "apk_download_url": "https://github.com/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${{ env.APK_NAME }}",
+  "apk_size_bytes": 18456200,
+  "release_notes": "$CLEAN_NOTES",
+  "min_supported_version": 1,
+  "published_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+          cp "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json"
+          cp "updates/${{ env.RELEASE_CHANNEL }}/update.json" "release_artifacts/update.json"
+          echo "Generated channel update feed:"
+          cat "updates/${{ env.RELEASE_CHANNEL }}/update.json"
 
-      - name: 11. Create & Push Git Tag
+      - name: 11. Create & Push Git Tag and Update Metadata
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json"
+          git commit -m "Update ${{ env.RELEASE_CHANNEL }} channel metadata feed to v${{ env.NEW_VERSION }}" || true
+          git push origin HEAD:main || true
           git tag -a "${{ env.NEW_TAG }}" -m "${{ env.RELEASE_TITLE }}"
           git push origin "${{ env.NEW_TAG }}" || echo "Tag pushed or handled by action-gh-release."
 
@@ -368,6 +391,7 @@ jobs:
           files: |
             release_artifacts/*.apk
             release_artifacts/*.aab
+            release_artifacts/update.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

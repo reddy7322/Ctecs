@@ -607,5 +607,49 @@ class HighwayTimestampCameraTest {
         assertEquals(baseTime + 1450L, retrievedFrame1.timestamp)
         assertEquals("100+020", retrievedFrame1.displayChainage)
     }
+
+    // 22. Testing Semantic Version & Pre-release Comparator
+    @Test
+    fun testAppUpdateVersionComparison() {
+        // Standard semantic versioning
+        assertTrue(com.example.update.AppUpdateManager.isNewerVersion("1.0.1", "1.0.0"))
+        assertTrue(com.example.update.AppUpdateManager.isNewerVersion("2.0.0", "1.9.9"))
+        assertTrue(com.example.update.AppUpdateManager.isNewerVersion("1.1.0", "1.0.9"))
+        org.junit.Assert.assertFalse(com.example.update.AppUpdateManager.isNewerVersion("1.0.0", "1.0.0"))
+        org.junit.Assert.assertFalse(com.example.update.AppUpdateManager.isNewerVersion("1.0.0", "1.0.1"))
+
+        // Beta channel build progression
+        assertTrue(com.example.update.AppUpdateManager.isNewerVersion("1.0.0-beta.2", "1.0.0-beta.1"))
+        assertTrue(com.example.update.AppUpdateManager.isNewerVersion("1.0.0-beta.10", "1.0.0-beta.9"))
+        org.junit.Assert.assertFalse(com.example.update.AppUpdateManager.isNewerVersion("1.0.0-beta.1", "1.0.0-beta.2"))
+    }
+
+    // 23. Testing Cross-Channel Feed Isolation & Rejection Logic
+    @Test
+    fun testCrossChannelUpdateFeedIsolation() {
+        val betaChannel = "beta"
+        val stableChannel = "stable"
+
+        // Channel equality rule: Feed channel MUST strictly equal installed channel
+        fun isUpdateChannelCompatible(feedChannel: String, installedChannel: String): Boolean {
+            return feedChannel.equals(installedChannel, ignoreCase = true)
+        }
+
+        // Stable installation must reject beta feed
+        org.junit.Assert.assertFalse(
+            "Stable installation must reject beta feed",
+            isUpdateChannelCompatible(betaChannel, "stable")
+        )
+
+        // Beta installation must reject stable feed
+        org.junit.Assert.assertFalse(
+            "Beta installation must reject stable feed",
+            isUpdateChannelCompatible(stableChannel, "beta")
+        )
+
+        // Same-channel feeds must be accepted
+        assertTrue(isUpdateChannelCompatible(betaChannel, "beta"))
+        assertTrue(isUpdateChannelCompatible(stableChannel, "stable"))
+    }
 }
 

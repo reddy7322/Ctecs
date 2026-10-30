@@ -19,6 +19,11 @@ android {
     versionCode = 1
     versionName = "1.0"
 
+    val updateChannel = project.findProperty("updateChannel") as? String
+        ?: System.getenv("UPDATE_CHANNEL")
+        ?: "stable"
+    buildConfigField("String", "UPDATE_CHANNEL", "\"$updateChannel\"")
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 

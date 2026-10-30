@@ -83,6 +83,20 @@ fun UpdateAvailableDialog(
         },
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val isBeta = releaseInfo.channel.equals("beta", ignoreCase = true)
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (isBeta) Color(0xFFD97706) else Color(0xFF059669)
+                ) {
+                    Text(
+                        text = if (isBeta) "BETA UPDATE FEED" else "STABLE PRODUCTION FEED",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Update Available",
                     fontWeight = FontWeight.Bold,

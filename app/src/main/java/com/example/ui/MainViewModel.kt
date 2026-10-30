@@ -299,7 +299,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val dynamicFeatures = whatsNewManager.parseReleaseNotesToFeatures(info.releaseNotes)
                     _whatsNewFeatures.value = dynamicFeatures
                 } else if (isManual) {
-                    _uiMessages.emit(UiMessage.Info("You are using the latest version of Ctecs (v${com.example.BuildConfig.VERSION_NAME})"))
+                    val channelLabel = com.example.update.AppUpdateManager.INSTALLED_CHANNEL.replaceFirstChar { it.uppercase() }
+                    _uiMessages.emit(UiMessage.Info("Latest version installed on $channelLabel channel (v${com.example.BuildConfig.VERSION_NAME})"))
                 }
             } else if (isManual) {
                 val err = result.exceptionOrNull()?.message ?: "Check failed"
@@ -307,6 +308,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    val updateChannel: String = com.example.update.AppUpdateManager.INSTALLED_CHANNEL
 
     fun downloadAndInstallUpdate() {
         val info = _availableUpdate.value ?: return
@@ -316,7 +319,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isDownloadingUpdate.value = true
             _updateDownloadProgress.value = 0f
 
-            val fileName = "Ctecs-${info.tagName}.apk"
+            val fileName = "CTECS-${info.tagName}.apk"
             val result = appUpdateManager.downloadApk(url, fileName) { progress ->
                 _updateDownloadProgress.value = progress
             }
@@ -326,8 +329,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val apkFile = result.getOrNull()
                 if (apkFile != null) {
                     _availableUpdate.value = null
-                    appUpdateManager.installApk(apkFile)
-                    _uiMessages.emit(UiMessage.Success("Update downloaded. Starting installer..."))
+                    val installResult = appUpdateManager.validateAndInstallApk(apkFile, info.channel)
+                    if (installResult.isSuccess) {
+                        _uiMessages.emit(UiMessage.Success("Update validated for ${info.channel} channel. Starting installer..."))
+                    } else {
+                        val reason = installResult.exceptionOrNull()?.message ?: "Security validation failed"
+                        _uiMessages.emit(UiMessage.Error("Installation blocked: $reason"))
+                    }
                 }
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Download failed"

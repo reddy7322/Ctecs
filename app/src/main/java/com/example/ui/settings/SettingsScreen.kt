@@ -1209,27 +1209,59 @@ fun SettingsScreen(
                     isExpanded = expandedSections["permissions_about"] ?: false,
                     onToggleExpand = { expandedSections["permissions_about"] = !(expandedSections["permissions_about"] ?: false) }
                 ) {
+                    val channel = com.example.update.AppUpdateManager.INSTALLED_CHANNEL
+                    val isBeta = channel == "beta"
+
                     Text("App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", fontSize = 12.sp, color = PrimaryText)
                     Text("Package: ${context.packageName}", fontSize = 11.sp, color = SecondaryText)
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Update Channel:", fontSize = 11.sp, color = SecondaryText)
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isBeta) Color(0xFFD97706) else Color(0xFF059669)
+                        ) {
+                            Text(
+                                text = if (isBeta) "BETA (Pre-release)" else "STABLE (Production)",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = if (isBeta)
+                            "Isolated Beta Feed: Receives pre-release builds only. Will not receive stable updates."
+                        else
+                            "Isolated Stable Feed: Receives verified production releases only. Will not receive beta updates.",
+                        fontSize = 10.sp,
+                        color = Color(0xFF94A3B8),
+                        modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
+                    )
 
                     if (isCheckingUpdate) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF38BDF8))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Checking for updates...", fontSize = 12.sp, color = SecondaryText)
+                            Text("Checking for ${channel.replaceFirstChar { it.uppercase() }} updates...", fontSize = 12.sp, color = SecondaryText)
                         }
                     } else {
                         Button(
                             onClick = { viewModel.checkForAppUpdate(isManual = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (isBeta) Color(0xFFD97706) else Color(0xFF0284C7)),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                         ) {
                             Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Check for Updates", fontSize = 12.sp)
+                            Text("Check for Updates (${channel.replaceFirstChar { it.uppercase() }})", fontSize = 12.sp)
                         }
                     }
 
