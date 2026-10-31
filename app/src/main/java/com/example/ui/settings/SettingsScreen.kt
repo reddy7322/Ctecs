@@ -412,10 +412,10 @@ fun SettingsScreen(
             // ====================================================
             // 1. PROJECT SETTINGS
             // ====================================================
-            if (matchesSearch("project highway road lane activity inspector section separator kmz kml alignment route chainage", searchQuery)) {
+            if (matchesSearch("project highway road lane activity inspector section strech separator kmz kml alignment route chainage", searchQuery)) {
                 SmartDropdownSection(
                     title = "1. Project Settings",
-                    subtitle = "${currentProject.highwayId.ifBlank { "NH-58" }} • ${currentProject.roadSide.label} • ${currentProject.lane}",
+                    subtitle = "${currentProject.highwayId.ifBlank { "No Project Set" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} • ${currentProject.roadSide.label} • ${currentProject.lane}",
                     icon = Icons.Default.Engineering,
                     accentColor = Color(0xFF38BDF8),
                     isExpanded = expandedSections["project"] ?: false,
@@ -424,7 +424,8 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = currentProject.highwayId,
                         onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(highwayId = it)) },
-                        label = { Text("Highway / Project Name (e.g. NH-58, MH)") },
+                        label = { Text("Project Name") },
+                        placeholder = { Text("e.g. NH-58, Highway Project", color = SecondaryText.copy(alpha = 0.6f)) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
                     )
@@ -432,7 +433,8 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = currentProject.packageSection,
                         onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(packageSection = it)) },
-                        label = { Text("Package / Section (e.g. MM, Pkg-1)") },
+                        label = { Text("Strech (Section / Package)") },
+                        placeholder = { Text("e.g. MM, Pkg-1, Strech-A", color = SecondaryText.copy(alpha = 0.6f)) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
                     )

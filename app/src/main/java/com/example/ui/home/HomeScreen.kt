@@ -21,6 +21,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +48,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.CompassCalibration
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LightMode
@@ -61,13 +64,19 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SatelliteAlt
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -107,6 +116,8 @@ import com.example.ui.theme.AccentRed
 import com.example.ui.theme.BorderColor
 import com.example.ui.theme.ElevatedSurface
 import com.example.ui.theme.HighlightYellow
+import com.example.ui.theme.PrimaryText
+import com.example.ui.theme.SecondaryText
 import com.example.ui.theme.SurfaceDark
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -218,20 +229,35 @@ fun HomeScreen(
                 subTextColor = subTextColor
             )
 
-            // 3. Highway & Project Information Cards (Row of 2 Cards)
-            val highwayTitle = if (projectProfile.highwayId.isNotBlank()) projectProfile.highwayId else (activeRoute?.name ?: "NH 44")
-            val highwaySubtitle = activeRoute?.name ?: "Hyderabad - Nagpur"
-            val packageTitle = if (projectProfile.packageSection.isNotBlank()) projectProfile.packageSection else "Package - 03"
+            // 3. Project & Strech Information Cards (Row of 2 Cards with Long-Press to Edit)
+            var showEditProjectStretchDialog by remember { mutableStateOf(false) }
 
-            HighwayProjectCardsRow(
-                highwayTitle = highwayTitle,
-                highwaySubtitle = highwaySubtitle,
-                packageTitle = packageTitle,
+            ProjectStretchCardsRow(
+                projectName = projectProfile.highwayId,
+                stretchName = projectProfile.packageSection,
+                onEdit = { showEditProjectStretchDialog = true },
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
                 subTextColor = subTextColor
             )
+
+            if (showEditProjectStretchDialog) {
+                EditProjectStretchDialog(
+                    initialProject = projectProfile.highwayId,
+                    initialStretch = projectProfile.packageSection,
+                    onDismiss = { showEditProjectStretchDialog = false },
+                    onSave = { newProj, newStretch ->
+                        viewModel.saveProjectProfile(
+                            projectProfile.copy(
+                                highwayId = newProj,
+                                packageSection = newStretch
+                            )
+                        )
+                        viewModel.showToast("Project & Strech updated", com.example.ui.ToastType.SUCCESS)
+                    }
+                )
+            }
 
             // 4. Interactive Smart KMZ Map - Expanded 360.dp Card
             Box(
@@ -254,15 +280,25 @@ fun HomeScreen(
                 )
             }
 
-            // 5. Prominent Full-Width Next Chainage Card (Single element below Map)
+            // 5. Prominent Full-Width Next KM Stone Card (Single element below Map)
             val curChainage = matchResult.chainage
-            val nextChainageValue = if (curChainage != null) {
-                com.example.model.Chainage.fromMetres(((curChainage.metres / 100) + 1) * 100).format()
-            } else "198+500"
+            val (nextKmStone, nextKmDistance) = remember(curChainage) {
+                if (curChainage != null) {
+                    val curM = curChainage.metres
+                    // Next KM stone is the next 1000m mark (e.g. 181+000)
+                    val nextKm = ((curM / 1000) + 1) * 1000
+                    val dist = (nextKm - curM).coerceAtLeast(1)
+                    val kmLabel = com.example.model.Chainage.fromMetres(nextKm).format()
+                    val distLabel = "Exact ${dist}m away"
+                    kmLabel to distLabel
+                } else {
+                    "181+000" to "Exact 12m away"
+                }
+            }
 
             NextChainageCard(
-                nextChainage = nextChainageValue,
-                distanceMetres = "50 m",
+                nextChainage = nextKmStone,
+                distanceText = nextKmDistance,
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
@@ -706,7 +742,7 @@ fun CentralChainageDisplay(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = if (hasActiveRoute) "Model" else "GPS-Derived",
+                    text = if (hasActiveRoute) "Project" else "GPS-Derived",
                     color = mainTextColor,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
@@ -840,13 +876,13 @@ fun OdometerSingleDigit(
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 3: HIGHWAY & PROJECT INFO CARDS (ROW OF 2 CARDS)
+// COMPONENT 3: PROJECT & STRECH CARDS (ROW OF 2 CARDS WITH LONG-PRESS)
 // -------------------------------------------------------------------
 @Composable
-fun HighwayProjectCardsRow(
-    highwayTitle: String,
-    highwaySubtitle: String,
-    packageTitle: String,
+fun ProjectStretchCardsRow(
+    projectName: String,
+    stretchName: String,
+    onEdit: () -> Unit,
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
@@ -854,97 +890,258 @@ fun HighwayProjectCardsRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Highway Card
+        // Project Card
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = cardBgColor,
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
             modifier = Modifier
                 .weight(1f)
-                .height(60.dp)
+                .height(68.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { onEdit() },
+                        onLongPress = { onEdit() }
+                    )
+                }
+                .testTag("home_card_project")
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.AltRoute,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(24.dp)
-                )
+                Surface(
+                    shape = CircleShape,
+                    color = HighlightYellow.copy(alpha = 0.15f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Engineering,
+                            contentDescription = null,
+                            tint = HighlightYellow,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.width(10.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = highwayTitle,
-                        color = mainTextColor,
+                        text = "Project",
+                        color = HighlightYellow,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = projectName.ifBlank { "Set Project" },
+                        color = if (projectName.isNotBlank()) mainTextColor else subTextColor.copy(alpha = 0.7f),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = highwaySubtitle,
-                        color = subTextColor,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
                 }
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Edit Project",
+                    tint = subTextColor.copy(alpha = 0.5f),
+                    modifier = Modifier.size(14.dp)
+                )
             }
         }
 
-        // Section / Package Card
+        // Strech Card
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = cardBgColor,
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
             modifier = Modifier
                 .weight(1f)
-                .height(60.dp)
+                .height(68.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { onEdit() },
+                        onLongPress = { onEdit() }
+                    )
+                }
+                .testTag("home_card_stretch")
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.MyLocation,
-                    contentDescription = null,
-                    tint = mainTextColor,
-                    modifier = Modifier.size(24.dp)
-                )
+                Surface(
+                    shape = CircleShape,
+                    color = HighlightYellow.copy(alpha = 0.15f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.AltRoute,
+                            contentDescription = null,
+                            tint = HighlightYellow,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.width(10.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Section",
-                        color = subTextColor,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium
+                        text = "Strech",
+                        color = HighlightYellow,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
                     )
                     Text(
-                        text = packageTitle,
-                        color = mainTextColor,
+                        text = stretchName.ifBlank { "Set Strech" },
+                        color = if (stretchName.isNotBlank()) mainTextColor else subTextColor.copy(alpha = 0.7f),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Edit Strech",
+                    tint = subTextColor.copy(alpha = 0.5f),
+                    modifier = Modifier.size(14.dp)
+                )
             }
         }
     }
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 4: PROMINENT FULL-WIDTH NEXT CHAINAGE CARD
+// EDIT PROJECT & STRECH MODAL DIALOG
+// -------------------------------------------------------------------
+@Composable
+fun EditProjectStretchDialog(
+    initialProject: String,
+    initialStretch: String,
+    onDismiss: () -> Unit,
+    onSave: (project: String, stretch: String) -> Unit
+) {
+    var project by remember { mutableStateOf(initialProject) }
+    var stretch by remember { mutableStateOf(initialStretch) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(20.dp),
+        containerColor = SurfaceDark,
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(HighlightYellow.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = null,
+                    tint = HighlightYellow,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "Edit Project & Strech",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = PrimaryText
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Update project information for camera watermark and documentation:",
+                    fontSize = 12.sp,
+                    color = SecondaryText
+                )
+
+                OutlinedTextField(
+                    value = project,
+                    onValueChange = { project = it },
+                    label = { Text("Project Name") },
+                    placeholder = { Text("e.g. NH-44, Express Corridor", color = SecondaryText.copy(alpha = 0.5f)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("edit_project_input"),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = HighlightYellow,
+                        unfocusedBorderColor = BorderColor,
+                        focusedLabelColor = HighlightYellow,
+                        unfocusedLabelColor = SecondaryText,
+                        cursorColor = HighlightYellow,
+                        focusedTextColor = PrimaryText,
+                        unfocusedTextColor = PrimaryText
+                    )
+                )
+
+                OutlinedTextField(
+                    value = stretch,
+                    onValueChange = { stretch = it },
+                    label = { Text("Strech") },
+                    placeholder = { Text("e.g. MM, Pkg-1, Section-A", color = SecondaryText.copy(alpha = 0.5f)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("edit_stretch_input"),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = HighlightYellow,
+                        unfocusedBorderColor = BorderColor,
+                        focusedLabelColor = HighlightYellow,
+                        unfocusedLabelColor = SecondaryText,
+                        cursorColor = HighlightYellow,
+                        focusedTextColor = PrimaryText,
+                        unfocusedTextColor = PrimaryText
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(project.trim(), stretch.trim())
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = HighlightYellow,
+                    contentColor = Color.Black
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.testTag("save_project_stretch_button")
+            ) {
+                Text("Save", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = SecondaryText)
+            }
+        }
+    )
+}
+
+// -------------------------------------------------------------------
+// COMPONENT 4: PROMINENT FULL-WIDTH NEXT KM STONE CARD
 // -------------------------------------------------------------------
 @Composable
 fun NextChainageCard(
     nextChainage: String,
-    distanceMetres: String,
+    distanceText: String,
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
@@ -956,7 +1153,7 @@ fun NextChainageCard(
         border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
         modifier = Modifier
             .fillMaxWidth()
-            .height(68.dp)
+            .height(72.dp)
             .testTag("next_chainage_card")
     ) {
         Row(
@@ -971,15 +1168,15 @@ fun NextChainageCard(
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = HighlightYellow.copy(alpha = 0.2f),
-                    modifier = Modifier.size(42.dp)
+                    color = HighlightYellow.copy(alpha = 0.18f),
+                    modifier = Modifier.size(44.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Default.AltRoute,
-                            contentDescription = "Next Chainage",
+                            imageVector = Icons.Default.Place,
+                            contentDescription = "Next KM Stone",
                             tint = HighlightYellow,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
@@ -990,31 +1187,33 @@ fun NextChainageCard(
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = "NEXT CHAINAGE",
-                        color = subTextColor,
+                        text = "NEXT KM STONE",
+                        color = HighlightYellow,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
+                        letterSpacing = 0.8.sp
                     )
                     Text(
                         text = if (!nextChainage.startsWith("KM") && !nextChainage.contains("-")) "KM $nextChainage" else nextChainage,
                         color = mainTextColor,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Black
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.5.sp
                     )
                 }
             }
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = HighlightYellow
+                shape = RoundedCornerShape(12.dp),
+                color = HighlightYellow,
+                shadowElevation = 2.dp
             ) {
                 Text(
-                    text = "$distanceMetres away",
+                    text = distanceText,
                     color = Color.Black,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
         }

@@ -16,8 +16,8 @@ enum class RoadSide(val label: String) {
  * Road construction project parameters and field tagging.
  */
 data class ProjectProfile(
-    val highwayId: String = "MH",              // e.g. "MH" or "NH-58"
-    val packageSection: String = "MM",         // e.g. "MM" or "Pkg-02"
+    val highwayId: String = "",              // e.g. "MH" or "NH-58"
+    val packageSection: String = "",         // e.g. "MM" or "Pkg-02"
     val roadSide: RoadSide = RoadSide.RHS,      // RHS / LHS / MEDIAN
     val lane: String = "I/L",                  // I/L (Inner), M/L (Middle), O/L (Outer), Shoulder
     val activity: String = "DBM",              // DBM, BC, GSB, WMM, Milling, Inspection, etc.

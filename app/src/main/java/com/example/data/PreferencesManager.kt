@@ -200,8 +200,8 @@ class PreferencesManager(private val context: Context) {
 
     val projectProfileFlow: Flow<ProjectProfile> = context.dataStore.data.map { prefs ->
         ProjectProfile(
-            highwayId = prefs[KEY_HIGHWAY_ID] ?: "MH",
-            packageSection = prefs[KEY_PACKAGE_SECTION] ?: "MM",
+            highwayId = prefs[KEY_HIGHWAY_ID] ?: "",
+            packageSection = prefs[KEY_PACKAGE_SECTION] ?: "",
             roadSide = RoadSide.fromString(prefs[KEY_ROAD_SIDE]),
             lane = prefs[KEY_LANE] ?: "I/L",
             activity = prefs[KEY_ACTIVITY] ?: "DBM",
