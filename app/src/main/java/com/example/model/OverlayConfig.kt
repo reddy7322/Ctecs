@@ -58,9 +58,9 @@ data class OverlayConfig(
     val showDirectionOnPreview: Boolean = false,
     val includeDirectionInCapture: Boolean = false,
 
-    // Custom Logo & Manual Settings
-    val showLogo: Boolean = true,
-    val logoPreset: String = "ctecs",           // "ctecs", "nhai", "survey_seal", "custom"
+    // Custom Logo & Manual Settings (Disabled by default, no prefill)
+    val showLogo: Boolean = false,
+    val logoPreset: String = "custom",           // "custom"
     val logoUri: String? = null,
     val logoPosition: LogoPosition = LogoPosition.TOP_RIGHT,
     val logoSizeDp: Int = 58,                   // 32 to 140 dp

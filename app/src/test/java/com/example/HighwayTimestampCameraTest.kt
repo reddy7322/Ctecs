@@ -13,6 +13,7 @@ import com.example.model.RouteData
 import com.example.model.RouteMarker
 import com.example.parser.KmzParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -325,8 +326,8 @@ class HighwayTimestampCameraTest {
         assertEquals(com.example.model.LogoShape.ORIGINAL, com.example.model.LogoShape.fromString("invalid"))
 
         val config = com.example.model.OverlayConfig()
-        assertTrue(config.showLogo)
-        assertEquals("ctecs", config.logoPreset)
+        assertFalse(config.showLogo)
+        assertEquals("custom", config.logoPreset)
         assertEquals(com.example.model.LogoPosition.TOP_RIGHT, config.logoPosition)
         assertEquals(58, config.logoSizeDp)
         assertEquals(0.90f, config.logoOpacity, 0.001f)

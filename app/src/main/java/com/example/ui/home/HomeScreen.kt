@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -69,11 +70,18 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -1034,11 +1042,14 @@ fun EditProjectStretchDialog(
 ) {
     var project by remember { mutableStateOf(initialProject) }
     var stretch by remember { mutableStateOf(initialStretch) }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(20.dp),
-        containerColor = SurfaceDark,
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.imePadding(),
         icon = {
             Box(
                 modifier = Modifier
@@ -1060,7 +1071,7 @@ fun EditProjectStretchDialog(
                 text = "Edit Project & Strech",
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
-                color = PrimaryText
+                color = MaterialTheme.colorScheme.onSurface
             )
         },
         text = {
@@ -1071,24 +1082,31 @@ fun EditProjectStretchDialog(
                 Text(
                     text = "Update project information for camera watermark and documentation:",
                     fontSize = 12.sp,
-                    color = SecondaryText
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 OutlinedTextField(
                     value = project,
                     onValueChange = { project = it },
                     label = { Text("Project Name") },
-                    placeholder = { Text("e.g. NH-44, Express Corridor", color = SecondaryText.copy(alpha = 0.5f)) },
+                    placeholder = { Text("e.g. NH-44, Express Corridor", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters,
+                        imeAction = ImeAction.Next
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                    ),
                     modifier = Modifier.fillMaxWidth().testTag("edit_project_input"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = HighlightYellow,
-                        unfocusedBorderColor = BorderColor,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
                         focusedLabelColor = HighlightYellow,
-                        unfocusedLabelColor = SecondaryText,
+                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         cursorColor = HighlightYellow,
-                        focusedTextColor = PrimaryText,
-                        unfocusedTextColor = PrimaryText
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                     )
                 )
 
@@ -1096,17 +1114,29 @@ fun EditProjectStretchDialog(
                     value = stretch,
                     onValueChange = { stretch = it },
                     label = { Text("Strech") },
-                    placeholder = { Text("e.g. MM, Pkg-1, Section-A", color = SecondaryText.copy(alpha = 0.5f)) },
+                    placeholder = { Text("e.g. MM, Pkg-1, Section-A", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Words,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                            onSave(project.trim(), stretch.trim())
+                            onDismiss()
+                        }
+                    ),
                     modifier = Modifier.fillMaxWidth().testTag("edit_stretch_input"),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = HighlightYellow,
-                        unfocusedBorderColor = BorderColor,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
                         focusedLabelColor = HighlightYellow,
-                        unfocusedLabelColor = SecondaryText,
+                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         cursorColor = HighlightYellow,
-                        focusedTextColor = PrimaryText,
-                        unfocusedTextColor = PrimaryText
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                     )
                 )
             }
@@ -1129,7 +1159,7 @@ fun EditProjectStretchDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = SecondaryText)
+                Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     )

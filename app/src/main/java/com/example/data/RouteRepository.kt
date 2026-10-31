@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -198,6 +199,67 @@ class RouteRepository(
         if (_activeRouteData.value?.id == routeId) {
             _activeRouteData.value = null
             preferencesManager.setActiveRouteId(null)
+        }
+    }
+
+    suspend fun getActiveRouteBytes(): Pair<String, ByteArray>? = withContext(Dispatchers.IO) {
+        val activeId = _activeRouteData.value?.id ?: preferencesManager.activeRouteIdFlow.firstOrNull()
+        if (activeId != null) {
+            val entity = routeDao.getRouteById(activeId)
+            if (entity?.localFilePath != null) {
+                val file = File(entity.localFilePath)
+                if (file.exists() && file.isFile) {
+                    val fileName = entity.fileName.ifBlank { file.name }
+                    return@withContext Pair(fileName, file.readBytes())
+                }
+            }
+        }
+        null
+    }
+
+    suspend fun importRouteFromBytes(bytes: ByteArray, fileName: String, displayName: String): Result<RouteData> = withContext(Dispatchers.IO) {
+        try {
+            val routesDir = File(context.filesDir, "imported_routes").apply { mkdirs() }
+            val sanitizedName = fileName.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
+            val targetFile = File(routesDir, "${System.currentTimeMillis()}_$sanitizedName")
+            targetFile.writeBytes(bytes)
+
+            val parsedRoute = targetFile.inputStream().use { input ->
+                KmzParser.parse(input, sanitizedName)
+            }
+
+            val finalDisplayName = if (displayName.isNotBlank() && displayName != sanitizedName) {
+                displayName
+            } else if (parsedRoute.name.isNotBlank() && parsedRoute.name != sanitizedName) {
+                parsedRoute.name
+            } else {
+                sanitizedName.substringBeforeLast(".")
+            }
+
+            val entity = RouteEntity(
+                id = parsedRoute.id,
+                name = finalDisplayName,
+                fileName = sanitizedName,
+                markerCount = parsedRoute.markers.size,
+                startChainageMetres = parsedRoute.startChainage?.metres,
+                endChainageMetres = parsedRoute.endChainage?.metres,
+                minLat = parsedRoute.bounds.minLat,
+                maxLat = parsedRoute.bounds.maxLat,
+                minLng = parsedRoute.bounds.minLng,
+                maxLng = parsedRoute.bounds.maxLng,
+                importedAt = parsedRoute.importedAt,
+                isActive = true,
+                localFilePath = targetFile.absolutePath
+            )
+
+            routeDao.deactivateAllRoutes()
+            routeDao.insertRoute(entity)
+            preferencesManager.setActiveRouteId(parsedRoute.id)
+            _activeRouteData.value = parsedRoute
+
+            Result.success(parsedRoute)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }

@@ -19,6 +19,7 @@ import com.example.model.CaptureSnapshot
 import com.example.model.Chainage
 import com.example.model.CameraMode
 import com.example.model.ChainageMatchResult
+import com.example.model.DefinedProject
 import com.example.model.OverlayConfig
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
@@ -132,6 +133,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = ProjectProfile()
+    )
+
+    val definedProjects: StateFlow<List<DefinedProject>> = preferencesManager.definedProjectsFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
     )
 
     val overlayConfig: StateFlow<OverlayConfig> = preferencesManager.overlayConfigFlow.stateIn(
@@ -415,6 +422,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateCustomDescription(description: String) {
+        viewModelScope.launch {
+            preferencesManager.updateProjectProfile(projectProfile.value.copy(customDescription = description))
+        }
+    }
+
+    fun updateWorkType(workType: String) {
+        viewModelScope.launch {
+            preferencesManager.updateProjectProfile(projectProfile.value.copy(workType = workType))
+        }
+    }
+
     fun saveProjectProfile(profile: ProjectProfile) {
         viewModelScope.launch {
             preferencesManager.updateProjectProfile(profile)
@@ -425,6 +444,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProjectProfileSilent(profile: ProjectProfile) {
         viewModelScope.launch {
             preferencesManager.updateProjectProfile(profile)
+        }
+    }
+
+    fun saveDefinedProjects(projects: List<DefinedProject>) {
+        viewModelScope.launch {
+            preferencesManager.updateDefinedProjects(projects)
+        }
+    }
+
+    fun addDefinedProject(project: DefinedProject) {
+        viewModelScope.launch {
+            val current = definedProjects.value.toMutableList()
+            val index = current.indexOfFirst { it.name.equals(project.name, ignoreCase = true) }
+            if (index >= 0) {
+                current[index] = project
+            } else {
+                current.add(0, project)
+            }
+            preferencesManager.updateDefinedProjects(current)
+        }
+    }
+
+    fun removeDefinedProject(name: String) {
+        viewModelScope.launch {
+            val current = definedProjects.value.filterNot { it.name.equals(name, ignoreCase = true) }
+            preferencesManager.updateDefinedProjects(current)
+        }
+    }
+
+    suspend fun getActiveRouteExportData(): Pair<String, ByteArray>? {
+        return routeRepository.getActiveRouteBytes()
+    }
+
+    fun importRouteFromBytes(bytes: ByteArray, fileName: String, displayName: String, onComplete: ((Boolean, String) -> Unit)? = null) {
+        viewModelScope.launch {
+            val result = routeRepository.importRouteFromBytes(bytes, fileName, displayName)
+            if (result.isSuccess) {
+                val route = result.getOrNull()
+                val msg = "Alignment imported: ${route?.name ?: fileName} (${route?.markers?.size ?: 0} markers)"
+                showToast(msg, ToastType.SUCCESS)
+                onComplete?.invoke(true, msg)
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Failed to import KMZ/KML"
+                showToast(err, ToastType.ERROR)
+                onComplete?.invoke(false, err)
+            }
         }
     }
 

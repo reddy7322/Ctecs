@@ -16,18 +16,20 @@ enum class RoadSide(val label: String) {
  * Road construction project parameters and field tagging.
  */
 data class ProjectProfile(
-    val highwayId: String = "",              // e.g. "MH" or "NH-58"
-    val packageSection: String = "",         // e.g. "MM" or "Pkg-02"
+    val highwayId: String = "",              // e.g. "NH-44" (Project Name)
+    val packageSection: String = "",         // e.g. "Pkg-02" (Stretch)
+    val workType: String = "",               // Work Type: MM, RM, LIE, or "None"/""
     val roadSide: RoadSide = RoadSide.RHS,      // RHS / LHS / MEDIAN
     val lane: String = "I/L",                  // I/L (Inner), M/L (Middle), O/L (Outer), Shoulder
-    val activity: String = "DBM",              // DBM, BC, GSB, WMM, Milling, Inspection, etc.
-    val customDescription: String = "",        // Optional notes
+    val activity: String = "DBM",              // Activity / Layer: DBM, BC, GSB, etc.
+    val customDescription: String = "",        // Custom Comment (shown on next line)
     val inspectorName: String = "",            // Optional site supervisor / engineer
     val separator: String = "||"               // Default "||" separator
 ) {
     /**
      * Builds the structured highway text line:
-     * e.g. "MH | 168+400 RHS Milling" or "MH | 168+400 RHS" or "MH | MM | 196+040 RHS I/L DBM"
+     * Line 1: Project Name | Stretch | Work Type | {Chainage} { RHS } { I/L} {DBM}
+     * Line 2: { Custom Comment } (handled via getCustomCommentLine())
      */
     fun buildHighwayText(chainageFormatted: String): String {
         fun isValid(s: String?): Boolean {
@@ -45,17 +47,31 @@ data class ProjectProfile(
         if (isValid(highwayId)) parts.add(highwayId.trim())
         if (isValid(packageSection)) parts.add(packageSection.trim())
 
-        // Chainage with road side, lane, activity, and custom description
-        val workParts = mutableListOf<String>()
-        if (isValid(chainageFormatted)) workParts.add(chainageFormatted.trim())
-        if (isValid(roadSide.label)) workParts.add(roadSide.label.trim())
-        if (isValid(lane)) workParts.add(lane.trim())
-        if (isValid(activity)) workParts.add(activity.trim())
-        if (isValid(customDescription)) workParts.add(customDescription.trim())
+        // Work Type: MM, RM, LIE. "None" or blank means empty Work type
+        val effectiveWorkType = when {
+            isValid(workType) -> workType.trim()
+            isValid(activity) && (activity.equals("MM", true) || activity.equals("RM", true) || activity.equals("LIE", true)) -> activity.trim()
+            else -> ""
+        }
+        if (isValid(effectiveWorkType)) {
+            parts.add(effectiveWorkType)
+        }
 
-        val workStr = workParts.joinToString(" ")
-        if (workStr.isNotBlank()) {
-            parts.add(workStr)
+        // Road segment telemetry: {Chainage} { RHS } { I/L} {DBM}
+        val roadDetails = mutableListOf<String>()
+        if (isValid(chainageFormatted)) roadDetails.add(chainageFormatted.trim())
+        if (isValid(roadSide.label)) roadDetails.add(roadSide.label.trim())
+        if (isValid(lane)) roadDetails.add(lane.trim())
+
+        // Activity / Layer: e.g. DBM (ignore if it matches workType or is None)
+        val effectiveActivity = if (!activity.equals("MM", true) && !activity.equals("RM", true) && !activity.equals("LIE", true)) activity else ""
+        if (isValid(effectiveActivity)) {
+            roadDetails.add(effectiveActivity.trim())
+        }
+
+        val roadDetailsStr = roadDetails.joinToString(" ")
+        if (roadDetailsStr.isNotBlank()) {
+            parts.add(roadDetailsStr)
         }
 
         val effectiveSep = if (separator.trim() == "||") "|" else separator.trim()
@@ -63,7 +79,23 @@ data class ProjectProfile(
         return parts.joinToString(sep)
     }
 
+    fun getCustomCommentLine(): String? {
+        val comment = customDescription.trim()
+        if (comment.isBlank()) return null
+        if (comment.equals("None", ignoreCase = true)) return null
+        if (comment.equals("Null", ignoreCase = true)) return null
+        return comment
+    }
+
     companion object {
+        data class WorkType(val code: String, val title: String)
+        val WORK_TYPE_PRESETS = listOf(
+            WorkType("None", "None"),
+            WorkType("MM", "Major Maintenance"),
+            WorkType("RM", "Routine Maintenance"),
+            WorkType("LIE", "Lenders Investment Engineer")
+        )
+
         val LANE_PRESETS = listOf("None", "I/L", "M/L", "O/L", "Shoulder", "Service Rd", "Main CW")
         val ACTIVITY_PRESETS = listOf(
             "None",
@@ -86,3 +118,17 @@ data class ProjectProfile(
         )
     }
 }
+
+/**
+ * Defined project item for user selection and persistence in Settings.
+ */
+data class DefinedProject(
+    val name: String,
+    val stretch: String = "",
+    val workType: String = "MM"
+) {
+    companion object {
+        val DEFAULT_PROJECTS: List<DefinedProject> = emptyList()
+    }
+}
+

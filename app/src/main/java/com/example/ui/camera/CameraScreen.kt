@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.Camera
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Exposure
@@ -108,10 +110,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -209,6 +219,8 @@ fun CameraScreen(
     var showExposureSlider by remember { mutableStateOf(false) }
     var showZoomSlider by remember { mutableStateOf(false) }
     var showQuickSettingsPopup by remember { mutableStateOf(false) }
+    var showCustomCommentDialog by remember { mutableStateOf(false) }
+    var commentInput by remember { mutableStateOf("") }
 
     // Countdown Timer State
     var countdownRemaining by remember { mutableIntStateOf(0) }
@@ -1039,6 +1051,45 @@ fun CameraScreen(
                         }
                     }
                 }
+
+                // Custom Comment chip
+                item {
+                    val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (hasComment) Color(0x990284C7) else Color(0x701A1A1A),
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, if (hasComment) Color(0xFF38BDF8) else BorderColor.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clickable {
+                                commentInput = projectProfile.customDescription
+                                showCustomCommentDialog = true
+                            }
+                            .testTag("custom_comment_chip")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ChatBubbleOutline,
+                                contentDescription = "Custom Comment",
+                                tint = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = if (hasComment) "Comment: ${projectProfile.customDescription}" else "+ Comment",
+                                color = PrimaryText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 160.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -1298,6 +1349,8 @@ fun CameraScreen(
         // Manual Chainage Dialog
         if (showManualDialog) {
             var inputVal by remember { mutableStateOf(matchResult.chainage?.format() ?: "196+040") }
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
             AlertDialog(
                 onDismissRequest = { viewModel.closeManualChainageDialog() },
                 containerColor = SurfaceDark,
@@ -1315,6 +1368,17 @@ fun CameraScreen(
                             onValueChange = { inputVal = it },
                             label = { Text("Chainage (km+m)") },
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    viewModel.setManualChainage(inputVal)
+                                }
+                            ),
                             modifier = Modifier.fillMaxWidth().testTag("manual_chainage_input")
                         )
                     }
@@ -1345,6 +1409,8 @@ fun CameraScreen(
         // Manual Activity / Layer Dialog
         if (showManualActivityDialog) {
             var activityInput by remember { mutableStateOf(projectProfile.activity) }
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
             AlertDialog(
                 onDismissRequest = { showManualActivityDialog = false },
                 containerColor = SurfaceDark,
@@ -1362,6 +1428,21 @@ fun CameraScreen(
                             onValueChange = { activityInput = it },
                             label = { Text("Activity / Layer Name") },
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Words,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    if (activityInput.isNotBlank()) {
+                                        viewModel.updateActivity(activityInput.trim())
+                                        viewModel.showToast("Activity updated: ${activityInput.trim()}", ToastType.SUCCESS)
+                                    }
+                                    showManualActivityDialog = false
+                                }
+                            ),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = HighlightYellow,
                                 unfocusedBorderColor = BorderColor,
@@ -1390,6 +1471,90 @@ fun CameraScreen(
                 dismissButton = {
                     TextButton(onClick = { showManualActivityDialog = false }) {
                         Text("Cancel", color = PrimaryText)
+                    }
+                }
+            )
+        }
+
+        // Custom Comment Dialog
+        if (showCustomCommentDialog) {
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
+            AlertDialog(
+                onDismissRequest = { showCustomCommentDialog = false },
+                containerColor = SurfaceDark,
+                title = { Text("Custom Comment Watermark", color = PrimaryText, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Add a custom comment line. When set, this will be displayed dynamically on the next line under the highway timestamp watermark.",
+                            fontSize = 13.sp,
+                            color = SecondaryText
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = commentInput,
+                            onValueChange = { commentInput = it },
+                            label = { Text("Custom Comment") },
+                            placeholder = { Text("e.g. Culvert Inspection / Patch Work", color = SecondaryText.copy(alpha = 0.6f)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Sentences,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    viewModel.updateCustomDescription(commentInput.trim())
+                                    if (commentInput.trim().isNotBlank()) {
+                                        viewModel.showToast("Comment set: ${commentInput.trim()}", ToastType.SUCCESS)
+                                    }
+                                    showCustomCommentDialog = false
+                                }
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = HighlightYellow,
+                                unfocusedBorderColor = BorderColor,
+                                focusedTextColor = PrimaryText,
+                                unfocusedTextColor = PrimaryText
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("custom_comment_input")
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.updateCustomDescription(commentInput.trim())
+                            if (commentInput.trim().isNotBlank()) {
+                                viewModel.showToast("Comment set: ${commentInput.trim()}", ToastType.SUCCESS)
+                            }
+                            showCustomCommentDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = HighlightYellow, contentColor = PrimaryBackground),
+                        modifier = Modifier.testTag("save_custom_comment_button")
+                    ) {
+                        Text("Apply", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        if (projectProfile.customDescription.isNotBlank()) {
+                            TextButton(
+                                onClick = {
+                                    commentInput = ""
+                                    viewModel.updateCustomDescription("")
+                                    viewModel.showToast("Comment cleared", ToastType.INFO)
+                                    showCustomCommentDialog = false
+                                }
+                            ) {
+                                Text("Clear", color = AccentRed)
+                            }
+                        }
+                        TextButton(onClick = { showCustomCommentDialog = false }) {
+                            Text("Cancel", color = PrimaryText)
+                        }
                     }
                 }
             )

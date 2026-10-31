@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.model.DefinedProject
 import com.example.model.LogoPosition
 import com.example.model.LogoShape
 import com.example.model.OverlayConfig
@@ -23,12 +24,14 @@ class PreferencesManager(private val context: Context) {
     companion object {
         val KEY_HIGHWAY_ID = stringPreferencesKey("highway_id")
         val KEY_PACKAGE_SECTION = stringPreferencesKey("package_section")
+        val KEY_WORK_TYPE = stringPreferencesKey("work_type")
         val KEY_ROAD_SIDE = stringPreferencesKey("road_side")
         val KEY_LANE = stringPreferencesKey("lane")
         val KEY_ACTIVITY = stringPreferencesKey("activity")
         val KEY_DESCRIPTION = stringPreferencesKey("description")
         val KEY_INSPECTOR = stringPreferencesKey("inspector")
         val KEY_SEPARATOR = stringPreferencesKey("separator")
+        val KEY_DEFINED_PROJECTS = stringPreferencesKey("defined_projects_list")
 
         val KEY_TEMPLATE = stringPreferencesKey("overlay_template")
         val KEY_TIMESTAMP_FORMAT = stringPreferencesKey("timestamp_format")
@@ -199,12 +202,15 @@ class PreferencesManager(private val context: Context) {
     }
 
     val projectProfileFlow: Flow<ProjectProfile> = context.dataStore.data.map { prefs ->
+        val rawWorkType = prefs[KEY_WORK_TYPE] ?: if (prefs[KEY_ACTIVITY] == "MM" || prefs[KEY_ACTIVITY] == "RM" || prefs[KEY_ACTIVITY] == "LIE" || prefs[KEY_ACTIVITY] == "None") prefs[KEY_ACTIVITY] ?: "" else ""
+        val rawActivity = if (prefs[KEY_ACTIVITY] == "MM" || prefs[KEY_ACTIVITY] == "RM" || prefs[KEY_ACTIVITY] == "LIE" || prefs[KEY_ACTIVITY] == "None") "DBM" else prefs[KEY_ACTIVITY] ?: "DBM"
         ProjectProfile(
             highwayId = prefs[KEY_HIGHWAY_ID] ?: "",
             packageSection = prefs[KEY_PACKAGE_SECTION] ?: "",
+            workType = rawWorkType,
             roadSide = RoadSide.fromString(prefs[KEY_ROAD_SIDE]),
             lane = prefs[KEY_LANE] ?: "I/L",
-            activity = prefs[KEY_ACTIVITY] ?: "DBM",
+            activity = rawActivity,
             customDescription = prefs[KEY_DESCRIPTION] ?: "",
             inspectorName = prefs[KEY_INSPECTOR] ?: "",
             separator = prefs[KEY_SEPARATOR] ?: "||"
@@ -233,9 +239,9 @@ class PreferencesManager(private val context: Context) {
             showDirectionOnPreview = prefs[KEY_SHOW_DIRECTION_PREVIEW] ?: false,
             includeDirectionInCapture = prefs[KEY_INCLUDE_DIRECTION_CAPTURE] ?: false,
 
-            // Logo manual settings
-            showLogo = prefs[KEY_SHOW_LOGO] ?: true,
-            logoPreset = prefs[KEY_LOGO_PRESET] ?: "ctecs",
+            // Logo manual settings (No prefill, default disabled)
+            showLogo = prefs[KEY_SHOW_LOGO] ?: false,
+            logoPreset = prefs[KEY_LOGO_PRESET] ?: "custom",
             logoUri = prefs[KEY_LOGO_URI],
             logoPosition = LogoPosition.fromString(prefs[KEY_LOGO_POSITION]),
             logoSizeDp = prefs[KEY_LOGO_SIZE_DP] ?: 58,
@@ -273,10 +279,58 @@ class PreferencesManager(private val context: Context) {
         prefs[KEY_ACTIVE_ROUTE_ID]
     }
 
+    val definedProjectsFlow: Flow<List<DefinedProject>> = context.dataStore.data.map { prefs ->
+        val jsonStr = prefs[KEY_DEFINED_PROJECTS]
+        parseDefinedProjects(jsonStr)
+    }
+
+    suspend fun updateDefinedProjects(projects: List<DefinedProject>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_DEFINED_PROJECTS] = serializeDefinedProjects(projects)
+        }
+    }
+
+    private fun serializeDefinedProjects(projects: List<DefinedProject>): String {
+        val array = org.json.JSONArray()
+        for (p in projects) {
+            val obj = org.json.JSONObject()
+            obj.put("name", p.name)
+            obj.put("stretch", p.stretch)
+            obj.put("workType", p.workType)
+            array.put(obj)
+        }
+        return array.toString()
+    }
+
+    private fun parseDefinedProjects(jsonStr: String?): List<DefinedProject> {
+        if (jsonStr.isNullOrBlank()) return emptyList()
+        return try {
+            val array = org.json.JSONArray(jsonStr)
+            val list = mutableListOf<DefinedProject>()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val name = obj.optString("name", "").trim()
+                if (name.isNotBlank()) {
+                    list.add(
+                        DefinedProject(
+                            name = name,
+                            stretch = obj.optString("stretch", "").trim(),
+                            workType = obj.optString("workType", "MM").trim()
+                        )
+                    )
+                }
+            }
+            list
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     suspend fun updateProjectProfile(profile: ProjectProfile) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HIGHWAY_ID] = profile.highwayId
             prefs[KEY_PACKAGE_SECTION] = profile.packageSection
+            prefs[KEY_WORK_TYPE] = profile.workType
             prefs[KEY_ROAD_SIDE] = profile.roadSide.name
             prefs[KEY_LANE] = profile.lane
             prefs[KEY_ACTIVITY] = profile.activity

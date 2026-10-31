@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -68,7 +69,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -103,12 +107,25 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -119,21 +136,16 @@ import com.example.model.CameraGridMode
 import com.example.model.CameraSettings
 import com.example.model.CaptureTimer
 import com.example.model.CoordinateFormat
+import com.example.model.DefinedProject
 import com.example.model.LogoPosition
+import com.example.model.LogoShape
 import com.example.model.OverlayConfig
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.VideoQualityOption
 import com.example.overlay.LogoProvider
 import com.example.ui.MainViewModel
-import com.example.ui.theme.BorderColor
-import com.example.ui.theme.DisabledGray
-import com.example.ui.theme.ElevatedSurface
-import com.example.ui.theme.PrimaryBackground
-import com.example.ui.theme.PrimaryText
-import com.example.ui.theme.SecondaryBackground
-import com.example.ui.theme.SecondaryText
-import com.example.ui.theme.SurfaceDark
+import com.example.ui.ToastType
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -151,7 +163,11 @@ fun SettingsScreen(
     }
 
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val coroutineScope = rememberCoroutineScope()
     val currentProject by viewModel.projectProfile.collectAsStateWithLifecycle()
+    val definedProjects by viewModel.definedProjects.collectAsStateWithLifecycle()
     val currentOverlay by viewModel.overlayConfig.collectAsStateWithLifecycle()
     val currentCameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val isFrontCamera by viewModel.isFrontCamera.collectAsStateWithLifecycle()
@@ -239,6 +255,164 @@ fun SettingsScreen(
         }
     }
 
+    // Export Project JSON (with user added KMZ/KML alignment) Launcher
+    val exportProjectLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                try {
+                    val routeExportData = viewModel.getActiveRouteExportData()
+                    val json = org.json.JSONObject().apply {
+                        put("version", 2)
+                        put("project", currentProject.highwayId)
+                        put("highwayId", currentProject.highwayId)
+                        put("stretch", currentProject.packageSection)
+                        put("packageSection", currentProject.packageSection)
+                        put("workType", currentProject.workType)
+                        put("activity", currentProject.activity)
+                        put("roadSide", currentProject.roadSide.label)
+                        put("lane", currentProject.lane)
+                        put("separator", currentProject.separator)
+                        put("exportedAt", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+
+                        // Include user's defined projects
+                        val projectsArray = org.json.JSONArray()
+                        definedProjects.forEach { dp ->
+                            val pObj = org.json.JSONObject()
+                            pObj.put("name", dp.name)
+                            pObj.put("stretch", dp.stretch)
+                            pObj.put("workType", dp.workType)
+                            projectsArray.put(pObj)
+                        }
+                        put("definedProjects", projectsArray)
+
+                        // Include active KMZ/KML file if available
+                        if (routeExportData != null) {
+                            put("hasRouteAlignment", true)
+                            put("routeFileName", routeExportData.first)
+                            put("routeDisplayName", activeRoute?.name ?: routeExportData.first.substringBeforeLast("."))
+                            put("routeMarkerCount", activeRoute?.markers?.size ?: 0)
+                            put("routeBase64", android.util.Base64.encodeToString(routeExportData.second, android.util.Base64.NO_WRAP))
+                        } else {
+                            put("hasRouteAlignment", false)
+                        }
+                    }
+                    context.contentResolver.openOutputStream(uri)?.use { outStream ->
+                        outStream.write(json.toString(2).toByteArray(Charsets.UTF_8))
+                    }
+                    if (routeExportData != null) {
+                        viewModel.showSuccess("Project \"${currentProject.highwayId.ifBlank { "Config" }}\" with KMZ/KML exported successfully")
+                    } else {
+                        viewModel.showSuccess("Project \"${currentProject.highwayId.ifBlank { "Config" }}\" exported successfully")
+                    }
+                } catch (e: Exception) {
+                    viewModel.showToast("Export failed: ${e.message}", ToastType.ERROR)
+                }
+            }
+        }
+    }
+
+    // Import Project JSON (with user added KMZ/KML alignment) Launcher
+    val importProjectLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+            if (fileName.endsWith(".kmz", ignoreCase = true) || fileName.endsWith(".kml", ignoreCase = true)) {
+                // Direct KMZ or KML imported via project import
+                viewModel.importRoute(uri, fileName)
+                if (currentProject.highwayId.isBlank()) {
+                    val pName = fileName.substringBeforeLast(".")
+                    viewModel.saveProjectProfileSilent(currentProject.copy(highwayId = pName))
+                    viewModel.addDefinedProject(DefinedProject(name = pName, stretch = currentProject.packageSection, workType = currentProject.workType))
+                }
+                viewModel.showSuccess("Imported KMZ/KML alignment: $fileName")
+                return@rememberLauncherForActivityResult
+            }
+
+            try {
+                val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                if (content.isNullOrBlank()) {
+                    viewModel.showToast("Selected file is empty", ToastType.ERROR)
+                    return@rememberLauncherForActivityResult
+                }
+                val json = org.json.JSONObject(content)
+                val projectName = json.optString("project", json.optString("highwayId", "")).trim()
+                val stretchName = json.optString("stretch", json.optString("packageSection", "")).trim()
+                val workType = json.optString("workType", "").trim()
+                val activityStr = json.optString("activity", currentProject.activity).trim()
+                val roadSideStr = json.optString("roadSide", currentProject.roadSide.label)
+                val laneStr = json.optString("lane", currentProject.lane)
+                val separatorStr = json.optString("separator", currentProject.separator)
+
+                if (projectName.isBlank() && stretchName.isBlank() && !json.has("routeBase64")) {
+                    viewModel.showToast("No valid project information found in JSON", ToastType.WARNING)
+                    return@rememberLauncherForActivityResult
+                }
+
+                val updated = currentProject.copy(
+                    highwayId = projectName.ifBlank { currentProject.highwayId },
+                    packageSection = stretchName.ifBlank { currentProject.packageSection },
+                    workType = workType.ifBlank { currentProject.workType },
+                    activity = activityStr.ifBlank { currentProject.activity },
+                    roadSide = RoadSide.fromString(roadSideStr),
+                    lane = laneStr.ifBlank { currentProject.lane },
+                    separator = separatorStr.ifBlank { currentProject.separator }
+                )
+                viewModel.saveProjectProfile(updated)
+
+                if (projectName.isNotBlank()) {
+                    viewModel.addDefinedProject(
+                        DefinedProject(
+                            name = projectName,
+                            stretch = stretchName,
+                            workType = workType.ifBlank { currentProject.workType }
+                        )
+                    )
+                }
+
+                // Restore defined projects list if bundled
+                if (json.has("definedProjects")) {
+                    try {
+                        val arr = json.getJSONArray("definedProjects")
+                        for (i in 0 until arr.length()) {
+                            val pObj = arr.getJSONObject(i)
+                            val pName = pObj.optString("name", "").trim()
+                            if (pName.isNotBlank()) {
+                                viewModel.addDefinedProject(
+                                    DefinedProject(
+                                        name = pName,
+                                        stretch = pObj.optString("stretch", "").trim(),
+                                        workType = pObj.optString("workType", "MM").trim()
+                                    )
+                                )
+                            }
+                        }
+                    } catch (ignored: Exception) {}
+                }
+
+                // Restore user added KMZ/KML file if present in export
+                val routeBase64 = json.optString("routeBase64", "").trim()
+                if (routeBase64.isNotBlank()) {
+                    try {
+                        val routeBytes = android.util.Base64.decode(routeBase64, android.util.Base64.DEFAULT)
+                        val rFileName = json.optString("routeFileName", "${projectName.ifBlank { "alignment" }}.kmz")
+                        val rDispName = json.optString("routeDisplayName", projectName.ifBlank { "Route Alignment" })
+                        viewModel.importRouteFromBytes(routeBytes, rFileName, rDispName)
+                        viewModel.showSuccess("Imported project: $projectName with KMZ/KML alignment")
+                    } catch (e: Exception) {
+                        viewModel.showToast("Project imported, but failed to load alignment: ${e.message}", ToastType.WARNING)
+                    }
+                } else {
+                    viewModel.showSuccess("Imported project: $projectName")
+                }
+            } catch (e: Exception) {
+                viewModel.showToast("Failed to parse project file: ${e.message}", ToastType.ERROR)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -253,7 +427,7 @@ fun SettingsScreen(
                         )
                         Text(
                             text = "14 Categories • Complete Camera & Overlay Config",
-                            style = MaterialTheme.typography.labelSmall.copy(color = SecondaryText)
+                            style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                         )
                     }
                 },
@@ -265,7 +439,7 @@ fun SettingsScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = PrimaryText
+                            tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 },
@@ -277,21 +451,21 @@ fun SettingsScreen(
                         Icon(
                             imageVector = Icons.Default.Restore,
                             contentDescription = "Restore Defaults",
-                            tint = SecondaryText
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PrimaryBackground
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         },
         bottomBar = {
             Surface(
-                color = ElevatedSurface,
+                color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth(),
-                tonalElevation = 8.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
+                tonalElevation = 6.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
             ) {
                 Row(
                     modifier = Modifier
@@ -316,13 +490,20 @@ fun SettingsScreen(
                 }
             }
         },
-        containerColor = PrimaryBackground,
+        containerColor = MaterialTheme.colorScheme.background,
         modifier = modifier
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .imePadding()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
+                    })
+                }
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
@@ -333,27 +514,36 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("settings_search_input"),
-                placeholder = { Text("Search settings (e.g. project, resolution, logo, gps, logo)...", color = SecondaryText, fontSize = 13.sp) },
+                placeholder = { Text("Search settings (e.g. project, stretch, work type, resolution, logo)...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), fontSize = 13.sp) },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = "Search", tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
                 },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear", tint = SecondaryText, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                         }
                     }
                 },
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Color(0xFF38BDF8),
-                    unfocusedBorderColor = BorderColor,
-                    focusedTextColor = PrimaryText,
-                    unfocusedTextColor = PrimaryText,
-                    focusedContainerColor = SurfaceDark,
-                    unfocusedContainerColor = SurfaceDark
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
                 ),
-                singleLine = true
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    imeAction = ImeAction.Search
+                ),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                    }
+                )
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -368,7 +558,7 @@ fun SettingsScreen(
                     text = "CATEGORIES (ALL COLLAPSED)",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = SecondaryText
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Row {
                     TextButton(
@@ -391,7 +581,7 @@ fun SettingsScreen(
                             ).forEach { expandedSections[it] = false }
                         }
                     ) {
-                        Text("Collapse All", fontSize = 11.sp, color = SecondaryText)
+                        Text("Collapse All", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -412,83 +602,370 @@ fun SettingsScreen(
             // ====================================================
             // 1. PROJECT SETTINGS
             // ====================================================
-            if (matchesSearch("project highway road lane activity inspector section strech separator kmz kml alignment route chainage", searchQuery)) {
+            if (matchesSearch("project stretch section work type mm rm lie highway export import", searchQuery)) {
+                var projectDropdownExpanded by remember { mutableStateOf(false) }
+                var workTypeDropdownExpanded by remember { mutableStateOf(false) }
+                val workTypeOptions = remember { ProjectProfile.WORK_TYPE_PRESETS }
+                val activeWorkType = workTypeOptions.firstOrNull {
+                    it.code.equals(currentProject.workType.trim(), ignoreCase = true) ||
+                    (currentProject.workType.isBlank() && it.code.equals("None", ignoreCase = true))
+                }
+                val workTypeDisplayText = activeWorkType?.let {
+                    if (it.code.equals("None", ignoreCase = true)) "None (Empty)" else "${it.code} - ${it.title}"
+                } ?: if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None (Empty)" else currentProject.workType
+
                 SmartDropdownSection(
                     title = "1. Project Settings",
-                    subtitle = "${currentProject.highwayId.ifBlank { "No Project Set" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} • ${currentProject.roadSide.label} • ${currentProject.lane}",
+                    subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
                     icon = Icons.Default.Engineering,
                     accentColor = Color(0xFF38BDF8),
                     isExpanded = expandedSections["project"] ?: false,
                     onToggleExpand = { expandedSections["project"] = !(expandedSections["project"] ?: false) }
                 ) {
-                    OutlinedTextField(
-                        value = currentProject.highwayId,
-                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(highwayId = it)) },
-                        label = { Text("Project Name") },
-                        placeholder = { Text("e.g. NH-58, Highway Project", color = SecondaryText.copy(alpha = 0.6f)) },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
-                    )
+                    // 1. Project Selection Dropdown
+                    ExposedDropdownMenuBox(
+                        expanded = projectDropdownExpanded,
+                        onExpandedChange = { projectDropdownExpanded = !projectDropdownExpanded },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = currentProject.highwayId,
+                            onValueChange = { newName ->
+                                viewModel.saveProjectProfileSilent(currentProject.copy(highwayId = newName))
+                            },
+                            label = { Text("Project") },
+                            placeholder = { Text("Select or enter Project name", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = projectDropdownExpanded)
+                            },
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth()
+                                .testTag("settings_project_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF38BDF8),
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                            ),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Words,
+                                imeAction = ImeAction.Next
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                            )
+                        )
 
+                        ExposedDropdownMenu(
+                            expanded = projectDropdownExpanded,
+                            onDismissRequest = { projectDropdownExpanded = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            Text(
+                                text = "PROJECTS",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8),
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                            )
+                            if (definedProjects.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "No saved projects yet\nEnter project name above to add",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    },
+                                    onClick = {},
+                                    enabled = false
+                                )
+                            } else {
+                                definedProjects.forEach { proj ->
+                                    val isSelected = proj.name.equals(currentProject.highwayId, ignoreCase = true)
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(
+                                                    text = proj.name,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (proj.stretch.isNotBlank() || proj.workType.isNotBlank()) {
+                                                    Text(
+                                                        text = listOfNotNull(
+                                                            proj.stretch.takeIf { it.isNotBlank() },
+                                                            proj.workType.takeIf { it.isNotBlank() }
+                                                        ).joinToString(" • "),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        trailingIcon = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                if (isSelected) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = "Selected",
+                                                        tint = Color(0xFF38BDF8),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { viewModel.removeDefinedProject(proj.name) },
+                                                    modifier = Modifier.size(28.dp).testTag("delete_project_${proj.name}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Delete,
+                                                        contentDescription = "Delete",
+                                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.saveProjectProfileSilent(
+                                                currentProject.copy(
+                                                    highwayId = proj.name,
+                                                    packageSection = if (proj.stretch.isNotBlank()) proj.stretch else currentProject.packageSection,
+                                                    workType = if (proj.workType.isNotBlank()) proj.workType else currentProject.workType
+                                                )
+                                            )
+                                            projectDropdownExpanded = false
+                                        },
+                                        contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                                    )
+                                }
+                            }
+
+                            if (currentProject.highwayId.isNotBlank() && definedProjects.none { it.name.equals(currentProject.highwayId, ignoreCase = true) }) {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "+ Save \"${currentProject.highwayId}\" to Projects",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = Color(0xFF38BDF8),
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    },
+                                    onClick = {
+                                        viewModel.addDefinedProject(
+                                            DefinedProject(
+                                                name = currentProject.highwayId,
+                                                stretch = currentProject.packageSection,
+                                                workType = currentProject.workType
+                                            )
+                                        )
+                                        viewModel.showSuccess("Saved \"${currentProject.highwayId}\" to projects")
+                                        projectDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // 2. Strech Input
                     OutlinedTextField(
                         value = currentProject.packageSection,
                         onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(packageSection = it)) },
-                        label = { Text("Strech (Section / Package)") },
-                        placeholder = { Text("e.g. MM, Pkg-1, Strech-A", color = SecondaryText.copy(alpha = 0.6f)) },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                        label = { Text("Strech") },
+                        placeholder = { Text("Enter Strech / Section", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("settings_stretch_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Words,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                            }
+                        )
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("Road Side (Carriageway)", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    // 3. Work Type Dropdown (MM - RM - LIE)
+                    ExposedDropdownMenuBox(
+                        expanded = workTypeDropdownExpanded,
+                        onExpandedChange = { workTypeDropdownExpanded = !workTypeDropdownExpanded },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     ) {
-                        RoadSide.entries.forEach { side ->
-                            FilterChip(
-                                selected = currentProject.roadSide == side,
-                                onClick = { viewModel.saveProjectProfileSilent(currentProject.copy(roadSide = side)) },
-                                label = { Text(side.label, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFF38BDF8),
-                                    selectedLabelColor = Color.Black
+                        OutlinedTextField(
+                            value = workTypeDisplayText,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Work Type") },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = workTypeDropdownExpanded)
+                            },
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth()
+                                .testTag("settings_work_type_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF38BDF8),
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                            ),
+                            singleLine = true
+                        )
+
+                        ExposedDropdownMenu(
+                            expanded = workTypeDropdownExpanded,
+                            onDismissRequest = { workTypeDropdownExpanded = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            workTypeOptions.forEach { wt ->
+                                val isSelected = wt.code.equals(currentProject.workType.trim(), ignoreCase = true) ||
+                                    (currentProject.workType.isBlank() && wt.code.equals("None", ignoreCase = true))
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.surfaceVariant,
+                                                contentColor = if (isSelected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
+                                            ) {
+                                                Text(
+                                                    text = wt.code,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 11.sp,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            Text(
+                                                text = if (wt.code.equals("None", ignoreCase = true)) "None (Empty Work Type)" else wt.title,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    },
+                                    trailingIcon = {
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Selected",
+                                                tint = Color(0xFF38BDF8),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.saveProjectProfileSilent(currentProject.copy(workType = wt.code))
+                                        workTypeDropdownExpanded = false
+                                    },
+                                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                                 )
+                            }
+                        }
+                    }
+
+                    // 4. KMZ / KML Route Alignment Status & Export/Import
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LinearScale,
+                                contentDescription = null,
+                                tint = if (activeRoute != null) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = if (activeRoute != null) {
+                                    "Alignment: ${activeRoute?.name} (${activeRoute?.markers?.size ?: 0} KM marks) • Included in Export"
+                                } else {
+                                    "No KMZ/KML attached • Will export project settings only"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (activeRoute != null) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
 
-                    OutlinedTextField(
-                        value = currentProject.lane,
-                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(lane = it)) },
-                        label = { Text("Lane (e.g. I/L, O/L, Shoulder, Median)") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val sanitizedName = (currentProject.highwayId.ifBlank { "Project" })
+                                    .replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                                exportProjectLauncher.launch("${sanitizedName}_alignment_bundle.json")
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("export_project_button"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFF38BDF8)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.UploadFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (activeRoute != null) "Export (with KMZ)" else "Export Project",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
 
-                    OutlinedTextField(
-                        value = currentProject.activity,
-                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(activity = it)) },
-                        label = { Text("Pavement Layer / Activity (e.g. DBM, BC, WMM, Subgrade)") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
-                    )
-
-                    OutlinedTextField(
-                        value = currentProject.inspectorName,
-                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(inspectorName = it)) },
-                        label = { Text("Inspector / Engineer Name (Optional)") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
-                    )
-
-                    OutlinedTextField(
-                        value = currentProject.separator,
-                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(separator = it)) },
-                        label = { Text("Text Separator (Default: ||)") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
-                    )
+                        Button(
+                            onClick = {
+                                importProjectLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("import_project_button"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF00BCD4),
+                                contentColor = Color.Black
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Import Project", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
 
@@ -590,7 +1067,7 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Photo Resolution (Real Hardware Capabilities)", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("Photo Resolution (Real Hardware Capabilities)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     OutlinedButton(
                         onClick = { showPhotoResolutionDialog = true },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -601,7 +1078,7 @@ fun SettingsScreen(
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Preview Aspect Ratio", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("Preview Aspect Ratio", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -613,7 +1090,9 @@ fun SettingsScreen(
                                 label = { Text(ratio.label, fontSize = 11.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = Color(0xFF00BCD4),
-                                    selectedLabelColor = Color.Black
+                                    selectedLabelColor = Color.Black,
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             )
                         }
@@ -652,7 +1131,7 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Video Recording Resolution", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("Video Recording Resolution", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     OutlinedButton(
                         onClick = { showVideoResolutionDialog = true },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -663,7 +1142,7 @@ fun SettingsScreen(
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Target Video Frame Rate", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("Target Video Frame Rate", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -675,7 +1154,9 @@ fun SettingsScreen(
                                 label = { Text("$fps FPS", fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = Color(0xFFEF4444),
-                                    selectedLabelColor = Color.White
+                                    selectedLabelColor = Color.White,
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             )
                         }
@@ -700,14 +1181,14 @@ fun SettingsScreen(
                     Text(
                         text = "Separate hardware resolution lists derived from active sensor output capabilities. Orientation flips are normalized and deduplicated.",
                         style = MaterialTheme.typography.labelSmall,
-                        color = SecondaryText,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
                     // Photo Resolution Selector
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -717,10 +1198,10 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("Photo Resolution Capabilities", fontWeight = FontWeight.Bold, color = Color(0xFF00BCD4), fontSize = 13.sp)
-                                Text("${photoResolutions.size} Options Detected", fontSize = 10.sp, color = SecondaryText)
+                                Text("${photoResolutions.size} Options Detected", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text("Current Selection: ${currentCameraSettings.photoResolution}", color = PrimaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Current Selection: ${currentCameraSettings.photoResolution}", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = { showPhotoResolutionDialog = true },
@@ -735,8 +1216,8 @@ fun SettingsScreen(
 
                     // Video Resolution Selector
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -746,10 +1227,10 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("Video Recording Capabilities", fontWeight = FontWeight.Bold, color = Color(0xFFEF4444), fontSize = 13.sp)
-                                Text("${videoResolutions.size} Options Detected", fontSize = 10.sp, color = SecondaryText)
+                                Text("${videoResolutions.size} Options Detected", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text("Current Selection: ${currentCameraSettings.videoResolution}", color = PrimaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Current Selection: ${currentCameraSettings.videoResolution}", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = { showVideoResolutionDialog = true },
@@ -795,7 +1276,7 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Timestamp Format Presets", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("Timestamp Format Presets", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     val timestampPresets = listOf(
                         "dd MMMM yyyy h:mm a" to "28 October 2026 10:57 pm",
                         "yyyy-MM-dd HH:mm:ss" to "2026-10-28 22:57:49",
@@ -823,8 +1304,8 @@ fun SettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Column {
-                                    Text(sample, fontSize = 13.sp, color = if (isSelected) Color(0xFFFFD700) else PrimaryText)
-                                    Text(pattern, fontSize = 10.sp, color = SecondaryText)
+                                    Text(sample, fontSize = 13.sp, color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface)
+                                    Text(pattern, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -855,7 +1336,7 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Coordinate Format", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("Coordinate Format", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -867,7 +1348,9 @@ fun SettingsScreen(
                                 label = { Text(format.name, fontSize = 11.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = Color(0xFF22C55E),
-                                    selectedLabelColor = Color.Black
+                                    selectedLabelColor = Color.Black,
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             )
                         }
@@ -914,8 +1397,8 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Active KMZ Route Alignment", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    Text("Currently active: ${activeRoute?.name ?: "Sample NH-58 Route"}", fontSize = 12.sp, color = SecondaryText)
+                    Text("Active KMZ Route Alignment", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Currently active: ${activeRoute?.name ?: "Sample NH-58 Route"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -990,7 +1473,7 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Watermark Placement Position", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("Watermark Placement Position", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     val positions = listOf("Bottom Right", "Bottom Left", "Top Right", "Top Left", "Bottom Center", "Top Center", "Center")
                     FlowRow(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1025,68 +1508,269 @@ fun SettingsScreen(
             // ====================================================
             // 10. CUSTOM LOGO
             // ====================================================
-            if (matchesSearch("custom logo preset nhai survey seal size opacity position shape rotation", searchQuery)) {
+            if (matchesSearch("custom logo size opacity position shape rotation stamp", searchQuery)) {
+                val hasCustomLogo = !currentOverlay.logoUri.isNullOrBlank() && File(currentOverlay.logoUri ?: "").exists()
+
                 SmartDropdownSection(
                     title = "10. Custom Logo",
-                    subtitle = "Preset: ${currentOverlay.logoPreset.uppercase()} • Size: ${currentOverlay.logoSizeDp}dp",
+                    subtitle = if (hasCustomLogo) "Custom Logo Active • ${currentOverlay.logoSizeDp}dp" else "No Logo Uploaded",
                     icon = Icons.Default.AddPhotoAlternate,
                     accentColor = Color(0xFF38BDF8),
                     isExpanded = expandedSections["logo"] ?: false,
                     onToggleExpand = { expandedSections["logo"] = !(expandedSections["logo"] ?: false) }
                 ) {
-                    CompactSwitchRow(
-                        title = "Show Logo Stamp",
-                        subtitle = "Display company seal / project logo on watermarked media",
-                        checked = currentOverlay.showLogo,
-                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showLogo = it)) },
-                        tag = "switch_show_logo"
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Logo Presets", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf("ctecs" to "CTECS", "nhai" to "NHAI", "survey_seal" to "Seal").forEach { (key, label) ->
-                            FilterChip(
-                                selected = currentOverlay.logoPreset == key,
-                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoPreset = key)) },
-                                label = { Text(label, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFF38BDF8),
-                                    selectedLabelColor = Color.Black
+                    if (!hasCustomLogo) {
+                        // Empty State - No prefilled logos or dummy presets
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF38BDF8).copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AddPhotoAlternate,
+                                        contentDescription = null,
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "No Custom Logo Uploaded",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
+                                Text(
+                                    text = "Upload your project or company logo to watermark captured photos and videos.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                Button(
+                                    onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.testTag("upload_custom_logo_button")
+                                ) {
+                                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Upload Custom Logo", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    } else {
+                        // User Uploaded Logo - Show full, simplified custom logo settings
+                        val logoFile = File(currentOverlay.logoUri!!)
+                        val logoBitmap = remember(currentOverlay.logoUri) {
+                            try {
+                                android.graphics.BitmapFactory.decodeFile(logoFile.absolutePath)
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+
+                        // Preview & Actions Card
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(52.dp)
+                                            .clip(
+                                                when (currentOverlay.logoShape) {
+                                                    LogoShape.CIRCLE -> CircleShape
+                                                    LogoShape.ROUNDED_CORNER -> RoundedCornerShape(currentOverlay.logoCornerRadiusDp.dp)
+                                                    LogoShape.ORIGINAL -> RoundedCornerShape(4.dp)
+                                                }
+                                            )
+                                            .background(Color.Black.copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (logoBitmap != null) {
+                                            Image(
+                                                bitmap = logoBitmap.asImageBitmap(),
+                                                contentDescription = "Custom Logo",
+                                                modifier = Modifier.size(48.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.AddPhotoAlternate,
+                                                contentDescription = null,
+                                                tint = Color(0xFF38BDF8)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = "Custom Logo",
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = logoFile.name,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    IconButton(
+                                        onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                        modifier = Modifier.testTag("replace_logo_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Replace Logo",
+                                            tint = Color(0xFF38BDF8)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            try { logoFile.delete() } catch (ignored: Exception) {}
+                                            viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoUri = null, showLogo = false))
+                                            viewModel.showToast("Custom logo removed")
+                                        },
+                                        modifier = Modifier.testTag("remove_logo_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Remove Logo",
+                                            tint = Color(0xFFEF4444)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        CompactSwitchRow(
+                            title = "Show Logo Stamp",
+                            subtitle = "Burn uploaded logo onto captured photos & videos",
+                            checked = currentOverlay.showLogo,
+                            onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showLogo = it)) },
+                            tag = "switch_show_logo"
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        SliderRow(
+                            title = "Logo Size (DP)",
+                            value = currentOverlay.logoSizeDp.toFloat(),
+                            valueRange = 32f..120f,
+                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoSizeDp = it.toInt())) },
+                            valueText = "${currentOverlay.logoSizeDp} dp"
+                        )
+
+                        SliderRow(
+                            title = "Logo Opacity",
+                            value = currentOverlay.logoOpacity,
+                            valueRange = 0.2f..1.0f,
+                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoOpacity = it)) },
+                            valueText = "${(currentOverlay.logoOpacity * 100).toInt()}%"
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Logo Position",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                LogoPosition.TOP_RIGHT to "Top Right",
+                                LogoPosition.TOP_LEFT to "Top Left",
+                                LogoPosition.BOTTOM_RIGHT to "Bottom Right",
+                                LogoPosition.BOTTOM_LEFT to "Bottom Left",
+                                LogoPosition.ABOVE_TEXT to "Above Text"
+                            ).forEach { (pos, label) ->
+                                FilterChip(
+                                    selected = currentOverlay.logoPosition == pos,
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoPosition = pos)) },
+                                    label = { Text(label, fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFF38BDF8),
+                                        selectedLabelColor = Color.Black,
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Logo Shape",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                LogoShape.ORIGINAL to "Original",
+                                LogoShape.ROUNDED_CORNER to "Rounded",
+                                LogoShape.CIRCLE to "Circular"
+                            ).forEach { (shape, label) ->
+                                FilterChip(
+                                    selected = currentOverlay.logoShape == shape,
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoShape = shape)) },
+                                    label = { Text(label, fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFF38BDF8),
+                                        selectedLabelColor = Color.Black,
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                        }
+
+                        if (currentOverlay.logoShape == LogoShape.ROUNDED_CORNER) {
+                            SliderRow(
+                                title = "Corner Radius (DP)",
+                                value = currentOverlay.logoCornerRadiusDp.toFloat(),
+                                valueRange = 2f..32f,
+                                onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoCornerRadiusDp = it.toInt())) },
+                                valueText = "${currentOverlay.logoCornerRadiusDp} dp"
                             )
                         }
                     }
-
-                    Button(
-                        onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    ) {
-                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Import Custom Logo Image...", fontSize = 12.sp)
-                    }
-
-                    SliderRow(
-                        title = "Logo Size (DP)",
-                        value = currentOverlay.logoSizeDp.toFloat(),
-                        valueRange = 32f..120f,
-                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoSizeDp = it.toInt())) },
-                        valueText = "${currentOverlay.logoSizeDp} dp"
-                    )
-
-                    SliderRow(
-                        title = "Logo Opacity",
-                        value = currentOverlay.logoOpacity,
-                        valueRange = 0.2f..1.0f,
-                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoOpacity = it)) },
-                        valueText = "${(currentOverlay.logoOpacity * 100).toInt()}%"
-                    )
                 }
             }
 
@@ -1115,7 +1799,7 @@ fun SettingsScreen(
                     Text(
                         text = "Videos use hardware-accelerated MediaCodec & MediaMuxer frame pipeline to burn-in dynamic metadata without video quality loss.",
                         style = MaterialTheme.typography.labelSmall,
-                        color = SecondaryText,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -1140,7 +1824,22 @@ fun SettingsScreen(
                         onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customFilenamePrefix = it)) },
                         label = { Text("Custom Filename Prefix (Optional e.g. NH58_)") },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Characters,
+                            imeAction = ImeAction.Next
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                        )
                     )
 
                     OutlinedTextField(
@@ -1148,7 +1847,24 @@ fun SettingsScreen(
                         onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customStoragePath = it)) },
                         label = { Text("Storage Directory Path") },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF38BDF8), unfocusedBorderColor = BorderColor)
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                            }
+                        )
                     )
                 }
             }
@@ -1176,7 +1892,7 @@ fun SettingsScreen(
                     )
 
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("App Theme Mode", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
+                    Text("App Theme Mode", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1189,7 +1905,9 @@ fun SettingsScreen(
                                 label = { Text(label, fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = Color(0xFF38BDF8),
-                                    selectedLabelColor = Color.Black
+                                    selectedLabelColor = Color.Black,
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             )
                         }
@@ -1221,7 +1939,7 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", fontSize = 12.sp, color = PrimaryText)
+                        Text("App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = channelBg
@@ -1236,7 +1954,7 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text("Package: ${context.packageName}", fontSize = 11.sp, color = SecondaryText)
+                    Text("Package: ${context.packageName}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
                         text = if (isBetaApp) "Update Channel: Beta (Receives Beta releases only)" else "Update Channel: Stable (Receives Stable releases only)",
                         fontSize = 11.sp,
@@ -1253,7 +1971,7 @@ fun SettingsScreen(
                             Text(
                                 text = if (isBetaApp) "Checking for Beta updates..." else "Checking for Stable updates...",
                                 fontSize = 12.sp,
-                                color = SecondaryText
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     } else {
@@ -1326,8 +2044,8 @@ fun SettingsScreen(
     if (showRestoreDialog) {
         AlertDialog(
             onDismissRequest = { showRestoreDialog = false },
-            title = { Text("Restore Default Settings?", fontWeight = FontWeight.Bold) },
-            text = { Text("All custom project profile names, camera settings, timestamp formats, and logo preferences will be reset to factory defaults.") },
+            title = { Text("Restore Default Settings?", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
+            text = { Text("All custom project profile names, camera settings, timestamp formats, and logo preferences will be reset to factory defaults.", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -1341,9 +2059,10 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showRestoreDialog = false }) {
-                    Text("Cancel", color = PrimaryText)
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
         )
     }
 }
@@ -1372,7 +2091,7 @@ private fun ResolutionSelectionDialog(
                 )
                 Text(
                     text = "${resolutions.size} supported hardware outputs detected",
-                    style = MaterialTheme.typography.labelSmall.copy(color = SecondaryText)
+                    style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                 )
             }
         },
@@ -1399,27 +2118,27 @@ private fun ResolutionSelectionDialog(
                             text = res.displayTitle,
                             fontSize = 15.sp,
                             fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal,
-                            color = if (isSelected) Color(0xFF38BDF8) else PrimaryText
+                            color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface
                         )
                         RadioButton(
                             selected = isSelected,
                             onClick = { onSelect(res) },
                             colors = RadioButtonDefaults.colors(
                                 selectedColor = Color(0xFF38BDF8),
-                                unselectedColor = SecondaryText
+                                unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         )
                     }
-                    HorizontalDivider(color = BorderColor.copy(alpha = 0.3f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = PrimaryText, fontWeight = FontWeight.Bold)
+                Text("Close", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
             }
         },
-        containerColor = SurfaceDark,
+        containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp)
     )
 }
@@ -1436,8 +2155,8 @@ private fun SmartDropdownSection(
 ) {
     Card(
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-        border = androidx.compose.foundation.BorderStroke(0.8.dp, if (isExpanded) accentColor.copy(alpha = 0.8f) else BorderColor),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isExpanded) accentColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(tween(250))
@@ -1470,12 +2189,12 @@ private fun SmartDropdownSection(
                             text = title,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = PrimaryText
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = subtitle,
                             style = MaterialTheme.typography.labelSmall,
-                            color = SecondaryText,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1484,7 +2203,7 @@ private fun SmartDropdownSection(
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = if (isExpanded) "Collapse" else "Expand",
-                    tint = if (isExpanded) accentColor else SecondaryText,
+                    tint = if (isExpanded) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -1495,7 +2214,7 @@ private fun SmartDropdownSection(
                         .fillMaxWidth()
                         .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
                 ) {
-                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(bottom = 10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(bottom = 10.dp))
                     content()
                 }
             }
@@ -1520,15 +2239,16 @@ private fun CompactSwitchRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, color = PrimaryText, fontWeight = FontWeight.Medium)
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.Black,
-                checkedTrackColor = Color(0xFF38BDF8)
+                checkedTrackColor = Color(0xFF38BDF8),
+                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
             ),
             modifier = Modifier.testTag(tag)
         )
@@ -1549,7 +2269,7 @@ private fun SliderRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(title, style = MaterialTheme.typography.bodySmall, color = PrimaryText, fontWeight = FontWeight.Medium)
+            Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
             Text(valueText, style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
         }
         Slider(
@@ -1559,7 +2279,7 @@ private fun SliderRow(
             colors = SliderDefaults.colors(
                 thumbColor = Color(0xFF38BDF8),
                 activeTrackColor = Color(0xFF38BDF8),
-                inactiveTrackColor = BorderColor
+                inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
             )
         )
     }
@@ -1575,7 +2295,7 @@ private fun WatermarkLivePreviewCard(
 ) {
     Card(
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -1595,7 +2315,7 @@ private fun WatermarkLivePreviewCard(
                     Icon(
                         imageVector = Icons.Default.RotateRight,
                         contentDescription = "Rotate Preview",
-                        tint = PrimaryText,
+                        tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -1613,12 +2333,26 @@ private fun WatermarkLivePreviewCard(
                     horizontalAlignment = Alignment.End,
                     modifier = Modifier.padding(10.dp)
                 ) {
-                    Text(
-                        text = "${project.highwayId.ifBlank { "MH" }} | 168+400 ${project.roadSide.name} ${project.activity}",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    val highwayPreview = project.buildHighwayText("181+000")
+                    if (highwayPreview.isNotBlank()) {
+                        Text(
+                            text = highwayPreview,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                    val commentLine = project.getCustomCommentLine()
+                    if (commentLine != null) {
+                        Text(
+                            text = commentLine,
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.End
+                        )
+                    }
                     Text(
                         text = "28 October 2026 10:57 PM",
                         color = Color.White,
