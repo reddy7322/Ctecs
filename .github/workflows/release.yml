@@ -1,187 +1,50 @@
-name: "CTECS Release System"
-run-name: "CTECS ${{ inputs.release_channel || 'Release' }} Build (${{ github.ref_name }})"
+name: Release APK & AAB
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       release_channel:
-        description: 'Release Channel'
+        description: 'Select Release Channel (stable or beta)'
         required: true
         type: choice
+        default: 'stable'
         options:
-          - 'beta'
           - 'stable'
-        default: 'beta'
-      version_name:
-        description: 'Version Name (e.g. 1.0.0). Leave blank to auto-detect/increment.'
+          - 'beta'
+      version_tag:
+        description: 'Release Tag (leave empty for auto-increment, or specify e.g. v1.0.1 or v1.0.1-beta.1)'
         required: false
         default: ''
-      release_notes:
-        description: 'Custom Release Notes (Optional)'
+      release_title:
+        description: 'Release Title (optional custom title)'
         required: false
         default: ''
 
 permissions:
-
   contents: write
 
 jobs:
-  build-and-release:
+  build-release:
     name: Build & Publish Release
     runs-on: ubuntu-latest
 
     steps:
-      - name: 1. Checkout Selected Revision
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 2. Validate Release Channel & Compute Version
-        id: versioning
-        run: |
-          echo "=========================================================="
-          echo "        CTECS RELEASE CHANNEL & VERSION CALCULATION       "
-          echo "=========================================================="
-          
-          git fetch --unshallow 2>/dev/null || git fetch --tags 2>/dev/null || true
-          
-          # 1. Determine Release Channel
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CHANNEL="${{ github.event.inputs.release_channel }}"
-          elif [[ "${{ github.ref }}" =~ refs/tags/v.*(-beta|-alpha|-rc) ]]; then
-            CHANNEL="beta"
-          else
-            CHANNEL="stable"
-          fi
-          
-          if [ "$CHANNEL" != "beta" ] && [ "$CHANNEL" != "stable" ]; then
-            echo "::error::Invalid release_channel '$CHANNEL'. Must be exactly 'beta' or 'stable'."
-            exit 1
-          fi
-          echo "Target Release Channel: $CHANNEL"
-          
-          # 2. Determine Base Semantic Version (MAJOR.MINOR.PATCH)
-          INPUT_VERSION="${{ github.event.inputs.version_name }}"
-          INPUT_VERSION="${INPUT_VERSION#v}"
-          INPUT_VERSION="${INPUT_VERSION#"${INPUT_VERSION%%[![:space:]]*}"}"
-          INPUT_VERSION="${INPUT_VERSION%"${INPUT_VERSION##*[![:space:]]}"}"
-          
-          if [ -n "$INPUT_VERSION" ]; then
-            CLEAN_BASE=$(echo "$INPUT_VERSION" | sed -E 's/-.*//')
-            if [[ ! "$CLEAN_BASE" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
-              echo "::error::Invalid manual version format '$INPUT_VERSION'. Must be semantic format like 1.0.0 or 1.1."
-              exit 1
-            fi
-            IFS='.' read -r M1 M2 M3 <<< "$CLEAN_BASE"
-            BASE_VERSION="${M1:-1}.${M2:-0}.${M3:-0}"
-            echo "Using developer specified base version: $BASE_VERSION"
-          elif [[ "${{ github.ref }}" =~ refs/tags/v ]]; then
-            TAG_RAW="${{ github.ref_name }}"
-            TAG_RAW="${TAG_RAW#v}"
-            CLEAN_BASE=$(echo "$TAG_RAW" | sed -E 's/-.*//')
-            IFS='.' read -r M1 M2 M3 <<< "$CLEAN_BASE"
-            BASE_VERSION="${M1:-1}.${M2:-0}.${M3:-0}"
-            echo "Using base version from pushed tag: $BASE_VERSION"
-          else
-            LATEST_STABLE_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v "-" | sort -V | tail -n 1 || true)
-            if [ -n "$LATEST_STABLE_TAG" ]; then
-              TAG_CLEAN="${LATEST_STABLE_TAG#v}"
-              IFS='.' read -r M1 M2 M3 <<< "$TAG_CLEAN"
-              if [ "$CHANNEL" = "stable" ]; then
-                M3=$((M3 + 1))
-              fi
-              BASE_VERSION="${M1:-1}.${M2:-0}.${M3:-0}"
-              echo "Derived base version from git history ($LATEST_STABLE_TAG): $BASE_VERSION"
-            else
-              GRADLE_VER=$(grep -E 'versionName\s*=\s*"[^"]+"' app/build.gradle.kts | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
-              GRADLE_VER="${GRADLE_VER:-1.0.0}"
-              IFS='.' read -r M1 M2 M3 <<< "$GRADLE_VER"
-              BASE_VERSION="${M1:-1}.${M2:-0}.${M3:-0}"
-              echo "Derived base version from app/build.gradle.kts: $BASE_VERSION"
-            fi
-          fi
-          
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
-          MAJOR=${MAJOR:-1}
-          MINOR=${MINOR:-0}
-          PATCH=${PATCH:-0}
-          
-          # 3. Channel-Specific Configuration & Tag Collision Safety
-          if [ "$CHANNEL" = "stable" ]; then
-            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-            NEW_TAG="v${NEW_VERSION}"
-            RELEASE_TITLE="CTECS Stable v${NEW_VERSION}"
-            IS_PRERELEASE="false"
-            
-            if git rev-parse -q --verify "refs/tags/${NEW_TAG}" >/dev/null; then
-              echo "::error::Stable release tag '${NEW_TAG}' already exists! Cannot overwrite an existing stable release."
-              exit 1
-            fi
-            
-            VERSION_CODE=$(( MAJOR * 100000 + MINOR * 10000 + PATCH * 100 + 99 ))
-          else
-            LATEST_BETA_NUM=$(git tag -l "v${BASE_VERSION}-beta.*" | sed -E 's/.*-beta\.([0-9]+)/\1/' | sort -n | tail -n 1 || true)
-            if [ -n "$LATEST_BETA_NUM" ]; then
-              BETA_NUM=$((LATEST_BETA_NUM + 1))
-            else
-              BETA_NUM=1
-            fi
-            
-            while git rev-parse -q --verify "refs/tags/v${BASE_VERSION}-beta.${BETA_NUM}" >/dev/null; do
-              BETA_NUM=$((BETA_NUM + 1))
-            done
-            
-            NEW_VERSION="${BASE_VERSION}-beta.${BETA_NUM}"
-            NEW_TAG="v${NEW_VERSION}"
-            RELEASE_TITLE="CTECS Beta v${NEW_VERSION}"
-            IS_PRERELEASE="true"
-            
-            VERSION_CODE=$(( MAJOR * 100000 + MINOR * 10000 + PATCH * 100 + (BETA_NUM % 99) ))
-          fi
-          
-          APK_NAME="CTECS-${NEW_VERSION}.apk"
-          AAB_NAME="CTECS-${NEW_VERSION}.aab"
-          
-          echo "----------------------------------------------------------"
-          echo "Channel:          $CHANNEL"
-          echo "Version Name:     $NEW_VERSION"
-          echo "Version Code:     $VERSION_CODE"
-          echo "Git Tag:          $NEW_TAG"
-          echo "Release Title:    $RELEASE_TITLE"
-          echo "Is Pre-release:   $IS_PRERELEASE"
-          echo "Target APK Name:  $APK_NAME"
-          echo "Target AAB Name:  $AAB_NAME"
-          echo "----------------------------------------------------------"
-          
-          if [ -f "app/build.gradle.kts" ]; then
-            sed -i -E "s/versionCode = [0-9]+/versionCode = $VERSION_CODE/g" app/build.gradle.kts
-            sed -i -E "s/versionName = \"[^\"]+\"/versionName = \"$NEW_VERSION\"/g" app/build.gradle.kts
-            sed -i -E "s/versionCode = if \(updateChannel == \"beta\"\) [0-9]+ else [0-9]+/versionCode = if (updateChannel == \"beta\") $VERSION_CODE else 101699/g" app/build.gradle.kts
-            sed -i -E "s/versionName = if \(updateChannel == \"beta\"\) \"[^\"]+\" else \"[^\"]+\"/versionName = if (updateChannel == \"beta\") \"$NEW_VERSION\" else \"1.0.16\"/g" app/build.gradle.kts
-            echo "Updated app/build.gradle.kts with synchronized version properties:"
-            grep -E "versionCode|versionName" app/build.gradle.kts
-          else
-            echo "::error::app/build.gradle.kts not found!"
-            exit 1
-          fi
-          
-          echo "RELEASE_CHANNEL=$CHANNEL" >> $GITHUB_ENV
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-          echo "NEW_CODE=$VERSION_CODE" >> $GITHUB_ENV
-          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
-          echo "RELEASE_TITLE=$RELEASE_TITLE" >> $GITHUB_ENV
-          echo "IS_PRERELEASE=$IS_PRERELEASE" >> $GITHUB_ENV
-          echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
-          echo "AAB_NAME=$AAB_NAME" >> $GITHUB_ENV
-
-      - name: 3. Set up JDK 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
 
-      - name: 4. Accept Android SDK Licenses
+      - name: Accept Android SDK Licenses
         run: |
           mkdir -p "${ANDROID_HOME:-/usr/local/lib/android/sdk}/licenses"
           echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "${ANDROID_HOME:-/usr/local/lib/android/sdk}/licenses/android-sdk-license"
@@ -189,239 +52,204 @@ jobs:
           echo "84831b9409646a233e8a4d45d625514c33f2601a" > "${ANDROID_HOME:-/usr/local/lib/android/sdk}/licenses/android-sdk-preview-license"
           yes | sdkmanager --licenses 2>/dev/null || true
 
-      - name: 5. Decode Keystore & Configure Signing
+      - name: Decode Upload Keystore
         run: |
-          echo "Configuring release signing keystore..."
+          echo "Decoding release keystore..."
           if [ -n "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 --decode > upload-keystore.jks
-            echo "Decoded keystore from secrets.UPLOAD_KEYSTORE_BASE64."
-          elif [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > upload-keystore.jks
-            echo "Decoded keystore from secrets.KEYSTORE_BASE64."
           elif [ -f "upload.keystore.base64" ]; then
             base64 --decode upload.keystore.base64 > upload-keystore.jks
-            echo "Decoded keystore from upload.keystore.base64 file."
           elif [ -f "upload-keystore.jks" ]; then
-            echo "Using existing upload-keystore.jks from workspace."
+            echo "upload-keystore.jks already present in workspace."
           else
-            echo "::error::Required signing keystore is missing! Configure UPLOAD_KEYSTORE_BASE64 in GitHub Secrets."
+            echo "ERROR: Keystore not found!"
             exit 1
           fi
-          
+          # Ensure both expected filenames exist for build configuration compatibility
           cp upload-keystore.jks my-upload-key.jks
-          
-          if [ ! -s "upload-keystore.jks" ]; then
-            echo "::error::Decoded upload-keystore.jks is empty or corrupted!"
+          echo "Keystore ready at $(pwd)/upload-keystore.jks"
+
+      - name: Resolve Channel, Auto Increment & Update Version
+        run: |
+          echo "Fetching git tags and history..."
+          git fetch --unshallow || git fetch --tags || true
+
+          # 1. Determine Channel
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHANNEL="${{ github.event.inputs.release_channel }}"
+          else
+            TAG_REF="${{ github.ref_name }}"
+            if echo "$TAG_REF" | grep -iq "beta"; then
+              CHANNEL="beta"
+            else
+              CHANNEL="stable"
+            fi
+          fi
+          echo "Resolved Channel: $CHANNEL"
+          echo "CHANNEL=$CHANNEL" >> $GITHUB_ENV
+
+          # 2. Determine Tag and Version
+          EXPLICIT_TAG="${{ github.event.inputs.version_tag }}"
+          if [ -n "$EXPLICIT_TAG" ]; then
+            NEW_TAG="$EXPLICIT_TAG"
+            NEW_VERSION="${NEW_TAG#v}"
+            echo "Using explicit tag input: $NEW_TAG ($NEW_VERSION)"
+          elif [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" =~ refs/tags/v ]]; then
+            NEW_TAG="${{ github.ref_name }}"
+            NEW_VERSION="${NEW_TAG#v}"
+            echo "Using git push tag: $NEW_TAG ($NEW_VERSION)"
+          else
+            # Auto-increment based on channel
+            LATEST_STABLE_TAG=$(git tag -l 'v*' | grep -v -i 'beta' | grep -v -i 'alpha' | sort -V | tail -n 1)
+            if [ -z "$LATEST_STABLE_TAG" ]; then
+              LATEST_STABLE_TAG="v1.0.0"
+            fi
+            CLEAN_STABLE=${LATEST_STABLE_TAG#v}
+            IFS='.' read -r S_MAJOR S_MINOR S_PATCH <<< "$CLEAN_STABLE"
+            S_MAJOR=${S_MAJOR:-1}
+            S_MINOR=${S_MINOR:-0}
+            S_PATCH=${S_PATCH:-0}
+
+            if [ "$CHANNEL" = "beta" ]; then
+              TARGET_BASE="$S_MAJOR.$S_MINOR.$((S_PATCH + 1))"
+              LATEST_BETA_TAG=$(git tag -l "v${TARGET_BASE}-beta*" | sort -V | tail -n 1)
+              if [ -n "$LATEST_BETA_TAG" ]; then
+                BETA_NUM=$(echo "$LATEST_BETA_TAG" | grep -o -E '[0-9]+$' || echo "1")
+                NEXT_BETA=$((BETA_NUM + 1))
+                NEW_VERSION="${TARGET_BASE}-beta.${NEXT_BETA}"
+              else
+                NEW_VERSION="${TARGET_BASE}-beta.1"
+              fi
+              NEW_TAG="v$NEW_VERSION"
+              echo "Auto-incremented Beta Version: $NEW_VERSION ($NEW_TAG)"
+            else
+              NEXT_PATCH=$((S_PATCH + 1))
+              NEW_VERSION="$S_MAJOR.$S_MINOR.$NEXT_PATCH"
+              NEW_TAG="v$NEW_VERSION"
+              echo "Auto-incremented Stable Version: $NEW_VERSION ($NEW_TAG)"
+            fi
+          fi
+
+          # 3. Calculate 32-bit positive versionCode
+          BASE_NUMS=$(echo "$NEW_VERSION" | cut -d'-' -f1)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_NUMS"
+          MAJOR=${MAJOR:-1}
+          MINOR=${MINOR:-0}
+          PATCH=${PATCH:-0}
+
+          if [ "$CHANNEL" = "beta" ]; then
+            BETA_REV=$(echo "$NEW_VERSION" | grep -o -E '[0-9]+$' || echo "1")
+            NEW_CODE=$(( MAJOR * 100000 + MINOR * 1000 + PATCH * 10 + BETA_REV ))
+            IS_PRERELEASE="true"
+            DEFAULT_TITLE="Ctecs Beta $NEW_VERSION"
+          else
+            NEW_CODE=$(( MAJOR * 100000 + MINOR * 1000 + PATCH * 10 ))
+            IS_PRERELEASE="false"
+            DEFAULT_TITLE="Ctecs Release $NEW_VERSION"
+          fi
+
+          if [ -z "$NEW_CODE" ] || [ "$NEW_CODE" -le 0 ]; then
+            NEW_CODE=1
+          fi
+
+          CUSTOM_TITLE="${{ github.event.inputs.release_title }}"
+          if [ -n "$CUSTOM_TITLE" ]; then
+            FINAL_TITLE="$CUSTOM_TITLE"
+          else
+            FINAL_TITLE="$DEFAULT_TITLE"
+          fi
+
+          echo "Final VersionName: $NEW_VERSION"
+          echo "Final VersionCode: $NEW_CODE"
+          echo "Final TagName: $NEW_TAG"
+          echo "Final Title: $FINAL_TITLE"
+          echo "Is Prerelease: $IS_PRERELEASE"
+
+          if [ -f "app/build.gradle.kts" ]; then
+            sed -i "s/versionCode = [0-9]\+/versionCode = $NEW_CODE/g" app/build.gradle.kts
+            sed -i "s/versionName = \"[^\"]*\"/versionName = \"$NEW_VERSION\"/g" app/build.gradle.kts
+          else
+            echo "ERROR: app/build.gradle.kts not found!"
             exit 1
           fi
-          echo "Signing Keystore confirmed ready at $(pwd)/upload-keystore.jks ($(wc -c < upload-keystore.jks) bytes)"
 
-      - name: 6. Setup Gradle
+          echo "Verifying build.gradle.kts changes:"
+          grep -E "versionCode|versionName" app/build.gradle.kts
+
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+          echo "NEW_CODE=$NEW_CODE" >> $GITHUB_ENV
+          echo "IS_PRERELEASE=$IS_PRERELEASE" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=$FINAL_TITLE" >> $GITHUB_ENV
+
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: 7. Run Unit Tests & Build Validation
-        run: |
-          echo "Running unit test suite..."
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew :app:testDebugUnitTest --no-daemon
-          else
-            gradle :app:testDebugUnitTest --no-daemon
-          fi
-
-      - name: 8. Build Release APK and AAB
+      - name: Build Release APK and AAB
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/upload-keystore.jks
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || 'ctecs123456' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD || 'ctecs123456' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'ctecs123456' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'ctecs123456' }}
+          BUILD_CHANNEL: ${{ env.CHANNEL }}
         run: |
-          echo "Compiling signed release APK and AAB for channel '${{ env.RELEASE_CHANNEL }}'..."
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew :app:assembleRelease :app:bundleRelease -PupdateChannel=${{ env.RELEASE_CHANNEL }} --no-daemon
+            ./gradlew :app:assembleRelease :app:bundleRelease -PbuildChannel=${{ env.CHANNEL }} --no-daemon
           else
-            gradle :app:assembleRelease :app:bundleRelease -PupdateChannel=${{ env.RELEASE_CHANNEL }} --no-daemon
+            gradle :app:assembleRelease :app:bundleRelease -PbuildChannel=${{ env.CHANNEL }} --no-daemon
           fi
 
-      - name: 9. Verify APK Signature & Package Artifacts
-        id: package_artifacts
+      - name: Locate and Package Artifacts
+        id: artifacts
         run: |
           mkdir -p release_artifacts
-          
-          RAW_APK=$(find app/build -name "*release*.apk" | head -n 1)
-          if [ -z "$RAW_APK" ]; then
-            RAW_APK=$(find app/build -name "*.apk" | head -n 1)
-          fi
-          
-          if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
-            echo "::error::No APK file generated during build!"
-            exit 1
-          fi
-          
-          echo "Validating APK signature on: $RAW_APK"
-          APKSIGNER=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -name apksigner | sort -V | tail -n 1 || true)
-          if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
-            "$APKSIGNER" verify --verbose "$RAW_APK" || {
-              echo "::error::APK signature verification failed!"
-              exit 1
-            }
-          else
-            jarsigner -verify -certs "$RAW_APK" || {
-              echo "::error::APK signature verification failed!"
-              exit 1
-            }
-          fi
-          echo "APK signature successfully verified."
-          
-          FINAL_APK="release_artifacts/${{ env.APK_NAME }}"
-          cp "$RAW_APK" "$FINAL_APK"
-          APK_SIZE_BYTES=$(wc -c < "$FINAL_APK")
-          APK_SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $APK_SIZE_BYTES/1048576}")
-          
-          RAW_AAB=$(find app/build -name "*release*.aab" | head -n 1)
-          if [ -n "$RAW_AAB" ] && [ -f "$RAW_AAB" ]; then
-            FINAL_AAB="release_artifacts/${{ env.AAB_NAME }}"
-            cp "$RAW_AAB" "$FINAL_AAB"
-            AAB_SIZE_BYTES=$(wc -c < "$FINAL_AAB")
-            AAB_SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $AAB_SIZE_BYTES/1048576}")
-            echo "Packaged AAB: $FINAL_AAB ($AAB_SIZE_MB MB)"
-          fi
-          
-          echo "Packaged APK: $FINAL_APK ($APK_SIZE_MB MB)"
-          echo "apk_size=$APK_SIZE_MB MB" >> $GITHUB_OUTPUT
-          echo "apk_bytes=$APK_SIZE_BYTES" >> $GITHUB_ENV
 
-      - name: 10. Generate Release Notes & Channel Metadata
-        env:
-          CUSTOM_NOTES: ${{ github.event.inputs.release_notes }}
-          APK_BYTES_VAL: ${{ env.apk_bytes }}
-        run: |
-          echo "## CTECS Release Summary" > release_notes.md
-          echo "" >> release_notes.md
-          echo "- **Channel:** \`${{ env.RELEASE_CHANNEL }}\`" >> release_notes.md
-          echo "- **Version Name:** \`${{ env.NEW_VERSION }}\`" >> release_notes.md
-          echo "- **Version Code:** \`${{ env.NEW_CODE }}\`" >> release_notes.md
-          echo "- **Git Tag:** \`${{ env.NEW_TAG }}\`" >> release_notes.md
-          echo "- **Pre-release:** \`${{ env.IS_PRERELEASE }}\`" >> release_notes.md
-          echo "- **Build Run:** #${{ github.run_number }}" >> release_notes.md
-          echo "- **Commit Hash:** \`${{ github.sha }}\`" >> release_notes.md
-          echo "" >> release_notes.md
-          
-          if [ -n "$CUSTOM_NOTES" ]; then
-            echo "### Release Notes" >> release_notes.md
-            echo "$CUSTOM_NOTES" >> release_notes.md
-            echo "" >> release_notes.md
-          fi
-          
-          echo "### Download Artifacts" >> release_notes.md
-          echo "- 📱 **Direct APK Download:** [\`${{ env.APK_NAME }}\`](https://github.com/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${{ env.APK_NAME }})" >> release_notes.md
-          echo "- 📦 **Play Store Bundle:** [\`${{ env.AAB_NAME }}\`](https://github.com/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${{ env.AAB_NAME }})" >> release_notes.md
-          echo "" >> release_notes.md
-          
-          echo "### Recent Changes" >> release_notes.md
-          git log -n 8 --pretty=format:"* %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" >> release_notes.md || true
-          echo "" >> release_notes.md
-          
-          python3 -c '
-          import json, os, time
-
-          channel = os.environ.get("RELEASE_CHANNEL", "stable")
-          version = os.environ.get("NEW_VERSION", "1.0.0")
-          try:
-              code = int(os.environ.get("NEW_CODE", "100099"))
-          except ValueError:
-              code = 100099
-          tag = os.environ.get("NEW_TAG", "v1.0.0")
-          repo = os.environ.get("GITHUB_REPOSITORY", "reddy7322/Ctecs")
-          apk = os.environ.get("APK_NAME", "CTECS-1.0.0.apk")
-          try:
-              bytes_val = int(os.environ.get("APK_BYTES_VAL", "0"))
-          except ValueError:
-              bytes_val = 0
-          notes = os.environ.get("CUSTOM_NOTES", "").strip() or "Release update available."
-
-          data = {
-            "release_channel": channel,
-            "version_name": version,
-            "version_code": code,
-            "release_tag": tag,
-            "apk_download_url": "https://github.com/" + repo + "/releases/download/" + tag + "/" + apk,
-            "apk_size_bytes": bytes_val,
-            "release_notes": notes,
-            "min_supported_version": 1,
-            "published_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-          }
-
-          dir1 = "updates/" + channel
-          dir2 = channel
-          os.makedirs(dir1, exist_ok=True)
-          os.makedirs(dir2, exist_ok=True)
-          os.makedirs("release_artifacts", exist_ok=True)
-
-          with open(dir1 + "/update.json", "w") as f:
-              json.dump(data, f, indent=2)
-          with open(dir2 + "/update.json", "w") as f:
-              json.dump(data, f, indent=2)
-          with open("release_artifacts/update.json", "w") as f:
-              json.dump(data, f, indent=2)
-
-          print("Generated update.json for channel " + channel + " successfully.")
-          '
-
-
-      - name: 11. Commit & Push Channel Metadata Feed & Version Properties
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "updates/${{ env.RELEASE_CHANNEL }}/update.json" "${{ env.RELEASE_CHANNEL }}/update.json" app/build.gradle.kts
-          if git commit -m "Update ${{ env.RELEASE_CHANNEL }} channel metadata feed & version properties to v${{ env.NEW_VERSION }} (Build ${{ env.NEW_CODE }}) [skip ci]"; then
-            git push origin HEAD:main 2>/dev/null || git push origin HEAD:master 2>/dev/null || true
-          else
-            echo "No changes to commit for metadata feed."
+          TAG_NAME="${{ env.NEW_TAG }}"
+          if [ -z "$TAG_NAME" ]; then
+            TAG_NAME="v1.0.1"
           fi
 
-      - name: 12. Publish GitHub Release
-        id: create_release
+          # Find APK
+          APK_PATH=$(find app/build -name "*release*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find app/build -name "*.apk" | head -n 1)
+          fi
+
+          # Find AAB
+          AAB_PATH=$(find app/build -name "*release*.aab" | head -n 1)
+          if [ -z "$AAB_PATH" ]; then
+            AAB_PATH=$(find app/build -name "*.aab" | head -n 1)
+          fi
+
+          if [ -f "$APK_PATH" ]; then
+            cp "$APK_PATH" "release_artifacts/Ctecs-${TAG_NAME}.apk"
+            echo "apk_path=release_artifacts/Ctecs-${TAG_NAME}.apk" >> $GITHUB_OUTPUT
+            echo "Packaged APK: release_artifacts/Ctecs-${TAG_NAME}.apk"
+          fi
+
+          if [ -f "$AAB_PATH" ]; then
+            cp "$AAB_PATH" "release_artifacts/Ctecs-${TAG_NAME}.aab"
+            echo "aab_path=release_artifacts/Ctecs-${TAG_NAME}.aab" >> $GITHUB_OUTPUT
+            echo "Packaged AAB: release_artifacts/Ctecs-${TAG_NAME}.aab"
+          fi
+
+      - name: Upload Artifacts to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ctecs-Release-Binaries
+          path: release_artifacts/*
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
           name: ${{ env.RELEASE_TITLE }}
           tag_name: ${{ env.NEW_TAG }}
-          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
-          body_path: release_notes.md
+          generate_release_notes: true
           files: |
             release_artifacts/*.apk
             release_artifacts/*.aab
-            release_artifacts/update.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 13. Upload Artifacts to Workflow Run
-        uses: actions/upload-artifact@v4
-        with:
-          name: CTECS-${{ env.NEW_VERSION }}-Binaries
-          path: release_artifacts/*
-          retention-days: 30
-
-      - name: 14. Display Summary in GitHub Actions
-        run: |
-          cat << EOF >> $GITHUB_STEP_SUMMARY
-          # 🚀 CTECS ${{ env.RELEASE_CHANNEL == 'stable' && 'Stable' || 'Beta' }} Release Published
-
-          | Attribute | Value |
-          | :--- | :--- |
-          | **Release Channel** | \`${{ env.RELEASE_CHANNEL }}\` |
-          | **Release Title** | **${{ env.RELEASE_TITLE }}** |
-          | **Version Name** | \`${{ env.NEW_VERSION }}\` |
-          | **Version Code** | \`${{ env.NEW_CODE }}\` |
-          | **Git Tag** | [\`${{ env.NEW_TAG }}\`](https://github.com/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }}) |
-          | **Pre-release** | \`${{ env.IS_PRERELEASE }}\` |
-          | **Build Run** | \`#${{ github.run_number }}\` |
-          | **Commit** | [\`${{ github.sha }}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) |
-          | **Release URL** | [https://github.com/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }}](https://github.com/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }}) |
-
-          ### 📦 Published Artifacts
-          - 📱 **Signed APK:** [\`${{ env.APK_NAME }}\`](https://github.com/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${{ env.APK_NAME }}) (${{ steps.package_artifacts.outputs.apk_size }})
-          - 📦 **Play Store AAB:** [\`${{ env.AAB_NAME }}\`](https://github.com/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${{ env.AAB_NAME }})
-          EOF

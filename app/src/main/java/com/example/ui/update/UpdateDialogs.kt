@@ -63,6 +63,10 @@ fun UpdateAvailableDialog(
 ) {
     val context = LocalContext.current
 
+    val isBetaUpdate = releaseInfo.isBeta || releaseInfo.channel.equals("beta", ignoreCase = true)
+    val accentColor = if (isBetaUpdate) Color(0xFFFBBF24) else Color(0xFF38BDF8)
+    val badgeBgColor = if (isBetaUpdate) Color(0xFFB45309) else Color(0xFF0369A1)
+
     AlertDialog(
         onDismissRequest = { if (!isDownloading) onDismiss() },
         icon = {
@@ -70,39 +74,42 @@ fun UpdateAvailableDialog(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF0284C7).copy(alpha = 0.2f)),
+                    .background(accentColor.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.SystemUpdate,
                     contentDescription = null,
-                    tint = Color(0xFF38BDF8),
+                    tint = accentColor,
                     modifier = Modifier.size(28.dp)
                 )
             }
         },
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                val isBeta = releaseInfo.channel.equals("beta", ignoreCase = true)
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = if (isBeta) Color(0xFFD97706) else Color(0xFF059669)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = if (isBeta) "BETA UPDATE FEED" else "STABLE PRODUCTION FEED",
-                        fontSize = 10.sp,
+                        text = if (isBetaUpdate) "Beta Update Available" else "Update Available",
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        fontSize = 18.sp
                     )
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = accentColor.copy(alpha = 0.2f)
+                    ) {
+                        Text(
+                            text = if (isBetaUpdate) "BETA" else "STABLE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Black,
+                            color = accentColor,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Update Available",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -121,7 +128,7 @@ fun UpdateAvailableDialog(
                     Text("→", color = Color(0xFF94A3B8), fontSize = 12.sp)
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF0369A1)
+                        color = badgeBgColor
                     ) {
                         Text(
                             text = "New: ${releaseInfo.tagName}",

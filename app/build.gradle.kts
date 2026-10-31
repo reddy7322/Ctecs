@@ -12,23 +12,21 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val buildChannel: String = (project.findProperty("buildChannel") as? String)
+      ?: System.getenv("BUILD_CHANNEL")
+      ?: "stable"
+
   defaultConfig {
     applicationId = "com.aistudio.ctecshighwaycam.pqzrt"
     minSdk = 26
-    val updateChannel = project.findProperty("updateChannel") as? String
-        ?: System.getenv("UPDATE_CHANNEL")
-        ?: "beta"
+    targetSdk = 36
+    versionCode = 1
+    versionName = "1.0"
 
-    versionCode = if (updateChannel == "beta") 101605 else 101699
-    versionName = if (updateChannel == "beta") "1.0.16-beta.5" else "1.0.16"
-
-
-
-    buildConfigField("String", "UPDATE_CHANNEL", "\"$updateChannel\"")
+    buildConfigField("String", "BUILD_CHANNEL", "\"$buildChannel\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
-
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
   // and updating Android apps in AI Studio.

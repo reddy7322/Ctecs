@@ -283,24 +283,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             checkForAppUpdate(isManual = false)
         }
-
-        // Collect live telemetry snapshots during active video recording
-        viewModelScope.launch {
-            liveMatchResult.collect {
-                if (_isRecording.value && !_isRecordingPaused.value) {
-                    synchronized(videoSnapshotsTimeline) {
-                        videoSnapshotsTimeline.add(createCurrentSnapshot())
-                    }
-                }
-            }
-        }
     }
-
 
     fun checkForAppUpdate(isManual: Boolean = false) {
         viewModelScope.launch {
             _isCheckingUpdate.value = true
-            val result = appUpdateManager.checkForUpdate()
+            val currentChannel = com.example.update.AppReleaseChannel.current()
+            val result = appUpdateManager.checkForUpdate(currentChannel)
             _isCheckingUpdate.value = false
 
             if (result.isSuccess) {
@@ -311,17 +300,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val dynamicFeatures = whatsNewManager.parseReleaseNotesToFeatures(info.releaseNotes)
                     _whatsNewFeatures.value = dynamicFeatures
                 } else if (isManual) {
-                    val channelLabel = com.example.update.AppUpdateManager.INSTALLED_CHANNEL.replaceFirstChar { it.uppercase() }
-                    _uiMessages.emit(UiMessage.Info("Latest version installed on $channelLabel channel (v${com.example.BuildConfig.VERSION_NAME})"))
+                    val msg = "You are using the latest ${currentChannel.label} version of Ctecs (v${com.example.BuildConfig.VERSION_NAME})"
+                    _uiMessages.emit(UiMessage.Info(msg))
+                    showToast(msg, ToastType.SUCCESS)
                 }
             } else if (isManual) {
                 val err = result.exceptionOrNull()?.message ?: "Check failed"
                 _uiMessages.emit(UiMessage.Error("Update check: $err"))
+                showToast("Update check: $err", ToastType.ERROR)
             }
         }
     }
-
-    val updateChannel: String = com.example.update.AppUpdateManager.INSTALLED_CHANNEL
 
     fun downloadAndInstallUpdate() {
         val info = _availableUpdate.value ?: return
@@ -331,7 +320,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isDownloadingUpdate.value = true
             _updateDownloadProgress.value = 0f
 
-            val fileName = "CTECS-${info.tagName}.apk"
+            val fileName = "Ctecs-${info.tagName}.apk"
             val result = appUpdateManager.downloadApk(url, fileName) { progress ->
                 _updateDownloadProgress.value = progress
             }
@@ -341,13 +330,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val apkFile = result.getOrNull()
                 if (apkFile != null) {
                     _availableUpdate.value = null
-                    val installResult = appUpdateManager.validateAndInstallApk(apkFile, info.channel)
-                    if (installResult.isSuccess) {
-                        _uiMessages.emit(UiMessage.Success("Update validated for ${info.channel} channel. Starting installer..."))
-                    } else {
-                        val reason = installResult.exceptionOrNull()?.message ?: "Security validation failed"
-                        _uiMessages.emit(UiMessage.Error("Installation blocked: $reason"))
-                    }
+                    appUpdateManager.installApk(apkFile)
+                    _uiMessages.emit(UiMessage.Success("Update downloaded. Starting installer..."))
                 }
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Download failed"
@@ -379,18 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isFlashOn.value = !_isFlashOn.value
     }
 
-    fun toggleRecordAudio() {
-        val current = cameraSettings.value.recordAudio
-        val updated = cameraSettings.value.copy(recordAudio = !current)
-        saveCameraSettingsSilent(updated)
-        viewModelScope.launch {
-            _uiMessages.emit(UiMessage.Info(if (!current) "Video Audio Enabled 🎤" else "Video Audio Disabled 🔇"))
-        }
-    }
-
-
     fun toggleCameraFacing() {
-
         _isFrontCamera.value = !_isFrontCamera.value
     }
 
@@ -479,6 +452,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             preferencesManager.updateCameraSettings(settings)
         }
+    }
+
+    fun toggleRecordAudio() {
+        val current = cameraSettings.value
+        val updated = current.copy(recordAudio = !current.recordAudio)
+        saveCameraSettingsSilent(updated)
+        val state = if (updated.recordAudio) "enabled" else "disabled"
+        showToast("Audio recording $state", ToastType.SETTINGS_SAVED)
     }
 
     fun setCaptureMode(mode: com.example.model.CaptureMode) {
@@ -588,10 +569,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             activeRoute = activeRouteData.value,
             deviceRotationDegrees = rotationDegrees.value.toInt(),
             compassHeading = compassState.value.displayHeading,
-            compassAzimuth = compassState.value.azimuthDegrees,
-            speedMps = locationState.value.speed
+            compassAzimuth = compassState.value.azimuthDegrees
         )
-
     }
 
     fun onVideoRecordingStarted() {
@@ -604,15 +583,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         videoTickerJob?.cancel()
         videoTickerJob = viewModelScope.launch {
-            var msAccumulator = 0L
             while (_isRecording.value) {
-                kotlinx.coroutines.delay(200L) // 5 Hz high-frequency sampling
+                kotlinx.coroutines.delay(1000L)
                 if (_isRecording.value && !_isRecordingPaused.value) {
-                    msAccumulator += 200L
-                    if (msAccumulator >= 1000L) {
-                        _recordingDurationSeconds.value += 1
-                        msAccumulator = 0L
-                    }
+                    _recordingDurationSeconds.value += 1
                     synchronized(videoSnapshotsTimeline) {
                         videoSnapshotsTimeline.add(createCurrentSnapshot())
                     }
@@ -620,7 +594,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
 
     fun onVideoRecordingTick(seconds: Int) {
         _recordingDurationSeconds.value = seconds

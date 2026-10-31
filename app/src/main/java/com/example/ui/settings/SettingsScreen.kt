@@ -1008,83 +1008,6 @@ fun SettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Text Color", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    val colorOptions = listOf(
-                        "White" to "#FFFFFF",
-                        "Yellow" to "#FFD700",
-                        "Cyan" to "#38BDF8",
-                        "Green" to "#4ADE80",
-                        "Orange" to "#FB923C",
-                        "Red" to "#F87171"
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        colorOptions.forEach { (label, hex) ->
-                            val chipColor = try { Color(android.graphics.Color.parseColor(hex)) } catch (e: Exception) { Color.White }
-                            FilterChip(
-                                selected = currentOverlay.textColorHex.equals(hex, ignoreCase = true),
-                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textColorHex = hex)) },
-                                label = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(modifier = Modifier.size(10.dp).background(chipColor, CircleShape))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(label, fontSize = 11.sp)
-                                    }
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Font Family", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    val fontFamilies = listOf("Default", "Monospace", "Serif", "Noto Sans", "Source Sans Pro")
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        fontFamilies.forEach { family ->
-                            FilterChip(
-                                selected = currentOverlay.fontFamily.equals(family, ignoreCase = true),
-                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontFamily = family)) },
-                                label = { Text(family, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Font Style", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    val fontStyles = listOf("Bold", "Medium", "Regular", "Italic")
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        fontStyles.forEach { style ->
-                            FilterChip(
-                                selected = currentOverlay.fontStyle.equals(style, ignoreCase = true),
-                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontStyle = style)) },
-                                label = { Text(style, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                        }
-                    }
-
                     SliderRow(
                         title = "Font Size (SP)",
                         value = currentOverlay.fontSizeSp,
@@ -1092,87 +1015,8 @@ fun SettingsScreen(
                         onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontSizeSp = it)) },
                         valueText = "${currentOverlay.fontSizeSp.toInt()} sp"
                     )
-
-                    SliderRow(
-                        title = "Text Opacity",
-                        value = currentOverlay.textOpacity,
-                        valueRange = 0.2f..1.0f,
-                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textOpacity = it)) },
-                        valueText = "${(currentOverlay.textOpacity * 100).toInt()}%"
-                    )
-
-                    CompactSwitchRow(
-                        title = "Text Outline & Shadow",
-                        subtitle = "Draw dark contrast outline around text for bright backgrounds",
-                        checked = currentOverlay.hasTextShadow,
-                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(hasTextShadow = it)) },
-                        tag = "switch_text_shadow"
-                    )
-
-                    if (currentOverlay.hasTextShadow) {
-                        SliderRow(
-                            title = "Outline Stroke Width",
-                            value = currentOverlay.textStrokeWidthDp,
-                            valueRange = 1f..5f,
-                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textStrokeWidthDp = it)) },
-                            valueText = String.format(Locale.US, "%.1f dp", currentOverlay.textStrokeWidthDp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Background Panel Style", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    val bgStyles = listOf("Transparent", "Translucent Glass", "Solid")
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        bgStyles.forEach { style ->
-                            FilterChip(
-                                selected = currentOverlay.backgroundStyle.equals(style, ignoreCase = true),
-                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundStyle = style)) },
-                                label = { Text(style, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                        }
-                    }
-
-                    if (currentOverlay.backgroundStyle != "Transparent") {
-                        SliderRow(
-                            title = "Background Panel Opacity",
-                            value = currentOverlay.backgroundOpacity,
-                            valueRange = 0.1f..1.0f,
-                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundOpacity = it)) },
-                            valueText = "${(currentOverlay.backgroundOpacity * 100).toInt()}%"
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Timestamp Position", style = MaterialTheme.typography.labelMedium, color = PrimaryText)
-                    val timePositions = listOf("Time in above", "Time in below")
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        timePositions.forEach { timePos ->
-                            FilterChip(
-                                selected = currentOverlay.timePosition.equals(timePos, ignoreCase = true),
-                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timePosition = timePos)) },
-                                label = { Text(if (timePos == "Time in above") "Time Above Block" else "Time Below Block", fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                        }
-                    }
                 }
             }
-
 
             Spacer(modifier = Modifier.height(10.dp))
 
@@ -1365,59 +1209,64 @@ fun SettingsScreen(
                     isExpanded = expandedSections["permissions_about"] ?: false,
                     onToggleExpand = { expandedSections["permissions_about"] = !(expandedSections["permissions_about"] ?: false) }
                 ) {
-                    val channel = com.example.update.AppUpdateManager.INSTALLED_CHANNEL
-                    val isBeta = channel == "beta"
-
-                    Text("App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", fontSize = 12.sp, color = PrimaryText)
-                    Text("Package: ${context.packageName}", fontSize = 11.sp, color = SecondaryText)
-
-                    Spacer(modifier = Modifier.height(6.dp))
+                    val currentChannel = com.example.update.AppReleaseChannel.current()
+                    val isBetaApp = currentChannel == com.example.update.AppReleaseChannel.BETA
+                    val channelColor = if (isBetaApp) Color(0xFFFBBF24) else Color(0xFF38BDF8)
+                    val channelBg = if (isBetaApp) Color(0xFFB45309).copy(alpha = 0.25f) else Color(0xFF0369A1).copy(alpha = 0.25f)
 
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Update Channel:", fontSize = 11.sp, color = SecondaryText)
+                        Text("App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", fontSize = 12.sp, color = PrimaryText)
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = if (isBeta) Color(0xFFD97706) else Color(0xFF059669)
+                            color = channelBg
                         ) {
                             Text(
-                                text = if (isBeta) "BETA (Pre-release)" else "STABLE (Production)",
+                                text = if (isBetaApp) "BETA" else "STABLE",
                                 fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
+                                fontWeight = FontWeight.Black,
+                                color = channelColor,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
 
+                    Text("Package: ${context.packageName}", fontSize = 11.sp, color = SecondaryText)
                     Text(
-                        text = if (isBeta)
-                            "Isolated Beta Feed: Receives pre-release builds only. Will not receive stable updates."
-                        else
-                            "Isolated Stable Feed: Receives verified production releases only. Will not receive beta updates.",
-                        fontSize = 10.sp,
-                        color = Color(0xFF94A3B8),
-                        modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
+                        text = if (isBetaApp) "Update Channel: Beta (Receives Beta releases only)" else "Update Channel: Stable (Receives Stable releases only)",
+                        fontSize = 11.sp,
+                        color = channelColor,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
+
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     if (isCheckingUpdate) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF38BDF8))
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = channelColor)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Checking for ${channel.replaceFirstChar { it.uppercase() }} updates...", fontSize = 12.sp, color = SecondaryText)
+                            Text(
+                                text = if (isBetaApp) "Checking for Beta updates..." else "Checking for Stable updates...",
+                                fontSize = 12.sp,
+                                color = SecondaryText
+                            )
                         }
                     } else {
                         Button(
                             onClick = { viewModel.checkForAppUpdate(isManual = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = if (isBeta) Color(0xFFD97706) else Color(0xFF0284C7)),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (isBetaApp) Color(0xFFB45309) else Color(0xFF0284C7)),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                         ) {
                             Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Check for Updates (${channel.replaceFirstChar { it.uppercase() }})", fontSize = 12.sp)
+                            Text(
+                                text = if (isBetaApp) "Check for Beta Updates" else "Check for Stable Updates",
+                                fontSize = 12.sp
+                            )
                         }
                     }
 
