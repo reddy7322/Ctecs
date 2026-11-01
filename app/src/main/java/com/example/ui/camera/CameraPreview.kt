@@ -18,8 +18,6 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoRecordEvent
-import androidx.camera.core.CameraEffect
-import androidx.camera.effects.OverlayEffect
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.camera.view.video.AudioConfig
@@ -133,52 +131,29 @@ fun CameraPreview(
         }
     }
 
-    // Configure Use Cases: Enable IMAGE_CAPTURE and VIDEO_CAPTURE so switching between
-    // photo and video modes is instantaneous with no camera unbinding or lag.
-    LaunchedEffect(hasCameraPermission) {
+    // Configure Use Cases: In photo mode, only IMAGE_CAPTURE is active.
+    // When isVideoMode is toggled to true, VIDEO_CAPTURE is enabled.
+    LaunchedEffect(hasCameraPermission, isVideoMode) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
             controller.isPinchToZoomEnabled = true
             controller.isTapToFocusEnabled = true
 
-            try {
-                controller.setEnabledUseCases(
-                    LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
-                )
-            } catch (e: Throwable) {
+            if (isVideoMode) {
+                try {
+                    controller.setEnabledUseCases(
+                        LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+                    )
+                } catch (e: Throwable) {
+                    try {
+                        controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
+                    } catch (ignored: Exception) {}
+                }
+            } else {
                 try {
                     controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
                 } catch (ignored: Exception) {}
             }
-            try {
-                val effect = OverlayEffect(
-                    CameraEffect.VIDEO_CAPTURE,
-                    0,
-                    android.os.Handler(android.os.Looper.getMainLooper())
-                ) { error ->
-                    Log.w("CameraPreview", "OverlayEffect notice: ${error.message}")
-                }
-                effect.setOnDrawListener { frameData ->
-                    try {
-                        val canvas = frameData.overlayCanvas
-                        canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-                        val snapshot = latestSnapshotProvider()
-                        if (snapshot != null && snapshot.overlayConfig.template != OverlayTemplate.NONE && snapshot.overlayConfig.burnInTimestamp) {
-                            OverlayRenderer.drawOverlayOnCanvas(
-                                context = context,
-                                canvas = canvas,
-                                width = canvas.width,
-                                height = canvas.height,
-                                snapshot = snapshot.copy(timestamp = System.currentTimeMillis())
-                            )
-                        }
-                    } catch (e: Exception) {
-                        Log.w("CameraPreview", "Frame overlay draw error: ${e.message}")
-                    }
-                    true
-                }
-                controller.setEffects(setOf(effect))
-            } catch (ignored: Exception) {}
         } catch (e: Exception) {
             Log.w("CameraPreview", "Setting use cases fallback", e)
         }
@@ -239,7 +214,10 @@ fun CameraPreview(
     LaunchedEffect(videoResolution, isVideoMode, hasCameraPermission) {
         if (!hasCameraPermission || !isVideoMode) return@LaunchedEffect
         try {
-            controller.videoCaptureQualitySelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
+            val safeSelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
+            if (safeSelector != null) {
+                controller.videoCaptureQualitySelector = safeSelector
+            }
         } catch (e: Exception) {
             Log.w("CameraPreview", "Setting video quality error", e)
         }
@@ -251,8 +229,8 @@ fun CameraPreview(
                 factory = { ctx ->
                     PreviewView(ctx).apply {
                         this.controller = controller
-                        // PERFORMANCE uses SurfaceView which eliminates TextureView EGL_BAD_ATTRIBUTE emulation errors
-                        implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                        // COMPATIBLE uses TextureView which eliminates SurfaceView EGL_BAD_ATTRIBUTE emulation errors
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -407,7 +385,7 @@ fun capturePhoto(
 fun buildSafeQualitySelector(
     videoResolution: String = "1920 x 1080",
     cameraInfo: androidx.camera.core.CameraInfo? = null
-): androidx.camera.video.QualitySelector {
+): androidx.camera.video.QualitySelector? {
     val supported = if (cameraInfo != null) {
         try {
             androidx.camera.video.QualitySelector.getSupportedQualities(cameraInfo)
@@ -419,9 +397,9 @@ fun buildSafeQualitySelector(
     }
 
     // If device/emulator camera HAL does not report any EncoderProfiles,
-    // return Recorder's DEFAULT_QUALITY_SELECTOR to let CameraX negotiate safe fallback internally
+    // return null so CameraX keeps its internal default without forced re-evaluation
     if (supported.isEmpty()) {
-        return androidx.camera.video.Recorder.DEFAULT_QUALITY_SELECTOR
+        return null
     }
 
     val videoParts = videoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }

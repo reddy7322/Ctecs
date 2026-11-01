@@ -28,20 +28,30 @@ import com.example.model.GeoPoint
 import com.example.model.RouteData
 import kotlin.math.cos
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.CircleShape
+import java.util.Locale
+
 @Composable
 fun MiniMapPreview(
     location: GeoPoint?,
     bearing: Float?,
     routeData: RouteData?,
     highwayTag: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    gpsAccuracy: Float? = null
 ) {
+    val appliedModifier = if (modifier == Modifier) {
+        Modifier.size(width = 110.dp, height = 80.dp)
+    } else {
+        modifier
+    }
     Box(
-        modifier = modifier
-            .size(110.dp)
-            .clip(RoundedCornerShape(12.dp))
+        modifier = appliedModifier
+            .clip(RoundedCornerShape(14.dp))
             .background(Color(0xE60F172A))
-            .border(1.5.dp, Color(0xFF475569), RoundedCornerShape(12.dp))
+            .border(1.2.dp, Color(0xFF38BDF8).copy(alpha = 0.4f), RoundedCornerShape(14.dp))
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
@@ -130,52 +140,102 @@ fun MiniMapPreview(
                     drawPath(genericPath, Color(0xFF38BDF8), style = Stroke(width = 3f))
                 }
 
-                // Current location pin
+                // Current location pin (Classic Red Map Pin with drop shadow)
+                val pinHeadR = 8f
+                val pinTip = center
+                val pinCenter = Offset(center.x, center.y - 10f)
+
+                // Shadow under pin tip
                 drawCircle(
-                    color = Color(0x66EF4444),
-                    radius = 9f,
-                    center = center
+                    color = Color(0x77000000),
+                    radius = 4f,
+                    center = Offset(pinTip.x, pinTip.y + 1f)
                 )
-                drawCircle(
-                    color = Color(0xFFEF4444),
-                    radius = 4.5f,
-                    center = center
-                )
+
+                // Pin shape
+                val pinPath = Path().apply {
+                    moveTo(pinTip.x, pinTip.y)
+                    lineTo(pinCenter.x - pinHeadR * 0.85f, pinCenter.y + 1f)
+                    arcTo(
+                        rect = androidx.compose.ui.geometry.Rect(
+                            pinCenter.x - pinHeadR,
+                            pinCenter.y - pinHeadR,
+                            pinCenter.x + pinHeadR,
+                            pinCenter.y + pinHeadR
+                        ),
+                        startAngleDegrees = 145f,
+                        sweepAngleDegrees = 250f,
+                        forceMoveTo = false
+                    )
+                    close()
+                }
+                drawPath(pinPath, color = Color(0xFFEF4444))
+
+                // Inner white dot
                 drawCircle(
                     color = Color.White,
-                    radius = 2f,
-                    center = center
+                    radius = 2.8f,
+                    center = pinCenter
                 )
 
                 // Heading arrow
                 if (bearing != null) {
                     rotate(degrees = bearing, pivot = center) {
                         val arrowPath = Path().apply {
-                            moveTo(center.x, center.y - 12f)
-                            lineTo(center.x - 3.5f, center.y - 6f)
-                            lineTo(center.x + 3.5f, center.y - 6f)
+                            moveTo(center.x, center.y - 18f)
+                            lineTo(center.x - 3.5f, center.y - 12f)
+                            lineTo(center.x + 3.5f, center.y - 12f)
                             close()
                         }
-                        drawPath(arrowPath, color = Color(0xFFEF4444))
+                        drawPath(arrowPath, color = Color(0xFF38BDF8))
                     }
                 }
             }
         }
 
-        // Road Name tag
+        // Top-left GPS Accuracy pill matching reference screenshot
+        if (gpsAccuracy != null) {
+            val isGood = gpsAccuracy <= 10f
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp)
+                    .background(Color(0xD9000000), RoundedCornerShape(10.dp))
+                    .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(if (isGood) Color(0xFF22C55E) else Color(0xFFFBBF24))
+                )
+                Text(
+                    text = String.format(Locale.US, "GPS ±%.1fm", gpsAccuracy),
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // Bottom Center Highway / Project tag pill (e.g. MH) matching reference screenshot
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .background(Color(0xCC090D16))
-                .fillMaxSize(0.24f)
-                .padding(horizontal = 4.dp),
+                .padding(bottom = 6.dp)
+                .background(Color(0xD9000000), RoundedCornerShape(8.dp))
+                .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 2.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = highwayTag.ifBlank { "Route" },
-                color = Color(0xFF94A3B8),
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Bold,
+                text = highwayTag.ifBlank { "MH" },
+                color = Color.White,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Black,
                 maxLines = 1
             )
         }
