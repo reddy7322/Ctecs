@@ -99,11 +99,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
@@ -111,11 +113,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.geo.GeoUtils
+import com.example.geo.OsmTileManager
 import com.example.model.GeoPoint
 import com.example.model.MatchConfidence
 import com.example.model.RouteData
@@ -297,10 +303,10 @@ fun HomeScreen(
                     val nextKm = ((curM / 1000) + 1) * 1000
                     val dist = (nextKm - curM).coerceAtLeast(1)
                     val kmLabel = com.example.model.Chainage.fromMetres(nextKm).format()
-                    val distLabel = "Exact ${dist}m away"
+                    val distLabel = "${dist}m away"
                     kmLabel to distLabel
                 } else {
-                    "181+000" to "Exact 12m away"
+                    "181+000" to "12m away"
                 }
             }
 
@@ -1169,6 +1175,107 @@ fun EditProjectStretchDialog(
 // COMPONENT 4: PROMINENT FULL-WIDTH NEXT KM STONE CARD
 // -------------------------------------------------------------------
 @Composable
+fun KmStoneIcon(
+    modifier: Modifier = Modifier,
+    sizeDp: Dp = 40.dp
+) {
+    Canvas(
+        modifier = modifier
+            .size(sizeDp)
+            .testTag("km_stone_icon")
+    ) {
+        val w = size.width
+        val h = size.height
+
+        val stoneW = w * 0.70f
+        val stoneH = h * 0.90f
+        val left = (w - stoneW) / 2f
+        val top = (h - stoneH) / 2f
+        val right = left + stoneW
+        val bottom = top + stoneH
+        val archH = stoneW * 0.50f
+
+        val stonePath = Path().apply {
+            moveTo(left, bottom)
+            lineTo(left, top + archH)
+            arcTo(
+                rect = Rect(left, top, right, top + archH * 2f),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = 180f,
+                forceMoveTo = false
+            )
+            lineTo(right, bottom)
+            close()
+        }
+
+        // Base ground foundation line
+        drawLine(
+            color = Color.Black.copy(alpha = 0.25f),
+            start = Offset(left - 4.dp.toPx(), bottom),
+            end = Offset(right + 4.dp.toPx(), bottom),
+            strokeWidth = 2.5.dp.toPx(),
+            cap = StrokeCap.Round
+        )
+
+        // Lower body crisp white fill
+        drawPath(
+            path = stonePath,
+            color = Color.White
+        )
+
+        // Yellow arch dome (authentic National Highway milestone top)
+        val archPath = Path().apply {
+            moveTo(left, top + archH)
+            arcTo(
+                rect = Rect(left, top, right, top + archH * 2f),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = 180f,
+                forceMoveTo = false
+            )
+            lineTo(right, top + archH)
+            close()
+        }
+        drawPath(
+            path = archPath,
+            color = HighlightYellow
+        )
+
+        // Milestone divider line
+        drawLine(
+            color = Color(0xFF1E293B),
+            start = Offset(left, top + archH),
+            end = Offset(right, top + archH),
+            strokeWidth = 1.6.dp.toPx()
+        )
+
+        // Border outline
+        drawPath(
+            path = stonePath,
+            color = Color(0xFF1E293B),
+            style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+
+        // Milestone horizontal chainage markings
+        val line1Y = top + archH + (bottom - (top + archH)) * 0.35f
+        val line2Y = top + archH + (bottom - (top + archH)) * 0.68f
+        drawLine(
+            color = Color(0xFF475569),
+            start = Offset(left + stoneW * 0.20f, line1Y),
+            end = Offset(right - stoneW * 0.20f, line1Y),
+            strokeWidth = 1.8.dp.toPx(),
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color(0xFF94A3B8),
+            start = Offset(left + stoneW * 0.30f, line2Y),
+            end = Offset(right - stoneW * 0.30f, line2Y),
+            strokeWidth = 1.4.dp.toPx(),
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+@Composable
 fun NextChainageCard(
     nextChainage: String,
     distanceText: String,
@@ -1177,6 +1284,8 @@ fun NextChainageCard(
     mainTextColor: Color,
     subTextColor: Color
 ) {
+    val cleanDistance = distanceText.replace("Exact ", "", ignoreCase = true).trim()
+
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = cardBgColor,
@@ -1197,17 +1306,13 @@ fun NextChainageCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    shape = CircleShape,
-                    color = HighlightYellow.copy(alpha = 0.18f),
-                    modifier = Modifier.size(44.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.Black.copy(alpha = 0.35f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, HighlightYellow.copy(alpha = 0.35f)),
+                    modifier = Modifier.size(46.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Place,
-                            contentDescription = "Next KM Stone",
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        KmStoneIcon(sizeDp = 38.dp)
                     }
                 }
 
@@ -1239,7 +1344,7 @@ fun NextChainageCard(
                 shadowElevation = 2.dp
             ) {
                 Text(
-                    text = distanceText,
+                    text = cleanDistance,
                     color = Color.Black,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Black,
@@ -1271,7 +1376,7 @@ fun MapToolButton(icon: androidx.compose.ui.graphics.vector.ImageVector, content
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 5: INTERACTIVE SMART KMZ MAP
+// COMPONENT 5: INTERACTIVE SMART KMZ MAP (OPEN STREET MAP INTEGRATED)
 // -------------------------------------------------------------------
 @Composable
 fun InteractiveSmartMap(
@@ -1285,6 +1390,9 @@ fun InteractiveSmartMap(
     onRefreshLocation: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
+
     var panOffsetX by remember { mutableFloatStateOf(0f) }
     var panOffsetY by remember { mutableFloatStateOf(0f) }
     var viewRangeMetres by remember { mutableDoubleStateOf(1000.0) }
@@ -1308,6 +1416,19 @@ fun InteractiveSmartMap(
         label = "pulseAlpha"
     )
 
+    // Compute discrete zoom level for OpenStreetMap Web Mercator tiles
+    val currentZoom = remember(viewRangeMetres) {
+        when {
+            viewRangeMetres <= 300.0 -> 18
+            viewRangeMetres <= 650.0 -> 17
+            viewRangeMetres <= 1300.0 -> 16
+            viewRangeMetres <= 2800.0 -> 15
+            viewRangeMetres <= 5500.0 -> 14
+            viewRangeMetres <= 10000.0 -> 13
+            else -> 12
+        }
+    }
+
     Box(modifier = modifier) {
         Canvas(
             modifier = Modifier
@@ -1323,44 +1444,67 @@ fun InteractiveSmartMap(
         ) {
             val w = size.width
             val h = size.height
-            val center = Offset(w / 2f + panOffsetX, h / 2f + panOffsetY)
-
-            // Light / Dark Map background
-            drawRect(color = Color(0xFFC7E1C5)) // Soft vector map terrain color
-
-            // Grid
-            val gridSpacing = 80.dp.toPx()
-            var gx = 0f
-            while (gx < w) {
-                drawLine(
-                    color = Color.Black.copy(alpha = 0.04f),
-                    start = Offset(gx, 0f),
-                    end = Offset(gx, h),
-                    strokeWidth = 1f
-                )
-                gx += gridSpacing
-            }
-            var gy = 0f
-            while (gy < h) {
-                drawLine(
-                    color = Color.Black.copy(alpha = 0.04f),
-                    start = Offset(0f, gy),
-                    end = Offset(w, gy),
-                    strokeWidth = 1f
-                )
-                gy += gridSpacing
-            }
 
             val anchorGeo = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-            val midLat = Math.toRadians(anchorGeo.latitude)
-            val cosMidLat = cos(midLat)
-            val metresPerPx = viewRangeMetres / w
 
+            // 1. Render real OpenStreetMap tiles
+            var hasOsmTiles = false
+            val osmBmp = OsmTileManager.renderMapBitmap(
+                context = context,
+                center = anchorGeo,
+                widthPx = w.toInt().coerceAtLeast(1),
+                heightPx = h.toInt().coerceAtLeast(1),
+                zoom = currentZoom,
+                panOffsetX = panOffsetX,
+                panOffsetY = panOffsetY
+            )
+
+            if (osmBmp != null) {
+                drawImage(
+                    image = osmBmp.asImageBitmap(),
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(w.toInt(), h.toInt())
+                )
+                hasOsmTiles = true
+            }
+
+            // Fallback dark terrain & grid if tiles are downloading or device is offline
+            if (!hasOsmTiles) {
+                drawRect(color = Color(0xFF0F172A))
+                val gridSpacing = 80.dp.toPx()
+                var gx = 0f
+                while (gx < w) {
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.06f),
+                        start = Offset(gx, 0f),
+                        end = Offset(gx, h),
+                        strokeWidth = 1f
+                    )
+                    gx += gridSpacing
+                }
+                var gy = 0f
+                while (gy < h) {
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.06f),
+                        start = Offset(0f, gy),
+                        end = Offset(w, gy),
+                        strokeWidth = 1f
+                    )
+                    gy += gridSpacing
+                }
+            }
+
+            // High-precision Web Mercator projection matching OSM tiles
             fun toScreen(pt: GeoPoint): Offset {
-                val dx = Math.toRadians(pt.longitude - anchorGeo.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
-                val dy = Math.toRadians(pt.latitude - anchorGeo.latitude) * GeoUtils.EARTH_RADIUS_METRES
-                val sx = (center.x + (dx / metresPerPx)).toFloat()
-                val sy = (center.y - (dy / metresPerPx)).toFloat()
+                val (sx, sy) = OsmTileManager.geoToScreen(
+                    pt = pt,
+                    center = anchorGeo,
+                    widthPx = w,
+                    heightPx = h,
+                    zoom = currentZoom,
+                    panOffsetX = panOffsetX,
+                    panOffsetY = panOffsetY
+                )
                 return Offset(sx, sy)
             }
 
@@ -1433,6 +1577,23 @@ fun InteractiveSmartMap(
                 drawCircle(color = Color.White, radius = 5.dp.toPx(), center = userOff)
                 drawCircle(color = Color(0xFFFF0000), radius = 4.dp.toPx(), center = userOff)
             }
+        }
+
+        // OpenStreetMap Attribution Badge (Dark Theme)
+        Surface(
+            shape = RoundedCornerShape(topEnd = 6.dp),
+            color = Color(0xD00F172A),
+            border = androidx.compose.foundation.BorderStroke(0.6.dp, Color.White.copy(alpha = 0.15f)),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+        ) {
+            Text(
+                text = "© OpenStreetMap contributors",
+                color = Color(0xFF94A3B8),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            )
         }
 
         // Left Map Tools (Layers, Refresh Location, Re-center/Follow, Pin)
@@ -1564,7 +1725,19 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Bottom Right Scale Bar
+        // Bottom Right Dynamic Scale Bar
+        val dynamicScaleMetres = remember(viewRangeMetres) {
+            when {
+                viewRangeMetres <= 300.0 -> 25
+                viewRangeMetres <= 650.0 -> 50
+                viewRangeMetres <= 1300.0 -> 100
+                viewRangeMetres <= 2800.0 -> 200
+                viewRangeMetres <= 5500.0 -> 500
+                else -> 1000
+            }
+        }
+        val scaleText = if (dynamicScaleMetres >= 1000) "${dynamicScaleMetres / 1000} km" else "$dynamicScaleMetres m"
+
         Surface(
             shape = RoundedCornerShape(6.dp),
             color = Color(0xD0000000),
@@ -1573,7 +1746,7 @@ fun InteractiveSmartMap(
                 .padding(bottom = 10.dp, end = 10.dp)
         ) {
             Text(
-                text = "50 m",
+                text = scaleText,
                 color = Color.White,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,

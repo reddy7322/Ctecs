@@ -216,6 +216,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val manualChainage: StateFlow<Chainage?> = _manualChainage.asStateFlow()
 
     private val progressionTracker = com.example.geo.ChainageProgressionTracker()
+    private var previousMatchResult: ChainageMatchResult? = null
+    private var isManualSideOverridden: Boolean = false
 
     // Combined live match result
     val liveMatchResult: StateFlow<ChainageMatchResult> = combine(
@@ -230,12 +232,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 gpsPoint = loc.point,
                 gpsAccuracy = loc.accuracy,
                 bearing = loc.bearing,
-                routeData = route
+                routeData = route,
+                previousResult = previousMatchResult
             )
         } else {
             ChainageMatchResult.noRoute(loc.accuracy)
         }
-        progressionTracker.processResult(rawResult)
+        val stabilized = progressionTracker.processResult(rawResult, route?.id)
+        previousMatchResult = stabilized
+
+        // Synchronize projectProfile.roadSide with authoritative KML/KMZ detectedSide if not manually overridden
+        if (!isManualSideOverridden && (stabilized.detectedSide == "LHS" || stabilized.detectedSide == "RHS")) {
+            val autoSide = if (stabilized.detectedSide == "LHS") RoadSide.LHS else RoadSide.RHS
+            if (projectProfile.value.roadSide != autoSide) {
+                preferencesManager.updateProjectProfile(projectProfile.value.copy(roadSide = autoSide))
+            }
+        }
+
+        stabilized
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -405,6 +419,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateSide(side: RoadSide) {
+        isManualSideOverridden = true
+        progressionTracker.setManualSide(side.name)
         viewModelScope.launch {
             preferencesManager.updateProjectProfile(projectProfile.value.copy(roadSide = side))
         }
@@ -820,6 +836,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectActiveRoute(id: String) {
         viewModelScope.launch {
             routeRepository.setActiveRoute(id)
+            progressionTracker.reset()
+            previousMatchResult = null
+            isManualSideOverridden = false
             _uiMessages.emit(UiMessage.Info("Active route updated"))
         }
     }
