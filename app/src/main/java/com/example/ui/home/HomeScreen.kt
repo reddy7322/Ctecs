@@ -1468,14 +1468,14 @@ fun InteractiveSmartMap(
                 hasOsmTiles = true
             }
 
-            // Fallback dark terrain & grid if tiles are downloading or device is offline
+            // Fallback soft terrain & grid if tiles are downloading or device is offline
             if (!hasOsmTiles) {
-                drawRect(color = Color(0xFF0F172A))
+                drawRect(color = Color(0xFFC7E1C5))
                 val gridSpacing = 80.dp.toPx()
                 var gx = 0f
                 while (gx < w) {
                     drawLine(
-                        color = Color.White.copy(alpha = 0.06f),
+                        color = Color.Black.copy(alpha = 0.04f),
                         start = Offset(gx, 0f),
                         end = Offset(gx, h),
                         strokeWidth = 1f
@@ -1485,7 +1485,7 @@ fun InteractiveSmartMap(
                 var gy = 0f
                 while (gy < h) {
                     drawLine(
-                        color = Color.White.copy(alpha = 0.06f),
+                        color = Color.Black.copy(alpha = 0.04f),
                         start = Offset(0f, gy),
                         end = Offset(w, gy),
                         strokeWidth = 1f
@@ -1579,17 +1579,16 @@ fun InteractiveSmartMap(
             }
         }
 
-        // OpenStreetMap Attribution Badge (Dark Theme)
+        // OpenStreetMap Attribution Badge
         Surface(
             shape = RoundedCornerShape(topEnd = 6.dp),
-            color = Color(0xD00F172A),
-            border = androidx.compose.foundation.BorderStroke(0.6.dp, Color.White.copy(alpha = 0.15f)),
+            color = Color.White.copy(alpha = 0.85f),
             modifier = Modifier
                 .align(Alignment.BottomStart)
         ) {
             Text(
                 text = "© OpenStreetMap contributors",
-                color = Color(0xFF94A3B8),
+                color = Color(0xFF334155),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)

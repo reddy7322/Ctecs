@@ -4,8 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
@@ -105,8 +103,7 @@ object OsmTileManager {
         heightPx: Int,
         zoom: Int = 15,
         panOffsetX: Float = 0f,
-        panOffsetY: Float = 0f,
-        darkTheme: Boolean = true
+        panOffsetY: Float = 0f
     ): Bitmap? {
         if (widthPx <= 0 || heightPx <= 0) return null
 
@@ -127,16 +124,6 @@ object OsmTileManager {
         val destBitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(destBitmap)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-
-        if (darkTheme) {
-            val darkMatrix = ColorMatrix(floatArrayOf(
-                -0.85f,  0.00f,  0.00f, 0.0f, 215f,
-                 0.00f, -0.85f,  0.00f, 0.0f, 215f,
-                 0.00f,  0.00f, -0.80f, 0.0f, 225f,
-                 0.00f,  0.00f,  0.00f, 1.0f,   0f
-            ))
-            paint.colorFilter = ColorMatrixColorFilter(darkMatrix)
-        }
 
         for (tx in minTileX..maxTileX) {
             for (ty in minTileY..maxTileY) {

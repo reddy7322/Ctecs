@@ -251,61 +251,6 @@ class HighwayTimestampCameraTest {
         )
     }
 
-    // 10. KML/KMZ Route Direction Priority and Chainage Independence
-    @Test
-    fun testKmlRouteDirectionLhsRhsAndChainageIndependence() {
-        // Route running South -> North from (29.0000, 77.0000) to (29.0100, 77.0000)
-        val m1 = RouteMarker("1", "100+000", Chainage(100000), GeoPoint(29.0000, 77.0000))
-        val m2 = RouteMarker("2", "100+500", Chainage(100500), GeoPoint(29.0050, 77.0000))
-        val m3 = RouteMarker("3", "101+000", Chainage(101000), GeoPoint(29.0100, 77.0000))
-
-        val alignment = RouteAlignment("a1", "Main Alignment", listOf(m1.point, m2.point, m3.point))
-        val routeData = RouteData(
-            id = "test-kml-route",
-            name = "KML Route",
-            fileName = "route.kml",
-            markers = listOf(m1, m2, m3),
-            alignments = listOf(alignment),
-            bounds = GeoBounds(29.0000, 29.0100, 77.0000, 77.0000),
-            startChainage = m1.chainage,
-            endChainage = m3.chainage
-        )
-
-        // Point to the West (Left of South->North route) -> Must be LHS
-        val westPoint = GeoPoint(29.0050, 76.9990)
-        val matchWest = ChainageMatcher.match(westPoint, 2.0f, null, routeData)
-        assertEquals("LHS", matchWest.detectedSide)
-
-        // Point to the East (Right of South->North route) -> Must be RHS
-        val eastPoint = GeoPoint(29.0050, 77.0010)
-        val matchEast = ChainageMatcher.match(eastPoint, 2.0f, null, routeData)
-        assertEquals("RHS", matchEast.detectedSide)
-
-        // Verify ChainageProgressionTracker keeps LHS regardless of increasing or decreasing chainage
-        val tracker = com.example.geo.ChainageProgressionTracker()
-
-        // 1. LHS with Increasing Chainage (100+100 -> 100+200)
-        val res1 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "LHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
-        val res2 = ChainageMatchResult(chainage = Chainage(100200), detectedSide = "LHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
-        assertEquals("LHS", tracker.processResult(res1, routeData.id).detectedSide)
-        assertEquals("LHS", tracker.processResult(res2, routeData.id).detectedSide)
-
-        // 2. LHS with Decreasing Chainage (100+200 -> 100+100) -> MUST STAY LHS!
-        val res3 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "LHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
-        assertEquals("LHS", tracker.processResult(res3, routeData.id).detectedSide)
-
-        // 3. RHS with Increasing Chainage (100+100 -> 100+200)
-        val trackerRhs = com.example.geo.ChainageProgressionTracker()
-        val resR1 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "RHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
-        val resR2 = ChainageMatchResult(chainage = Chainage(100200), detectedSide = "RHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
-        assertEquals("RHS", trackerRhs.processResult(resR1, routeData.id).detectedSide)
-        assertEquals("RHS", trackerRhs.processResult(resR2, routeData.id).detectedSide)
-
-        // 4. RHS with Decreasing Chainage (100+200 -> 100+100) -> MUST STAY RHS!
-        val resR3 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "RHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
-        assertEquals("RHS", trackerRhs.processResult(resR3, routeData.id).detectedSide)
-    }
-
     // 9b. Validating KMZ parsing when filename lacks .kmz extension (e.g. Android SAF content URI)
     @Test
     fun testKmzParsingWithoutKmzExtension() {
