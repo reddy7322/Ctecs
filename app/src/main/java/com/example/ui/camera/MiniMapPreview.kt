@@ -1,36 +1,45 @@
 package com.example.ui.camera
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.geo.GeoUtils
+import com.example.geo.OsmTileManager
 import com.example.model.GeoPoint
 import com.example.model.RouteData
-import kotlin.math.cos
-
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.shape.CircleShape
 import java.util.Locale
 
 @Composable
@@ -42,55 +51,78 @@ fun MiniMapPreview(
     modifier: Modifier = Modifier,
     gpsAccuracy: Float? = null
 ) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsState()
+
     val appliedModifier = if (modifier == Modifier) {
         Modifier.size(width = 110.dp, height = 80.dp)
     } else {
         modifier
     }
+
     Box(
         modifier = appliedModifier
             .clip(RoundedCornerShape(14.dp))
             .background(Color(0xE60F172A))
             .border(1.2.dp, Color(0xFF38BDF8).copy(alpha = 0.4f), RoundedCornerShape(14.dp))
     ) {
+        val centerGeo = location ?: routeData?.bounds?.center
+
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
             val center = Offset(w / 2f, h / 2f)
 
-            // Grid lines
-            val gridStep = w / 4f
-            for (i in 1..3) {
-                drawLine(
-                    color = Color.White.copy(alpha = 0.1f),
-                    start = Offset(i * gridStep, 0f),
-                    end = Offset(i * gridStep, h),
-                    strokeWidth = 1f
+            // 1. OpenStreetMap Tile Background (Real geographic map data)
+            var hasOsmTiles = false
+            if (centerGeo != null) {
+                val osmBmp = OsmTileManager.renderMapBitmap(
+                    context = context,
+                    center = centerGeo,
+                    widthPx = w.toInt().coerceAtLeast(1),
+                    heightPx = h.toInt().coerceAtLeast(1),
+                    zoom = 15
                 )
-                drawLine(
-                    color = Color.White.copy(alpha = 0.1f),
-                    start = Offset(0f, i * gridStep),
-                    end = Offset(w, i * gridStep),
-                    strokeWidth = 1f
-                )
+                if (osmBmp != null) {
+                    drawImage(
+                        image = osmBmp.asImageBitmap(),
+                        dstOffset = IntOffset.Zero,
+                        dstSize = IntSize(w.toInt(), h.toInt())
+                    )
+                    // Dim slightly for minimalist dark Glass UI look
+                    drawRect(color = Color(0x33000000))
+                    hasOsmTiles = true
+                }
             }
 
-            val centerGeo = location ?: routeData?.bounds?.center
-            if (centerGeo != null) {
-                val viewRangeMetres = 1200.0
-                val midLat = Math.toRadians(centerGeo.latitude)
-                val cosMidLat = cos(midLat)
-                val metresPerPx = viewRangeMetres / w
+            // Fallback grid when tiles are loading or offline
+            if (!hasOsmTiles) {
+                val gridStep = w / 4f
+                for (i in 1..3) {
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.12f),
+                        start = Offset(i * gridStep, 0f),
+                        end = Offset(i * gridStep, h),
+                        strokeWidth = 1f
+                    )
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.12f),
+                        start = Offset(0f, i * gridStep),
+                        end = Offset(w, i * gridStep),
+                        strokeWidth = 1f
+                    )
+                }
+            }
 
+            if (centerGeo != null) {
+                // Projection conversion
                 fun toScreen(pt: GeoPoint): Offset {
-                    val dx = Math.toRadians(pt.longitude - centerGeo.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
-                    val dy = Math.toRadians(pt.latitude - centerGeo.latitude) * GeoUtils.EARTH_RADIUS_METRES
-                    val sx = (center.x + (dx / metresPerPx)).toFloat()
-                    val sy = (center.y - (dy / metresPerPx)).toFloat()
+                    val (sx, sy) = OsmTileManager.geoToScreen(pt, centerGeo, w, h, zoom = 15)
                     return Offset(sx, sy)
                 }
 
-                // Draw route alignments
+                // 2. KMZ/KML Route Alignments
                 if (routeData != null && routeData.alignments.isNotEmpty()) {
                     for (align in routeData.alignments) {
                         if (align.points.size < 2) continue
@@ -109,29 +141,29 @@ fun MiniMapPreview(
                         drawPath(
                             path = path,
                             color = Color(0xFF0284C7),
-                            style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            style = Stroke(width = 5.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                         // Inner centerline
                         drawPath(
                             path = path,
                             color = Color(0xFF38BDF8),
-                            style = Stroke(width = 3f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            style = Stroke(width = 3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                     }
 
-                    // Nearby chainage dots
+                    // Nearby chainage marker dots
                     for (m in routeData.markers) {
-                        if (GeoUtils.distanceMetres(m.point, centerGeo) < viewRangeMetres) {
-                            val off = toScreen(m.point)
+                        val off = toScreen(m.point)
+                        if (off.x in 0f..w && off.y in 0f..h) {
                             drawCircle(
                                 color = Color(0xFFFBBF24),
-                                radius = 2.5f,
+                                radius = 2.8f,
                                 center = off
                             )
                         }
                     }
-                } else {
-                    // Stylized road curve
+                } else if (!hasOsmTiles) {
+                    // Stylized road curve fallback only when neither route nor OSM tile is loaded
                     val genericPath = Path().apply {
                         moveTo(0f, h - 16f)
                         cubicTo(w * 0.4f, h - 30f, w * 0.6f, 30f, w, 20f)
@@ -140,15 +172,15 @@ fun MiniMapPreview(
                     drawPath(genericPath, Color(0xFF38BDF8), style = Stroke(width = 3f))
                 }
 
-                // Current location pin (Classic Red Map Pin with drop shadow)
-                val pinHeadR = 8f
+                // 3. Current GPS Location Pin (Red marker with drop shadow)
+                val pinHeadR = 7.5f
                 val pinTip = center
-                val pinCenter = Offset(center.x, center.y - 10f)
+                val pinCenter = Offset(center.x, center.y - 9f)
 
                 // Shadow under pin tip
                 drawCircle(
                     color = Color(0x77000000),
-                    radius = 4f,
+                    radius = 3.5f,
                     center = Offset(pinTip.x, pinTip.y + 1f)
                 )
 
@@ -157,7 +189,7 @@ fun MiniMapPreview(
                     moveTo(pinTip.x, pinTip.y)
                     lineTo(pinCenter.x - pinHeadR * 0.85f, pinCenter.y + 1f)
                     arcTo(
-                        rect = androidx.compose.ui.geometry.Rect(
+                        rect = Rect(
                             pinCenter.x - pinHeadR,
                             pinCenter.y - pinHeadR,
                             pinCenter.x + pinHeadR,
@@ -174,17 +206,17 @@ fun MiniMapPreview(
                 // Inner white dot
                 drawCircle(
                     color = Color.White,
-                    radius = 2.8f,
+                    radius = 2.5f,
                     center = pinCenter
                 )
 
-                // Heading arrow
+                // Heading / Bearing direction arrow
                 if (bearing != null) {
                     rotate(degrees = bearing, pivot = center) {
                         val arrowPath = Path().apply {
-                            moveTo(center.x, center.y - 18f)
-                            lineTo(center.x - 3.5f, center.y - 12f)
-                            lineTo(center.x + 3.5f, center.y - 12f)
+                            moveTo(center.x, center.y - 17f)
+                            lineTo(center.x - 3.5f, center.y - 11f)
+                            lineTo(center.x + 3.5f, center.y - 11f)
                             close()
                         }
                         drawPath(arrowPath, color = Color(0xFF38BDF8))
@@ -193,13 +225,13 @@ fun MiniMapPreview(
             }
         }
 
-        // Top-left GPS Accuracy pill matching reference screenshot
+        // Top-left GPS Accuracy pill
         if (gpsAccuracy != null) {
             val isGood = gpsAccuracy <= 10f
             Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(6.dp)
+                    .padding(5.dp)
                     .background(Color(0xD9000000), RoundedCornerShape(10.dp))
                     .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -208,33 +240,44 @@ fun MiniMapPreview(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(6.dp)
+                        .size(5.dp)
                         .clip(CircleShape)
                         .background(if (isGood) Color(0xFF22C55E) else Color(0xFFFBBF24))
                 )
                 Text(
                     text = String.format(Locale.US, "GPS ±%.1fm", gpsAccuracy),
                     color = Color.White,
-                    fontSize = 9.sp,
+                    fontSize = 8.5.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
         }
 
-        // Bottom Center Highway / Project tag pill (e.g. MH) matching reference screenshot
+        // Top-right OpenStreetMap Attribution
+        Text(
+            text = "© OSM",
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 7.sp,
+            fontWeight = FontWeight.Normal,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 4.dp, end = 5.dp)
+        )
+
+        // Bottom Center Highway / Project tag pill (e.g. MH)
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 6.dp)
+                .padding(bottom = 5.dp)
                 .background(Color(0xD9000000), RoundedCornerShape(8.dp))
                 .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .padding(horizontal = 8.dp, vertical = 1.5.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = highwayTag.ifBlank { "MH" },
                 color = Color.White,
-                fontSize = 9.sp,
+                fontSize = 8.5.sp,
                 fontWeight = FontWeight.Black,
                 maxLines = 1
             )

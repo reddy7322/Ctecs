@@ -90,6 +90,7 @@ object OverlayRenderer {
             )
             mapRect = rect
             renderMiniMap(
+                context = context,
                 canvas = canvas,
                 rect = rect,
                 scale = scale,
@@ -269,6 +270,7 @@ object OverlayRenderer {
 
 
     private fun renderMiniMap(
+        context: Context,
         canvas: Canvas,
         rect: RectF,
         scale: Float,
@@ -300,33 +302,51 @@ object OverlayRenderer {
         clipPath.addRoundRect(rect, cornerRadius, cornerRadius, Path.Direction.CW)
         canvas.clipPath(clipPath)
 
-        // Subtle grid lines
-        val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(40, 255, 255, 255)
-            strokeWidth = 1f * scale
+        val centerPoint = location ?: routeData?.bounds?.center
+        var hasOsmTiles = false
+
+        if (centerPoint != null) {
+            val osmBmp = com.example.geo.OsmTileManager.renderMapBitmap(
+                context = context,
+                center = centerPoint,
+                widthPx = rect.width().toInt().coerceAtLeast(1),
+                heightPx = rect.height().toInt().coerceAtLeast(1),
+                zoom = 15
+            )
+            if (osmBmp != null) {
+                canvas.drawBitmap(osmBmp, rect.left, rect.top, Paint(Paint.FILTER_BITMAP_FLAG))
+                val dimPaint = Paint().apply { color = Color.argb(45, 0, 0, 0) }
+                canvas.drawRect(rect, dimPaint)
+                hasOsmTiles = true
+            }
         }
-        val step = rect.width() / 4f
-        for (i in 1..3) {
-            val gx = rect.left + i * step
-            canvas.drawLine(gx, rect.top, gx, rect.bottom, gridPaint)
-            val gy = rect.top + i * step
-            canvas.drawLine(rect.left, gy, rect.right, gy, gridPaint)
+
+        // Subtle grid lines if OSM tiles not available
+        if (!hasOsmTiles) {
+            val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(40, 255, 255, 255)
+                strokeWidth = 1f * scale
+            }
+            val step = rect.width() / 4f
+            for (i in 1..3) {
+                val gx = rect.left + i * step
+                canvas.drawLine(gx, rect.top, gx, rect.bottom, gridPaint)
+                val gy = rect.top + i * step
+                canvas.drawLine(rect.left, gy, rect.right, gy, gridPaint)
+            }
         }
 
         // Draw road alignment if available
-        val centerPoint = location ?: routeData?.bounds?.center
         if (centerPoint != null) {
-            val viewRangeMetres = 1200.0 // 1.2km view span
-            val midLat = Math.toRadians(centerPoint.latitude)
-            val cosMidLat = cos(midLat)
-            val metresPerPixel = viewRangeMetres / rect.width()
-
             fun geoToScreen(pt: GeoPoint): Pair<Float, Float> {
-                val dxMetres = Math.toRadians(pt.longitude - centerPoint.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
-                val dyMetres = Math.toRadians(pt.latitude - centerPoint.latitude) * GeoUtils.EARTH_RADIUS_METRES
-                val sx = (rect.centerX() + (dxMetres / metresPerPixel)).toFloat()
-                val sy = (rect.centerY() - (dyMetres / metresPerPixel)).toFloat()
-                return Pair(sx, sy)
+                val (sx, sy) = com.example.geo.OsmTileManager.geoToScreen(
+                    pt = pt,
+                    center = centerPoint,
+                    widthPx = rect.width(),
+                    heightPx = rect.height(),
+                    zoom = 15
+                )
+                return Pair(rect.left + sx, rect.top + sy)
             }
 
             // Route alignments
@@ -346,7 +366,7 @@ object OverlayRenderer {
                 strokeJoin = Paint.Join.ROUND
             }
 
-            if (routeData != null) {
+            if (routeData != null && routeData.alignments.isNotEmpty()) {
                 for (align in routeData.alignments) {
                     if (align.points.size < 2) continue
                     val path = Path()
@@ -370,14 +390,13 @@ object OverlayRenderer {
                     style = Paint.Style.FILL
                 }
                 for (m in routeData.markers) {
-                    val dist = GeoUtils.distanceMetres(m.point, centerPoint)
-                    if (dist < viewRangeMetres) {
-                        val (sx, sy) = geoToScreen(m.point)
+                    val (sx, sy) = geoToScreen(m.point)
+                    if (sx in rect.left..rect.right && sy in rect.top..rect.bottom) {
                         canvas.drawCircle(sx, sy, 3f * scale, markerDotPaint)
                     }
                 }
-            } else {
-                // Draw a stylized curved highway representation when no route is loaded
+            } else if (!hasOsmTiles) {
+                // Draw a stylized curved highway representation when no route and no tile is loaded
                 val genericPath = Path()
                 genericPath.moveTo(rect.left, rect.bottom - 20f * scale)
                 genericPath.cubicTo(
@@ -416,7 +435,7 @@ object OverlayRenderer {
                 canvas.save()
                 canvas.rotate(bearing, rect.centerX(), rect.centerY())
                 val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.parseColor("#EF4444")
+                    color = Color.parseColor("#38BDF8")
                     style = Paint.Style.FILL
                 }
                 val arrowPath = Path().apply {
@@ -430,16 +449,25 @@ object OverlayRenderer {
             }
         }
 
+        // OpenStreetMap Attribution (Top-Right)
+        val osmAttrPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(160, 255, 255, 255)
+            textSize = 8.5f * scale
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            textAlign = Paint.Align.RIGHT
+        }
+        canvas.drawText("© OSM", rect.right - 8f * scale, rect.top + 13f * scale, osmAttrPaint)
+
         // Road / Map tag at bottom of inset
         val tagBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(200, 15, 23, 42)
+            color = Color.argb(210, 15, 23, 42)
             style = Paint.Style.FILL
         }
         val tagRect = RectF(rect.left, rect.bottom - 22f * scale, rect.right, rect.bottom)
         canvas.drawRect(tagRect, tagBgPaint)
 
         val tagTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#94A3B8")
+            color = Color.WHITE
             textSize = 10f * scale
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             textAlign = Paint.Align.CENTER

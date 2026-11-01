@@ -372,9 +372,15 @@ fun CameraScreen(
                     controller = controller,
                     context = context,
                     deviceRotationDegrees = rotationDegrees.toInt(),
+                    isLandscape = isLandscape,
                     onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                     onError = {
-                        val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
+                        val fallback = createSimulatedCameraFrame(
+                            context = context,
+                            rotationDegrees = rotationDegrees.toInt(),
+                            isLandscapeMode = isLandscape,
+                            resolutionStr = cameraSettings.photoResolution
+                        )
                         viewModel.processCapture(fallback)
                     }
                 )
@@ -384,9 +390,15 @@ fun CameraScreen(
                 controller = controller,
                 context = context,
                 deviceRotationDegrees = rotationDegrees.toInt(),
+                isLandscape = isLandscape,
                 onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                 onError = {
-                    val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
+                    val fallback = createSimulatedCameraFrame(
+                        context = context,
+                        rotationDegrees = rotationDegrees.toInt(),
+                        isLandscapeMode = isLandscape,
+                        resolutionStr = cameraSettings.photoResolution
+                    )
                     viewModel.processCapture(fallback)
                 }
             )
@@ -421,6 +433,7 @@ fun CameraScreen(
             exposureIndex = exposureCompensation,
             isVideoMode = (captureMode == CaptureMode.VIDEO),
             rotationDegrees = rotationDegrees.toInt(),
+            isLandscape = isLandscape,
             photoResolution = cameraSettings.photoResolution,
             videoResolution = cameraSettings.videoResolution,
             controller = controller,
@@ -1167,7 +1180,7 @@ fun CameraScreen(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(end = 160.dp, bottom = 12.dp)
+                    .padding(end = 96.dp, bottom = 12.dp)
             ) {
                 // Custom Logo (if enabled)
                 if (overlayConfig.showLogo) {
@@ -1211,93 +1224,17 @@ fun CameraScreen(
                 }
             }
 
-            // 5. RIGHT CORNER: CAPTURE & RECORDING CONTROLS (Vertical Control Bar & Mode Pill)
-            Row(
+            // 5. RIGHT CORNER: CAPTURE & RECORDING CONTROLS (Authoritative Vertical Control Bar)
+            Surface(
+                shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
+                color = Color(0xD9090D16),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .windowInsetsPadding(WindowInsets.navigationBars),
-                verticalAlignment = Alignment.CenterVertically
+                    .width(82.dp)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
             ) {
-                // Floating Mode Selector Pill (PHOTO | VIDEO)
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color(0xD90F172A),
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.25f)),
-                    modifier = Modifier.padding(end = 8.dp)
-                ) {
-                    Column(modifier = Modifier.padding(3.dp)) {
-                        // Photo Mode Button
-                        val isPhoto = captureMode == CaptureMode.PHOTO
-                        Box(
-                            modifier = Modifier
-                                .size(width = 62.dp, height = 48.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (isPhoto) HighlightYellow else Color.Transparent)
-                                .clickable { viewModel.setCaptureMode(CaptureMode.PHOTO) }
-                                .testTag("landscape_mode_photo"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CameraAlt,
-                                    contentDescription = "Photo Mode",
-                                    tint = if (isPhoto) Color.Black else SecondaryText,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = "PHOTO",
-                                    color = if (isPhoto) Color.Black else SecondaryText,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-
-                        // Video Mode Button
-                        val isVideo = captureMode == CaptureMode.VIDEO
-                        Box(
-                            modifier = Modifier
-                                .size(width = 62.dp, height = 48.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (isVideo) AccentRed else Color.Transparent)
-                                .clickable { viewModel.setCaptureMode(CaptureMode.VIDEO) }
-                                .testTag("landscape_mode_video"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Videocam,
-                                    contentDescription = "Video Mode",
-                                    tint = if (isVideo) Color.White else SecondaryText,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = "VIDEO",
-                                    color = if (isVideo) Color.White else SecondaryText,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Vertical Control Bar (Far Right Panel)
-                Surface(
-                    shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
-                    color = Color(0xD9090D16),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(82.dp)
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1369,12 +1306,18 @@ fun CameraScreen(
                                             controller = controller,
                                             context = context,
                                             deviceRotationDegrees = rotationDegrees.toInt(),
+                                            isLandscape = isLandscape,
                                             onSuccess = { bitmap ->
                                                 viewModel.processCapture(bitmap)
                                                 viewModel.showSuccess("Quick photo saved to Gallery!")
                                             },
                                             onError = {
-                                                val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
+                                                val fallback = createSimulatedCameraFrame(
+                                                    context = context,
+                                                    rotationDegrees = rotationDegrees.toInt(),
+                                                    isLandscapeMode = isLandscape,
+                                                    resolutionStr = cameraSettings.photoResolution
+                                                )
                                                 viewModel.processCapture(fallback)
                                                 viewModel.showSuccess("Quick photo saved to Gallery!")
                                             }
@@ -1398,11 +1341,10 @@ fun CameraScreen(
                                     .border(3.5.dp, Color.White.copy(alpha = 0.95f), CircleShape)
                                     .background(Color.White)
                                     .clickable(enabled = !isCapturing && !isCountingDown) {
-                                        if (captureMode == CaptureMode.PHOTO) {
-                                            triggerPhotoCapture()
-                                        } else {
-                                            toggleVideoRecording()
+                                        if (captureMode != CaptureMode.PHOTO) {
+                                            viewModel.setCaptureMode(CaptureMode.PHOTO)
                                         }
+                                        triggerPhotoCapture()
                                     }
                                     .testTag("landscape_shutter_button"),
                                 contentAlignment = Alignment.Center
@@ -1512,7 +1454,6 @@ fun CameraScreen(
                         }
                     }
                 }
-            }
         } else {
             // 6. Top Bar: Fully Transparent Single-Icon Controls & Status (PORTRAIT)
             Column(
@@ -2231,12 +2172,18 @@ fun CameraScreen(
                                     controller = controller,
                                     context = context,
                                     deviceRotationDegrees = rotationDegrees.toInt(),
+                                    isLandscape = isLandscape,
                                     onSuccess = { bitmap ->
                                         viewModel.processCapture(bitmap)
                                         viewModel.showSuccess("Quick photo captured & saved to Gallery!")
                                     },
                                     onError = {
-                                        val fallback = createSimulatedCameraFrame(context, rotationDegrees.toInt())
+                                        val fallback = createSimulatedCameraFrame(
+                                            context = context,
+                                            rotationDegrees = rotationDegrees.toInt(),
+                                            isLandscapeMode = isLandscape,
+                                            resolutionStr = cameraSettings.photoResolution
+                                        )
                                         viewModel.processCapture(fallback)
                                         viewModel.showSuccess("Quick photo captured & saved to Gallery!")
                                     }
@@ -2998,10 +2945,19 @@ private fun toDms(dec: Double, isLat: Boolean): String {
  * Creates a high resolution simulated camera frame with road texture if device camera hardware is unavailable,
  * correctly sized for landscape (1920x1080) or portrait (1080x1920).
  */
-fun createSimulatedCameraFrame(context: Context, rotationDegrees: Int = 0): Bitmap {
-    val isLandscape = rotationDegrees == 90 || rotationDegrees == 270
-    val w = if (isLandscape) 1920 else 1080
-    val h = if (isLandscape) 1080 else 1920
+fun createSimulatedCameraFrame(
+    context: Context,
+    rotationDegrees: Int = 0,
+    isLandscapeMode: Boolean = false,
+    resolutionStr: String = "1920 x 1080"
+): Bitmap {
+    val shouldBeLandscape = isLandscapeMode || rotationDegrees == 90 || rotationDegrees == 270
+    val photoParts = resolutionStr.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
+    val maxDim = if (photoParts.size == 2) maxOf(photoParts[0], photoParts[1]) else 1920
+    val minDim = if (photoParts.size == 2) minOf(photoParts[0], photoParts[1]) else 1080
+
+    val w = if (shouldBeLandscape) maxDim else minDim
+    val h = if (shouldBeLandscape) minDim else maxDim
     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 

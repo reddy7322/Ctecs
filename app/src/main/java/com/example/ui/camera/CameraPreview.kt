@@ -77,6 +77,7 @@ fun CameraPreview(
     exposureIndex: Int,
     isVideoMode: Boolean,
     rotationDegrees: Int = 0,
+    isLandscape: Boolean = false,
     photoResolution: String = "1920 x 1080",
     videoResolution: String = "1920 x 1080",
     controller: LifecycleCameraController,
@@ -198,13 +199,21 @@ fun CameraPreview(
         } catch (ignored: Exception) {}
     }
 
-    LaunchedEffect(photoResolution, hasCameraPermission) {
+    LaunchedEffect(photoResolution, isLandscape, hasCameraPermission) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
             val photoParts = photoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
             if (photoParts.size == 2) {
-                val size = android.util.Size(photoParts[0], photoParts[1])
-                controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(size)
+                val maxDim = maxOf(photoParts[0], photoParts[1])
+                val minDim = minOf(photoParts[0], photoParts[1])
+                // In landscape mode: width > height (e.g. 1920x1080)
+                // In portrait mode: height > width (e.g. 1080x1920)
+                val targetSize = if (isLandscape) {
+                    android.util.Size(maxDim, minDim)
+                } else {
+                    android.util.Size(minDim, maxDim)
+                }
+                controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(targetSize)
             }
         } catch (e: Exception) {
             Log.w("CameraPreview", "Setting photo resolution error", e)
@@ -293,9 +302,11 @@ fun CameraPreview(
 fun normalizeBitmapOrientation(
     rawBitmap: Bitmap,
     cameraXRotationDegrees: Int,
-    deviceRotationDegrees: Int
+    isLandscapeMode: Boolean = false,
+    deviceRotationDegrees: Int = 0
 ): Bitmap {
-    val initialRotated = if (cameraXRotationDegrees != 0) {
+    // 1. First apply CameraX reported rotation to bring image upright relative to target rotation
+    val upright = if (cameraXRotationDegrees != 0) {
         try {
             val matrix = Matrix().apply { postRotate(cameraXRotationDegrees.toFloat()) }
             Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
@@ -306,36 +317,64 @@ fun normalizeBitmapOrientation(
         rawBitmap
     }
 
-    val isLandscape = deviceRotationDegrees == 90 || deviceRotationDegrees == 270
+    // 2. Validate against desired mode (Landscape vs Portrait)
+    // If device is in landscape mode (or device sensor reports 90/270 degrees),
+    // output MUST be landscape (width >= height).
+    val shouldBeLandscape = isLandscapeMode || deviceRotationDegrees == 90 || deviceRotationDegrees == 270
 
-    // If device is in landscape but bitmap is portrait, rotate by 90 or 270
-    if (isLandscape && initialRotated.width < initialRotated.height) {
-        try {
-            val matrix = Matrix().apply { postRotate(90f) }
-            return Bitmap.createBitmap(initialRotated, 0, 0, initialRotated.width, initialRotated.height, matrix, true)
-        } catch (e: Exception) {
-            return initialRotated
+    if (shouldBeLandscape) {
+        if (upright.width < upright.height) {
+            // Bitmap is portrait, must be rotated to landscape (width >= height)
+            val rotateBy = if (deviceRotationDegrees == 270) 270f else 90f
+            return try {
+                val matrix = Matrix().apply { postRotate(rotateBy) }
+                Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
+            } catch (e: Exception) {
+                upright
+            }
+        } else if (deviceRotationDegrees == 270 && cameraXRotationDegrees == 0) {
+            // Reverse landscape 180° adjustment if sensor did not account for it
+            return try {
+                val matrix = Matrix().apply { postRotate(180f) }
+                Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
+            } catch (e: Exception) {
+                upright
+            }
         }
-    } else if (!isLandscape && initialRotated.width > initialRotated.height) {
-        try {
-            val matrix = Matrix().apply { postRotate(90f) }
-            return Bitmap.createBitmap(initialRotated, 0, 0, initialRotated.width, initialRotated.height, matrix, true)
-        } catch (e: Exception) {
-            return initialRotated
+    } else {
+        // Portrait mode: output MUST be portrait (height >= width)
+        if (upright.width > upright.height) {
+            // Bitmap is landscape, must be rotated to portrait (height >= width)
+            val rotateBy = if (deviceRotationDegrees == 270) 270f else 90f
+            return try {
+                val matrix = Matrix().apply { postRotate(rotateBy) }
+                Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
+            } catch (e: Exception) {
+                upright
+            }
+        } else if (deviceRotationDegrees == 180 && cameraXRotationDegrees == 0) {
+            // Reverse portrait 180° adjustment if sensor did not account for it
+            return try {
+                val matrix = Matrix().apply { postRotate(180f) }
+                Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
+            } catch (e: Exception) {
+                upright
+            }
         }
     }
 
-    return initialRotated
+    return upright
 }
 
 /**
  * Captures image from LifecycleCameraController and returns a correctly rotated Bitmap
- * that strictly adheres to the physical device orientation.
+ * that strictly adheres to the physical device orientation and original aspect ratio.
  */
 fun capturePhoto(
     controller: LifecycleCameraController,
     context: Context,
     deviceRotationDegrees: Int = 0,
+    isLandscape: Boolean = false,
     onSuccess: (Bitmap) -> Unit,
     onError: (Throwable) -> Unit
 ) {
@@ -346,10 +385,14 @@ fun capturePhoto(
             override fun onCaptureSuccess(image: ImageProxy) {
                 try {
                     val rotationDegrees = image.imageInfo.rotationDegrees
-                    val buffer = image.planes[0].buffer
-                    val bytes = ByteArray(buffer.remaining())
-                    buffer.get(bytes)
-                    val rawBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    val rawBitmap = try {
+                        image.toBitmap()
+                    } catch (e: Exception) {
+                        val buffer = image.planes[0].buffer
+                        val bytes = ByteArray(buffer.remaining())
+                        buffer.get(bytes)
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }
 
                     if (rawBitmap == null) {
                         image.close()
@@ -360,6 +403,7 @@ fun capturePhoto(
                     val normalizedBitmap = normalizeBitmapOrientation(
                         rawBitmap = rawBitmap,
                         cameraXRotationDegrees = rotationDegrees,
+                        isLandscapeMode = isLandscape,
                         deviceRotationDegrees = deviceRotationDegrees
                     )
 
