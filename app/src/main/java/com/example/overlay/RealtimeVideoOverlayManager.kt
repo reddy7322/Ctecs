@@ -53,12 +53,24 @@ class RealtimeVideoOverlayManager(
     @Volatile
     private var lastRenderedAccuracy: Int = -1
     @Volatile
+    private var lastRenderedSpeed: Int = -1
+    @Volatile
+    private var lastRenderedHeading: String = ""
+    @Volatile
+    private var lastRenderedSide: String = ""
+    @Volatile
+    private var lastRenderedActivity: String = ""
+    @Volatile
+    private var lastRenderedLane: String = ""
+    @Volatile
     private var lastRenderedWidth: Int = -1
     @Volatile
     private var lastRenderedHeight: Int = -1
 
     @Volatile
     private var isRecordingActive: Boolean = false
+    @Volatile
+    private var startRecordingRotation: Int = 0
 
     @Synchronized
     fun getOrCreateEffect(): OverlayEffect? {
@@ -95,8 +107,9 @@ class RealtimeVideoOverlayManager(
         }
     }
 
-    fun notifyRecordingStarted() {
+    fun notifyRecordingStarted(initialRotation: Int? = null) {
         isRecordingActive = true
+        startRecordingRotation = ((initialRotation ?: rotationProvider()) % 360 + 360) % 360
         // Force full refresh on first frame of a recording session
         lastRenderedSecond = -1L
         lastRenderedRotation = -1
@@ -111,20 +124,38 @@ class RealtimeVideoOverlayManager(
             val baseSnapshot = snapshotProvider() ?: return true
             val nowMs = System.currentTimeMillis()
             val currentSecond = nowMs / 1000L
-            val currentRotation = rotationProvider()
+            val currentRotation = ((rotationProvider() % 360) + 360) % 360
+            val frameRotation = ((frame.rotationDegrees % 360) + 360) % 360
             val currentChainage = baseSnapshot.displayChainage
-            val currentCoords = baseSnapshot.location?.let { "${it.latitude.toInt()}_${it.longitude.toInt()}" } ?: ""
+            val currentCoords = baseSnapshot.location?.let { String.format(java.util.Locale.US, "%.5f_%.5f", it.latitude, it.longitude) } ?: ""
             val currentAccuracy = baseSnapshot.gpsAccuracy.toInt()
+            val currentSpeed = (baseSnapshot.speedMps ?: -1f).toInt()
+            val currentHeading = baseSnapshot.compassHeading
+            val currentSide = baseSnapshot.projectProfile.roadSide.name
+            val currentActivity = baseSnapshot.projectProfile.activity
+            val currentLane = baseSnapshot.projectProfile.lane
 
             val frameSize = frame.size
             val width = frameSize.width
             val height = frameSize.height
 
+            // Calculate rotation needed on raw buffer canvas to appear upright
+            // after the player applies MP4 rotation metadata (frameRotation)
+            val delta = if (isRecordingActive) {
+                ((currentRotation - startRecordingRotation) % 360 + 360) % 360
+            } else 0
+            val effectiveCanvasRotation = ((delta - frameRotation) % 360 + 360) % 360
+
             val isDirty = (currentSecond != lastRenderedSecond) ||
-                    (currentRotation != lastRenderedRotation) ||
+                    (effectiveCanvasRotation != lastRenderedRotation) ||
                     (currentChainage != lastRenderedChainage) ||
                     (currentCoords != lastRenderedCoords) ||
                     (currentAccuracy != lastRenderedAccuracy) ||
+                    (currentSpeed != lastRenderedSpeed) ||
+                    (currentHeading != lastRenderedHeading) ||
+                    (currentSide != lastRenderedSide) ||
+                    (currentActivity != lastRenderedActivity) ||
+                    (currentLane != lastRenderedLane) ||
                     (width != lastRenderedWidth) ||
                     (height != lastRenderedHeight)
 
@@ -144,16 +175,21 @@ class RealtimeVideoOverlayManager(
                     canvas = canvas,
                     width = width,
                     height = height,
-                    deviceRotation = currentRotation,
+                    effectiveCanvasRotation = effectiveCanvasRotation,
                     snapshot = liveSnapshot
                 )
 
                 // Update cached indicators
                 lastRenderedSecond = currentSecond
-                lastRenderedRotation = currentRotation
+                lastRenderedRotation = effectiveCanvasRotation
                 lastRenderedChainage = currentChainage
                 lastRenderedCoords = currentCoords
                 lastRenderedAccuracy = currentAccuracy
+                lastRenderedSpeed = currentSpeed
+                lastRenderedHeading = currentHeading
+                lastRenderedSide = currentSide
+                lastRenderedActivity = currentActivity
+                lastRenderedLane = currentLane
                 lastRenderedWidth = width
                 lastRenderedHeight = height
             }
@@ -165,31 +201,20 @@ class RealtimeVideoOverlayManager(
     }
 
     /**
-     * Renders overlays onto the video frame canvas with dynamic 4-way orientation adjustments.
-     * Ensures all text, badges, chainage, and logos stay perfectly upright when device is
-     * rotated during active recording.
+     * Renders overlays onto the video frame canvas with mathematically verified orientation mapping.
+     * Prevents double-rotation and guarantees that text, map, and logos stay perfectly upright
+     * on the final video output across all 4 orientations (Portrait, Landscape Right,
+     * Reverse Portrait, Landscape Left).
      */
     private fun renderRotatedOverlay(
         canvas: android.graphics.Canvas,
         width: Int,
         height: Int,
-        deviceRotation: Int,
+        effectiveCanvasRotation: Int,
         snapshot: CaptureSnapshot
     ) {
-        val naturalIsPortrait = (width <= height)
-        // Normalize rotation angle
-        val normalizedRotation = ((deviceRotation % 360) + 360) % 360
-
-        // Compute relative rotation angle to keep overlays upright
-        val effectiveRotation = if (naturalIsPortrait) {
-            normalizedRotation
-        } else {
-            // For landscape buffers (width > height), base orientation is 0°
-            (normalizedRotation + 270) % 360
-        }
-
         canvas.save()
-        when (effectiveRotation) {
+        when (effectiveCanvasRotation) {
             0 -> {
                 OverlayRenderer.drawOverlayOnCanvas(
                     context = context,
@@ -200,7 +225,7 @@ class RealtimeVideoOverlayManager(
                 )
             }
             90 -> {
-                // Landscape Right (90° clockwise)
+                // 90° clockwise: output display width is height, output display height is width
                 canvas.translate(width.toFloat(), 0f)
                 canvas.rotate(90f)
                 OverlayRenderer.drawOverlayOnCanvas(
@@ -212,7 +237,7 @@ class RealtimeVideoOverlayManager(
                 )
             }
             180 -> {
-                // Reverse Portrait (180°)
+                // 180° reverse
                 canvas.translate(width.toFloat(), height.toFloat())
                 canvas.rotate(180f)
                 OverlayRenderer.drawOverlayOnCanvas(
@@ -224,7 +249,7 @@ class RealtimeVideoOverlayManager(
                 )
             }
             270 -> {
-                // Landscape Left (270°)
+                // 270° clockwise (-90°): output display width is height, output display height is width
                 canvas.translate(0f, height.toFloat())
                 canvas.rotate(270f)
                 OverlayRenderer.drawOverlayOnCanvas(

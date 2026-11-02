@@ -127,7 +127,7 @@ object OverlayTextGenerator {
                 // 6. Project Info / Chainage / Activity / Lane / Side
                 // Line 1: Project Name | Stretch | Work Type | {Chainage} { RHS } { I/L} {DBM}
                 // Line 2: { Custom Comment } (if user added only, on next line)
-                if ((config.showProjectInfo || config.showChainage) && config.showIndexNumber) {
+                if (config.showProjectInfo || config.showChainage) {
                     val highwayLine = project.buildHighwayText(
                         chainageFormatted = if (config.showChainage) chainageStr else "",
                         includeProjectName = config.showProjectInfo

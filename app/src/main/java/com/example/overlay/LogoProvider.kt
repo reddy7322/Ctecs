@@ -38,22 +38,29 @@ object LogoProvider {
      * Loads raw logo bitmap either from custom user URI or generates preset.
      */
     fun loadRawLogoBitmap(
-        context: Context,
+        context: Context?,
         config: OverlayConfig,
         targetWidthPx: Int
     ): Bitmap? {
-        if (config.logoPreset == "custom" && !config.logoUri.isNullOrBlank()) {
-            val customBitmap = loadCustomImage(context, config.logoUri)
-            if (customBitmap != null) {
-                return customBitmap
+        if (!config.showLogo) return null
+
+        if (config.logoPreset.equals("custom", ignoreCase = true)) {
+            if (!config.logoUri.isNullOrBlank() && context != null) {
+                val customBitmap = loadCustomImage(context, config.logoUri)
+                if (customBitmap != null) {
+                    return customBitmap
+                }
             }
+            // If custom logo is selected but no image URI is provided, do NOT draw any unwanted fallback watermark
+            return null
         }
 
-        // Return or generate preset bitmap
+        // Return or generate preset bitmap ONLY if explicitly configured by the user
         return when (config.logoPreset.lowercase()) {
             "nhai" -> generateNhaiPreset(targetWidthPx)
             "survey_seal" -> generateSurveySealPreset(targetWidthPx)
-            else -> generateCtecsPreset(targetWidthPx) // Default "ctecs"
+            "ctecs" -> generateCtecsPreset(targetWidthPx)
+            else -> null
         }
     }
 

@@ -520,6 +520,7 @@ class VideoRecordingManager(private val context: Context) {
     fun startRecording(
         controller: LifecycleCameraController,
         recordAudio: Boolean,
+        initialRotation: Int = 0,
         onEvent: (VideoRecordEvent, File?) -> Unit,
         onError: (Throwable) -> Unit
     ) {
@@ -547,7 +548,7 @@ class VideoRecordingManager(private val context: Context) {
                     Log.w("VideoRecordingManager", "Effect attachment: ${e.message}")
                 }
             }
-            overlayManager?.notifyRecordingStarted()
+            overlayManager?.notifyRecordingStarted(initialRotation)
 
             val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())

@@ -64,35 +64,30 @@ object OverlayRenderer {
 
         // Scale factors relative to 1080p height
         val scale = max(width, height) / 1920f
-        val marginX = (width * 0.04f).coerceAtLeast(32f * scale)
-        val marginY = (height * 0.05f).coerceAtLeast(36f * scale)
+        val marginX = (width * 0.042f).coerceIn(24f * scale, 64f * scale)
+        val marginY = (height * 0.048f).coerceIn(28f * scale, 68f * scale)
 
-        // 1. Render Lower-Right Information Block (returns top Y coordinate of block)
-        val infoBlockTopY = renderInformationBlock(
-            canvas = canvas,
-            width = width,
-            height = height,
-            scale = scale,
-            marginX = marginX,
-            marginY = marginY,
-            snapshot = snapshot
-        )
+        // 1. Calculate and Render Lower-Left Mini-Map Inset (if enabled)
+        val showMiniMap = config.showMapInset && config.template != OverlayTemplate.MINIMAL_TIMESTAMP
+        val mapSize = if (showMiniMap) {
+            val mapRatio = if (width > height) 0.25f else 0.21f
+            (min(width, height) * mapRatio).coerceIn(150f * scale, 340f * scale)
+        } else 0f
 
-        // 2. Render Lower-Left Mini-Map Inset
-        var mapRect: RectF? = null
-        if (config.showMapInset && config.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
-            val mapSize = (min(width, height) * 0.22f).coerceIn(160f * scale, 340f * scale)
-            val rect = RectF(
+        val mapRect: RectF? = if (showMiniMap) {
+            RectF(
                 marginX,
                 height - marginY - mapSize,
                 marginX + mapSize,
                 height - marginY
             )
-            mapRect = rect
+        } else null
+
+        if (mapRect != null) {
             renderMiniMap(
                 context = context,
                 canvas = canvas,
-                rect = rect,
+                rect = mapRect,
                 scale = scale,
                 location = location,
                 bearing = snapshot.bearing,
@@ -100,6 +95,18 @@ object OverlayRenderer {
                 roadName = project.highwayId.ifBlank { "NH-58" }
             )
         }
+
+        // 2. Render Information Block (passing mapRect so it never overlaps the map and wraps cleanly)
+        val infoBlockTopY = renderInformationBlock(
+            canvas = canvas,
+            width = width,
+            height = height,
+            scale = scale,
+            marginX = marginX,
+            marginY = marginY,
+            snapshot = snapshot,
+            mapInsetRect = mapRect
+        )
 
         // 3. Render Custom Logo / Image Overlay with full manual settings
         if (config.showLogo) {
@@ -139,7 +146,8 @@ object OverlayRenderer {
         scale: Float,
         marginX: Float,
         marginY: Float,
-        snapshot: CaptureSnapshot
+        snapshot: CaptureSnapshot,
+        mapInsetRect: RectF? = null
     ): Float {
         val config = snapshot.overlayConfig
         val project = snapshot.projectProfile
@@ -152,7 +160,6 @@ object OverlayRenderer {
         } else {
             (config.fontSizeSp * 1.8f * scale).coerceIn(20f, 90f)
         }
-        val lineSpacing = baseFontSize * 0.35f
 
         val customTypeface = resolveTypeface(config.fontFamily, config.fontStyle)
 
@@ -171,24 +178,35 @@ object OverlayRenderer {
         val alphaVal = (config.textOpacity.coerceIn(0.1f, 1f) * 255).toInt()
         val textColorWithAlpha = Color.argb(alphaVal, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
 
+        var currentFontSize = baseFontSize
+        val lineSpacing = currentFontSize * 0.35f
+
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = textColorWithAlpha
-            textSize = baseFontSize
+            textSize = currentFontSize
             typeface = customTypeface
             textAlign = align
         }
 
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb((alphaVal * 0.85f).toInt(), 0, 0, 0)
-            textSize = baseFontSize
+            textSize = currentFontSize
             typeface = customTypeface
             textAlign = align
             style = Paint.Style.STROKE
-            strokeWidth = (baseFontSize * (config.textStrokeWidthDp / 20f)).coerceAtLeast(2f * scale)
+            strokeWidth = (currentFontSize * (config.textStrokeWidthDp / 20f)).coerceAtLeast(2f * scale)
             strokeJoin = Paint.Join.ROUND
         }
 
-        val lines = OverlayTextGenerator.generateLines(
+        // Calculate available width for text to guarantee no clipping and no map overlap
+        val minLeftBound = if (mapInsetRect != null && !isTop && !isLeft) {
+            mapInsetRect.right + 20f * scale
+        } else {
+            marginX
+        }
+        val maxAvailableWidth = (width - marginX - minLeftBound).coerceAtLeast(width * 0.38f)
+
+        val rawLines = OverlayTextGenerator.generateLines(
             config = config,
             project = project,
             location = location,
@@ -204,15 +222,40 @@ object OverlayRenderer {
             isForCapture = true
         )
 
-        if (lines.isEmpty()) return height - marginY
+        if (rawLines.isEmpty()) return height - marginY
+
+        // Auto-scale font size if lines are overly wide
+        var maxMeasuredWidth = 0f
+        for (line in rawLines) {
+            val w = textPaint.measureText(line)
+            if (w > maxMeasuredWidth) maxMeasuredWidth = w
+        }
+
+        if (maxMeasuredWidth > maxAvailableWidth) {
+            val shrinkRatio = (maxAvailableWidth / maxMeasuredWidth).coerceIn(0.72f, 1.0f)
+            currentFontSize = (baseFontSize * shrinkRatio).coerceAtLeast(14f * scale)
+            textPaint.textSize = currentFontSize
+            strokePaint.textSize = currentFontSize
+            strokePaint.strokeWidth = (currentFontSize * (config.textStrokeWidthDp / 20f)).coerceAtLeast(2f * scale)
+        }
+
+        // Dynamically wrap any line that still exceeds available width
+        val lines = mutableListOf<String>()
+        for (line in rawLines) {
+            if (textPaint.measureText(line) <= maxAvailableWidth) {
+                lines.add(line)
+            } else {
+                lines.addAll(wrapText(line, textPaint, maxAvailableWidth))
+            }
+        }
 
         val targetX = when {
             isLeft -> marginX
-            isCenter -> width / 2f
+            isCenter -> (minLeftBound + (width - marginX)) / 2f
             else -> width - marginX
         }
 
-        val totalBlockHeight = lines.size * baseFontSize + (lines.size - 1) * lineSpacing
+        val totalBlockHeight = lines.size * currentFontSize + (lines.size - 1) * lineSpacing
 
         // Background card panel if configured
         val showBgPanel = config.backgroundStyle != "Transparent" || config.backgroundOpacity > 0f
@@ -224,25 +267,25 @@ object OverlayRenderer {
                 style = Paint.Style.FILL
             }
 
-            var maxLineWidth = 0f
+            var actualMaxLineWidth = 0f
             for (line in lines) {
                 val w = textPaint.measureText(line)
-                if (w > maxLineWidth) maxLineWidth = w
+                if (w > actualMaxLineWidth) actualMaxLineWidth = w
             }
 
-            val padX = 16f * scale
-            val padY = 12f * scale
+            val padX = 14f * scale
+            val padY = 10f * scale
 
             val bgRect = when {
-                isLeft -> RectF(marginX - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, marginX + maxLineWidth + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
-                isCenter -> RectF(width / 2f - maxLineWidth / 2f - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, width / 2f + maxLineWidth / 2f + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
-                else -> RectF(width - marginX - maxLineWidth - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, width - marginX + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
+                isLeft -> RectF(marginX - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, marginX + actualMaxLineWidth + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
+                isCenter -> RectF(targetX - actualMaxLineWidth / 2f - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, targetX + actualMaxLineWidth / 2f + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
+                else -> RectF(width - marginX - actualMaxLineWidth - padX, if (isTop) marginY - padY else height - marginY - totalBlockHeight - padY, width - marginX + padX, if (isTop) marginY + totalBlockHeight + padY else height - marginY + padY)
             }
 
-            canvas.drawRoundRect(bgRect, 12f * scale, 12f * scale, bgPaint)
+            canvas.drawRoundRect(bgRect, 10f * scale, 10f * scale, bgPaint)
         }
 
-        var currentY = if (isTop) marginY + baseFontSize else height - marginY
+        var currentY = if (isTop) marginY + currentFontSize else height - marginY
 
         if (isTop) {
             // Draw top to bottom
@@ -251,7 +294,7 @@ object OverlayRenderer {
                     canvas.drawText(line, targetX, currentY, strokePaint)
                 }
                 canvas.drawText(line, targetX, currentY, textPaint)
-                currentY += (baseFontSize + lineSpacing)
+                currentY += (currentFontSize + lineSpacing)
             }
             return currentY
         } else {
@@ -262,10 +305,57 @@ object OverlayRenderer {
                     canvas.drawText(line, targetX, currentY, strokePaint)
                 }
                 canvas.drawText(line, targetX, currentY, textPaint)
-                currentY -= (baseFontSize + lineSpacing)
+                currentY -= (currentFontSize + lineSpacing)
             }
             return currentY
         }
+    }
+
+    /**
+     * Intelligently wraps text into multiple lines so that no line exceeds [maxWidth].
+     * Prefers splitting on " | " separator first, then by spaces.
+     */
+    private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
+        val result = mutableListOf<String>()
+        val segments = if (text.contains(" | ")) {
+            text.split(" | ")
+        } else {
+            listOf(text)
+        }
+
+        var currentLine = ""
+        for (segment in segments) {
+            val candidate = if (currentLine.isEmpty()) segment else "$currentLine | $segment"
+            if (paint.measureText(candidate) <= maxWidth) {
+                currentLine = candidate
+            } else {
+                if (currentLine.isNotEmpty()) {
+                    result.add(currentLine)
+                    currentLine = ""
+                }
+                if (paint.measureText(segment) <= maxWidth) {
+                    currentLine = segment
+                } else {
+                    // Split segment by spaces
+                    val words = segment.split(" ")
+                    var subLine = ""
+                    for (word in words) {
+                        val wordCand = if (subLine.isEmpty()) word else "$subLine $word"
+                        if (paint.measureText(wordCand) <= maxWidth) {
+                            subLine = wordCand
+                        } else {
+                            if (subLine.isNotEmpty()) result.add(subLine)
+                            subLine = word
+                        }
+                    }
+                    if (subLine.isNotEmpty()) currentLine = subLine
+                }
+            }
+        }
+        if (currentLine.isNotEmpty()) {
+            result.add(currentLine)
+        }
+        return if (result.isEmpty()) listOf(text) else result
     }
 
 

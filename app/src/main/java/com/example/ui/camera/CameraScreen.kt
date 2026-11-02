@@ -338,6 +338,7 @@ fun CameraScreen(
         videoManager.startRecording(
             controller = controller,
             recordAudio = audioEnabled,
+            initialRotation = rotationDegrees.toInt(),
             onEvent = { event, recFile ->
                 when (event) {
                     is androidx.camera.video.VideoRecordEvent.Start -> {

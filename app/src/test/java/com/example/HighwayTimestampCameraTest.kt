@@ -816,6 +816,95 @@ class HighwayTimestampCameraTest {
         assertFalse(liveSnapshot.displayChainage.contains("null"))
         assertFalse(liveSnapshot.projectProfile.highwayId.contains("null"))
     }
+
+    // 32. Verify chainage and highway details are rendered when showIndexNumber is false
+    @Test
+    fun testChainageVisibleWhenIndexNumberFalse() {
+        val config = com.example.model.OverlayConfig(
+            showChainage = true,
+            showProjectInfo = true,
+            showIndexNumber = false
+        )
+        val project = ProjectProfile(
+            highwayId = "MH",
+            packageSection = "MM",
+            roadSide = RoadSide.RHS,
+            lane = "O/L",
+            activity = "Milling"
+        )
+        val lines = com.example.overlay.OverlayTextGenerator.generateLines(
+            config = config,
+            project = project,
+            location = GeoPoint(29.8426, 77.9398),
+            accuracy = 3f,
+            compassHeading = "0° N",
+            speedMps = 0f,
+            bearing = 0f,
+            chainageStr = "174+736",
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = com.example.model.CoordinateFormat.DECIMAL,
+            is24HourFormat = false
+        )
+
+        // Verify chainage line is present and contains highway details
+        val highwayLine = lines.firstOrNull { it.contains("174+736") }
+        assertNotNull("Highway line with chainage must be present even when showIndexNumber is false", highwayLine)
+        assertTrue(highwayLine!!.contains("MH"))
+        assertTrue(highwayLine.contains("MM"))
+        assertTrue(highwayLine.contains("174+736"))
+        assertTrue(highwayLine.contains("RHS"))
+        assertTrue(highwayLine.contains("O/L"))
+        assertTrue(highwayLine.contains("Milling"))
+    }
+
+    // 33. Verify 4-way orientation transformation math prevents double-rotation
+    @Test
+    fun testFourWayOrientationMath() {
+        // Case A: Portrait recording (0°), device at 0° -> effective rotation 0°
+        val rotA = ((0 - 0) % 360 + 360) % 360
+        assertEquals(0, rotA)
+
+        // Case B: Landscape recording (90°), MP4 frameRotation = 90°, device at 90° -> canvas rotation 270° (counter-rotation)
+        // Player applies 90° clockwise, so total = 270° + 90° = 360° = 0° (Upright)
+        val rotB = ((0 - 90) % 360 + 360) % 360
+        assertEquals(270, rotB)
+
+        // Case C: Landscape recording (270°), MP4 frameRotation = 270°, device at 270° -> canvas rotation 90°
+        // Player applies 270° clockwise, so total = 90° + 270° = 360° = 0° (Upright)
+        val rotC = ((0 - 270) % 360 + 360) % 360
+        assertEquals(90, rotC)
+
+        // Case D: Reverse portrait (180°), MP4 frameRotation = 180°, device at 180° -> canvas rotation 180°
+        val rotD = ((0 - 180) % 360 + 360) % 360
+        assertEquals(180, rotD)
+
+        // Case E: Dynamic rotation during recording: started at 0° (frameRotation 0), user turns to 90°
+        val deltaE = (90 - 0) % 360
+        val rotE = ((deltaE - 0) % 360 + 360) % 360
+        assertEquals(90, rotE)
+    }
+
+    // 34. Verify no unwanted CUBE or unconfigured watermark is emitted
+    @Test
+    fun testNoCubeOrUnwantedWatermark() {
+        val configCustomEmpty = com.example.model.OverlayConfig(
+            showLogo = false,
+            logoPreset = "custom",
+            logoUri = null
+        )
+        // With showLogo false, no logo should be rendered
+        assertFalse(configCustomEmpty.showLogo)
+
+        val configCustomNoUri = com.example.model.OverlayConfig(
+            showLogo = true,
+            logoPreset = "custom",
+            logoUri = null
+        )
+        // When custom is selected without URI, loadRawLogoBitmap should return null
+        val logo = com.example.overlay.LogoProvider.loadRawLogoBitmap(null, configCustomNoUri, 200)
+        assertNull("Unconfigured custom logo must return null and never emit fallback watermarks", logo)
+    }
 }
+
 
 

@@ -76,19 +76,6 @@ object VideoOverlayProcessor {
 
             retriever.release()
 
-            // Scale to optimal dimensions for fast, crystal-clear transcoding (max 1280 on longer edge)
-            if (targetWidth > 1280 || targetHeight > 1280) {
-                if (targetWidth >= targetHeight) {
-                    val ratio = 1280f / targetWidth
-                    targetWidth = 1280
-                    targetHeight = ((targetHeight * ratio).toInt() / 2) * 2
-                } else {
-                    val ratio = 1280f / targetHeight
-                    targetHeight = 1280
-                    targetWidth = ((targetWidth * ratio).toInt() / 2) * 2
-                }
-            }
-
             // Ensure dimensions are even numbers (strictly required by H.264 AVC codecs)
             if (targetWidth % 2 != 0) targetWidth -= 1
             if (targetHeight % 2 != 0) targetHeight -= 1
