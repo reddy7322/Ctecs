@@ -102,6 +102,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -252,6 +253,20 @@ fun CameraScreen(
         }
     }
     val videoManager = remember { VideoRecordingManager(context) }
+    val overlayManager = remember {
+        com.example.overlay.RealtimeVideoOverlayManager(
+            context = context.applicationContext,
+            snapshotProvider = { viewModel.createCurrentSnapshot() },
+            rotationProvider = { viewModel.rotationDegrees.value.toInt() }
+        )
+    }
+
+    DisposableEffect(overlayManager) {
+        videoManager.overlayManager = overlayManager
+        onDispose {
+            overlayManager.release()
+        }
+    }
 
     val isFlashOn by viewModel.isFlashOn.collectAsStateWithLifecycle()
     val isFrontCamera by viewModel.isFrontCamera.collectAsStateWithLifecycle()
@@ -438,6 +453,7 @@ fun CameraScreen(
             videoResolution = cameraSettings.videoResolution,
             controller = controller,
             currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
+            overlayManager = overlayManager,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -822,7 +838,7 @@ fun CameraScreen(
                     location = locationState.point,
                     bearing = locationState.bearing,
                     routeData = activeRoute,
-                    highwayTag = projectProfile.highwayId.ifBlank { "MH" },
+                    highwayTag = projectProfile.highwayId,
                     gpsAccuracy = locationState.accuracy,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1652,37 +1668,41 @@ fun CameraScreen(
                 )
                 val indicatorAlpha = if (isAcquiring) pulseAlpha else 1.0f
 
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = SurfaceDark.copy(alpha = 0.85f),
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, gpsColor.copy(alpha = 0.6f)),
-                    modifier = Modifier
-                        .clickable { showSimDialog = true }
-                        .testTag("gps_status_pill")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                if (overlayConfig.showCoordinates && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = SurfaceDark.copy(alpha = 0.85f),
+                        border = androidx.compose.foundation.BorderStroke(0.5.dp, gpsColor.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .clickable { showSimDialog = true }
+                            .testTag("gps_status_pill")
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(gpsColor)
-                                .alpha(indicatorAlpha)
-                        )
-                        Text(
-                            text = if (locationState.point != null) {
-                                String.format(Locale.US, "GPS ±%.0fm", locationState.accuracy)
-                            } else {
-                                "GPS Acquiring..."
-                            },
-                            color = PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(gpsColor)
+                                    .alpha(indicatorAlpha)
+                            )
+                            Text(
+                                text = if (locationState.point != null) {
+                                    String.format(Locale.US, "GPS ±%.0fm", locationState.accuracy)
+                                } else {
+                                    "GPS Acquiring..."
+                                },
+                                color = PrimaryText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
                 }
 
                 if (overlayConfig.showCompass) {
@@ -1821,7 +1841,7 @@ fun CameraScreen(
                         location = locationState.point,
                         bearing = locationState.bearing,
                         routeData = activeRoute,
-                        highwayTag = projectProfile.highwayId.ifBlank { "MH" },
+                        highwayTag = projectProfile.highwayId,
                         gpsAccuracy = locationState.accuracy,
                         modifier = Modifier
                             .size(width = 110.dp, height = 80.dp)

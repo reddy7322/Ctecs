@@ -34,7 +34,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -259,6 +278,18 @@ fun MainScreen(
             onDismiss = { viewModel.dismissWhatsNew() }
         )
     }
+
+    // Smart Minimalist Glass Page Loader UI with percentage animations
+    val isPageLoading by viewModel.isPageLoading.collectAsStateWithLifecycle()
+    val pageLoadingProgress by viewModel.pageLoadingProgress.collectAsStateWithLifecycle()
+    val pageLoadingStatus by viewModel.pageLoadingStatus.collectAsStateWithLifecycle()
+
+    com.example.ui.loader.SmartGlassPageLoader(
+        isLoading = isPageLoading,
+        progress = pageLoadingProgress,
+        status = pageLoadingStatus,
+        onDismissRequest = { viewModel.hidePageLoader() }
+    )
 }
 
 @Composable
@@ -266,79 +297,190 @@ fun AnimatedGlassToast(
     toastMessage: ToastMessage?,
     onDismiss: () -> Unit
 ) {
-    if (toastMessage == null) return
+    var activeMessage by remember { mutableStateOf(toastMessage) }
 
-    LaunchedEffect(toastMessage.id) {
-        kotlinx.coroutines.delay(3000L)
-        onDismiss()
+    LaunchedEffect(toastMessage?.id) {
+        if (toastMessage != null) {
+            activeMessage = toastMessage
+            kotlinx.coroutines.delay(2200L)
+            onDismiss()
+        }
     }
 
-    val (accentColor, iconSymbol) = when (toastMessage.type) {
-        ToastType.SUCCESS -> Color(0xFF22C55E) to "✓"
-        ToastType.ERROR -> Color(0xFFEF4444) to "✕"
-        ToastType.WARNING -> HighlightYellow to "⚠"
-        ToastType.SETTINGS_SAVED -> HighlightYellow to "✓"
-        ToastType.MODE_CHANGE -> Color(0xFF38BDF8) to "⚡"
-        ToastType.INFO -> Color(0xFF38BDF8) to "ℹ"
+    val displayMessage = toastMessage ?: activeMessage
+
+    val accentColor = when (displayMessage?.type) {
+        ToastType.SUCCESS -> Color(0xFF34D399) // Emerald
+        ToastType.ERROR -> Color(0xFFF87171)   // Soft Rose
+        ToastType.WARNING -> Color(0xFFFBBF24) // Amber
+        ToastType.SETTINGS_SAVED -> Color(0xFF2DD4BF) // Teal
+        ToastType.MODE_CHANGE -> Color(0xFF38BDF8)    // Sky
+        ToastType.INFO, null -> Color(0xFF818CF8)     // Indigo
     }
+
+    // Micro pulsing breathing animation for the status indicator
+    val infiniteTransition = rememberInfiniteTransition(label = "toast_glow")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(durationMillis = 850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "toast_pulse"
+    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(top = 10.dp, start = 16.dp, end = 16.dp),
+            .padding(top = 10.dp),
         contentAlignment = Alignment.TopCenter
     ) {
         androidx.compose.animation.AnimatedVisibility(
-            visible = true,
-            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)) +
-                    androidx.compose.animation.slideInVertically(
-                        initialOffsetY = { -it },
-                        animationSpec = androidx.compose.animation.core.spring(
-                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-                            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
-                        )
-                    ),
-            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(150)) +
-                    androidx.compose.animation.slideOutVertically(targetOffsetY = { -it })
+            visible = toastMessage != null && displayMessage != null,
+            enter = slideInVertically(
+                initialOffsetY = { -it },
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ) + fadeIn(animationSpec = androidx.compose.animation.core.tween(180)) + scaleIn(
+                initialScale = 0.85f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ),
+            exit = slideOutVertically(
+                targetOffsetY = { -it / 2 },
+                animationSpec = androidx.compose.animation.core.tween(160, easing = FastOutLinearInEasing)
+            ) + fadeOut(animationSpec = androidx.compose.animation.core.tween(140)) + scaleOut(
+                targetScale = 0.90f,
+                animationSpec = androidx.compose.animation.core.tween(140)
+            )
         ) {
-            androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = Color(0xF2111827),
-                border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.65f)),
-                shadowElevation = 10.dp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .clickable { onDismiss() }
-                    .padding(horizontal = 4.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+            displayMessage?.let { msg ->
+                val smartText = remember(msg.message, msg.type) {
+                    formatSmartTinyFeedback(msg.message, msg.type)
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xB8090D14), // Ultra sleek minimalist frosted glass
+                    border = BorderStroke(0.75.dp, Color(0x38FFFFFF)),
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .testTag("tiny_glass_toast")
+                        .widthIn(max = 240.dp)
+                        .clip(CircleShape)
+                        .clickable { onDismiss() }
                 ) {
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(accentColor.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        // Smart tiny status indicator with gentle glowing aura
+                        Box(
+                            modifier = Modifier.size(12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(accentColor.copy(alpha = pulseAlpha * 0.35f))
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(5.5.dp)
+                                    .clip(CircleShape)
+                                    .background(accentColor)
+                            )
+                        }
+
+                        // Smart tiny feedback text: minimal, single-line, no clutter
                         Text(
-                            text = iconSymbol,
-                            color = accentColor,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            text = smartText,
+                            color = Color(0xFFF8FAFC),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.25.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Text(
-                        text = toastMessage.message,
-                        color = PrimaryText,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
                 }
             }
         }
+    }
+}
+
+/**
+ * Transforms verbose toast messages and file paths into concise, smart, tiny feedback labels.
+ */
+private fun formatSmartTinyFeedback(message: String, type: ToastType): String {
+    val clean = message
+        .removePrefix("✓ ")
+        .removePrefix("✕ ")
+        .removePrefix("⚠ ")
+        .removePrefix("⚡ ")
+        .removePrefix("ℹ ")
+        .trim()
+
+    val lower = clean.lowercase()
+
+    return when {
+        lower.startsWith("video saved") || lower.contains("dynamic overlays") -> "Video Saved"
+        lower.startsWith("photo saved") -> "Photo Saved"
+        lower.contains("gps location & chainage refreshed") || lower.contains("gps refreshed") -> "GPS Synced"
+        lower.contains("failed to refresh gps") -> "GPS Offline"
+        lower.contains("file name format") -> "Format Saved"
+        lower.contains("custom logo imported") -> "Logo Added"
+        lower.contains("custom logo removed") -> "Logo Removed"
+        lower.contains("failed to load logo") -> "Logo Failed"
+        lower.contains("export failed") -> "Export Failed"
+        lower.contains("project imported") -> "Imported"
+        lower.contains("project & strech updated") || lower.contains("project updated") -> "Project Saved"
+        lower.startsWith("deleted ") && lower.contains("photo") -> {
+            val count = clean.filter { it.isDigit() }
+            if (count.isNotEmpty()) "$count Deleted" else "Deleted"
+        }
+        lower.startsWith("activity updated:") -> "Activity Set"
+        lower.startsWith("comment set:") -> "Comment Set"
+        lower.contains("comment cleared") -> "Comment Cleared"
+        lower.contains("audio recording") -> {
+            if (lower.contains("enabled") || lower.contains("on")) "Audio On" else "Audio Off"
+        }
+        lower.startsWith("theme:") -> {
+            val mode = clean.substringAfter(":").trim()
+            "Theme $mode"
+        }
+        lower.startsWith("road alignment:") -> "Road Linked"
+        lower.contains("hdr mode") -> {
+            if (lower.contains("active") || lower.contains("on")) "HDR On" else "HDR Off"
+        }
+        lower.contains("horizon level") -> {
+            if (lower.contains("on")) "Level On" else "Level Off"
+        }
+        lower.startsWith("photo resolution:") -> {
+            "Photo " + clean.substringAfter(":").trim()
+        }
+        lower.startsWith("video resolution:") -> {
+            "Video " + clean.substringAfter(":").trim()
+        }
+        lower.contains("finalizing") -> "Saving..."
+        lower.contains("update check") -> "Up to date"
+        clean.contains(":") -> {
+            val prefix = clean.substringBefore(":").trim()
+            if (prefix.length in 3..15) prefix else clean.take(15)
+        }
+        clean.length > 18 -> {
+            val words = clean.split(" ")
+            if (words.size >= 2) "${words[0]} ${words[1]}" else clean.take(16)
+        }
+        else -> clean
     }
 }

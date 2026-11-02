@@ -38,10 +38,9 @@ object ChainageMatcher {
         }
 
         // 1. Find nearest candidate segment across all alignments
+        val prevAlignmentName = previousResult?.matchedAlignmentName.orEmpty()
         var bestProjection: SegmentProjection? = null
-        var bestSegmentMarkerBefore: RouteMarker? = null
-        var bestSegmentMarkerAfter: RouteMarker? = null
-        var minPerpDistance = Double.MAX_VALUE
+        var minScore = Double.MAX_VALUE
         var matchedAlignmentName = ""
 
         // Check each alignment polyline
@@ -53,19 +52,24 @@ object ChainageMatcher {
                 val p1 = pts[i]
                 val p2 = pts[i + 1]
 
-                // Quick bounding box check with 100m padding (~0.001 deg)
-                val minLat = minOf(p1.latitude, p2.latitude) - 0.001
-                val maxLat = maxOf(p1.latitude, p2.latitude) + 0.001
-                val minLng = minOf(p1.longitude, p2.longitude) - 0.001
-                val maxLng = maxOf(p1.longitude, p2.longitude) + 0.001
+                // Bounding box check with 500m padding (~0.005 deg)
+                val minLat = minOf(p1.latitude, p2.latitude) - 0.005
+                val maxLat = maxOf(p1.latitude, p2.latitude) + 0.005
+                val minLng = minOf(p1.longitude, p2.longitude) - 0.005
+                val maxLng = maxOf(p1.longitude, p2.longitude) + 0.005
 
                 if (gpsPoint.latitude !in minLat..maxLat || gpsPoint.longitude !in minLng..maxLng) {
                     continue
                 }
 
                 val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
-                if (proj.perpendicularDistance < minPerpDistance) {
-                    minPerpDistance = proj.perpendicularDistance
+                // Continuity bias: give previously matched alignment a 4.0m hysteresis advantage
+                // to prevent rapid fluttering across median between parallel carriageways
+                val continuityBonus = if (prevAlignmentName.isNotBlank() && alignment.name == prevAlignmentName) 4.0 else 0.0
+                val score = proj.perpendicularDistance - continuityBonus
+
+                if (score < minScore) {
+                    minScore = score
                     bestProjection = proj
                     matchedAlignmentName = alignment.name
                 }
@@ -80,7 +84,7 @@ object ChainageMatcher {
         val distToNearestMarker = GeoUtils.distanceMetres(gpsPoint, nearestMarker.point)
 
         // If polyline gave a projection within acceptable distance, use it
-        val finalProjectionPoint = if (bestProjection != null && bestProjection.perpendicularDistance <= minPerpDistance) {
+        val finalProjectionPoint = if (bestProjection != null && bestProjection.perpendicularDistance <= (distToNearestMarker + 20.0)) {
             bestProjection.projectedPoint
         } else {
             nearestMarker.point
@@ -168,9 +172,11 @@ object ChainageMatcher {
             }
         }
 
-        // 4. Carriageway LHS / RHS detection based on road alignment geometry & travel direction
+        // 4. Carriageway LHS / RHS detection based strictly on KML/KMZ route direction
+        // Imported KML/KMZ route direction is the authoritative reference.
+        // Chainage direction and vehicle travel direction NEVER reverse LHS/RHS!
         var detectedSide = "Unknown"
-        if (confidence == MatchConfidence.HIGH || confidence == MatchConfidence.MEDIUM) {
+        if (confidence != MatchConfidence.NO_MATCH) {
             val lowerAlign = matchedAlignmentName.lowercase(Locale.ROOT)
             val lowerRouteName = routeData.name.lowercase(Locale.ROOT)
 
@@ -178,37 +184,25 @@ object ChainageMatcher {
                 detectedSide = "LHS"
             } else if (lowerAlign.contains("rhs") || lowerAlign.contains("right") || lowerRouteName.contains("rhs")) {
                 detectedSide = "RHS"
-            } else if (bestProjection != null && bestProjection.p1 != null && bestProjection.p2 != null && effectiveOffset >= 1.5) {
-                val p1 = bestProjection.p1!!
-                val p2 = bestProjection.p2!!
-                val midLat = Math.toRadians((p1.latitude + p2.latitude + gpsPoint.latitude) / 3.0)
-                val cosMidLat = kotlin.math.cos(midLat)
-
-                val segDx = Math.toRadians(p2.longitude - p1.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
-                val segDy = Math.toRadians(p2.latitude - p1.latitude) * GeoUtils.EARTH_RADIUS_METRES
-
-                val px = Math.toRadians(gpsPoint.longitude - bestProjection.projectedPoint.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
-                val py = Math.toRadians(gpsPoint.latitude - bestProjection.projectedPoint.latitude) * GeoUtils.EARTH_RADIUS_METRES
-
-                // 2D cross product: segDx * py - segDy * px
-                // In East-North coordinates, looking along segment (p1 -> p2),
-                // cross < 0 corresponds to being on the right side of the centerline.
-                val cross = segDx * py - segDy * px
-                val isRightOfAlignment = cross < 0.0
-
-                var isReverseTravel = false
-                if (bearing != null && bearing >= 0f) {
-                    val segBearing = GeoUtils.bearingDegrees(p1, p2)
-                    val diff = (abs(bearing - segBearing) % 360)
-                    val acuteDiff = if (diff > 180) 360 - diff else diff
-                    if (acuteDiff > 90) {
-                        isReverseTravel = true
-                    }
+            } else {
+                // Determine geometric side relative to nearest ordered route segment
+                val segment = if (bestProjection != null && bestProjection.p1 != null && bestProjection.p2 != null) {
+                    Pair(bestProjection.p1!!, bestProjection.p2!!)
+                } else if (sortedMarkers.size >= 2) {
+                    val p1 = if (nearestIndex < sortedMarkers.size - 1) sortedMarkers[nearestIndex].point else sortedMarkers[nearestIndex - 1].point
+                    val p2 = if (nearestIndex < sortedMarkers.size - 1) sortedMarkers[nearestIndex + 1].point else sortedMarkers[nearestIndex].point
+                    Pair(p1, p2)
+                } else {
+                    null
                 }
 
-                detectedSide = when {
-                    isReverseTravel -> if (isRightOfAlignment) "LHS" else "RHS"
-                    else -> if (isRightOfAlignment) "RHS" else "LHS"
+                if (segment != null) {
+                    val lateralOffset = calculateSignedLateralOffsetMetres(gpsPoint, segment.first, segment.second)
+                    detectedSide = when {
+                        lateralOffset > 0.0 -> "LHS"
+                        lateralOffset < 0.0 -> "RHS"
+                        else -> previousResult?.detectedSide ?: "RHS"
+                    }
                 }
             }
         }
@@ -224,5 +218,34 @@ object ChainageMatcher {
             matchedAlignmentName = matchedAlignmentName,
             detectedSide = detectedSide
         )
+    }
+
+    /**
+     * Calculates the signed lateral distance in metres of [point] relative to the
+     * ordered route segment from [p1] to [p2].
+     *
+     * Looking forward along the ordered direction from [p1] to [p2]:
+     * - Positive (> 0): Point is strictly to the LEFT (LHS) of the route.
+     * - Negative (< 0): Point is strictly to the RIGHT (RHS) of the route.
+     * - Zero (= 0): Point is on the route.
+     */
+    fun calculateSignedLateralOffsetMetres(point: GeoPoint, p1: GeoPoint, p2: GeoPoint): Double {
+        val midLat = Math.toRadians((p1.latitude + p2.latitude + point.latitude) / 3.0)
+        val cosMidLat = kotlin.math.cos(midLat)
+
+        // Vector along segment (p1 -> p2) in metres (East, North)
+        val segDx = Math.toRadians(p2.longitude - p1.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
+        val segDy = Math.toRadians(p2.latitude - p1.latitude) * GeoUtils.EARTH_RADIUS_METRES
+        val segLen = kotlin.math.sqrt(segDx * segDx + segDy * segDy)
+        if (segLen < 1e-4) return 0.0
+
+        // Vector from p1 to query point in metres (East, North)
+        val ptDx = Math.toRadians(point.longitude - p1.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosMidLat
+        val ptDy = Math.toRadians(point.latitude - p1.latitude) * GeoUtils.EARTH_RADIUS_METRES
+
+        // 2D Cross Product: segDx * ptDy - segDy * ptDx
+        // Positive = LHS, Negative = RHS
+        val cross = segDx * ptDy - segDy * ptDx
+        return cross / segLen
     }
 }

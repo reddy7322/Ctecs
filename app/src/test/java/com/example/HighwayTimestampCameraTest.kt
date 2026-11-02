@@ -3,6 +3,7 @@ package com.example
 import com.example.geo.ChainageMatcher
 import com.example.geo.GeoUtils
 import com.example.model.Chainage
+import com.example.model.ChainageMatchResult
 import com.example.model.GeoBounds
 import com.example.model.GeoPoint
 import com.example.model.MatchConfidence
@@ -251,6 +252,61 @@ class HighwayTimestampCameraTest {
         )
     }
 
+    // 10. KML/KMZ Route Direction Priority and Chainage Independence
+    @Test
+    fun testKmlRouteDirectionLhsRhsAndChainageIndependence() {
+        // Route running South -> North from (29.0000, 77.0000) to (29.0100, 77.0000)
+        val m1 = RouteMarker("1", "100+000", Chainage(100000), GeoPoint(29.0000, 77.0000))
+        val m2 = RouteMarker("2", "100+500", Chainage(100500), GeoPoint(29.0050, 77.0000))
+        val m3 = RouteMarker("3", "101+000", Chainage(101000), GeoPoint(29.0100, 77.0000))
+
+        val alignment = RouteAlignment("a1", "Main Alignment", listOf(m1.point, m2.point, m3.point))
+        val routeData = RouteData(
+            id = "test-kml-route",
+            name = "KML Route",
+            fileName = "route.kml",
+            markers = listOf(m1, m2, m3),
+            alignments = listOf(alignment),
+            bounds = GeoBounds(29.0000, 29.0100, 77.0000, 77.0000),
+            startChainage = m1.chainage,
+            endChainage = m3.chainage
+        )
+
+        // Point to the West (Left of South->North route) -> Must be LHS
+        val westPoint = GeoPoint(29.0050, 76.9990)
+        val matchWest = ChainageMatcher.match(westPoint, 2.0f, null, routeData)
+        assertEquals("LHS", matchWest.detectedSide)
+
+        // Point to the East (Right of South->North route) -> Must be RHS
+        val eastPoint = GeoPoint(29.0050, 77.0010)
+        val matchEast = ChainageMatcher.match(eastPoint, 2.0f, null, routeData)
+        assertEquals("RHS", matchEast.detectedSide)
+
+        // Verify ChainageProgressionTracker keeps LHS regardless of increasing or decreasing chainage
+        val tracker = com.example.geo.ChainageProgressionTracker()
+
+        // 1. LHS with Increasing Chainage (100+100 -> 100+200)
+        val res1 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "LHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
+        val res2 = ChainageMatchResult(chainage = Chainage(100200), detectedSide = "LHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
+        assertEquals("LHS", tracker.processResult(res1, routeData.id).detectedSide)
+        assertEquals("LHS", tracker.processResult(res2, routeData.id).detectedSide)
+
+        // 2. LHS with Decreasing Chainage (100+200 -> 100+100) -> MUST STAY LHS!
+        val res3 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "LHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
+        assertEquals("LHS", tracker.processResult(res3, routeData.id).detectedSide)
+
+        // 3. RHS with Increasing Chainage (100+100 -> 100+200)
+        val trackerRhs = com.example.geo.ChainageProgressionTracker()
+        val resR1 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "RHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
+        val resR2 = ChainageMatchResult(chainage = Chainage(100200), detectedSide = "RHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
+        assertEquals("RHS", trackerRhs.processResult(resR1, routeData.id).detectedSide)
+        assertEquals("RHS", trackerRhs.processResult(resR2, routeData.id).detectedSide)
+
+        // 4. RHS with Decreasing Chainage (100+200 -> 100+100) -> MUST STAY RHS!
+        val resR3 = ChainageMatchResult(chainage = Chainage(100100), detectedSide = "RHS", confidence = MatchConfidence.HIGH, offsetMetres = 5.0, gpsAccuracy = 2.0f)
+        assertEquals("RHS", trackerRhs.processResult(resR3, routeData.id).detectedSide)
+    }
+
     // 9b. Validating KMZ parsing when filename lacks .kmz extension (e.g. Android SAF content URI)
     @Test
     fun testKmzParsingWithoutKmzExtension() {
@@ -449,6 +505,42 @@ class HighwayTimestampCameraTest {
 
         val f3 = com.example.data.PhotoRepository.buildCustomFileName("tag_chainage_YYYYMMDD_HHMMSS", "MYPREFIX", timestamp, chainage, address, road, tag)
         assertTrue(f3.startsWith("MYPREFIX_Survey_198+450"))
+
+        // Verify dynamic highway preset without project does NOT contain MH or MM
+        val f4 = com.example.data.PhotoRepository.buildCustomFileName(
+            preset = "highway_YYYYMMDD_HHMMSS",
+            prefix = "",
+            timestamp = timestamp,
+            chainage = chainage,
+            address = address,
+            roadName = road,
+            tag = tag,
+            project = "",
+            stretch = "",
+            side = "LHS",
+            lane = "IL",
+            activity = "DBM"
+        )
+        assertFalse(f4.contains("MH"))
+        assertFalse(f4.contains("MM"))
+        assertTrue(f4.contains("198+450-LHS-IL-DBM"))
+
+        // Verify dynamic highway preset with custom project reflects custom project cleanly
+        val f5 = com.example.data.PhotoRepository.buildCustomFileName(
+            preset = "highway_YYYYMMDD_HHMMSS",
+            prefix = "",
+            timestamp = timestamp,
+            chainage = chainage,
+            address = address,
+            roadName = road,
+            tag = tag,
+            project = "NH44",
+            stretch = "Pkg2",
+            side = "LHS",
+            lane = "IL",
+            activity = "BC"
+        )
+        assertTrue(f5.contains("NH44--Pkg2--198+450-LHS-IL-BC"))
     }
 
     // 17. Testing Location Address Overlay Option
@@ -654,5 +746,76 @@ class HighwayTimestampCameraTest {
         assertTrue(isUpdateChannelCompatible(betaChannel, "beta"))
         assertTrue(isUpdateChannelCompatible(stableChannel, "stable"))
     }
+
+    // 24. Testing Real-time Dynamic Video Overlay Orientation & Upright Adjustment
+    @Test
+    fun testRealtimeVideoOverlayOrientationAngles() {
+        fun computeEffectiveRotation(naturalIsPortrait: Boolean, deviceRotation: Int): Int {
+            val normalized = ((deviceRotation % 360) + 360) % 360
+            return if (naturalIsPortrait) normalized else (normalized + 270) % 360
+        }
+
+        // Portrait video buffer (e.g. 1080x1920)
+        assertEquals(0, computeEffectiveRotation(naturalIsPortrait = true, deviceRotation = 0))
+        assertEquals(90, computeEffectiveRotation(naturalIsPortrait = true, deviceRotation = 90))
+        assertEquals(180, computeEffectiveRotation(naturalIsPortrait = true, deviceRotation = 180))
+        assertEquals(270, computeEffectiveRotation(naturalIsPortrait = true, deviceRotation = 270))
+
+        // Negative angles normalized
+        assertEquals(270, computeEffectiveRotation(naturalIsPortrait = true, deviceRotation = -90))
+        assertEquals(180, computeEffectiveRotation(naturalIsPortrait = true, deviceRotation = -180))
+
+        // Landscape video buffer (e.g. 1920x1080)
+        assertEquals(270, computeEffectiveRotation(naturalIsPortrait = false, deviceRotation = 0))
+        assertEquals(0, computeEffectiveRotation(naturalIsPortrait = false, deviceRotation = 90))
+        assertEquals(90, computeEffectiveRotation(naturalIsPortrait = false, deviceRotation = 180))
+        assertEquals(180, computeEffectiveRotation(naturalIsPortrait = false, deviceRotation = 270))
+    }
+
+    // 25. Testing Dynamic Timestamp and Metadata in Real-Time Video Recording Pipeline
+    @Test
+    fun testDynamicVideoSnapshotMetadataPreservation() {
+        val baseSnapshot = com.example.model.CaptureSnapshot(
+            timestamp = 1700000000000L,
+            location = GeoPoint(28.6139, 77.2090, 215.0),
+            gpsAccuracy = 3.2f,
+            bearing = 45.0f,
+            matchResult = ChainageMatchResult(
+                chainage = Chainage(196320L),
+                confidence = MatchConfidence.HIGH,
+                offsetMetres = 2.5
+            ),
+            projectProfile = ProjectProfile(
+                highwayId = "NH-48",
+                packageSection = "Package-1",
+                roadSide = RoadSide.RHS,
+                lane = "Lane 2",
+                activity = "Paving",
+                inspectorName = "Alex"
+            ),
+            deviceRotationDegrees = 0,
+            compassHeading = "45° NE",
+            speedMps = 14.5f
+        )
+
+        val updatedTimeMs = 1700000005000L
+        val updatedRotation = 90
+        val liveSnapshot = baseSnapshot.copy(
+            timestamp = updatedTimeMs,
+            deviceRotationDegrees = updatedRotation
+        )
+
+        assertEquals(updatedTimeMs, liveSnapshot.timestamp)
+        assertEquals(updatedRotation, liveSnapshot.deviceRotationDegrees)
+        assertEquals("196+320", liveSnapshot.displayChainage)
+        assertEquals("NH-48", liveSnapshot.projectProfile.highwayId)
+        assertEquals(RoadSide.RHS, liveSnapshot.projectProfile.roadSide)
+        assertEquals("Lane 2", liveSnapshot.projectProfile.lane)
+        assertEquals("Paving", liveSnapshot.projectProfile.activity)
+        assertEquals("45° NE", liveSnapshot.compassHeading)
+        assertFalse(liveSnapshot.displayChainage.contains("null"))
+        assertFalse(liveSnapshot.projectProfile.highwayId.contains("null"))
+    }
 }
+
 

@@ -49,7 +49,9 @@ fun MiniMapPreview(
     routeData: RouteData?,
     highwayTag: String,
     modifier: Modifier = Modifier,
-    gpsAccuracy: Float? = null
+    gpsAccuracy: Float? = null,
+    showGpsBadge: Boolean = false,
+    showProjectTag: Boolean = false
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -225,8 +227,8 @@ fun MiniMapPreview(
             }
         }
 
-        // Top-left GPS Accuracy pill
-        if (gpsAccuracy != null) {
+        // Top-left GPS Accuracy pill (only shown when showGpsBadge is explicitly true)
+        if (showGpsBadge && gpsAccuracy != null) {
             val isGood = gpsAccuracy <= 10f
             Row(
                 modifier = Modifier
@@ -264,23 +266,25 @@ fun MiniMapPreview(
                 .padding(top = 4.dp, end = 5.dp)
         )
 
-        // Bottom Center Highway / Project tag pill (e.g. MH)
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 5.dp)
-                .background(Color(0xD9000000), RoundedCornerShape(8.dp))
-                .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 1.5.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = highwayTag.ifBlank { "MH" },
-                color = Color.White,
-                fontSize = 8.5.sp,
-                fontWeight = FontWeight.Black,
-                maxLines = 1
-            )
+        // Bottom Center Highway / Project tag pill (only shown when showProjectTag is explicitly true)
+        if (showProjectTag && highwayTag.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 5.dp)
+                    .background(Color(0xD9000000), RoundedCornerShape(8.dp))
+                    .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 1.5.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = highwayTag,
+                    color = Color.White,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1
+                )
+            }
         }
     }
 }

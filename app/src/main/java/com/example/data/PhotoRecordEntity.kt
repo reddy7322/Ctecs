@@ -21,7 +21,7 @@ data class PhotoRecordEntity(
     val isManualChainage: Boolean = false,
     val offsetMetres: Float = 0f,
     val highwayId: String = "NH-58",
-    val packageSection: String = "MM",
+    val packageSection: String = "",
     val roadSide: String = "RHS",
     val lane: String = "I/L",
     val activity: String = "DBM",

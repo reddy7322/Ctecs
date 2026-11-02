@@ -34,31 +34,77 @@ class PhotoRepository(
             chainage: String,
             address: String,
             roadName: String,
-            tag: String
+            tag: String,
+            project: String = "",
+            stretch: String = "",
+            side: String = "",
+            lane: String = "",
+            workType: String = "",
+            activity: String = "",
+            isVideo: Boolean = false
         ): String {
             val dateFmtUnder = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
             val dateFmtPlain = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
             val dUnder = dateFmtUnder.format(Date(timestamp))
             val dPlain = dateFmtPlain.format(Date(timestamp))
 
-            val cleanChain = chainage.replace("[^a-zA-Z0-9+]".toRegex(), "").ifBlank { "0+000" }
-            val cleanAddr = address.replace("[^a-zA-Z0-9]".toRegex(), "").ifBlank { "Location" }
-            val cleanTag = tag.replace("[^a-zA-Z0-9]".toRegex(), "").ifBlank { "Survey" }
+            fun clean(s: String?): String {
+                if (s == null) return ""
+                val t = s.trim()
+                if (t.isEmpty() || t.equals("None", ignoreCase = true) || t.equals("Null", ignoreCase = true) || t.equals("N/A", ignoreCase = true)) return ""
+                return t.replace("[^a-zA-Z0-9_+]".toRegex(), "")
+            }
+
+            val cleanProj = clean(project)
+            val cleanStretch = clean(stretch)
+            val cleanChain = clean(chainage).ifBlank { "189+320" }
+            val cleanSide = clean(side)
+            val cleanLane = clean(lane)
+            val cleanAct = clean(activity).ifBlank { clean(workType) }
+
+            val roadParts = mutableListOf<String>()
+            if (cleanChain.isNotBlank()) roadParts.add(cleanChain)
+            if (cleanSide.isNotBlank()) roadParts.add(cleanSide)
+            if (cleanLane.isNotBlank()) roadParts.add(cleanLane)
+            if (cleanAct.isNotBlank()) roadParts.add(cleanAct)
+            val roadDetails = roadParts.joinToString("-")
+
+            val projParts = mutableListOf<String>()
+            if (cleanProj.isNotBlank()) projParts.add(cleanProj)
+            if (cleanStretch.isNotBlank()) projParts.add(cleanStretch)
+
+            val highwaySeg = when {
+                projParts.isNotEmpty() && roadDetails.isNotEmpty() -> "${projParts.joinToString("--")}--$roadDetails"
+                projParts.isNotEmpty() -> projParts.joinToString("--")
+                else -> roadDetails
+            }
+
+            val cleanAddr = clean(address).ifBlank { "address" }
+            val cleanTag = clean(tag).ifBlank { "tag" }
+            val uniqueId = java.util.UUID.randomUUID().toString().replace("-", "")
 
             val rawName = when (preset) {
+                "TimePhoto_YYYYMMDD_HHMMSS" -> if (isVideo) "TimeVideo_$dUnder" else "TimePhoto_$dUnder"
                 "YYYYMMDD_HHMMSS" -> dUnder
                 "YYYYMMDDHHMMSS" -> dPlain
+                "YYYYMMDD_HHMMSS_highway" -> "${dUnder}_$highwaySeg"
                 "YYYYMMDD_HHMMSS_address" -> "${dUnder}_$cleanAddr"
+                "IndexNumber_YYYYMMDD_HHMMSS_address" -> "IndexNumber_${dUnder}_$cleanAddr"
+                "YYYYMMDD_HHMMSS_uuid" -> "${dUnder}_$uniqueId"
+                "highway_address_YYYYMMDD_HHMMSS" -> "${highwaySeg}_${cleanAddr}_$dUnder"
+                "address_highway_YYYYMMDD_HHMMSS" -> "${cleanAddr}_${highwaySeg}_$dUnder"
+                "highway_YYYYMMDD_HHMMSS" -> "${highwaySeg}_$dUnder"
+                "tag_highway_YYYYMMDD_HHMMSS" -> "${cleanTag}_${highwaySeg}_$dUnder"
                 "YYYYMMDD_HHMMSS_chainage" -> "${dUnder}_$cleanChain"
-                "IndexNumber_YYYYMMDD_HHMMSS_address" -> "IMG_${dUnder}_$cleanAddr"
                 "chainage_address_YYYYMMDD_HHMMSS" -> "${cleanChain}_${cleanAddr}_$dUnder"
                 "tag_chainage_YYYYMMDD_HHMMSS" -> "${cleanTag}_${cleanChain}_$dUnder"
-                else -> "TimePhoto_$dUnder"
+                else -> "${highwaySeg}_$dUnder"
             }
 
             val pfx = prefix.trim().replace("[^a-zA-Z0-9_-]".toRegex(), "")
-            val finalName = if (pfx.isNotBlank()) "${pfx}_$rawName" else rawName
-            return "$finalName.jpg"
+            val finalBase = if (pfx.isNotBlank()) "${pfx}_$rawName" else rawName
+            val ext = if (isVideo) ".mp4" else ".jpg"
+            return "$finalBase$ext"
         }
     }
 
@@ -74,13 +120,20 @@ class PhotoRepository(
                 snapshot.projectProfile.highwayId
             }
             val fileName = buildCustomFileName(
-                preset = "TimePhoto_YYYYMMDD_HHMMSS",
-                prefix = "",
+                preset = snapshot.filenameFormatPreset,
+                prefix = snapshot.customFilenamePrefix,
                 timestamp = snapshot.timestamp,
                 chainage = snapshot.displayChainage,
                 address = addrText,
                 roadName = snapshot.projectProfile.highwayId,
-                tag = snapshot.overlayConfig.customTag
+                tag = snapshot.overlayConfig.customTag,
+                project = snapshot.projectProfile.highwayId,
+                stretch = snapshot.projectProfile.packageSection,
+                side = snapshot.projectProfile.roadSide.label,
+                lane = snapshot.projectProfile.lane,
+                workType = snapshot.projectProfile.workType,
+                activity = snapshot.projectProfile.activity,
+                isVideo = false
             )
 
             // Reliable App-Specific Storage (guaranteed writable across all Android versions)

@@ -31,7 +31,7 @@ data class ProjectProfile(
      * Line 1: Project Name | Stretch | Work Type | {Chainage} { RHS } { I/L} {DBM}
      * Line 2: { Custom Comment } (handled via getCustomCommentLine())
      */
-    fun buildHighwayText(chainageFormatted: String): String {
+    fun buildHighwayText(chainageFormatted: String, includeProjectName: Boolean = true): String {
         fun isValid(s: String?): Boolean {
             if (s == null) return false
             val t = s.trim()
@@ -44,7 +44,7 @@ data class ProjectProfile(
 
         val parts = mutableListOf<String>()
 
-        if (isValid(highwayId)) parts.add(highwayId.trim())
+        if (includeProjectName && isValid(highwayId)) parts.add(highwayId.trim())
         if (isValid(packageSection)) parts.add(packageSection.trim())
 
         // Work Type: MM, RM, LIE. "None" or blank means empty Work type

@@ -36,6 +36,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.BrandingWatermark
 import androidx.compose.material.icons.filled.CameraAlt
@@ -69,6 +70,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -185,9 +187,10 @@ fun SettingsScreen(
     var showRestoreDialog by remember { mutableStateOf(false) }
     var isPreviewLandscape by remember { mutableStateOf(false) }
 
-    // Dialog states for Photo & Video Resolution selection
+    // Dialog states for Photo & Video Resolution selection and File Name Format
     var showPhotoResolutionDialog by remember { mutableStateOf(false) }
     var showVideoResolutionDialog by remember { mutableStateOf(false) }
+    var showFileNameFormatDialog by remember { mutableStateOf(false) }
 
     // Query real camera capability lists
     val photoResolutions = remember(isFrontCamera) {
@@ -1810,15 +1813,174 @@ fun SettingsScreen(
             // ====================================================
             // 12. STORAGE, FILENAMES AND GALLERY
             // ====================================================
-            if (matchesSearch("storage filenames gallery prefix folder path dcim movies", searchQuery)) {
+            if (matchesSearch("storage filenames gallery prefix folder path dcim movies file name format save format photos videos", searchQuery)) {
+                val currentPresetOption = remember(currentCameraSettings.filenameFormatPreset) {
+                    com.example.model.FilenameFormats.findPreset(currentCameraSettings.filenameFormatPreset)
+                }
+                val dynamicPreview = remember(currentPresetOption, currentProject) {
+                    currentPresetOption.formatDynamicPreview(
+                        project = currentProject.highwayId,
+                        stretch = currentProject.packageSection,
+                        chainage = "189+320",
+                        side = currentProject.roadSide.label,
+                        lane = currentProject.lane,
+                        workType = currentProject.workType,
+                        activity = currentProject.activity
+                    )
+                }
+                var showInlineFormatDropdown by remember { mutableStateOf(false) }
+
                 SmartDropdownSection(
                     title = "12. Storage, Filenames and Gallery",
-                    subtitle = "Folder: DCIM/HighwayCamera",
+                    subtitle = "Format: $dynamicPreview",
                     icon = Icons.Default.Storage,
                     accentColor = Color(0xFF38BDF8),
                     isExpanded = expandedSections["storage"] ?: false,
                     onToggleExpand = { expandedSections["storage"] = !(expandedSections["storage"] ?: false) }
                 ) {
+                    // Smart Dynamic Option: File Name Save Format (Photos & Videos)
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                            .testTag("file_name_format_card"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showFileNameFormatDialog = true },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "File name format",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "File Name Save Format",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Photos & Videos (Tap to choose format)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF38BDF8)
+                                        )
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { showInlineFormatDropdown = !showInlineFormatDropdown }) {
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowDropDown,
+                                            contentDescription = "Dropdown format selector",
+                                            tint = Color(0xFF38BDF8)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Dynamic Live Preview Box
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = androidx.compose.foundation.BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                                    .clickable { showFileNameFormatDialog = true }
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "Current dynamic filename:",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "$dynamicPreview.jpg",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38BDF8)
+                                    )
+                                    Text(
+                                        text = "$dynamicPreview.mp4 (Video)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38BDF8).copy(alpha = 0.8f)
+                                    )
+                                }
+                            }
+
+                            // Smart Dropdown Menu for Quick Selection
+                            DropdownMenu(
+                                expanded = showInlineFormatDropdown,
+                                onDismissRequest = { showInlineFormatDropdown = false },
+                                modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                            ) {
+                                com.example.model.FilenameFormats.PRESETS.forEach { opt ->
+                                    val isSel = opt.id.equals(currentCameraSettings.filenameFormatPreset, ignoreCase = true)
+                                    val preview = opt.formatDynamicPreview(
+                                        project = currentProject.highwayId,
+                                        stretch = currentProject.packageSection,
+                                        chainage = "189+320",
+                                        side = currentProject.roadSide.label,
+                                        lane = currentProject.lane,
+                                        workType = currentProject.workType,
+                                        activity = currentProject.activity
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = preview,
+                                                    color = if (isSel) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface,
+                                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                                    fontSize = 13.sp,
+                                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                                )
+                                                RadioButton(
+                                                    selected = isSel,
+                                                    onClick = {
+                                                        viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(filenameFormatPreset = opt.id))
+                                                        showInlineFormatDropdown = false
+                                                    },
+                                                    colors = RadioButtonDefaults.colors(
+                                                        selectedColor = Color(0xFF38BDF8)
+                                                    )
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(filenameFormatPreset = opt.id))
+                                            showInlineFormatDropdown = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = currentCameraSettings.customFilenamePrefix,
                         onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customFilenamePrefix = it)) },
@@ -2065,6 +2227,20 @@ fun SettingsScreen(
             containerColor = MaterialTheme.colorScheme.surface
         )
     }
+
+    // Modal File Name Format Selection Dialog (Matching reference screenshot)
+    if (showFileNameFormatDialog) {
+        FileNameFormatDialog(
+            currentSelectionId = currentCameraSettings.filenameFormatPreset,
+            currentProject = currentProject,
+            onSelect = { presetId ->
+                viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(filenameFormatPreset = presetId))
+                viewModel.showToast("File name format updated")
+                showFileNameFormatDialog = false
+            },
+            onDismiss = { showFileNameFormatDialog = false }
+        )
+    }
 }
 
 /**
@@ -2140,6 +2316,115 @@ private fun ResolutionSelectionDialog(
         },
         containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp)
+    )
+}
+
+/**
+ * Clean, scrollable modal selection dialog for File Name Formats matching reference screenshot.
+ * Displays all 11 format presets dynamically evaluated with current timestamp and highway metadata.
+ */
+@Composable
+private fun FileNameFormatDialog(
+    currentSelectionId: String,
+    currentProject: ProjectProfile,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF38BDF8).copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "File name format",
+                            tint = Color(0xFF0284C7),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Text(
+                        text = "File name format",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0284C7)
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(
+                    thickness = 1.8.dp,
+                    color = Color(0xFF38BDF8)
+                )
+            }
+        },
+        text = {
+            val presets = remember { com.example.model.FilenameFormats.PRESETS }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                presets.forEach { option ->
+                    val isSelected = option.id.equals(currentSelectionId, ignoreCase = true)
+                    val previewText = option.formatDynamicPreview(
+                        project = currentProject.highwayId,
+                        stretch = currentProject.packageSection,
+                        chainage = "189+320",
+                        side = currentProject.roadSide.label,
+                        lane = currentProject.lane,
+                        workType = currentProject.workType,
+                        activity = currentProject.activity
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(option.id) }
+                            .padding(vertical = 11.dp, horizontal = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = previewText,
+                            fontSize = 13.5.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        )
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = { onSelect(option.id) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = Color(0xFF0284C7),
+                                unselectedColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+                            )
+                        )
+                    }
+                    HorizontalDivider(
+                        thickness = 0.6.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = Color(0xFF0284C7), fontWeight = FontWeight.Bold)
+            }
+        }
     )
 }
 

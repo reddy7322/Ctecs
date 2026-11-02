@@ -82,6 +82,7 @@ fun CameraPreview(
     videoResolution: String = "1920 x 1080",
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
+    overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -133,8 +134,9 @@ fun CameraPreview(
     }
 
     // Configure Use Cases: In photo mode, only IMAGE_CAPTURE is active.
-    // When isVideoMode is toggled to true, VIDEO_CAPTURE is enabled.
-    LaunchedEffect(hasCameraPermission, isVideoMode) {
+    // When isVideoMode is toggled to true, VIDEO_CAPTURE is enabled and
+    // real-time video overlay effect is attached.
+    LaunchedEffect(hasCameraPermission, isVideoMode, overlayManager) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
             controller.isPinchToZoomEnabled = true
@@ -150,7 +152,20 @@ fun CameraPreview(
                         controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
                     } catch (ignored: Exception) {}
                 }
+
+                // Attach real-time video overlay effect directly to CameraX pipeline
+                val effect = overlayManager?.getOrCreateEffect()
+                if (effect != null) {
+                    try {
+                        controller.setEffects(setOf(effect))
+                    } catch (e: Exception) {
+                        Log.w("CameraPreview", "Failed to attach real-time video overlay effect: ${e.message}", e)
+                    }
+                }
             } else {
+                try {
+                    controller.clearEffects()
+                } catch (ignored: Exception) {}
                 try {
                     controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
                 } catch (ignored: Exception) {}
@@ -498,6 +513,7 @@ class VideoRecordingManager(private val context: Context) {
     private var activeRecording: Recording? = null
     var currentRecordingFile: File? = null
         private set
+    var overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null
 
     fun isRecordingActive(): Boolean = activeRecording != null
 
@@ -521,6 +537,17 @@ class VideoRecordingManager(private val context: Context) {
                     }
                 }
             }
+
+            // Ensure real-time video overlay effect is actively bound to video capture use case
+            val effect = overlayManager?.getOrCreateEffect()
+            if (effect != null) {
+                try {
+                    controller.setEffects(setOf(effect))
+                } catch (e: Exception) {
+                    Log.w("VideoRecordingManager", "Effect attachment: ${e.message}")
+                }
+            }
+            overlayManager?.notifyRecordingStarted()
 
             val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -549,6 +576,7 @@ class VideoRecordingManager(private val context: Context) {
                 val recFile = currentRecordingFile
                 if (event is VideoRecordEvent.Finalize) {
                     activeRecording = null
+                    overlayManager?.notifyRecordingStopped()
                 }
                 onEvent(event, recFile)
             }
@@ -572,6 +600,7 @@ class VideoRecordingManager(private val context: Context) {
             activeRecording = pendingRecording
         } catch (e: Throwable) {
             activeRecording = null
+            overlayManager?.notifyRecordingStopped()
             onError(e)
         }
     }
@@ -593,5 +622,6 @@ class VideoRecordingManager(private val context: Context) {
             activeRecording?.stop()
         } catch (ignored: Exception) {}
         activeRecording = null
+        overlayManager?.notifyRecordingStopped()
     }
 }

@@ -119,7 +119,9 @@ data class CaptureSnapshot(
     val deviceRotationDegrees: Int = 0,
     val compassHeading: String = "",
     val compassAzimuth: Float = 0f,
-    val speedMps: Float? = null
+    val speedMps: Float? = null,
+    val filenameFormatPreset: String = "highway_YYYYMMDD_HHMMSS",
+    val customFilenamePrefix: String = ""
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage

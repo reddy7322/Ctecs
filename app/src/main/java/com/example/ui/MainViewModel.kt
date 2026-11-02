@@ -117,6 +117,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _toastMessage.value = null
     }
 
+    // Page Loader State & Percentage Animations
+    private val _isPageLoading = MutableStateFlow(true)
+    val isPageLoading: StateFlow<Boolean> = _isPageLoading.asStateFlow()
+
+    private val _pageLoadingProgress = MutableStateFlow(0.08f)
+    val pageLoadingProgress: StateFlow<Float> = _pageLoadingProgress.asStateFlow()
+
+    private val _pageLoadingStatus = MutableStateFlow("Starting System Engine...")
+    val pageLoadingStatus: StateFlow<String> = _pageLoadingStatus.asStateFlow()
+
+    fun showPageLoader(status: String = "Loading...", initialProgress: Float = 0f) {
+        _pageLoadingStatus.value = status
+        _pageLoadingProgress.value = initialProgress
+        _isPageLoading.value = true
+    }
+
+    fun updatePageLoader(progress: Float, status: String? = null) {
+        _pageLoadingProgress.value = progress.coerceIn(0f, 1f)
+        if (status != null) {
+            _pageLoadingStatus.value = status
+        }
+    }
+
+    fun hidePageLoader() {
+        _pageLoadingProgress.value = 1f
+        _pageLoadingStatus.value = "Ready"
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(200)
+            _isPageLoading.value = false
+        }
+    }
+
     // Location State
     val locationState: StateFlow<LocationState> = locationTracker.locationState
 
@@ -289,6 +321,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Silent background check for updates
         viewModelScope.launch {
             checkForAppUpdate(isManual = false)
+        }
+
+        // Smart Startup Page Loader progression
+        viewModelScope.launch {
+            _pageLoadingProgress.value = 0.18f
+            _pageLoadingStatus.value = "Starting System Engine..."
+            kotlinx.coroutines.delay(220)
+
+            _pageLoadingProgress.value = 0.45f
+            _pageLoadingStatus.value = "Calibrating Sensors & GPS..."
+            kotlinx.coroutines.delay(260)
+
+            _pageLoadingProgress.value = 0.78f
+            _pageLoadingStatus.value = "Loading Route Alignments..."
+            kotlinx.coroutines.delay(280)
+
+            _pageLoadingProgress.value = 0.96f
+            _pageLoadingStatus.value = "Configuring Realtime Overlays..."
+            kotlinx.coroutines.delay(240)
+
+            _pageLoadingProgress.value = 1.0f
+            _pageLoadingStatus.value = "Ready"
+            kotlinx.coroutines.delay(260)
+
+            _isPageLoading.value = false
         }
     }
 
@@ -634,7 +691,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             activeRoute = activeRouteData.value,
             deviceRotationDegrees = rotationDegrees.value.toInt(),
             compassHeading = compassState.value.displayHeading,
-            compassAzimuth = compassState.value.azimuthDegrees
+            compassAzimuth = compassState.value.azimuthDegrees,
+            filenameFormatPreset = cameraSettings.value.filenameFormatPreset,
+            customFilenamePrefix = cameraSettings.value.customFilenamePrefix
         )
     }
 
@@ -677,13 +736,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun processRecordedVideo(context: android.content.Context, rawVideoFile: java.io.File) {
         viewModelScope.launch {
-            showToast("Saving video with dynamic overlays...", ToastType.INFO)
-
             val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
             val defaultSnapshot = createCurrentSnapshot()
 
-            val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-            val fileName = "VID_${timeStamp}.mp4"
+            val addrText = if (defaultSnapshot.overlayConfig.locationAddressOption != "None") {
+                defaultSnapshot.overlayConfig.customAddressText.ifBlank { defaultSnapshot.overlayConfig.locationAddressOption }
+            } else {
+                defaultSnapshot.projectProfile.highwayId
+            }
+            val fileName = com.example.data.PhotoRepository.buildCustomFileName(
+                preset = cameraSettings.value.filenameFormatPreset,
+                prefix = cameraSettings.value.customFilenamePrefix,
+                timestamp = defaultSnapshot.timestamp,
+                chainage = defaultSnapshot.displayChainage,
+                address = addrText,
+                roadName = defaultSnapshot.projectProfile.highwayId,
+                tag = defaultSnapshot.overlayConfig.customTag,
+                project = defaultSnapshot.projectProfile.highwayId,
+                stretch = defaultSnapshot.projectProfile.packageSection,
+                side = defaultSnapshot.projectProfile.roadSide.label,
+                lane = defaultSnapshot.projectProfile.lane,
+                workType = defaultSnapshot.projectProfile.workType,
+                activity = defaultSnapshot.projectProfile.activity,
+                isVideo = true
+            )
 
             val outputDir = java.io.File(
                 android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES),
@@ -692,15 +768,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             val finalFile = java.io.File(outputDir, fileName)
 
-            val success = com.example.overlay.VideoOverlayProcessor.applyOverlayToVideo(
-                context = context,
-                inputFile = rawVideoFile,
-                outputFile = finalFile,
-                snapshotsTimeline = timelineCopy,
-                defaultSnapshot = defaultSnapshot
-            )
+            // Instant Video Saving:
+            // Since CameraX real-time overlay rendering embeds dynamic timestamp and all enabled
+            // metadata directly into video frames during active recording, the recorded file is
+            // already permanently burnt-in and immediately playable!
+            var isSaved = false
+            if (rawVideoFile.exists() && rawVideoFile.length() > 0) {
+                try {
+                    if (rawVideoFile.renameTo(finalFile)) {
+                        isSaved = true
+                    } else {
+                        rawVideoFile.copyTo(finalFile, overwrite = true)
+                        try { rawVideoFile.delete() } catch (ignored: Exception) {}
+                        isSaved = true
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("MainViewModel", "Direct video save move/copy failed: ${e.message}", e)
+                }
+            }
 
-            if (success && finalFile.exists() && finalFile.length() > 0) {
+            // Fallback: Only if raw recorded file was empty or missing, synthesize or transcode
+            if (!isSaved) {
+                showToast("Finalizing video overlays...", ToastType.INFO)
+                isSaved = com.example.overlay.VideoOverlayProcessor.applyOverlayToVideo(
+                    context = context,
+                    inputFile = rawVideoFile,
+                    outputFile = finalFile,
+                    snapshotsTimeline = timelineCopy,
+                    defaultSnapshot = defaultSnapshot
+                )
+            }
+
+            if (isSaved && finalFile.exists() && finalFile.length() > 0) {
                 android.media.MediaScannerConnection.scanFile(
                     context,
                     arrayOf(finalFile.absolutePath),
