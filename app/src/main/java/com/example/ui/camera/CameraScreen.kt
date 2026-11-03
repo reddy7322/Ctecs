@@ -455,6 +455,7 @@ fun CameraScreen(
             controller = controller,
             currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
             overlayManager = overlayManager,
+            onExposureChanged = { newEv -> viewModel.setExposureCompensation(newEv) },
             modifier = Modifier.fillMaxSize()
         )
 

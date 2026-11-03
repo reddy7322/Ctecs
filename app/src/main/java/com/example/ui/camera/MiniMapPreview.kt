@@ -52,12 +52,16 @@ fun MiniMapPreview(
     gpsAccuracy: Float? = null,
     showGpsBadge: Boolean = false,
     showProjectTag: Boolean = false,
-    overrideIsDark: Boolean? = null
+    overrideIsDark: Boolean? = null,
+    mapType: String = "standard",
+    mapThemePreference: String = "system"
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsState()
-    val mapTheme = com.example.ui.map.rememberMapThemeColors(overrideIsDark ?: com.example.ui.theme.isAppDarkTheme())
+    val isAppDark = com.example.ui.theme.isAppDarkTheme()
+    val isDark = overrideIsDark ?: com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
+    val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
     val appliedModifier = if (modifier == Modifier) {
         Modifier.size(width = 110.dp, height = 80.dp)
@@ -78,7 +82,7 @@ fun MiniMapPreview(
             val h = size.height
             val center = Offset(w / 2f, h / 2f)
 
-            // 1. OpenStreetMap Tile Background (Real geographic map data)
+            // 1. OpenStreetMap or Satellite Tile Background (Real geographic map data)
             var hasOsmTiles = false
             if (centerGeo != null) {
                 val osmBmp = OsmTileManager.renderMapBitmap(
@@ -87,7 +91,8 @@ fun MiniMapPreview(
                     widthPx = w.toInt().coerceAtLeast(1),
                     heightPx = h.toInt().coerceAtLeast(1),
                     zoom = 15,
-                    darkTheme = mapTheme.isDark
+                    darkTheme = mapTheme.isDark,
+                    mapType = mapType
                 )
                 if (osmBmp != null) {
                     drawImage(
@@ -261,9 +266,9 @@ fun MiniMapPreview(
             }
         }
 
-        // Top-right OpenStreetMap Attribution
+        // Top-right Attribution
         Text(
-            text = "© OSM",
+            text = if (mapType.equals("satellite", ignoreCase = true)) "© Esri" else "© OSM",
             color = mapTheme.attributionTextColor,
             fontSize = 7.sp,
             fontWeight = FontWeight.Normal,

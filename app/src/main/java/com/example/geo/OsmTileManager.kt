@@ -7,8 +7,6 @@ import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
-import android.graphics.Rect
-import android.graphics.RectF
 import android.util.Log
 import android.util.LruCache
 import com.example.model.GeoPoint
@@ -30,29 +28,33 @@ import kotlin.math.ln
 import kotlin.math.tan
 
 /**
- * OpenStreetMap Tile Manager and Web Mercator Projection Engine.
- * Complies strictly with the OpenStreetMap Tile Usage Policy:
+ * OpenStreetMap & Satellite Tile Manager and Web Mercator Projection Engine.
+ * Supports:
+ * - Standard OpenStreetMap street-map tiles
+ * - Genuine Satellite imagery tiles (Esri World Imagery ArcGIS MapServer)
  * - Identifiable User-Agent
  * - Local disk and in-memory LRU caching to prevent redundant requests
- * - Asynchronous background fetching that never blocks camera or UI
- * - Graceful offline fallback
- * - Mandatory OpenStreetMap attribution
+ * - Asynchronous background fetching with loading state indicator
+ * - Graceful offline fallback with terrain grid
+ * - Accurate attribution for both providers
  */
 object OsmTileManager {
     private const val TAG = "OsmTileManager"
-    const val ATTRIBUTION = "© OpenStreetMap contributors"
+    const val ATTRIBUTION_STANDARD = "© OpenStreetMap contributors"
+    const val ATTRIBUTION_SATELLITE = "© Esri, Maxar, Earthstar Geographics"
+    const val ATTRIBUTION = ATTRIBUTION_STANDARD
     private const val USER_AGENT = "HighwayTimestampCameraPro/1.0 (CTECS Highway Survey Surveying App; Android)"
     private const val TILE_SIZE = 256
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    // 16 MB in-memory cache for tile bitmaps
-    private val memoryCache = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+    // 24 MB in-memory cache for tile bitmaps (standard & satellite)
+    private val memoryCache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int {
             return value.byteCount
         }
@@ -61,6 +63,10 @@ object OsmTileManager {
     // State flow notifying UI whenever a tile has been downloaded so map can re-render
     private val _tileUpdateEvent = MutableStateFlow(0L)
     val tileUpdateEvent: StateFlow<Long> = _tileUpdateEvent.asStateFlow()
+
+    // State flow tracking whether background tile downloads are currently in flight
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     fun lonToTileX(lon: Double, zoom: Int): Double {
         return (lon + 180.0) / 360.0 * (1 shl zoom)
@@ -94,8 +100,8 @@ object OsmTileManager {
     }
 
     /**
-     * Stitches real OpenStreetMap tiles centered around [center] into a target [Bitmap]
-     * of dimensions [widthPx] x [heightPx], accounting for interactive pan offsets.
+     * Stitches real map tiles (Standard street map or Satellite imagery) centered around [center]
+     * into a target [Bitmap] of dimensions [widthPx] x [heightPx], accounting for interactive pan offsets.
      * Returns null if no cached tiles are ready. Enqueues missing tiles for background download.
      */
     fun renderMapBitmap(
@@ -106,10 +112,12 @@ object OsmTileManager {
         zoom: Int = 15,
         panOffsetX: Float = 0f,
         panOffsetY: Float = 0f,
-        darkTheme: Boolean = true
+        darkTheme: Boolean = true,
+        mapType: String = "standard"
     ): Bitmap? {
         if (widthPx <= 0 || heightPx <= 0) return null
 
+        val isSatellite = mapType.equals("satellite", ignoreCase = true)
         val centerPxX = lonToTileX(center.longitude, zoom) * TILE_SIZE
         val centerPxY = latToTileY(center.latitude, zoom) * TILE_SIZE
 
@@ -128,8 +136,14 @@ object OsmTileManager {
         val canvas = Canvas(destBitmap)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-        if (darkTheme) {
-            // Elegant dark mode matrix: invert brightness into a deep slate palette while preserving road clarity
+        if (isSatellite) {
+            // Satellite imagery: natural aerial photography without inverted colors
+            val satMatrix = ColorMatrix().apply {
+                setSaturation(1.05f)
+            }
+            paint.colorFilter = ColorMatrixColorFilter(satMatrix)
+        } else if (darkTheme) {
+            // Standard Street Map (Dark Mode): invert brightness into a deep slate palette while preserving road clarity
             val darkMatrix = ColorMatrix(floatArrayOf(
                 -0.85f,  0.00f,  0.00f, 0.0f, 215f,
                  0.00f, -0.85f,  0.00f, 0.0f, 215f,
@@ -138,7 +152,7 @@ object OsmTileManager {
             ))
             paint.colorFilter = ColorMatrixColorFilter(darkMatrix)
         } else {
-            // Light theme: crisp, natural OpenStreetMap palette with vibrant roads and clear labels
+            // Standard Street Map (Light Mode): crisp, natural OpenStreetMap palette with vibrant roads and clear labels
             val lightMatrix = ColorMatrix().apply {
                 setSaturation(1.08f)
             }
@@ -147,7 +161,7 @@ object OsmTileManager {
 
         for (tx in minTileX..maxTileX) {
             for (ty in minTileY..maxTileY) {
-                val tile = getTile(context, zoom, tx, ty)
+                val tile = getTile(context, zoom, tx, ty, isSatellite)
                 if (tile != null) {
                     hasAnyTile = true
                     val tileWorldLeft = tx * TILE_SIZE.toDouble()
@@ -164,14 +178,19 @@ object OsmTileManager {
         return if (hasAnyTile) destBitmap else null
     }
 
-    private fun getTile(context: Context, zoom: Int, x: Int, y: Int): Bitmap? {
-        val key = "$zoom/$x/$y"
+    private fun getTile(context: Context, zoom: Int, x: Int, y: Int, isSatellite: Boolean): Bitmap? {
+        val typeKey = if (isSatellite) "satellite" else "standard"
+        val key = "$typeKey/$zoom/$x/$y"
+
         // 1. In-memory LRU cache
         memoryCache.get(key)?.let { return it }
 
         // 2. Disk cache
-        val cacheDir = File(context.cacheDir, "osm_tiles")
-        val tileFile = File(cacheDir, "$zoom/$x/$y.png")
+        val ext = if (isSatellite) "jpg" else "png"
+        val typeFolder = if (isSatellite) "satellite" else "standard"
+        val cacheDir = File(context.cacheDir, "osm_tiles/$typeFolder")
+        val tileFile = File(cacheDir, "$zoom/$x/$y.$ext")
+
         if (tileFile.exists() && tileFile.length() > 0) {
             try {
                 val bmp = BitmapFactory.decodeFile(tileFile.absolutePath)
@@ -184,23 +203,47 @@ object OsmTileManager {
             }
         }
 
+        // Backward compatibility fallback for standard tiles cached previously under root "osm_tiles"
+        if (!isSatellite) {
+            val legacyFile = File(context.cacheDir, "osm_tiles/$zoom/$x/$y.png")
+            if (legacyFile.exists() && legacyFile.length() > 0) {
+                try {
+                    val bmp = BitmapFactory.decodeFile(legacyFile.absolutePath)
+                    if (bmp != null) {
+                        memoryCache.put(key, bmp)
+                        return bmp
+                    }
+                } catch (ignored: Exception) {}
+            }
+        }
+
         // 3. Fetch asynchronously
-        fetchTileAsync(context, zoom, x, y)
+        fetchTileAsync(context, zoom, x, y, isSatellite)
         return null
     }
 
     private val pendingFetches = mutableSetOf<String>()
 
-    private fun fetchTileAsync(context: Context, zoom: Int, x: Int, y: Int) {
-        val key = "$zoom/$x/$y"
+    private fun fetchTileAsync(context: Context, zoom: Int, x: Int, y: Int, isSatellite: Boolean) {
+        val typeKey = if (isSatellite) "satellite" else "standard"
+        val key = "$typeKey/$zoom/$x/$y"
+
         synchronized(pendingFetches) {
             if (pendingFetches.contains(key)) return
             pendingFetches.add(key)
+            _isLoading.value = true
         }
 
         scope.launch {
             try {
-                val url = "https://tile.openstreetmap.org/$zoom/$x/$y.png"
+                val url = if (isSatellite) {
+                    // ArcGIS World Imagery tile URL format: {zoom}/{row_y}/{col_x}
+                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$zoom/$y/$x"
+                } else {
+                    // OpenStreetMap tile URL format: {zoom}/{col_x}/{row_y}.png
+                    "https://tile.openstreetmap.org/$zoom/$x/$y.png"
+                }
+
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", USER_AGENT)
@@ -215,9 +258,11 @@ object OsmTileManager {
                             memoryCache.put(key, bmp)
 
                             // Save to disk cache
-                            val cacheDir = File(context.cacheDir, "osm_tiles/$zoom/$x")
+                            val typeFolder = if (isSatellite) "satellite" else "standard"
+                            val ext = if (isSatellite) "jpg" else "png"
+                            val cacheDir = File(context.cacheDir, "osm_tiles/$typeFolder/$zoom/$x")
                             cacheDir.mkdirs()
-                            val tileFile = File(cacheDir, "$y.png")
+                            val tileFile = File(cacheDir, "$y.$ext")
                             FileOutputStream(tileFile).use { it.write(bytes) }
 
                             // Trigger UI update
@@ -226,10 +271,11 @@ object OsmTileManager {
                     }
                 }
             } catch (e: Exception) {
-                // Ignore network errors (graceful offline behavior)
+                // Graceful offline behavior: missing tiles do not crash the app
             } finally {
                 synchronized(pendingFetches) {
                     pendingFetches.remove(key)
+                    _isLoading.value = pendingFetches.isNotEmpty()
                 }
             }
         }

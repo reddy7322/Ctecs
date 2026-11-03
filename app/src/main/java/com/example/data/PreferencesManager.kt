@@ -130,6 +130,8 @@ class PreferencesManager(private val context: Context) {
         val KEY_CUSTOM_STORAGE_PATH = stringPreferencesKey("custom_storage_path")
         val KEY_AUTO_ROTATE_UI = booleanPreferencesKey("auto_rotate_ui")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
+        val KEY_MAP_THEME = stringPreferencesKey("map_theme_preference")
+        val KEY_MAP_TYPE = stringPreferencesKey("map_type_preference")
         val KEY_PHOTO_RESOLUTION = stringPreferencesKey("photo_resolution")
         val KEY_VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
         val KEY_GALLERY_VIEW_MODE = stringPreferencesKey("gallery_view_mode")
@@ -164,6 +166,26 @@ class PreferencesManager(private val context: Context) {
     suspend fun updateThemeMode(mode: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_THEME_MODE] = mode
+        }
+    }
+
+    val mapThemeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_MAP_THEME] ?: "system"
+    }
+
+    suspend fun updateMapTheme(theme: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MAP_THEME] = theme
+        }
+    }
+
+    val mapTypeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_MAP_TYPE] ?: "standard"
+    }
+
+    suspend fun updateMapType(type: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MAP_TYPE] = type
         }
     }
 

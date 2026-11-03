@@ -17,37 +17,75 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageProxy
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Recording
+import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.camera.view.video.AudioConfig
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,6 +96,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.model.CaptureSnapshot
+import kotlinx.coroutines.delay
+import java.util.concurrent.TimeUnit
+
 import com.example.model.OverlayTemplate
 import com.example.overlay.OverlayRenderer
 import com.example.ui.theme.HighlightYellow
@@ -68,6 +109,16 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/**
+ * State representing visual autofocus status.
+ */
+enum class CameraFocusStatus {
+    IDLE,
+    RUNNING,
+    SUCCESS,
+    FAILED
+}
 
 @Composable
 fun CameraPreview(
@@ -83,11 +134,116 @@ fun CameraPreview(
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
+    onExposureChanged: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestSnapshotProvider by rememberUpdatedState(currentSnapshotProvider)
+
+    // Touch-to-Focus State
+    var previewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
+    var focusStatus by remember { mutableStateOf(CameraFocusStatus.IDLE) }
+    var focusPosition by remember { mutableStateOf(Offset.Zero) }
+    var focusTriggerCount by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(focusTriggerCount, focusStatus) {
+        if (focusStatus != CameraFocusStatus.IDLE) {
+            delay(2500L)
+            focusStatus = CameraFocusStatus.IDLE
+        }
+    }
+
+    // Right-Side Brightness Control Gesture State
+    var isDraggingBrightness by remember { mutableStateOf(false) }
+    var showBrightnessIndicator by remember { mutableStateOf(false) }
+    var brightnessDismissKey by remember { mutableIntStateOf(0) }
+    var accumulatedDragY by remember { mutableFloatStateOf(0f) }
+    var currentEvIndex by remember(exposureIndex) { mutableIntStateOf(exposureIndex) }
+
+    val exposureState = controller.cameraInfo?.exposureState
+    val isEvSupported = exposureState?.isExposureCompensationSupported ?: true
+    val evRange = exposureState?.exposureCompensationRange ?: android.util.Range(-4, 4)
+    val minEv = if (isEvSupported) evRange.lower else -4
+    val maxEv = if (isEvSupported) evRange.upper else 4
+    val evStepRational = exposureState?.exposureCompensationStep ?: android.util.Rational(1, 1)
+    val evStep = if (evStepRational.denominator != 0) evStepRational.toFloat() else 1f
+
+    LaunchedEffect(brightnessDismissKey, isDraggingBrightness) {
+        if (!isDraggingBrightness && showBrightnessIndicator) {
+            delay(1500L)
+            showBrightnessIndicator = false
+        }
+    }
+
+    fun triggerTouchToFocus(tapOffset: Offset, viewWidth: Int, viewHeight: Int) {
+        focusPosition = tapOffset
+        focusStatus = CameraFocusStatus.RUNNING
+        focusTriggerCount++
+
+        try {
+            val factory = previewViewInstance?.meteringPointFactory
+                ?: SurfaceOrientedMeteringPointFactory(
+                    viewWidth.toFloat().coerceAtLeast(1f),
+                    viewHeight.toFloat().coerceAtLeast(1f)
+                )
+            val meteringPoint = factory.createPoint(tapOffset.x, tapOffset.y)
+
+            val focusAction = FocusMeteringAction.Builder(
+                meteringPoint,
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+            ).setAutoCancelDuration(3, TimeUnit.SECONDS)
+                .build()
+
+            val future = controller.cameraControl?.startFocusAndMetering(focusAction)
+            future?.addListener({
+                try {
+                    val result = future.get()
+                    focusStatus = if (result.isFocusSuccessful) {
+                        CameraFocusStatus.SUCCESS
+                    } else {
+                        CameraFocusStatus.FAILED
+                    }
+                } catch (e: Exception) {
+                    focusStatus = CameraFocusStatus.FAILED
+                }
+            }, ContextCompat.getMainExecutor(context))
+        } catch (e: Exception) {
+            Log.w("CameraPreview", "Failed to start focus and metering: ${e.message}", e)
+            focusStatus = CameraFocusStatus.FAILED
+        }
+    }
+
+    fun updateBrightness(deltaDrag: Float, dragStepPx: Float) {
+        accumulatedDragY += -deltaDrag // Dragging UP (negative deltaDrag) increases brightness
+
+        var changed = false
+        var targetEv = currentEvIndex
+
+        while (accumulatedDragY >= dragStepPx) {
+            if (targetEv < maxEv) {
+                targetEv++
+                changed = true
+            }
+            accumulatedDragY -= dragStepPx
+        }
+
+        while (accumulatedDragY <= -dragStepPx) {
+            if (targetEv > minEv) {
+                targetEv--
+                changed = true
+            }
+            accumulatedDragY += dragStepPx
+        }
+
+        if (changed) {
+            currentEvIndex = targetEv
+            try {
+                controller.cameraControl?.setExposureCompensationIndex(targetEv)
+            } catch (ignored: Exception) {}
+            onExposureChanged?.invoke(targetEv)
+        }
+    }
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -140,7 +296,7 @@ fun CameraPreview(
         if (!hasCameraPermission) return@LaunchedEffect
         try {
             controller.isPinchToZoomEnabled = true
-            controller.isTapToFocusEnabled = true
+            controller.isTapToFocusEnabled = false
 
             if (isVideoMode) {
                 try {
@@ -249,16 +405,113 @@ fun CameraPreview(
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         if (hasCameraPermission) {
-            AndroidView(
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        this.controller = controller
-                        // COMPATIBLE uses TextureView which eliminates SurfaceView EGL_BAD_ATTRIBUTE emulation errors
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val totalWidth = constraints.maxWidth.toFloat()
+                val totalHeight = constraints.maxHeight.toFloat()
+                val density = LocalDensity.current
+                val rightZoneWidth = with(density) { 76.dp.toPx() }
+                val rightZoneMargin = if (isLandscape) with(density) { 96.dp.toPx() } else 0f
+                val rightZoneStart = (totalWidth - rightZoneMargin - rightZoneWidth).coerceAtLeast(0f)
+                val rightZoneEnd = totalWidth - rightZoneMargin
+
+                // 1. CameraX PreviewView Rendering
+                AndroidView(
+                    factory = { ctx ->
+                        PreviewView(ctx).apply {
+                            this.controller = controller
+                            // COMPATIBLE uses TextureView which eliminates SurfaceView EGL_BAD_ATTRIBUTE emulation errors
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        }.also { previewViewInstance = it }
+                    },
+                    update = { pv ->
+                        previewViewInstance = pv
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // 2. Gesture Detector Layer for Touch-to-Focus & Right-Side Brightness Drag
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(minEv, maxEv, isLandscape) {
+                            val touchSlop = viewConfiguration.touchSlop
+                            val dragStepPx = 22.dp.toPx()
+
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val startPos = down.position
+                                val inRightZone = startPos.x in rightZoneStart..rightZoneEnd
+
+                                var isDragging = false
+                                var hasMovedPastSlop = false
+                                var lastY = startPos.y
+
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (event.changes.size > 1) {
+                                        // Multi-touch active (e.g. pinch to zoom)
+                                        hasMovedPastSlop = true
+                                    }
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                                    if (!change.pressed) {
+                                        // Finger lifted
+                                        if (!isDragging && !hasMovedPastSlop) {
+                                            // Tap detected! Focus at exact touched position
+                                            triggerTouchToFocus(startPos, constraints.maxWidth, constraints.maxHeight)
+                                        } else if (isDragging) {
+                                            isDraggingBrightness = false
+                                            brightnessDismissKey++
+                                        }
+                                        break
+                                    }
+
+                                    val currentPos = change.position
+                                    val deltaY = currentPos.y - lastY
+                                    val totalDistY = currentPos.y - startPos.y
+                                    val totalDistX = currentPos.x - startPos.x
+
+                                    if (kotlin.math.abs(totalDistY) > touchSlop || kotlin.math.abs(totalDistX) > touchSlop) {
+                                        hasMovedPastSlop = true
+                                    }
+
+                                    if (!isDragging) {
+                                        if (inRightZone && kotlin.math.abs(totalDistY) > touchSlop && kotlin.math.abs(totalDistY) > kotlin.math.abs(totalDistX)) {
+                                            isDragging = true
+                                            isDraggingBrightness = true
+                                            showBrightnessIndicator = true
+                                            change.consume()
+                                            updateBrightness(totalDistY, dragStepPx)
+                                            lastY = currentPos.y
+                                        }
+                                    } else {
+                                        change.consume()
+                                        updateBrightness(deltaY, dragStepPx)
+                                        lastY = currentPos.y
+                                    }
+                                }
+                            }
+                        }
+                )
+
+                // 3. Animated Touch-to-Focus Indicator
+                CameraFocusIndicator(
+                    status = focusStatus,
+                    position = focusPosition
+                )
+
+                // 4. Right-Side Brightness Control Indicator
+                CameraBrightnessIndicator(
+                    visible = showBrightnessIndicator,
+                    currentEv = currentEvIndex,
+                    minEv = minEv,
+                    maxEv = maxEv,
+                    step = evStep,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = if (isLandscape) 104.dp else 16.dp)
+                )
+            }
         } else {
             // Elegant fallback UI when camera permission is requested or pending
             Box(
@@ -304,6 +557,223 @@ fun CameraPreview(
                     ) {
                         Text("Grant Camera Permission", fontWeight = FontWeight.SemiBold)
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Animated Touch-to-Focus Indicator showing real-time CameraX autofocus reticle.
+ * Displays viewfinder corner brackets with pulsing animation during search,
+ * snaps to locked golden yellow on success, turns red on failure, and fades away.
+ */
+@Composable
+fun CameraFocusIndicator(
+    status: CameraFocusStatus,
+    position: Offset,
+    modifier: Modifier = Modifier
+) {
+    if (status == CameraFocusStatus.IDLE) return
+
+    val transition = rememberInfiniteTransition(label = "focus_pulse")
+    val pulseScale by transition.animateFloat(
+        initialValue = 0.98f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_scale"
+    )
+
+    val entryScale by animateFloatAsState(
+        targetValue = if (status == CameraFocusStatus.RUNNING) 1.0f else 1.05f,
+        animationSpec = tween(200),
+        label = "entry_scale"
+    )
+
+    val indicatorColor by animateColorAsState(
+        targetValue = when (status) {
+            CameraFocusStatus.RUNNING -> Color.White.copy(alpha = 0.92f)
+            CameraFocusStatus.SUCCESS -> HighlightYellow
+            CameraFocusStatus.FAILED -> Color(0xFFEF4444)
+            CameraFocusStatus.IDLE -> Color.Transparent
+        },
+        animationSpec = tween(200),
+        label = "indicator_color"
+    )
+
+    val ringSizeDp = 64.dp
+    val density = LocalDensity.current
+    val ringSizePx = with(density) { ringSizeDp.toPx() }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("camera_focus_indicator")
+    ) {
+        ComposeCanvas(
+            modifier = Modifier
+                .size(ringSizeDp)
+                .graphicsLayer {
+                    translationX = position.x - (ringSizePx / 2f)
+                    translationY = position.y - (ringSizePx / 2f)
+                    scaleX = entryScale * (if (status == CameraFocusStatus.RUNNING) pulseScale else 1.0f)
+                    scaleY = entryScale * (if (status == CameraFocusStatus.RUNNING) pulseScale else 1.0f)
+                }
+        ) {
+            val w = size.width
+            val h = size.height
+            val strokeWidth = 2.dp.toPx()
+            val bracketLen = w * 0.28f
+
+            // 1. Draw 4 Viewfinder Corner Brackets
+            val path = Path().apply {
+                // Top-Left Bracket
+                moveTo(0f, bracketLen)
+                lineTo(0f, 0f)
+                lineTo(bracketLen, 0f)
+
+                // Top-Right Bracket
+                moveTo(w - bracketLen, 0f)
+                lineTo(w, 0f)
+                lineTo(w, bracketLen)
+
+                // Bottom-Right Bracket
+                moveTo(w, h - bracketLen)
+                lineTo(w, h)
+                lineTo(w - bracketLen, h)
+
+                // Bottom-Left Bracket
+                moveTo(bracketLen, h)
+                lineTo(0f, h)
+                lineTo(0f, h - bracketLen)
+            }
+
+            drawPath(
+                path = path,
+                color = indicatorColor,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+
+            // 2. Inner subtle circular reticle
+            drawCircle(
+                color = indicatorColor.copy(alpha = if (status == CameraFocusStatus.SUCCESS) 0.85f else 0.45f),
+                radius = w * 0.32f,
+                style = Stroke(width = 1.2.dp.toPx())
+            )
+
+            // 3. Center Target Dot
+            if (status == CameraFocusStatus.SUCCESS) {
+                drawCircle(
+                    color = indicatorColor,
+                    radius = 3.5.dp.toPx()
+                )
+            } else if (status == CameraFocusStatus.RUNNING) {
+                drawCircle(
+                    color = indicatorColor.copy(alpha = 0.6f),
+                    radius = 2.dp.toPx()
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Minimalist Glass Brightness & Exposure indicator shown on the right side of preview
+ * when user touches and drags vertically to adjust camera hardware exposure compensation.
+ */
+@Composable
+fun CameraBrightnessIndicator(
+    visible: Boolean,
+    currentEv: Int,
+    minEv: Int,
+    maxEv: Int,
+    step: Float,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(180)) + scaleIn(tween(180)),
+        exit = fadeOut(tween(280)),
+        modifier = modifier
+    ) {
+        val totalRange = (maxEv - minEv).coerceAtLeast(1)
+        val progress = ((currentEv - minEv).toFloat() / totalRange.toFloat()).coerceIn(0f, 1f)
+        val calculatedEv = currentEv * step
+        val evText = if (calculatedEv > 0f) {
+            String.format(Locale.US, "+%.1f", calculatedEv)
+        } else if (calculatedEv < 0f) {
+            String.format(Locale.US, "%.1f", calculatedEv)
+        } else {
+            "0.0"
+        }
+
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = Color(0xD0141414),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+            shadowElevation = 8.dp,
+            modifier = Modifier
+                .width(44.dp)
+                .height(168.dp)
+                .testTag("camera_brightness_indicator")
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(vertical = 12.dp, horizontal = 6.dp)
+            ) {
+                // Top: Sun Icon
+                val sunTint = when {
+                    currentEv > 0 -> HighlightYellow
+                    currentEv < 0 -> Color(0xFF94A3B8)
+                    else -> Color.White
+                }
+                Icon(
+                    imageVector = Icons.Default.LightMode,
+                    contentDescription = "Brightness",
+                    tint = sunTint,
+                    modifier = Modifier.size(20.dp)
+                )
+
+                // Middle: Vertical Fill Slider Track
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(72.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.White.copy(alpha = 0.20f)),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(progress)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(HighlightYellow)
+                    )
+                }
+
+                // Bottom: Numerical Readout
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = evText,
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "EV",
+                        color = HighlightYellow,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }

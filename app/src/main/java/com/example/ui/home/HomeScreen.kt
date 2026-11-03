@@ -162,6 +162,8 @@ fun HomeScreen(
     val compassState by viewModel.compassState.collectAsStateWithLifecycle()
 
     val currentThemeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
+    val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
     val mainTextColor = MaterialTheme.colorScheme.onBackground
     val subTextColor = MaterialTheme.colorScheme.onSurfaceVariant
     val cardBgColor = MaterialTheme.colorScheme.surface
@@ -289,7 +291,26 @@ fun HomeScreen(
                     compassHeadingStr = compassState.displayHeading,
                     routeData = activeRoute,
                     matchedProjectedPoint = matchResult.projectedPoint,
-                    onRefreshLocation = { viewModel.refreshLocation() },
+                    onRefreshLocation = {
+                        viewModel.refreshLocation()
+                        viewModel.showToast("Location refreshed")
+                    },
+                    mapThemePreference = mapThemePreference,
+                    mapTypePreference = mapTypePreference,
+                    onToggleMapTheme = {
+                        val next = when (mapThemePreference) {
+                            "system" -> "light"
+                            "light" -> "dark"
+                            else -> "system"
+                        }
+                        viewModel.setMapTheme(next)
+                        viewModel.showToast("Map Theme: ${next.uppercase(Locale.ROOT)}")
+                    },
+                    onToggleMapType = {
+                        val next = if (mapTypePreference == "satellite") "standard" else "satellite"
+                        viewModel.setMapType(next)
+                        viewModel.showToast(if (next == "satellite") "Satellite Imagery" else "Standard Map")
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -1396,11 +1417,18 @@ fun InteractiveSmartMap(
     routeData: RouteData?,
     matchedProjectedPoint: GeoPoint?,
     onRefreshLocation: (() -> Unit)? = null,
+    mapThemePreference: String = "system",
+    mapTypePreference: String = "standard",
+    onToggleMapTheme: (() -> Unit)? = null,
+    onToggleMapType: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
-    val mapTheme = com.example.ui.map.rememberMapThemeColors()
+    val isTileLoading by OsmTileManager.isLoading.collectAsStateWithLifecycle()
+    val isAppDark = com.example.ui.theme.isAppDarkTheme()
+    val isDark = com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
+    val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
     var panOffsetX by remember { mutableFloatStateOf(0f) }
     var panOffsetY by remember { mutableFloatStateOf(0f) }
@@ -1456,7 +1484,7 @@ fun InteractiveSmartMap(
 
             val anchorGeo = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
 
-            // 1. Render real OpenStreetMap tiles with dynamic theme styling
+            // 1. Render real OpenStreetMap or Satellite tiles with dynamic theme styling
             var hasOsmTiles = false
             val osmBmp = OsmTileManager.renderMapBitmap(
                 context = context,
@@ -1466,7 +1494,8 @@ fun InteractiveSmartMap(
                 zoom = currentZoom,
                 panOffsetX = panOffsetX,
                 panOffsetY = panOffsetY,
-                darkTheme = mapTheme.isDark
+                darkTheme = mapTheme.isDark,
+                mapType = mapTypePreference
             )
 
             if (osmBmp != null) {
@@ -1589,7 +1618,42 @@ fun InteractiveSmartMap(
             }
         }
 
-        // OpenStreetMap Attribution Badge
+        // Tile / Satellite Loading Indicator Banner
+        AnimatedVisibility(
+            visible = isTileLoading,
+            enter = fadeIn(tween(150)),
+            exit = fadeOut(tween(250)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 10.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = mapTheme.mapControlBg,
+                border = androidx.compose.foundation.BorderStroke(0.8.dp, mapTheme.mapControlBorder),
+                shadowElevation = 4.dp
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(11.dp),
+                        strokeWidth = 1.6.dp,
+                        color = if (mapTheme.isDark) HighlightYellow else Color(0xFF0284C7)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (mapTypePreference.equals("satellite", ignoreCase = true)) "Loading Satellite..." else "Loading Tiles...",
+                        color = mapTheme.mapControlIconColor,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // Dynamic Map Attribution Badge
         Surface(
             shape = RoundedCornerShape(topEnd = 6.dp),
             color = mapTheme.attributionBg,
@@ -1597,7 +1661,7 @@ fun InteractiveSmartMap(
             modifier = Modifier.align(Alignment.BottomStart)
         ) {
             Text(
-                text = "© OpenStreetMap contributors",
+                text = if (mapTypePreference.equals("satellite", ignoreCase = true)) OsmTileManager.ATTRIBUTION_SATELLITE else OsmTileManager.ATTRIBUTION_STANDARD,
                 color = mapTheme.attributionTextColor,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
@@ -1605,25 +1669,60 @@ fun InteractiveSmartMap(
             )
         }
 
-        // Left Map Tools (Layers, Refresh Location, Re-center/Follow, Pin)
+        // Left Map Tools (Map Type Switcher, Map Theme Switcher, Refresh Location, Re-center/Follow)
         Column(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            MapToolButton(
-                icon = Icons.Default.Layers,
-                contentDesc = "Layers",
-                tag = "map_layers_btn",
-                bgColor = mapTheme.mapControlBg,
-                iconColor = mapTheme.mapControlIconColor,
-                borderColor = mapTheme.mapControlBorder
-            )
+            // 1. Map Type Switcher (Standard <-> Satellite)
+            val isSatellite = mapTypePreference.equals("satellite", ignoreCase = true)
+            IconButton(
+                onClick = { onToggleMapType?.invoke() },
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (isSatellite) (if (mapTheme.isDark) HighlightYellow else Color(0xFF0284C7)) else mapTheme.mapControlBg)
+                    .border(0.8.dp, mapTheme.mapControlBorder, CircleShape)
+                    .testTag("map_type_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SatelliteAlt,
+                    contentDescription = if (isSatellite) "Satellite Imagery (Tap for Standard)" else "Standard Map (Tap for Satellite)",
+                    tint = if (isSatellite) (if (mapTheme.isDark) Color.Black else Color.White) else mapTheme.mapControlIconColor,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
+            // 2. Map Theme Switcher (System Default -> Light -> Dark)
+            val themeIcon = when (mapThemePreference.lowercase(Locale.ROOT)) {
+                "light" -> Icons.Default.LightMode
+                "dark" -> Icons.Default.DarkMode
+                else -> Icons.Default.Palette
+            }
+            IconButton(
+                onClick = { onToggleMapTheme?.invoke() },
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(mapTheme.mapControlBg)
+                    .border(0.8.dp, mapTheme.mapControlBorder, CircleShape)
+                    .testTag("map_theme_btn")
+            ) {
+                Icon(
+                    imageVector = themeIcon,
+                    contentDescription = "Map Theme: ${mapThemePreference.uppercase(Locale.ROOT)} (Tap to switch)",
+                    tint = if (mapTheme.isDark) HighlightYellow else Color(0xFFD97706),
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
+            // 3. Refresh Location
             IconButton(
                 onClick = { onRefreshLocation?.invoke() },
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(38.dp)
                     .clip(CircleShape)
                     .background(mapTheme.mapControlBg)
                     .border(0.8.dp, mapTheme.mapControlBorder, CircleShape)
@@ -1633,9 +1732,11 @@ fun InteractiveSmartMap(
                     imageVector = Icons.Default.Refresh,
                     contentDescription = "Refresh Location",
                     tint = if (mapTheme.isDark) HighlightYellow else Color(0xFFD97706),
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
+
+            // 4. Re-center / Follow User Location
             IconButton(
                 onClick = {
                     isFollowingUser = true
@@ -1643,7 +1744,7 @@ fun InteractiveSmartMap(
                     panOffsetY = 0f
                 },
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(38.dp)
                     .clip(CircleShape)
                     .background(if (isFollowingUser) (if (mapTheme.isDark) HighlightYellow else Color(0xFF0284C7)) else mapTheme.mapControlBg)
                     .border(0.8.dp, mapTheme.mapControlBorder, CircleShape)
@@ -1653,17 +1754,9 @@ fun InteractiveSmartMap(
                     imageVector = Icons.Default.MyLocation,
                     contentDescription = "Center",
                     tint = if (isFollowingUser) (if (mapTheme.isDark) Color.Black else Color.White) else mapTheme.mapControlIconColor,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
-            MapToolButton(
-                icon = Icons.Default.Place,
-                contentDesc = "Pin",
-                tag = "map_pin_btn",
-                bgColor = mapTheme.mapControlBg,
-                iconColor = mapTheme.mapControlIconColor,
-                borderColor = mapTheme.mapControlBorder
-            )
         }
 
         // Top Right Circular Compass Widget
@@ -1713,8 +1806,8 @@ fun InteractiveSmartMap(
         // Right Side Zoom Controls (+ / -)
         Surface(
             shape = RoundedCornerShape(10.dp),
-            color = Color.White.copy(alpha = 0.95f),
-            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.LightGray),
+            color = mapTheme.mapControlBg,
+            border = androidx.compose.foundation.BorderStroke(0.8.dp, mapTheme.mapControlBorder),
             shadowElevation = 4.dp,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -1726,24 +1819,24 @@ fun InteractiveSmartMap(
                 IconButton(
                     onClick = { viewRangeMetres = (viewRangeMetres * 0.7).coerceAtLeast(100.0) },
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(38.dp)
                         .testTag("map_zoom_in")
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Zoom In", tint = Color.Black, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Add, contentDescription = "Zoom In", tint = mapTheme.mapControlIconColor, modifier = Modifier.size(19.dp))
                 }
                 Box(
                     modifier = Modifier
-                        .width(22.dp)
+                        .width(24.dp)
                         .height(0.8.dp)
-                        .background(Color.LightGray)
+                        .background(mapTheme.mapControlBorder)
                 )
                 IconButton(
                     onClick = { viewRangeMetres = (viewRangeMetres * 1.4).coerceAtMost(15000.0) },
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(38.dp)
                         .testTag("map_zoom_out")
                 ) {
-                    Icon(Icons.Default.Remove, contentDescription = "Zoom Out", tint = Color.Black, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Remove, contentDescription = "Zoom Out", tint = mapTheme.mapControlIconColor, modifier = Modifier.size(19.dp))
                 }
             }
         }

@@ -7,6 +7,42 @@ import androidx.compose.ui.graphics.toArgb
 import com.example.ui.theme.isAppDarkTheme
 
 /**
+ * Supported map display types.
+ */
+enum class MapType(
+    val id: String,
+    val label: String,
+    val attribution: String
+) {
+    STANDARD("standard", "Standard", "© OpenStreetMap contributors"),
+    SATELLITE("satellite", "Satellite", "© Esri, Maxar, Earthstar Geographics");
+
+    companion object {
+        fun fromId(id: String?): MapType {
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: STANDARD
+        }
+    }
+}
+
+/**
+ * User preference options for map theme appearance.
+ */
+enum class MapThemeMode(
+    val id: String,
+    val label: String
+) {
+    SYSTEM("system", "System Default"),
+    LIGHT("light", "Light"),
+    DARK("dark", "Dark");
+
+    companion object {
+        fun fromId(id: String?): MapThemeMode {
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SYSTEM
+        }
+    }
+}
+
+/**
  * Centralized theme colors and styling for all map components throughout the CTECS app.
  * Provides synchronized styling across Home, Camera, Routes, Gallery and any screen containing a map.
  */
@@ -123,6 +159,19 @@ object MapThemeConfig {
     )
 
     fun getColors(isDark: Boolean): MapThemeColors = if (isDark) DarkColors else LightColors
+
+    /**
+     * Resolves whether the map should display dark styling based on
+     * the user's manual map theme preference ("system", "light", "dark")
+     * and the current app/system theme.
+     */
+    fun resolveIsDark(mapThemePreference: String, appIsDark: Boolean): Boolean {
+        return when (mapThemePreference.lowercase()) {
+            "light" -> false
+            "dark" -> true
+            else -> appIsDark // "system" -> follow app theme / device appearance
+        }
+    }
 }
 
 /**
@@ -132,5 +181,16 @@ object MapThemeConfig {
 @Composable
 @ReadOnlyComposable
 fun rememberMapThemeColors(isDark: Boolean = isAppDarkTheme()): MapThemeColors {
+    return MapThemeConfig.getColors(isDark)
+}
+
+/**
+ * Resolves map theme colors considering both user preference and current app theme.
+ */
+@Composable
+@ReadOnlyComposable
+fun rememberResolvedMapColors(mapThemePreference: String = "system"): MapThemeColors {
+    val isAppDark = isAppDarkTheme()
+    val isDark = MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
     return MapThemeConfig.getColors(isDark)
 }

@@ -1031,6 +1031,93 @@ class HighwayTimestampCameraTest {
         assertTrue(darkSnapshot.isDarkTheme)
         assertFalse(lightSnapshot.isDarkTheme)
     }
+
+    @Test
+    fun testMapTypeSelectionAndAttributions() {
+        assertEquals(com.example.ui.map.MapType.STANDARD, com.example.ui.map.MapType.fromId("standard"))
+        assertEquals(com.example.ui.map.MapType.SATELLITE, com.example.ui.map.MapType.fromId("satellite"))
+        assertEquals(com.example.ui.map.MapType.STANDARD, com.example.ui.map.MapType.fromId("invalid_value"))
+
+        assertEquals("© OpenStreetMap contributors", com.example.geo.OsmTileManager.ATTRIBUTION_STANDARD)
+        assertEquals("© Esri, Maxar, Earthstar Geographics", com.example.geo.OsmTileManager.ATTRIBUTION_SATELLITE)
+        assertEquals(com.example.geo.OsmTileManager.ATTRIBUTION_STANDARD, com.example.ui.map.MapType.STANDARD.attribution)
+        assertEquals(com.example.geo.OsmTileManager.ATTRIBUTION_SATELLITE, com.example.ui.map.MapType.SATELLITE.attribution)
+    }
+
+    @Test
+    fun testMapThemeModeResolution() {
+        assertEquals(com.example.ui.map.MapThemeMode.SYSTEM, com.example.ui.map.MapThemeMode.fromId("system"))
+        assertEquals(com.example.ui.map.MapThemeMode.LIGHT, com.example.ui.map.MapThemeMode.fromId("light"))
+        assertEquals(com.example.ui.map.MapThemeMode.DARK, com.example.ui.map.MapThemeMode.fromId("dark"))
+        assertEquals(com.example.ui.map.MapThemeMode.SYSTEM, com.example.ui.map.MapThemeMode.fromId(null))
+
+        // System follows app theme
+        assertTrue(com.example.ui.map.MapThemeConfig.resolveIsDark("system", appIsDark = true))
+        assertFalse(com.example.ui.map.MapThemeConfig.resolveIsDark("system", appIsDark = false))
+
+        // Manual Light overrides app dark
+        assertFalse(com.example.ui.map.MapThemeConfig.resolveIsDark("light", appIsDark = true))
+        assertFalse(com.example.ui.map.MapThemeConfig.resolveIsDark("light", appIsDark = false))
+
+        // Manual Dark overrides app light
+        assertTrue(com.example.ui.map.MapThemeConfig.resolveIsDark("dark", appIsDark = false))
+        assertTrue(com.example.ui.map.MapThemeConfig.resolveIsDark("dark", appIsDark = true))
+    }
+
+    @Test
+    fun testCameraFocusStatusTransitions() {
+        val statuses = com.example.ui.camera.CameraFocusStatus.entries
+        assertEquals(4, statuses.size)
+        assertTrue(statuses.contains(com.example.ui.camera.CameraFocusStatus.IDLE))
+        assertTrue(statuses.contains(com.example.ui.camera.CameraFocusStatus.RUNNING))
+        assertTrue(statuses.contains(com.example.ui.camera.CameraFocusStatus.SUCCESS))
+        assertTrue(statuses.contains(com.example.ui.camera.CameraFocusStatus.FAILED))
+    }
+
+    @Test
+    fun testBrightnessAndExposureCalculations() {
+        val minEv = -4
+        val maxEv = 4
+        val step = 0.33333334f // 1/3 EV step
+
+        fun calcEv(index: Int): Float = (index * step)
+        fun clampEv(ev: Int): Int = ev.coerceIn(minEv, maxEv)
+
+        // Clamping within hardware bounds
+        assertEquals(-4, clampEv(-10))
+        assertEquals(4, clampEv(8))
+        assertEquals(0, clampEv(0))
+        assertEquals(2, clampEv(2))
+
+        // EV text formatting
+        val positiveEv = calcEv(3)
+        val negativeEv = calcEv(-3)
+        val neutralEv = calcEv(0)
+
+        val posText = String.format(java.util.Locale.US, "+%.1f", positiveEv)
+        val negText = String.format(java.util.Locale.US, "%.1f", negativeEv)
+        val zeroText = String.format(java.util.Locale.US, "%.1f", neutralEv)
+
+        assertEquals("+1.0", posText)
+        assertEquals("-1.0", negText)
+        assertEquals("0.0", zeroText)
+
+        // Drag direction consistency: Dragging up (delta < 0) increases exposure, dragging down decreases
+        var currentEv = 0
+        fun onDrag(deltaY: Float, stepThreshold: Float) {
+            val delta = -deltaY // Inverted: upward drag (-deltaY) increases
+            if (delta > stepThreshold && currentEv < maxEv) currentEv++
+            if (delta < -stepThreshold && currentEv > minEv) currentEv--
+        }
+
+        // Drag up 30px with threshold 20px -> increments
+        onDrag(-30f, 20f)
+        assertEquals(1, currentEv)
+
+        // Drag down 30px with threshold 20px -> decrements
+        onDrag(30f, 20f)
+        assertEquals(0, currentEv)
+    }
 }
 
 

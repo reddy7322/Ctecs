@@ -216,6 +216,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    val mapThemePreference: StateFlow<String> = preferencesManager.mapThemeFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "system"
+    )
+
+    fun setMapTheme(theme: String) {
+        viewModelScope.launch {
+            preferencesManager.updateMapTheme(theme)
+            val label = when (theme.lowercase()) {
+                "light" -> "Light"
+                "dark" -> "Dark"
+                else -> "System Default"
+            }
+            _uiMessages.emit(UiMessage.Info("Map Theme: $label"))
+        }
+    }
+
+    val mapTypePreference: StateFlow<String> = preferencesManager.mapTypeFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "standard"
+    )
+
+    fun setMapType(type: String) {
+        viewModelScope.launch {
+            preferencesManager.updateMapType(type)
+            val label = if (type.equals("satellite", ignoreCase = true)) "Satellite" else "Standard (Street)"
+            _uiMessages.emit(UiMessage.Info("Map Type: $label"))
+        }
+    }
+
     val cameraSettings: StateFlow<com.example.model.CameraSettings> = preferencesManager.cameraSettingsFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
