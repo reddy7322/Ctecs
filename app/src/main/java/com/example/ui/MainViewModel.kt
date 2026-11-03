@@ -693,7 +693,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             compassHeading = compassState.value.displayHeading,
             compassAzimuth = compassState.value.azimuthDegrees,
             filenameFormatPreset = cameraSettings.value.filenameFormatPreset,
-            customFilenamePrefix = cameraSettings.value.customFilenamePrefix
+            customFilenamePrefix = cameraSettings.value.customFilenamePrefix,
+            isDarkTheme = themeMode.value != "light"
         )
     }
 
@@ -970,7 +971,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     activeRoute = activeRouteData.value,
                     deviceRotationDegrees = rotationDegrees.value.toInt(),
                     compassHeading = compassState.value.displayHeading,
-                    compassAzimuth = compassState.value.azimuthDegrees
+                    compassAzimuth = compassState.value.azimuthDegrees,
+                    isDarkTheme = themeMode.value != "light"
                 )
 
                 val result = photoRepository.saveCapturedPhoto(bitmap, snapshot)

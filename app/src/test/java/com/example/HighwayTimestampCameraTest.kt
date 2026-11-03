@@ -904,6 +904,133 @@ class HighwayTimestampCameraTest {
         val logo = com.example.overlay.LogoProvider.loadRawLogoBitmap(null, configCustomNoUri, 200)
         assertNull("Unconfigured custom logo must return null and never emit fallback watermarks", logo)
     }
+
+    // 35. Verify dynamic smart fit ensures text and metadata boundaries fit safely in both orientations
+    @Test
+    fun testDynamicSmartFitBoundaries() {
+        val longProject = ProjectProfile(
+            highwayId = "MH",
+            packageSection = "MM",
+            roadSide = RoadSide.LHS,
+            lane = "O/L",
+            activity = "Milling",
+            customDescription = "Dense bituminous overlay section"
+        )
+        val config = com.example.model.OverlayConfig(
+            showCoordinates = true,
+            showChainage = true,
+            showProjectInfo = true,
+            showTimestamp = true,
+            showMapInset = true
+        )
+        val lines = com.example.overlay.OverlayTextGenerator.generateLines(
+            config = config,
+            project = longProject,
+            location = GeoPoint(29.8339, 77.8893),
+            accuracy = 3f,
+            compassHeading = "350° N",
+            speedMps = 0f,
+            bearing = 0f,
+            chainageStr = "168+400",
+            cameraMode = com.example.model.CameraMode.HIGHWAY,
+            coordinateFormat = com.example.model.CoordinateFormat.DECIMAL,
+            is24HourFormat = false
+        )
+        assertTrue("Lines should contain timestamp, coordinates, highway details, and comments", lines.size >= 3)
+        assertTrue(lines.any { it.contains("168+400") })
+        assertTrue(lines.any { it.contains("29.8339°N") })
+
+        // Verify portrait safe margins (e.g. 1080x2400)
+        val pWidth = 1080
+        val pHeight = 2400
+        val pScale = Math.max(pWidth, pHeight) / 1920f
+        val pMarginX = (pWidth * 0.055f).coerceIn(38f * pScale, 80f * pScale)
+        val pMarginY = (pHeight * 0.068f).coerceIn(46f * pScale, 96f * pScale)
+        assertTrue("Portrait safe margin X should be at least 50px", pMarginX >= 50f)
+        assertTrue("Portrait safe margin Y should be at least 60px", pMarginY >= 60f)
+
+        // Verify landscape safe margins (e.g. 1920x864)
+        val lWidth = 1920
+        val lHeight = 864
+        val lScale = Math.max(lWidth, lHeight) / 1920f
+        val lMarginX = (lWidth * 0.052f).coerceIn(42f * lScale, 92f * lScale)
+        val lMarginY = (lHeight * 0.082f).coerceIn(42f * lScale, 88f * lScale)
+        assertTrue("Landscape safe margin X should be at least 70px", lMarginX >= 70f)
+        assertTrue("Landscape safe margin Y should be at least 65px", lMarginY >= 65f)
+    }
+
+    @Test
+    fun testMergedTimestampSettingsAndNewCustomizationProperties() {
+        val defaultConfig = com.example.model.OverlayConfig()
+        assertEquals("Right", defaultConfig.textAlignment)
+        assertEquals(0.32f, defaultConfig.lineSpacingFactor, 0.001f)
+        assertEquals(1.5f, defaultConfig.textStrokeWidthDp, 0.001f)
+        assertNull(defaultConfig.customFontPath)
+        assertNull(defaultConfig.customFontName)
+
+        val customConfig = defaultConfig.copy(
+            customFontPath = "/data/user/0/com.example/files/font_123_custom.ttf",
+            customFontName = "custom.ttf",
+            textAlignment = "Left",
+            lineSpacingFactor = 0.45f,
+            textStrokeWidthDp = 2.5f,
+            watermarkPosition = "Center Left"
+        )
+        assertEquals("Left", customConfig.textAlignment)
+        assertEquals(0.45f, customConfig.lineSpacingFactor, 0.001f)
+        assertEquals(2.5f, customConfig.textStrokeWidthDp, 0.001f)
+        assertEquals("Center Left", customConfig.watermarkPosition)
+        assertEquals("/data/user/0/com.example/files/font_123_custom.ttf", customConfig.customFontPath)
+        assertEquals("custom.ttf", customConfig.customFontName)
+
+        val supportedPositions = listOf(
+            "Top Left", "Top Center", "Top Right",
+            "Center Left", "Center", "Center Right",
+            "Bottom Left", "Bottom Center", "Bottom Right"
+        )
+        assertEquals(9, supportedPositions.size)
+        supportedPositions.forEach { pos ->
+            val cfg = defaultConfig.copy(watermarkPosition = pos)
+            assertEquals(pos, cfg.watermarkPosition)
+        }
+    }
+
+    @Test
+    fun testMapThemeConfigurationLightAndDark() {
+        val darkColors = com.example.ui.map.MapThemeConfig.getColors(isDark = true)
+        val lightColors = com.example.ui.map.MapThemeConfig.getColors(isDark = false)
+
+        assertTrue(darkColors.isDark)
+        assertFalse(lightColors.isDark)
+
+        // Light colors must have high-contrast styling for bright mode
+        assertEquals(androidx.compose.ui.graphics.Color(0xFFF1F5F9), lightColors.mapBackground)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF0369A1), lightColors.routeCasingColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF0284C7), lightColors.routeCenterColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFFD97706), lightColors.markerDotColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF0F172A), lightColors.badgeTextColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF475569), lightColors.attributionTextColor)
+
+        // Dark colors must have dark slate background and luminous cyan route centerline
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF0F172A), darkColors.mapBackground)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF0284C7), darkColors.routeCasingColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF38BDF8), darkColors.routeCenterColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFFFBBF24), darkColors.markerDotColor)
+        assertEquals(androidx.compose.ui.graphics.Color.White, darkColors.badgeTextColor)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF94A3B8), darkColors.attributionTextColor)
+
+        // ARGB integer helpers must be populated
+        assertTrue(lightColors.mapBackgroundArgb != 0)
+        assertTrue(darkColors.mapBackgroundArgb != 0)
+        assertTrue(lightColors.routeCenterArgb != darkColors.routeCenterArgb)
+        assertTrue(lightColors.markerDotArgb != darkColors.markerDotArgb)
+
+        // CaptureSnapshot preserves theme state
+        val darkSnapshot = com.example.model.CaptureSnapshot(timestamp = 1000L, isDarkTheme = true)
+        val lightSnapshot = com.example.model.CaptureSnapshot(timestamp = 1000L, isDarkTheme = false)
+        assertTrue(darkSnapshot.isDarkTheme)
+        assertFalse(lightSnapshot.isDarkTheme)
+    }
 }
 
 

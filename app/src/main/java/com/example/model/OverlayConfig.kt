@@ -83,6 +83,10 @@ data class OverlayConfig(
     val fontFamily: String = "Default",         // Default, Noto Sans, Source Sans Pro, Dancing Script, Monospace, Serif
     val fontStyle: String = "Bold",             // Regular, Medium, Bold, Italic
     val textStrokeWidthDp: Float = 1.5f,
+    val customFontPath: String? = null,
+    val customFontName: String? = null,
+    val textAlignment: String = "Right",        // "Auto", "Right", "Center", "Left"
+    val lineSpacingFactor: Float = 0.32f,
 
     // Background style & color
     val backgroundStyle: String = "Transparent", // Transparent, Solid, Translucent Glass
@@ -121,7 +125,8 @@ data class CaptureSnapshot(
     val compassAzimuth: Float = 0f,
     val speedMps: Float? = null,
     val filenameFormatPreset: String = "highway_YYYYMMDD_HHMMSS",
-    val customFilenamePrefix: String = ""
+    val customFilenamePrefix: String = "",
+    val isDarkTheme: Boolean = true
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage

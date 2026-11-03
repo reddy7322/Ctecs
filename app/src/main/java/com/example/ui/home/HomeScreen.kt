@@ -1356,20 +1356,28 @@ fun NextChainageCard(
 }
 
 @Composable
-fun MapToolButton(icon: androidx.compose.ui.graphics.vector.ImageVector, contentDesc: String, tag: String) {
+fun MapToolButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDesc: String,
+    tag: String,
+    bgColor: Color = Color(0xD0121212),
+    iconColor: Color = Color.White,
+    borderColor: Color = Color.White.copy(alpha = 0.2f),
+    onClick: () -> Unit = {}
+) {
     IconButton(
-        onClick = {},
+        onClick = onClick,
         modifier = Modifier
             .size(36.dp)
             .clip(CircleShape)
-            .background(Color(0xD0121212))
-            .border(0.8.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+            .background(bgColor)
+            .border(0.8.dp, borderColor, CircleShape)
             .testTag(tag)
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDesc,
-            tint = Color.White,
+            tint = iconColor,
             modifier = Modifier.size(18.dp)
         )
     }
@@ -1392,6 +1400,7 @@ fun InteractiveSmartMap(
 ) {
     val context = LocalContext.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
+    val mapTheme = com.example.ui.map.rememberMapThemeColors()
 
     var panOffsetX by remember { mutableFloatStateOf(0f) }
     var panOffsetY by remember { mutableFloatStateOf(0f) }
@@ -1447,7 +1456,7 @@ fun InteractiveSmartMap(
 
             val anchorGeo = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
 
-            // 1. Render real OpenStreetMap tiles
+            // 1. Render real OpenStreetMap tiles with dynamic theme styling
             var hasOsmTiles = false
             val osmBmp = OsmTileManager.renderMapBitmap(
                 context = context,
@@ -1456,7 +1465,8 @@ fun InteractiveSmartMap(
                 heightPx = h.toInt().coerceAtLeast(1),
                 zoom = currentZoom,
                 panOffsetX = panOffsetX,
-                panOffsetY = panOffsetY
+                panOffsetY = panOffsetY,
+                darkTheme = mapTheme.isDark
             )
 
             if (osmBmp != null) {
@@ -1468,14 +1478,14 @@ fun InteractiveSmartMap(
                 hasOsmTiles = true
             }
 
-            // Fallback dark terrain & grid if tiles are downloading or device is offline
+            // Fallback terrain & grid if tiles are downloading or device is offline
             if (!hasOsmTiles) {
-                drawRect(color = Color(0xFF0F172A))
+                drawRect(color = mapTheme.mapBackground)
                 val gridSpacing = 80.dp.toPx()
                 var gx = 0f
                 while (gx < w) {
                     drawLine(
-                        color = Color.White.copy(alpha = 0.06f),
+                        color = mapTheme.gridLineColor,
                         start = Offset(gx, 0f),
                         end = Offset(gx, h),
                         strokeWidth = 1f
@@ -1485,7 +1495,7 @@ fun InteractiveSmartMap(
                 var gy = 0f
                 while (gy < h) {
                     drawLine(
-                        color = Color.White.copy(alpha = 0.06f),
+                        color = mapTheme.gridLineColor,
                         start = Offset(0f, gy),
                         end = Offset(w, gy),
                         strokeWidth = 1f
@@ -1527,13 +1537,13 @@ fun InteractiveSmartMap(
                     // Outer casing
                     drawPath(
                         path = path,
-                        color = Color(0xFF0284C7),
+                        color = mapTheme.routeCasingColor,
                         style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
-                    // Inner cyan path
+                    // Inner path
                     drawPath(
                         path = path,
-                        color = Color(0xFF38BDF8),
+                        color = mapTheme.routeCenterColor,
                         style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                 }
@@ -1544,8 +1554,8 @@ fun InteractiveSmartMap(
                 for (marker in routeData.markers) {
                     val mOff = toScreen(marker.point)
                     if (mOff.x in -100f..(w + 100f) && mOff.y in -100f..(h + 100f)) {
-                        drawCircle(color = HighlightYellow, radius = 5.dp.toPx(), center = mOff)
-                        drawCircle(color = Color.Black, radius = 5.dp.toPx(), center = mOff, style = Stroke(width = 1.5.dp.toPx()))
+                        drawCircle(color = mapTheme.markerDotColor, radius = 5.dp.toPx(), center = mOff)
+                        drawCircle(color = mapTheme.markerBorderColor, radius = 5.dp.toPx(), center = mOff, style = Stroke(width = 1.5.dp.toPx()))
                     }
                 }
             }
@@ -1556,7 +1566,7 @@ fun InteractiveSmartMap(
 
                 // Pulse Red Ring
                 drawCircle(
-                    color = Color(0xFFFF0000).copy(alpha = pulseAlpha * 0.5f),
+                    color = mapTheme.userPulseColor.copy(alpha = pulseAlpha * 0.5f),
                     radius = 28.dp.toPx(),
                     center = userOff
                 )
@@ -1571,25 +1581,24 @@ fun InteractiveSmartMap(
                         lineTo(userOff.x + 9.dp.toPx(), userOff.y + 8.dp.toPx())
                         close()
                     }
-                    drawPath(path = conePath, color = Color(0xFFFF0000))
+                    drawPath(path = conePath, color = mapTheme.userPinColor)
                 }
 
-                drawCircle(color = Color.White, radius = 5.dp.toPx(), center = userOff)
-                drawCircle(color = Color(0xFFFF0000), radius = 4.dp.toPx(), center = userOff)
+                drawCircle(color = mapTheme.userPinInnerColor, radius = 5.dp.toPx(), center = userOff)
+                drawCircle(color = mapTheme.userPinColor, radius = 4.dp.toPx(), center = userOff)
             }
         }
 
-        // OpenStreetMap Attribution Badge (Dark Theme)
+        // OpenStreetMap Attribution Badge
         Surface(
             shape = RoundedCornerShape(topEnd = 6.dp),
-            color = Color(0xD00F172A),
-            border = androidx.compose.foundation.BorderStroke(0.6.dp, Color.White.copy(alpha = 0.15f)),
-            modifier = Modifier
-                .align(Alignment.BottomStart)
+            color = mapTheme.attributionBg,
+            border = androidx.compose.foundation.BorderStroke(0.6.dp, mapTheme.containerBorder),
+            modifier = Modifier.align(Alignment.BottomStart)
         ) {
             Text(
                 text = "© OpenStreetMap contributors",
-                color = Color(0xFF94A3B8),
+                color = mapTheme.attributionTextColor,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1603,20 +1612,27 @@ fun InteractiveSmartMap(
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            MapToolButton(icon = Icons.Default.Layers, contentDesc = "Layers", tag = "map_layers_btn")
+            MapToolButton(
+                icon = Icons.Default.Layers,
+                contentDesc = "Layers",
+                tag = "map_layers_btn",
+                bgColor = mapTheme.mapControlBg,
+                iconColor = mapTheme.mapControlIconColor,
+                borderColor = mapTheme.mapControlBorder
+            )
             IconButton(
                 onClick = { onRefreshLocation?.invoke() },
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(Color(0xD0121212))
-                    .border(0.8.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                    .background(mapTheme.mapControlBg)
+                    .border(0.8.dp, mapTheme.mapControlBorder, CircleShape)
                     .testTag("map_refresh_location_btn")
             ) {
                 Icon(
                     imageVector = Icons.Default.Refresh,
                     contentDescription = "Refresh Location",
-                    tint = HighlightYellow,
+                    tint = if (mapTheme.isDark) HighlightYellow else Color(0xFFD97706),
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -1629,25 +1645,32 @@ fun InteractiveSmartMap(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(if (isFollowingUser) HighlightYellow else Color(0xD0121212))
-                    .border(0.8.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                    .background(if (isFollowingUser) (if (mapTheme.isDark) HighlightYellow else Color(0xFF0284C7)) else mapTheme.mapControlBg)
+                    .border(0.8.dp, mapTheme.mapControlBorder, CircleShape)
                     .testTag("map_follow_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.MyLocation,
                     contentDescription = "Center",
-                    tint = if (isFollowingUser) Color.Black else Color.White,
+                    tint = if (isFollowingUser) (if (mapTheme.isDark) Color.Black else Color.White) else mapTheme.mapControlIconColor,
                     modifier = Modifier.size(18.dp)
                 )
             }
-            MapToolButton(icon = Icons.Default.Place, contentDesc = "Pin", tag = "map_pin_btn")
+            MapToolButton(
+                icon = Icons.Default.Place,
+                contentDesc = "Pin",
+                tag = "map_pin_btn",
+                bgColor = mapTheme.mapControlBg,
+                iconColor = mapTheme.mapControlIconColor,
+                borderColor = mapTheme.mapControlBorder
+            )
         }
 
         // Top Right Circular Compass Widget
         Surface(
             shape = CircleShape,
-            color = Color(0xEE121212),
-            border = androidx.compose.foundation.BorderStroke(1.dp, HighlightYellow.copy(alpha = 0.8f)),
+            color = mapTheme.mapControlBg,
+            border = androidx.compose.foundation.BorderStroke(1.dp, mapTheme.compassBorderColor),
             shadowElevation = 6.dp,
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -1679,7 +1702,7 @@ fun InteractiveSmartMap(
                     )
                     Text(
                         text = compassHeadingStr,
-                        color = HighlightYellow,
+                        color = if (mapTheme.isDark) HighlightYellow else Color(0xFF0F172A),
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Black
                     )

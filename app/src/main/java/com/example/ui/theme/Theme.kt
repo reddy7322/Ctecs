@@ -5,6 +5,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme = darkColorScheme(
@@ -55,12 +58,22 @@ private val LightColorScheme = lightColorScheme(
     onError = Color(0xFFFFFFFF)
 )
 
+val LocalIsDarkTheme = compositionLocalOf { false }
+
+/**
+ * Returns true if the app is currently displaying dark theme, respecting
+ * the user's explicit preference ("dark", "light") or following device system appearance ("system").
+ */
+@Composable
+@ReadOnlyComposable
+fun isAppDarkTheme(): Boolean = LocalIsDarkTheme.current
+
 @Composable
 fun MyApplicationTheme(
     themeMode: String = "system",
     content: @Composable () -> Unit
 ) {
-    val darkTheme = when (themeMode) {
+    val darkTheme = when (themeMode.lowercase()) {
         "dark" -> true
         "light" -> false
         else -> isSystemInDarkTheme()
@@ -68,9 +81,11 @@ fun MyApplicationTheme(
 
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    CompositionLocalProvider(LocalIsDarkTheme provides darkTheme) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
 }

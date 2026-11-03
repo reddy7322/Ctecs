@@ -129,6 +129,7 @@ object OsmTileManager {
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
         if (darkTheme) {
+            // Elegant dark mode matrix: invert brightness into a deep slate palette while preserving road clarity
             val darkMatrix = ColorMatrix(floatArrayOf(
                 -0.85f,  0.00f,  0.00f, 0.0f, 215f,
                  0.00f, -0.85f,  0.00f, 0.0f, 215f,
@@ -136,6 +137,12 @@ object OsmTileManager {
                  0.00f,  0.00f,  0.00f, 1.0f,   0f
             ))
             paint.colorFilter = ColorMatrixColorFilter(darkMatrix)
+        } else {
+            // Light theme: crisp, natural OpenStreetMap palette with vibrant roads and clear labels
+            val lightMatrix = ColorMatrix().apply {
+                setSaturation(1.08f)
+            }
+            paint.colorFilter = ColorMatrixColorFilter(lightMatrix)
         }
 
         for (tx in minTileX..maxTileX) {

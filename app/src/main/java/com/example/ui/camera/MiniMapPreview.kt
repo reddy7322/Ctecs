@@ -51,11 +51,13 @@ fun MiniMapPreview(
     modifier: Modifier = Modifier,
     gpsAccuracy: Float? = null,
     showGpsBadge: Boolean = false,
-    showProjectTag: Boolean = false
+    showProjectTag: Boolean = false,
+    overrideIsDark: Boolean? = null
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsState()
+    val mapTheme = com.example.ui.map.rememberMapThemeColors(overrideIsDark ?: com.example.ui.theme.isAppDarkTheme())
 
     val appliedModifier = if (modifier == Modifier) {
         Modifier.size(width = 110.dp, height = 80.dp)
@@ -66,8 +68,8 @@ fun MiniMapPreview(
     Box(
         modifier = appliedModifier
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xE60F172A))
-            .border(1.2.dp, Color(0xFF38BDF8).copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+            .background(mapTheme.containerBackground)
+            .border(1.2.dp, mapTheme.containerBorder, RoundedCornerShape(14.dp))
     ) {
         val centerGeo = location ?: routeData?.bounds?.center
 
@@ -84,7 +86,8 @@ fun MiniMapPreview(
                     center = centerGeo,
                     widthPx = w.toInt().coerceAtLeast(1),
                     heightPx = h.toInt().coerceAtLeast(1),
-                    zoom = 15
+                    zoom = 15,
+                    darkTheme = mapTheme.isDark
                 )
                 if (osmBmp != null) {
                     drawImage(
@@ -92,24 +95,27 @@ fun MiniMapPreview(
                         dstOffset = IntOffset.Zero,
                         dstSize = IntSize(w.toInt(), h.toInt())
                     )
-                    // Dim slightly for minimalist dark Glass UI look
-                    drawRect(color = Color(0x33000000))
+                    if (mapTheme.isDark) {
+                        // Subtle dimming for minimalist dark Glass UI look
+                        drawRect(color = Color(0x22000000))
+                    }
                     hasOsmTiles = true
                 }
             }
 
             // Fallback grid when tiles are loading or offline
             if (!hasOsmTiles) {
+                drawRect(color = mapTheme.mapBackground)
                 val gridStep = w / 4f
                 for (i in 1..3) {
                     drawLine(
-                        color = Color.White.copy(alpha = 0.12f),
+                        color = mapTheme.gridLineColor,
                         start = Offset(i * gridStep, 0f),
                         end = Offset(i * gridStep, h),
                         strokeWidth = 1f
                     )
                     drawLine(
-                        color = Color.White.copy(alpha = 0.12f),
+                        color = mapTheme.gridLineColor,
                         start = Offset(0f, i * gridStep),
                         end = Offset(w, i * gridStep),
                         strokeWidth = 1f
@@ -142,13 +148,13 @@ fun MiniMapPreview(
                         // Outer casing
                         drawPath(
                             path = path,
-                            color = Color(0xFF0284C7),
+                            color = mapTheme.routeCasingColor,
                             style = Stroke(width = 5.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                         // Inner centerline
                         drawPath(
                             path = path,
-                            color = Color(0xFF38BDF8),
+                            color = mapTheme.routeCenterColor,
                             style = Stroke(width = 3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                     }
@@ -158,7 +164,7 @@ fun MiniMapPreview(
                         val off = toScreen(m.point)
                         if (off.x in 0f..w && off.y in 0f..h) {
                             drawCircle(
-                                color = Color(0xFFFBBF24),
+                                color = mapTheme.markerDotColor,
                                 radius = 2.8f,
                                 center = off
                             )
@@ -170,8 +176,8 @@ fun MiniMapPreview(
                         moveTo(0f, h - 16f)
                         cubicTo(w * 0.4f, h - 30f, w * 0.6f, 30f, w, 20f)
                     }
-                    drawPath(genericPath, Color(0xFF0284C7), style = Stroke(width = 5f))
-                    drawPath(genericPath, Color(0xFF38BDF8), style = Stroke(width = 3f))
+                    drawPath(genericPath, mapTheme.routeCasingColor, style = Stroke(width = 5f))
+                    drawPath(genericPath, mapTheme.routeCenterColor, style = Stroke(width = 3f))
                 }
 
                 // 3. Current GPS Location Pin (Red marker with drop shadow)
@@ -181,7 +187,7 @@ fun MiniMapPreview(
 
                 // Shadow under pin tip
                 drawCircle(
-                    color = Color(0x77000000),
+                    color = Color(0x66000000),
                     radius = 3.5f,
                     center = Offset(pinTip.x, pinTip.y + 1f)
                 )
@@ -203,11 +209,11 @@ fun MiniMapPreview(
                     )
                     close()
                 }
-                drawPath(pinPath, color = Color(0xFFEF4444))
+                drawPath(pinPath, color = mapTheme.userPinColor)
 
                 // Inner white dot
                 drawCircle(
-                    color = Color.White,
+                    color = mapTheme.userPinInnerColor,
                     radius = 2.5f,
                     center = pinCenter
                 )
@@ -221,7 +227,7 @@ fun MiniMapPreview(
                             lineTo(center.x + 3.5f, center.y - 11f)
                             close()
                         }
-                        drawPath(arrowPath, color = Color(0xFF38BDF8))
+                        drawPath(arrowPath, color = mapTheme.userBearingColor)
                     }
                 }
             }
@@ -234,8 +240,8 @@ fun MiniMapPreview(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(5.dp)
-                    .background(Color(0xD9000000), RoundedCornerShape(10.dp))
-                    .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
+                    .background(mapTheme.badgeBg, RoundedCornerShape(10.dp))
+                    .border(0.5.dp, mapTheme.badgeBorderColor, RoundedCornerShape(10.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -248,7 +254,7 @@ fun MiniMapPreview(
                 )
                 Text(
                     text = String.format(Locale.US, "GPS ±%.1fm", gpsAccuracy),
-                    color = Color.White,
+                    color = mapTheme.badgeTextColor,
                     fontSize = 8.5.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -258,7 +264,7 @@ fun MiniMapPreview(
         // Top-right OpenStreetMap Attribution
         Text(
             text = "© OSM",
-            color = Color.White.copy(alpha = 0.55f),
+            color = mapTheme.attributionTextColor,
             fontSize = 7.sp,
             fontWeight = FontWeight.Normal,
             modifier = Modifier
@@ -272,14 +278,14 @@ fun MiniMapPreview(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 5.dp)
-                    .background(Color(0xD9000000), RoundedCornerShape(8.dp))
-                    .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                    .background(mapTheme.badgeBg, RoundedCornerShape(8.dp))
+                    .border(0.5.dp, mapTheme.badgeBorderColor, RoundedCornerShape(8.dp))
                     .padding(horizontal = 8.dp, vertical = 1.5.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = highwayTag,
-                    color = Color.White,
+                    color = mapTheme.badgeTextColor,
                     fontSize = 8.5.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 1

@@ -86,6 +86,11 @@ class PreferencesManager(private val context: Context) {
         val KEY_CUSTOM_ADDRESS_TEXT = stringPreferencesKey("custom_address_text")
         val KEY_CUSTOM_TAG = stringPreferencesKey("custom_tag")
         val KEY_GPS_ACCURACY_MARGIN_PRESET = stringPreferencesKey("gps_accuracy_margin_preset")
+        val KEY_CUSTOM_FONT_PATH = stringPreferencesKey("custom_font_path")
+        val KEY_CUSTOM_FONT_NAME = stringPreferencesKey("custom_font_name")
+        val KEY_TEXT_ALIGNMENT = stringPreferencesKey("text_alignment")
+        val KEY_LINE_SPACING_FACTOR = floatPreferencesKey("line_spacing_factor")
+        val KEY_TEXT_STROKE_WIDTH_DP = floatPreferencesKey("text_stroke_width_dp")
 
         val KEY_ACTIVE_ROUTE_ID = stringPreferencesKey("active_route_id")
 
@@ -271,7 +276,12 @@ class PreferencesManager(private val context: Context) {
             locationAddressOption = prefs[KEY_LOCATION_ADDRESS_OPTION] ?: "None",
             customAddressText = prefs[KEY_CUSTOM_ADDRESS_TEXT] ?: "",
             customTag = prefs[KEY_CUSTOM_TAG] ?: "",
-            gpsAccuracyMarginPreset = prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] ?: "±5m"
+            gpsAccuracyMarginPreset = prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] ?: "±5m",
+            customFontPath = prefs[KEY_CUSTOM_FONT_PATH],
+            customFontName = prefs[KEY_CUSTOM_FONT_NAME],
+            textAlignment = prefs[KEY_TEXT_ALIGNMENT] ?: "Right",
+            lineSpacingFactor = prefs[KEY_LINE_SPACING_FACTOR] ?: 0.32f,
+            textStrokeWidthDp = prefs[KEY_TEXT_STROKE_WIDTH_DP] ?: 1.5f
         )
     }
 
@@ -397,6 +407,19 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_CUSTOM_ADDRESS_TEXT] = config.customAddressText
             prefs[KEY_CUSTOM_TAG] = config.customTag
             prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] = config.gpsAccuracyMarginPreset
+            if (config.customFontPath != null) {
+                prefs[KEY_CUSTOM_FONT_PATH] = config.customFontPath
+            } else {
+                prefs.remove(KEY_CUSTOM_FONT_PATH)
+            }
+            if (config.customFontName != null) {
+                prefs[KEY_CUSTOM_FONT_NAME] = config.customFontName
+            } else {
+                prefs.remove(KEY_CUSTOM_FONT_NAME)
+            }
+            prefs[KEY_TEXT_ALIGNMENT] = config.textAlignment
+            prefs[KEY_LINE_SPACING_FACTOR] = config.lineSpacingFactor
+            prefs[KEY_TEXT_STROKE_WIDTH_DP] = config.textStrokeWidthDp
         }
     }
 

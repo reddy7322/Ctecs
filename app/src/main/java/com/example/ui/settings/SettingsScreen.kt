@@ -247,6 +247,47 @@ fun SettingsScreen(
         }
     }
 
+    // TTF / OTF Custom Font File Picker Launcher
+    val fontPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val cr = context.contentResolver
+                var displayName = "custom_font.ttf"
+                cr.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIdx >= 0 && cursor.moveToFirst()) {
+                        displayName = cursor.getString(nameIdx) ?: "custom_font.ttf"
+                    }
+                }
+                val safeName = displayName.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
+                val targetFile = File(context.filesDir, "font_${System.currentTimeMillis()}_$safeName")
+                cr.openInputStream(uri)?.use { inStream ->
+                    targetFile.outputStream().use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                val testTf = android.graphics.Typeface.createFromFile(targetFile)
+                if (testTf != null) {
+                    val fontLabel = displayName.substringBeforeLast(".")
+                    viewModel.saveOverlayConfigSilent(
+                        currentOverlay.copy(
+                            fontFamily = fontLabel,
+                            customFontPath = targetFile.absolutePath,
+                            customFontName = displayName
+                        )
+                    )
+                    viewModel.showToast("Custom font loaded: $displayName", ToastType.SUCCESS)
+                } else {
+                    viewModel.showToast("Invalid font file. Please select a valid TTF/OTF file.", ToastType.ERROR)
+                }
+            } catch (e: Exception) {
+                viewModel.showToast("Failed to load font: ${e.message}", ToastType.ERROR)
+            }
+        }
+    }
+
     // KMZ / KML File Picker Launcher
     val kmzPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -1251,17 +1292,35 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 6. TIMESTAMP AND DATE/TIME FORMAT
+            // 6. TIMESTAMP (MERGED WITH METADATA & WATERMARK)
             // ====================================================
-            if (matchesSearch("timestamp date time format precision 24-hour placement pattern", searchQuery)) {
+            if (matchesSearch("timestamp date time format precision 24-hour placement pattern metadata watermark font size color opacity shadow background alignment spacing", searchQuery)) {
+                var isFormatDropdownOpen by remember { mutableStateOf(false) }
+                var isPositionDropdownOpen by remember { mutableStateOf(false) }
+                var isFontDropdownOpen by remember { mutableStateOf(false) }
+                var customFormatText by remember(currentOverlay.timestampFormat) { mutableStateOf(currentOverlay.timestampFormat) }
+                var customHexText by remember(currentOverlay.textColorHex) { mutableStateOf(currentOverlay.textColorHex) }
+                var showCustomFormatInput by remember { mutableStateOf(false) }
+
                 SmartDropdownSection(
-                    title = "6. Timestamp and Date/Time Format",
-                    subtitle = "${currentOverlay.timestampFormat} • ${if (currentCameraSettings.is24HourFormat) "24H" else "12H"}",
+                    title = "6. Timestamp",
+                    subtitle = "${currentOverlay.timestampFormat} • ${currentOverlay.watermarkPosition} • ${currentOverlay.fontFamily} • ${currentOverlay.fontSizeSp.toInt()}sp",
                     icon = Icons.Default.BrandingWatermark,
                     accentColor = Color(0xFFFFD700),
                     isExpanded = expandedSections["timestamp"] ?: false,
                     onToggleExpand = { expandedSections["timestamp"] = !(expandedSections["timestamp"] ?: false) }
                 ) {
+                    // ----------------------------------------------------
+                    // SUBSECTION 1: DISPLAY & OVERLAY TOGGLES
+                    // ----------------------------------------------------
+                    Text(
+                        text = "DISPLAY & OVERLAY TOGGLES",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                    )
+
                     CompactSwitchRow(
                         title = "Enable Timestamp Burn-In",
                         subtitle = "Permanently render timestamp onto captured photos & video frames",
@@ -1278,37 +1337,977 @@ fun SettingsScreen(
                         tag = "switch_24_hour"
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Timestamp Format Presets", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-                    val timestampPresets = listOf(
-                        "dd MMMM yyyy h:mm a" to "28 October 2026 10:57 pm",
-                        "yyyy-MM-dd HH:mm:ss" to "2026-10-28 22:57:49",
-                        "dd/MM/yyyy HH:mm:ss" to "28/10/2026 22:57:49",
-                        "MM/dd/yyyy h:mm:ss a" to "10/28/2026 10:57:49 PM",
-                        "dd-MMM-yyyy HH:mm" to "28-Oct-2026 22:57",
-                        "EEE, dd MMM yyyy HH:mm" to "Wed, 28 Oct 2026 22:57"
+                    CompactSwitchRow(
+                        title = "Show Project Info",
+                        subtitle = "Include Highway ID, Section & Lane details",
+                        checked = currentOverlay.showProjectInfo,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showProjectInfo = it)) },
+                        tag = "switch_show_project"
                     )
 
-                    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                        timestampPresets.forEach { (pattern, sample) ->
-                            val isSelected = currentOverlay.timestampFormat == pattern
+                    CompactSwitchRow(
+                        title = "Show Compass Heading",
+                        subtitle = "Include live compass direction (e.g. 359° N)",
+                        checked = currentOverlay.showCompass,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showCompass = it)) },
+                        tag = "switch_show_compass"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Show Altitude",
+                        subtitle = "Include elevation in meters above sea level",
+                        checked = currentOverlay.showAltitude,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAltitude = it)) },
+                        tag = "switch_show_altitude"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Show GPS Accuracy",
+                        subtitle = "Include GPS error margin (e.g. ±4m)",
+                        checked = currentOverlay.showAccuracy,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAccuracy = it)) },
+                        tag = "switch_show_accuracy"
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 2: DROPDOWN - TIMESTAMP FORMAT PRESETS
+                    // ----------------------------------------------------
+                    Text(
+                        text = "TIMESTAMP FORMAT PRESETS",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val formatPresets = listOf(
+                        "dd-MM-yyyy HH:mm:ss" to "DD-MM-YYYY HH:mm:ss (Standard 24H)",
+                        "dd/MM/yyyy HH:mm:ss" to "DD/MM/YYYY HH:mm:ss (Slash 24H)",
+                        "yyyy-MM-dd HH:mm:ss" to "YYYY-MM-DD HH:mm:ss (ISO-8601)",
+                        "dd MMM yyyy, HH:mm:ss" to "DD MMM YYYY, HH:mm:ss (Short Month)",
+                        "HH:mm:ss" to "HH:mm:ss (24-Hour Time Only)",
+                        "hh:mm:ss a" to "hh:mm:ss a (12-Hour Time Only)",
+                        "dd MMMM yyyy h:mm a" to "DD MMMM YYYY h:mm a (Full Month 12H)",
+                        "MM/dd/yyyy h:mm:ss a" to "MM/DD/YYYY h:mm:ss a (US Format)",
+                        "dd-MMM-yyyy HH:mm" to "DD-MMM-YYYY HH:mm (Compact)",
+                        "EEE, dd MMM yyyy HH:mm" to "EEE, DD MMM YYYY HH:mm (With Day)"
+                    )
+
+                    val currentSampleDate = remember(currentOverlay.timestampFormat) {
+                        try {
+                            SimpleDateFormat(currentOverlay.timestampFormat, Locale.US).format(Date())
+                        } catch (e: Exception) {
+                            currentOverlay.timestampFormat
+                        }
+                    }
+
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Card(
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isFormatDropdownOpen = true }
+                                .padding(vertical = 2.dp)
+                        ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timestampFormat = pattern)) }
-                                    .padding(vertical = 5.dp, horizontal = 4.dp),
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(timestampFormat = pattern)) },
-                                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFFFD700))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = currentSampleDate,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFFD700)
+                                    )
+                                    Text(
+                                        text = "Pattern: ${currentOverlay.timestampFormat}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (isFormatDropdownOpen) Icons.Default.ExpandLess else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Format",
+                                    tint = Color(0xFFFFD700)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Column {
-                                    Text(sample, fontSize = 13.sp, color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface)
-                                    Text(pattern, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = isFormatDropdownOpen,
+                            onDismissRequest = { isFormatDropdownOpen = false },
+                            modifier = Modifier
+                                .fillMaxWidth(0.92f)
+                                .heightIn(max = 380.dp)
+                                .background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            formatPresets.forEach { (pattern, label) ->
+                                val sample = try {
+                                    SimpleDateFormat(pattern, Locale.US).format(Date())
+                                } catch (e: Exception) {
+                                    pattern
+                                }
+                                val isSelected = currentOverlay.timestampFormat == pattern
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = sample,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (isSelected) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFFFFD700),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.saveOverlayConfigSilent(currentOverlay.copy(timestampFormat = pattern))
+                                        showCustomFormatInput = false
+                                        isFormatDropdownOpen = false
+                                    }
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "✍ Custom Format Pattern...",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF38BDF8)
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    showCustomFormatInput = true
+                                    isFormatDropdownOpen = false
+                                }
+                            )
+                        }
+                    }
+
+                    if (showCustomFormatInput || !formatPresets.any { it.first == currentOverlay.timestampFormat }) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = customFormatText,
+                                onValueChange = { customFormatText = it },
+                                label = { Text("Custom Pattern (e.g. yyyy/MM/dd HH:mm)") },
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFFFFD700),
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    if (customFormatText.isNotBlank()) {
+                                        try {
+                                            SimpleDateFormat(customFormatText, Locale.US).format(Date())
+                                            viewModel.saveOverlayConfigSilent(currentOverlay.copy(timestampFormat = customFormatText.trim()))
+                                            viewModel.showToast("Custom timestamp format applied", ToastType.SUCCESS)
+                                        } catch (e: Exception) {
+                                            viewModel.showToast("Invalid date/time format pattern", ToastType.ERROR)
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Apply", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 3: DROPDOWN - WATERMARK PLACEMENT POSITION
+                    // ----------------------------------------------------
+                    Text(
+                        text = "WATERMARK PLACEMENT POSITION",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val placementPositions = listOf(
+                        "Top Left",
+                        "Top Center",
+                        "Top Right",
+                        "Center Left",
+                        "Center",
+                        "Center Right",
+                        "Bottom Left",
+                        "Bottom Center",
+                        "Bottom Right"
+                    )
+
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Card(
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isPositionDropdownOpen = true }
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = currentOverlay.watermarkPosition,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFFD700)
+                                    )
+                                    Text(
+                                        text = "Anchors timestamp & metadata to this frame position",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (isPositionDropdownOpen) Icons.Default.ExpandLess else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Placement",
+                                    tint = Color(0xFFFFD700)
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = isPositionDropdownOpen,
+                            onDismissRequest = { isPositionDropdownOpen = false },
+                            modifier = Modifier
+                                .fillMaxWidth(0.92f)
+                                .heightIn(max = 340.dp)
+                                .background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            placementPositions.forEach { pos ->
+                                val isSelected = currentOverlay.watermarkPosition.equals(pos, ignoreCase = true)
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = pos,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFFD700),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.saveOverlayConfigSilent(currentOverlay.copy(watermarkPosition = pos))
+                                        isPositionDropdownOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 4: DROPDOWN - FONT SELECTION & TYPOGRAPHY
+                    // ----------------------------------------------------
+                    Text(
+                        text = "FONT SELECTION & TYPOGRAPHY",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val systemFonts = listOf(
+                        "Default" to ("System Default" to FontFamily.Default),
+                        "Sans-Serif" to ("Roboto / Sans-Serif" to FontFamily.SansSerif),
+                        "Serif" to ("Serif Typography" to FontFamily.Serif),
+                        "Monospace" to ("Monospace / Terminal" to FontFamily.Monospace),
+                        "Cursive" to ("Dancing Script / Cursive" to FontFamily.Cursive)
+                    )
+
+                    val activeFontDisplay = when {
+                        !currentOverlay.customFontName.isNullOrBlank() -> "Custom: ${currentOverlay.customFontName}"
+                        else -> systemFonts.find { it.first.equals(currentOverlay.fontFamily, ignoreCase = true) }?.second?.first ?: currentOverlay.fontFamily
+                    }
+
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Card(
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isFontDropdownOpen = true }
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = activeFontDisplay,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFFD700)
+                                    )
+                                    Text(
+                                        text = "Sample: 03 Nov 2026 • 29.8339°N 77.8893°E",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (isFontDropdownOpen) Icons.Default.ExpandLess else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Font",
+                                    tint = Color(0xFFFFD700)
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = isFontDropdownOpen,
+                            onDismissRequest = { isFontDropdownOpen = false },
+                            modifier = Modifier
+                                .fillMaxWidth(0.92f)
+                                .heightIn(max = 360.dp)
+                                .background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            systemFonts.forEach { (key, details) ->
+                                val (label, family) = details
+                                val isSelected = currentOverlay.customFontPath.isNullOrBlank() && currentOverlay.fontFamily.equals(key, ignoreCase = true)
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = label,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    fontFamily = family,
+                                                    color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Text(
+                                                    text = "189+320 LHS • 23:45:10",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontFamily = family,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFFD700),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.saveOverlayConfigSilent(
+                                            currentOverlay.copy(
+                                                fontFamily = key,
+                                                customFontPath = null,
+                                                customFontName = null
+                                            )
+                                        )
+                                        isFontDropdownOpen = false
+                                    }
+                                )
+                            }
+
+                            if (!currentOverlay.customFontPath.isNullOrBlank()) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = "Custom: ${currentOverlay.customFontName ?: "Loaded Font"}",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF22C55E)
+                                                )
+                                                Text(
+                                                    text = "Imported TTF/OTF File Active",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color(0xFF22C55E),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    },
+                                    onClick = { isFontDropdownOpen = false }
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.UploadFile,
+                                            contentDescription = null,
+                                            tint = Color(0xFF38BDF8),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            text = "Import Custom Font (TTF/OTF)...",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF38BDF8)
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    isFontDropdownOpen = false
+                                    fontPickerLauncher.launch(
+                                        arrayOf(
+                                            "font/*",
+                                            "font/ttf",
+                                            "font/otf",
+                                            "application/x-font-ttf",
+                                            "application/x-font-opentype",
+                                            "application/font-sfnt",
+                                            "*/*"
+                                        )
+                                    )
+                                }
+                            )
+
+                            if (!currentOverlay.customFontPath.isNullOrBlank()) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = null,
+                                                tint = Color(0xFFEF4444),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text(
+                                                text = "Revert to Default Font",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFFEF4444)
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.saveOverlayConfigSilent(
+                                            currentOverlay.copy(
+                                                fontFamily = "Default",
+                                                customFontPath = null,
+                                                customFontName = null
+                                            )
+                                        )
+                                        isFontDropdownOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 5: FONT & TEXT CUSTOMIZATION
+                    // ----------------------------------------------------
+                    Text(
+                        text = "FONT & TEXT CUSTOMIZATION",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    SliderRow(
+                        title = "Font Size (SP)",
+                        value = currentOverlay.fontSizeSp,
+                        valueRange = 14f..42f,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontSizeSp = it)) },
+                        valueText = "${currentOverlay.fontSizeSp.toInt()} sp"
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Font Weight", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+                    val fontWeights = listOf("Regular", "Medium", "Bold", "Italic")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        fontWeights.forEach { weight ->
+                            val isSelected = currentOverlay.fontStyle.equals(weight, ignoreCase = true)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontStyle = weight)) },
+                                label = { Text(weight, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Text Alignment", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+                    val alignments = listOf("Left", "Center", "Right")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        alignments.forEach { align ->
+                            val isSelected = currentOverlay.textAlignment.equals(align, ignoreCase = true)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textAlignment = align)) },
+                                label = { Text(align, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    SliderRow(
+                        title = "Line Spacing Factor",
+                        value = currentOverlay.lineSpacingFactor,
+                        valueRange = 0.15f..0.60f,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(lineSpacingFactor = it)) },
+                        valueText = String.format(Locale.US, "%.2f", currentOverlay.lineSpacingFactor)
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 6: COLOR, STROKE & SHADOW
+                    // ----------------------------------------------------
+                    Text(
+                        text = "TEXT COLOR, OUTLINE & SHADOW",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val colorPresets = listOf(
+                        "#FFFFFF" to "White",
+                        "#FFD700" to "Gold",
+                        "#38BDF8" to "Cyan",
+                        "#22C55E" to "Green",
+                        "#F97316" to "Orange",
+                        "#EF4444" to "Red",
+                        "#FACC15" to "Yellow",
+                        "#E2E8F0" to "Gray"
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        colorPresets.forEach { (hex, _) ->
+                            val isSelected = currentOverlay.textColorHex.equals(hex, ignoreCase = true)
+                            val parsedColor = try {
+                                Color(android.graphics.Color.parseColor(hex))
+                            } catch (e: Exception) {
+                                Color.White
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(parsedColor)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) Color(0xFFFFD700) else Color.Gray.copy(alpha = 0.5f),
+                                        shape = CircleShape
+                                    )
+                                    .clickable {
+                                        viewModel.saveOverlayConfigSilent(currentOverlay.copy(textColorHex = hex))
+                                        customHexText = hex
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = if (hex == "#FFFFFF" || hex == "#FFD700" || hex == "#FACC15") Color.Black else Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val parsedCustomColor = try {
+                            Color(android.graphics.Color.parseColor(customHexText))
+                        } catch (e: Exception) {
+                            Color.White
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(parsedCustomColor)
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = customHexText,
+                            onValueChange = { customHexText = it },
+                            label = { Text("Custom Hex Color (e.g. #FFFFFF)") },
+                            textStyle = MaterialTheme.typography.bodySmall,
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFFFFD700),
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                try {
+                                    android.graphics.Color.parseColor(customHexText.trim())
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(textColorHex = customHexText.trim()))
+                                    viewModel.showToast("Custom text color applied", ToastType.SUCCESS)
+                                } catch (e: Exception) {
+                                    viewModel.showToast("Invalid Hex color (must be #RRGGBB)", ToastType.ERROR)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Apply", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    SliderRow(
+                        title = "Text Opacity",
+                        value = currentOverlay.textOpacity * 100f,
+                        valueRange = 10f..100f,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textOpacity = it / 100f)) },
+                        valueText = "${(currentOverlay.textOpacity * 100).toInt()}%"
+                    )
+
+                    SliderRow(
+                        title = "Text Stroke / Outline Width",
+                        value = currentOverlay.textStrokeWidthDp,
+                        valueRange = 0.0f..4.0f,
+                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textStrokeWidthDp = it)) },
+                        valueText = String.format(Locale.US, "%.1f dp", currentOverlay.textStrokeWidthDp)
+                    )
+
+                    CompactSwitchRow(
+                        title = "Enable Text Shadow",
+                        subtitle = "Render dark contrast outline behind text for high daylight readability",
+                        checked = currentOverlay.hasTextShadow,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(hasTextShadow = it)) },
+                        tag = "switch_has_text_shadow"
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 7: BACKGROUND PANEL STYLE
+                    // ----------------------------------------------------
+                    Text(
+                        text = "TEXT BACKGROUND PANEL STYLE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val bgStyles = listOf("Transparent", "Translucent", "Solid")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        bgStyles.forEach { style ->
+                            val isSelected = currentOverlay.backgroundStyle.equals(style, ignoreCase = true)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    val newOpacity = when (style) {
+                                        "Transparent" -> 0.0f
+                                        "Translucent" -> 0.55f
+                                        "Solid" -> 0.90f
+                                        else -> currentOverlay.backgroundOpacity
+                                    }
+                                    viewModel.saveOverlayConfigSilent(
+                                        currentOverlay.copy(
+                                            backgroundStyle = style,
+                                            backgroundOpacity = newOpacity
+                                        )
+                                    )
+                                },
+                                label = { Text(style, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    if (currentOverlay.backgroundStyle != "Transparent") {
+                        SliderRow(
+                            title = "Background Panel Opacity",
+                            value = currentOverlay.backgroundOpacity * 100f,
+                            valueRange = 10f..100f,
+                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundOpacity = it / 100f)) },
+                            valueText = "${(currentOverlay.backgroundOpacity * 100).toInt()}%"
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Background Panel Color", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+                        val bgColors = listOf(
+                            "#000000" to "Black",
+                            "#1E293B" to "Slate",
+                            "#0F172A" to "Navy",
+                            "#18181B" to "Charcoal"
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            bgColors.forEach { (hex, name) ->
+                                val isSelected = currentOverlay.backgroundColorHex.equals(hex, ignoreCase = true)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundColorHex = hex)) },
+                                    label = { Text(name, fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFFFFD700),
+                                        selectedLabelColor = Color.Black
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 8: LIVE INTERACTIVE PREVIEW
+                    // ----------------------------------------------------
+                    Text(
+                        text = "LIVE INTERACTIVE PREVIEW",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val previewParsedColor = try {
+                        Color(android.graphics.Color.parseColor(currentOverlay.textColorHex)).copy(alpha = currentOverlay.textOpacity.coerceIn(0.2f, 1.0f))
+                    } catch (e: Exception) {
+                        Color.White
+                    }
+
+                    val previewBgParsed = if (currentOverlay.backgroundStyle != "Transparent") {
+                        try {
+                            Color(android.graphics.Color.parseColor(currentOverlay.backgroundColorHex)).copy(alpha = currentOverlay.backgroundOpacity.coerceIn(0.1f, 1f))
+                        } catch (e: Exception) {
+                            Color.Black.copy(alpha = 0.6f)
+                        }
+                    } else {
+                        Color.Transparent
+                    }
+
+                    val previewFontFamily = when (currentOverlay.fontFamily.lowercase()) {
+                        "monospace" -> FontFamily.Monospace
+                        "serif" -> FontFamily.Serif
+                        "cursive" -> FontFamily.Cursive
+                        else -> FontFamily.SansSerif
+                    }
+
+                    val previewFontWeight = when (currentOverlay.fontStyle.lowercase()) {
+                        "bold" -> FontWeight.Bold
+                        "medium" -> FontWeight.Medium
+                        else -> FontWeight.Normal
+                    }
+
+                    val previewFontStyle = if (currentOverlay.fontStyle.equals("italic", ignoreCase = true)) FontStyle.Italic else FontStyle.Normal
+
+                    val previewTextAlign = when (currentOverlay.textAlignment.lowercase()) {
+                        "left" -> TextAlign.Start
+                        "center" -> TextAlign.Center
+                        else -> TextAlign.End
+                    }
+
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .background(Color(0xFF0F172A))
+                                .padding(12.dp),
+                            contentAlignment = when (currentOverlay.watermarkPosition.lowercase()) {
+                                "top left" -> Alignment.TopStart
+                                "top center" -> Alignment.TopCenter
+                                "top right" -> Alignment.TopEnd
+                                "center left" -> Alignment.CenterStart
+                                "center" -> Alignment.Center
+                                "center right" -> Alignment.CenterEnd
+                                "bottom left" -> Alignment.BottomStart
+                                "bottom center" -> Alignment.BottomCenter
+                                else -> Alignment.BottomEnd
+                            }
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(previewBgParsed)
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalAlignment = when (currentOverlay.textAlignment.lowercase()) {
+                                    "left" -> Alignment.Start
+                                    "center" -> Alignment.CenterHorizontally
+                                    else -> Alignment.End
+                                }
+                            ) {
+                                if (currentOverlay.showProjectInfo) {
+                                    Text(
+                                        text = "MH | MM | 189+320 LHS",
+                                        color = previewParsedColor,
+                                        fontSize = 11.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
+                                }
+                                Text(
+                                    text = currentSampleDate,
+                                    color = previewParsedColor,
+                                    fontSize = 11.sp,
+                                    fontFamily = previewFontFamily,
+                                    fontWeight = previewFontWeight,
+                                    fontStyle = previewFontStyle,
+                                    textAlign = previewTextAlign
+                                )
+                                if (currentOverlay.showAccuracy) {
+                                    Text(
+                                        text = "29.8339°N 77.8893°E • ±4m",
+                                        color = previewParsedColor,
+                                        fontSize = 10.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
                                 }
                             }
                         }
@@ -1431,82 +2430,8 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // ====================================================
-            // 9. METADATA AND WATERMARK
-            // ====================================================
-            if (matchesSearch("metadata watermark position font size color opacity shadow background", searchQuery)) {
-                SmartDropdownSection(
-                    title = "9. Metadata and Watermark",
-                    subtitle = "Position: ${currentOverlay.watermarkPosition} • Size: ${currentOverlay.fontSizePreset}",
-                    icon = Icons.Default.BrandingWatermark,
-                    accentColor = Color(0xFFFFD700),
-                    isExpanded = expandedSections["metadata"] ?: false,
-                    onToggleExpand = { expandedSections["metadata"] = !(expandedSections["metadata"] ?: false) }
-                ) {
-                    CompactSwitchRow(
-                        title = "Show Project Info",
-                        subtitle = "Include Highway ID, Section & Lane details",
-                        checked = currentOverlay.showProjectInfo,
-                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showProjectInfo = it)) },
-                        tag = "switch_show_project"
-                    )
+            // (Section 9 Metadata and Watermark is merged into Section 6. Timestamp)
 
-                    CompactSwitchRow(
-                        title = "Show Compass Heading",
-                        subtitle = "Include live compass direction (e.g. 359° N)",
-                        checked = currentOverlay.showCompass,
-                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showCompass = it)) },
-                        tag = "switch_show_compass"
-                    )
-
-                    CompactSwitchRow(
-                        title = "Show Altitude",
-                        subtitle = "Include elevation in meters above sea level",
-                        checked = currentOverlay.showAltitude,
-                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAltitude = it)) },
-                        tag = "switch_show_altitude"
-                    )
-
-                    CompactSwitchRow(
-                        title = "Show GPS Accuracy",
-                        subtitle = "Include GPS error margin (e.g. ±4m)",
-                        checked = currentOverlay.showAccuracy,
-                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAccuracy = it)) },
-                        tag = "switch_show_accuracy"
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Watermark Placement Position", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-                    val positions = listOf("Bottom Right", "Bottom Left", "Top Right", "Top Left", "Bottom Center", "Top Center", "Center")
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        positions.forEach { pos ->
-                            FilterChip(
-                                selected = currentOverlay.watermarkPosition.equals(pos, ignoreCase = true),
-                                onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(watermarkPosition = pos)) },
-                                label = { Text(pos, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                        }
-                    }
-
-                    SliderRow(
-                        title = "Font Size (SP)",
-                        value = currentOverlay.fontSizeSp,
-                        valueRange = 14f..42f,
-                        onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontSizeSp = it)) },
-                        valueText = "${currentOverlay.fontSizeSp.toInt()} sp"
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
             // 10. CUSTOM LOGO

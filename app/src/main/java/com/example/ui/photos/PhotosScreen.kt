@@ -104,7 +104,9 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.PhotoRecordEntity
+import com.example.model.GeoPoint
 import com.example.ui.MainViewModel
+import com.example.ui.camera.MiniMapPreview
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -1200,6 +1202,28 @@ fun PhotoDetailsDialog(
                 DetailRow("Match Offset", "%.1f meters".format(Locale.US, photo.offsetMetres))
                 DetailRow("Match Type", if (photo.isManualChainage) "Manual Input" else "Auto KMZ Match")
                 DetailRow("File Path", photo.filePath)
+
+                if (photo.latitude != 0.0 || photo.longitude != 0.0) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Capture Location Map",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    MiniMapPreview(
+                        location = GeoPoint(photo.latitude, photo.longitude),
+                        bearing = null,
+                        routeData = null,
+                        highwayTag = photo.highwayId,
+                        gpsAccuracy = photo.accuracy,
+                        showGpsBadge = true,
+                        showProjectTag = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(130.dp)
+                    )
+                }
             }
         },
         confirmButton = {

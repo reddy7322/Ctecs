@@ -60,6 +60,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.RouteEntity
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
+import com.example.ui.camera.MiniMapPreview
+import com.example.ui.theme.isAppDarkTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -228,9 +230,16 @@ fun ActiveRouteCard(
     onInspectMarkers: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = isAppDarkTheme()
     Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDark) Color(0xFF1E293B) else MaterialTheme.colorScheme.surface
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (isDark) Color(0xFF334155) else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+        ),
         modifier = modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -246,12 +255,12 @@ fun ActiveRouteCard(
                     Icon(
                         imageVector = Icons.Default.AltRoute,
                         contentDescription = null,
-                        tint = Color(0xFF38BDF8),
+                        tint = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
                         text = "ACTIVE ALIGNMENT",
-                        color = Color(0xFF38BDF8),
+                        color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
@@ -277,7 +286,7 @@ fun ActiveRouteCard(
             if (activeRoute != null) {
                 Text(
                     text = activeRoute.name,
-                    color = Color.White,
+                    color = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -289,14 +298,14 @@ fun ActiveRouteCard(
 
                 Text(
                     text = "Chainage: $startStr  →  $endStr  (%.1f km coverage)".format(Locale.US, activeRoute.totalCoverageKm),
-                    color = Color(0xFFFBBF24),
+                    color = if (isDark) Color(0xFFFBBF24) else Color(0xFFD97706),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )
 
                 Text(
                     text = "Parsed Markers: ${activeRoute.markers.size} (50m intervals) • Alignments: ${activeRoute.alignments.size}",
-                    color = Color(0xFF94A3B8),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp
                 )
 
@@ -306,8 +315,22 @@ fun ActiveRouteCard(
                         activeRoute.bounds.minLat, activeRoute.bounds.minLng,
                         activeRoute.bounds.maxLat, activeRoute.bounds.maxLng
                     ),
-                    color = Color(0xFF94A3B8),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Embedded Dynamic Map Preview of the Active Route Alignment
+                MiniMapPreview(
+                    location = activeRoute.bounds.center,
+                    bearing = null,
+                    routeData = activeRoute,
+                    highwayTag = activeRoute.name,
+                    showProjectTag = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -323,7 +346,7 @@ fun ActiveRouteCard(
             } else {
                 Text(
                     text = "Import a KMZ or KML highway alignment file to enable real-time chainage tracking.",
-                    color = Color(0xFF94A3B8),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp
                 )
             }

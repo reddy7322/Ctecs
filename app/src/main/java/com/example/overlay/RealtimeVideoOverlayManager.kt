@@ -135,9 +135,12 @@ class RealtimeVideoOverlayManager(
             val currentActivity = baseSnapshot.projectProfile.activity
             val currentLane = baseSnapshot.projectProfile.lane
 
-            val frameSize = frame.size
-            val width = frameSize.width
-            val height = frameSize.height
+            val cropRect = try { frame.cropRect } catch (e: Throwable) { null }
+            val hasCrop = cropRect != null && cropRect.width() > 0 && cropRect.height() > 0
+            val renderWidth = if (hasCrop) cropRect.width() else frame.size.width
+            val renderHeight = if (hasCrop) cropRect.height() else frame.size.height
+            val cropLeft = if (hasCrop) cropRect.left.toFloat() else 0f
+            val cropTop = if (hasCrop) cropRect.top.toFloat() else 0f
 
             // Calculate rotation needed on raw buffer canvas to appear upright
             // after the player applies MP4 rotation metadata (frameRotation)
@@ -156,8 +159,8 @@ class RealtimeVideoOverlayManager(
                     (currentSide != lastRenderedSide) ||
                     (currentActivity != lastRenderedActivity) ||
                     (currentLane != lastRenderedLane) ||
-                    (width != lastRenderedWidth) ||
-                    (height != lastRenderedHeight)
+                    (renderWidth != lastRenderedWidth) ||
+                    (renderHeight != lastRenderedHeight)
 
             if (isDirty) {
                 val canvas = frame.overlayCanvas
@@ -173,8 +176,10 @@ class RealtimeVideoOverlayManager(
                 // 3. Render upright overlay adjusted for current dynamic orientation
                 renderRotatedOverlay(
                     canvas = canvas,
-                    width = width,
-                    height = height,
+                    width = renderWidth,
+                    height = renderHeight,
+                    cropLeft = cropLeft,
+                    cropTop = cropTop,
                     effectiveCanvasRotation = effectiveCanvasRotation,
                     snapshot = liveSnapshot
                 )
@@ -190,8 +195,8 @@ class RealtimeVideoOverlayManager(
                 lastRenderedSide = currentSide
                 lastRenderedActivity = currentActivity
                 lastRenderedLane = currentLane
-                lastRenderedWidth = width
-                lastRenderedHeight = height
+                lastRenderedWidth = renderWidth
+                lastRenderedHeight = renderHeight
             }
             return true
         } catch (e: Throwable) {
@@ -210,10 +215,15 @@ class RealtimeVideoOverlayManager(
         canvas: android.graphics.Canvas,
         width: Int,
         height: Int,
+        cropLeft: Float,
+        cropTop: Float,
         effectiveCanvasRotation: Int,
         snapshot: CaptureSnapshot
     ) {
         canvas.save()
+        if (cropLeft > 0f || cropTop > 0f) {
+            canvas.translate(cropLeft, cropTop)
+        }
         when (effectiveCanvasRotation) {
             0 -> {
                 OverlayRenderer.drawOverlayOnCanvas(
