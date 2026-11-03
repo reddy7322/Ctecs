@@ -96,25 +96,35 @@ data class ProjectProfile(
             WorkType("LIE", "Lenders Investment Engineer")
         )
 
-        val LANE_PRESETS = listOf("None", "I/L", "M/L", "O/L", "Shoulder", "Service Rd", "Main CW")
+        val LANE_PRESETS = listOf("None", "I/L", "M/L", "O/L", "Shoulder", "Service Rd", "MCW")
         val ACTIVITY_PRESETS = listOf(
             "None",
-            "DBM",
-            "BC",
+            "EMB",
+            "SG",
             "GSB",
             "WMM",
+            "DBM",
+            "BC",
             "Milling",
-            "Embankment",
-            "Subgrade",
             "DLC",
             "PQC",
-            "Drainage",
+            "RE Wall",
+            "Drain",
             "Kerb",
+            "Studs",
+            "Lighting",
+            "Junction",
+            "Minor Junction",
+            "Major Junction",
             "Road Marking",
-            "Safety Barrier",
+            "Sign Boards",
+            "MBCB",
+            "U-Duct",
+            "Busbay",
+            "Bus Shelter",
+            "Safety",
             "Site Inspection",
-            "General Progress",
-            "Main CW to MCW"
+            "General Progress"
         )
     }
 }
