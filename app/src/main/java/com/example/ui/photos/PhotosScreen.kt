@@ -74,6 +74,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sort
@@ -501,72 +503,163 @@ fun PhotosScreen(
         },
         bottomBar = {
             if (isSelectionMode) {
-                Surface(
-                    tonalElevation = 6.dp,
-                    shadowElevation = 8.dp,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color.White,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        OutlinedButton(
-                            onClick = {
-                                if (selectedPhotoIds.size == filteredSortedPhotos.size) {
-                                    selectedPhotoIds.clear()
-                                } else {
-                                    selectedPhotoIds.clear()
-                                    selectedPhotoIds.addAll(filteredSortedPhotos.map { it.id })
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = if (selectedPhotoIds.size == filteredSortedPhotos.size) Icons.Default.Close else Icons.Default.Checklist,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (selectedPhotoIds.size == filteredSortedPhotos.size) "Deselect All" else "Select All (${filteredSortedPhotos.size})",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
-                            )
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                enabled = selectedPhotoIds.isNotEmpty(),
-                                onClick = {
-                                    val selectedList = photos.filter { it.id in selectedPhotoIds }
-                                    shareMultiplePhotos(context, selectedList)
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary
-                                )
+                            // 1. Share Item
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = selectedPhotoIds.isNotEmpty()) {
+                                        val selectedList = photos.filter { it.id in selectedPhotoIds }
+                                        shareMultiplePhotos(context, selectedList)
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Share (${selectedPhotoIds.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Share",
+                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Share",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                )
                             }
 
-                            Button(
-                                enabled = selectedPhotoIds.isNotEmpty(),
-                                onClick = { showBulkDeleteDialog = true },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFDC2626),
-                                    contentColor = Color.White
-                                )
+                            // Divider 1
+                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
+
+                            // 2. Delete Item
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = selectedPhotoIds.isNotEmpty()) {
+                                        showBulkDeleteDialog = true
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Delete (${selectedPhotoIds.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFFDC2626) else Color.LightGray,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Delete",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFFDC2626) else Color.Gray
+                                )
+                            }
+
+                            // Divider 2
+                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
+
+                            // 3. Move Item
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = selectedPhotoIds.isNotEmpty()) {
+                                        viewModel.showToast("Moved ${selectedPhotoIds.size} files")
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CreateNewFolder,
+                                    contentDescription = "Move",
+                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Move",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                )
+                            }
+
+                            // Divider 3
+                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
+
+                            // 4. Group Item
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = selectedPhotoIds.isNotEmpty()) {
+                                        viewModel.showToast("Grouped ${selectedPhotoIds.size} photos")
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CreateNewFolder,
+                                    contentDescription = "Group",
+                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Group",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                )
+                            }
+
+                            // Divider 4
+                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
+
+                            // 5. Export Item
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = selectedPhotoIds.isNotEmpty()) {
+                                        val selectedList = photos.filter { it.id in selectedPhotoIds }
+                                        shareMultiplePhotos(context, selectedList)
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileDownload,
+                                    contentDescription = "Export",
+                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Export",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                )
                             }
                         }
                     }

@@ -169,10 +169,15 @@ fun HomeScreen(
     val currentThemeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
     val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
-    val mainTextColor = MaterialTheme.colorScheme.onBackground
-    val subTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val cardBgColor = MaterialTheme.colorScheme.surface
-    val cardBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+
+    val isDark = com.example.ui.theme.isAppDarkTheme()
+
+    // Light Theme Visual Colors vs Dark Theme
+    val pageBgColor = if (isDark) MaterialTheme.colorScheme.background else Color(0xFFF8FAFC)
+    val cardBgColor = if (isDark) MaterialTheme.colorScheme.surface else Color.White
+    val cardBorderColor = if (isDark) MaterialTheme.colorScheme.outline.copy(alpha = 0.25f) else Color(0xFFE2E8F0)
+    val mainTextColor = if (isDark) MaterialTheme.colorScheme.onBackground else Color(0xFF0F172A)
+    val subTextColor = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF64748B)
 
     // Pulse transition for GPS dot
     val infiniteTransition = rememberInfiniteTransition(label = "gps_dot")
@@ -183,18 +188,25 @@ fun HomeScreen(
         label = "gps_dot_pulse"
     )
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(pageBgColor)
     ) {
+        val maxH = maxHeight
+        val isCompactHeight = maxH < 680.dp
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(
+                    start = 12.dp,
+                    end = 12.dp,
+                    top = if (isCompactHeight) 2.dp else 4.dp,
+                    bottom = if (isCompactHeight) 2.dp else 4.dp
+                ),
+            verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 4.dp else 6.dp)
         ) {
             // 1. Top Telemetry Header Row (4 Cards Across)
             val speedKmh = if (locationState.speed != null && locationState.speed!! >= 0f) locationState.speed!! * 3.6f else 0f
@@ -222,10 +234,11 @@ fun HomeScreen(
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
-                subTextColor = subTextColor
+                subTextColor = subTextColor,
+                isDark = isDark
             )
 
-            // 2. Extra-Large Central Chainage Display with Individual Odometer Digit Animations
+            // 2. Central Chainage Display
             val displayChainageText = when {
                 activeRoute == null -> "NO KMZ"
                 locationState.point == null -> "--+---"
@@ -247,10 +260,11 @@ fun HomeScreen(
                 offsetMetres = matchResult.offsetMetres,
                 hasActiveRoute = activeRoute != null,
                 mainTextColor = mainTextColor,
-                subTextColor = subTextColor
+                subTextColor = subTextColor,
+                isDark = isDark
             )
 
-            // 3. Project & Strech Information Cards (Row of 2 Cards with Long-Press to Edit)
+            // 3. Project & Stretch Information Cards (Row of 2 Cards with Long-Press to Edit)
             var showEditProjectStretchDialog by remember { mutableStateOf(false) }
 
             ProjectStretchCardsRow(
@@ -260,7 +274,8 @@ fun HomeScreen(
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
-                subTextColor = subTextColor
+                subTextColor = subTextColor,
+                isDark = isDark
             )
 
             if (showEditProjectStretchDialog) {
@@ -280,13 +295,13 @@ fun HomeScreen(
                 )
             }
 
-            // 4. Interactive Smart KMZ Map - Expanded 360.dp Card
+            // 4. Interactive Smart KMZ Map - Dynamic Height Priority (weight 1f)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(360.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .border(0.8.dp, cardBorderColor, RoundedCornerShape(18.dp))
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .border(1.dp, cardBorderColor, RoundedCornerShape(14.dp))
             ) {
                 InteractiveSmartMap(
                     location = locationState.point,
@@ -320,7 +335,7 @@ fun HomeScreen(
                 )
             }
 
-            // 5. Prominent Full-Width Next KM Stone Card (Single element below Map)
+            // 5. Prominent Next KM Stone Card
             val curChainage = matchResult.chainage
             val (nextKmStone, nextKmDistance) = remember(curChainage) {
                 if (curChainage != null) {
@@ -339,14 +354,29 @@ fun HomeScreen(
             NextChainageCard(
                 nextChainage = nextKmStone,
                 distanceText = nextKmDistance,
+                detectedSide = detectedSide,
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
-                subTextColor = subTextColor
+                subTextColor = subTextColor,
+                isDark = isDark
             )
 
-            // Bottom Spacing for Floating Glass Nav Bar
-            Spacer(modifier = Modifier.height(72.dp))
+            // 6. Quick Action Flat Buttons Row below Next KM stone card
+            HomeQuickActionButtons(
+                onNavigateToTools = onNavigateToTools,
+                onNavigateToNotes = onNavigateToNotes,
+                onNavigateToCamera = onNavigateToCamera,
+                onNavigateToPhotos = onNavigateToPhotos,
+                onNavigateToRoutes = onNavigateToRoutes,
+                onNavigateToSettings = onNavigateToSettings,
+                cardBgColor = cardBgColor,
+                cardBorderColor = cardBorderColor,
+                isDark = isDark
+            )
+
+            // Bottom Spacing for Floating Navigation Bar
+            Spacer(modifier = Modifier.height(if (isCompactHeight) 52.dp else 58.dp))
         }
     }
 }
@@ -367,7 +397,8 @@ fun TopTelemetryHeaderRow(
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
-    subTextColor: Color
+    subTextColor: Color,
+    isDark: Boolean = true
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val isNarrow = maxWidth < 360.dp
@@ -375,23 +406,26 @@ fun TopTelemetryHeaderRow(
         val (dotCol, gpsText) = when {
             !hasFix -> Color(0xFF38BDF8) to "GPS --"
             accuracy <= 5f -> Color(0xFF22C55E) to String.format(Locale.US, "GPS ±%.0fm", accuracy)
-            accuracy <= 15f -> HighlightYellow to String.format(Locale.US, "GPS ±%.0fm", accuracy)
+            accuracy <= 15f -> (if (isDark) HighlightYellow else Color(0xFF2563EB)) to String.format(Locale.US, "GPS ±%.0fm", accuracy)
             else -> AccentRed to String.format(Locale.US, "GPS ±%.0fm", accuracy)
         }
 
+        val pillBgColor = if (isDark) Color(0xFF0F172A) else Color(0xFF1E293B)
+        val compassTint = if (isDark) HighlightYellow else Color(0xFF38BDF8)
+
         if (isNarrow) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     // Card 1: GPS Accuracy Pill
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF0F172A),
+                        shape = RoundedCornerShape(12.dp),
+                        color = pillBgColor,
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(38.dp)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp),
@@ -417,12 +451,12 @@ fun TopTelemetryHeaderRow(
 
                     // Card 2: Satellites
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(12.dp),
                         color = cardBgColor,
                         border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(38.dp)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp),
@@ -433,7 +467,7 @@ fun TopTelemetryHeaderRow(
                                 imageVector = Icons.Default.SatelliteAlt,
                                 contentDescription = null,
                                 tint = mainTextColor,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Column(horizontalAlignment = Alignment.Start) {
@@ -460,12 +494,12 @@ fun TopTelemetryHeaderRow(
                 ) {
                     // Card 3: Speed
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(12.dp),
                         color = cardBgColor,
                         border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(38.dp)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp),
@@ -476,7 +510,7 @@ fun TopTelemetryHeaderRow(
                                 imageVector = Icons.Default.Speed,
                                 contentDescription = null,
                                 tint = mainTextColor,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Column(horizontalAlignment = Alignment.Start) {
@@ -498,11 +532,11 @@ fun TopTelemetryHeaderRow(
 
                     // Card 4: Compass Pill + Quick Theme Shortcut
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF0F172A),
+                        shape = RoundedCornerShape(12.dp),
+                        color = pillBgColor,
                         modifier = Modifier
                             .weight(1.1f)
-                            .height(44.dp)
+                            .height(38.dp)
                             .clickable { onToggleTheme() }
                     ) {
                         Row(
@@ -514,13 +548,13 @@ fun TopTelemetryHeaderRow(
                                 Icon(
                                     imageVector = Icons.Default.CompassCalibration,
                                     contentDescription = null,
-                                    tint = HighlightYellow,
-                                    modifier = Modifier.size(16.dp)
+                                    tint = compassTint,
+                                    modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = compassHeadingStr,
-                                    color = HighlightYellow,
+                                    color = compassTint,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Black
                                 )
@@ -533,7 +567,7 @@ fun TopTelemetryHeaderRow(
                                     else -> Icons.Default.Palette
                                 },
                                 contentDescription = "Toggle Theme",
-                                tint = Color.White.copy(alpha = 0.7f),
+                                tint = Color.White.copy(alpha = 0.75f),
                                 modifier = Modifier.size(14.dp)
                             )
                         }
@@ -548,11 +582,11 @@ fun TopTelemetryHeaderRow(
             ) {
                 // Card 1: GPS Accuracy Pill
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF0F172A),
+                    shape = RoundedCornerShape(12.dp),
+                    color = pillBgColor,
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(38.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp),
@@ -578,12 +612,12 @@ fun TopTelemetryHeaderRow(
 
                 // Card 2: Satellites
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = cardBgColor,
                     border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(38.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp),
@@ -594,7 +628,7 @@ fun TopTelemetryHeaderRow(
                             imageVector = Icons.Default.SatelliteAlt,
                             contentDescription = null,
                             tint = mainTextColor,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Column(horizontalAlignment = Alignment.Start) {
@@ -616,12 +650,12 @@ fun TopTelemetryHeaderRow(
 
                 // Card 3: Speed
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = cardBgColor,
                     border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(38.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp),
@@ -632,7 +666,7 @@ fun TopTelemetryHeaderRow(
                             imageVector = Icons.Default.Speed,
                             contentDescription = null,
                             tint = mainTextColor,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Column(horizontalAlignment = Alignment.Start) {
@@ -654,11 +688,11 @@ fun TopTelemetryHeaderRow(
 
                 // Card 4: Compass Pill + Quick Theme Shortcut
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF0F172A),
+                    shape = RoundedCornerShape(12.dp),
+                    color = pillBgColor,
                     modifier = Modifier
                         .weight(1.1f)
-                        .height(44.dp)
+                        .height(38.dp)
                         .clickable { onToggleTheme() }
                 ) {
                     Row(
@@ -670,13 +704,13 @@ fun TopTelemetryHeaderRow(
                             Icon(
                                 imageVector = Icons.Default.CompassCalibration,
                                 contentDescription = null,
-                                tint = HighlightYellow,
-                                modifier = Modifier.size(16.dp)
+                                tint = compassTint,
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = compassHeadingStr,
-                                color = HighlightYellow,
+                                color = compassTint,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Black
                             )
@@ -689,7 +723,7 @@ fun TopTelemetryHeaderRow(
                                 else -> Icons.Default.Palette
                             },
                             contentDescription = "Toggle Theme",
-                            tint = Color.White.copy(alpha = 0.7f),
+                            tint = Color.White.copy(alpha = 0.75f),
                             modifier = Modifier.size(14.dp)
                         )
                     }
@@ -710,20 +744,24 @@ fun CentralChainageDisplay(
     offsetMetres: Double,
     hasActiveRoute: Boolean,
     mainTextColor: Color,
-    subTextColor: Color
+    subTextColor: Color,
+    isDark: Boolean = true
 ) {
+    val badgeBg = if (isDark) HighlightYellow else Color(0xFFEFF6FF)
+    val badgeTextCol = if (isDark) Color.Black else Color(0xFF2563EB)
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 2.dp),
         contentAlignment = Alignment.Center
     ) {
         val containerWidth = maxWidth
         val digitFontSize = when {
-            containerWidth < 340.dp -> 42.sp
-            containerWidth < 380.dp -> 50.sp
-            containerWidth < 430.dp -> 58.sp
-            else -> 66.sp
+            containerWidth < 340.dp -> 38.sp
+            containerWidth < 380.dp -> 44.sp
+            containerWidth < 430.dp -> 50.sp
+            else -> 56.sp
         }
 
         Column(
@@ -735,15 +773,15 @@ fun CentralChainageDisplay(
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Left Yellow Pill: KM (Small & Compact)
+                // Left Pill: KM
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = HighlightYellow,
+                    color = badgeBg,
                     modifier = Modifier.padding(end = 6.dp)
                 ) {
                     Text(
                         text = "KM",
-                        color = Color.Black,
+                        color = badgeTextCol,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -754,18 +792,19 @@ fun CentralChainageDisplay(
                 OdometerChainageRow(
                     chainageText = chainageText,
                     mainTextColor = mainTextColor,
-                    digitFontSize = digitFontSize
+                    digitFontSize = digitFontSize,
+                    isDark = isDark
                 )
 
-                // Right Yellow Pill: RHS / LHS (Small & Compact)
+                // Right Pill: RHS / LHS
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = HighlightYellow,
+                    color = badgeBg,
                     modifier = Modifier.padding(start = 6.dp)
                 ) {
                     Text(
                         text = "• $detectedSide",
-                        color = Color.Black,
+                        color = badgeTextCol,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -773,7 +812,7 @@ fun CentralChainageDisplay(
                 }
             }
 
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(1.dp))
 
             // Quality & Offset Status Line Below Chainage
             Row(
@@ -784,24 +823,24 @@ fun CentralChainageDisplay(
                 Text(
                     text = if (hasActiveRoute) "Project" else "GPS-Derived",
                     color = mainTextColor,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = "  •  ",
                     color = subTextColor,
-                    fontSize = 12.sp
+                    fontSize = 11.sp
                 )
                 Text(
                     text = String.format(Locale.US, "Offset: %.1fm", offsetMetres),
                     color = mainTextColor,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
                     text = "  •  ",
                     color = subTextColor,
-                    fontSize = 12.sp
+                    fontSize = 11.sp
                 )
 
                 val (confText, confCol) = when (confidence) {
@@ -813,7 +852,7 @@ fun CentralChainageDisplay(
                 Text(
                     text = confText,
                     color = confCol,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -825,7 +864,8 @@ fun CentralChainageDisplay(
 fun OdometerChainageRow(
     chainageText: String,
     mainTextColor: Color,
-    digitFontSize: TextUnit = 62.sp
+    digitFontSize: TextUnit = 56.sp,
+    isDark: Boolean = true
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -836,7 +876,8 @@ fun OdometerChainageRow(
             OdometerSingleDigit(
                 char = ch,
                 mainTextColor = mainTextColor,
-                digitFontSize = digitFontSize
+                digitFontSize = digitFontSize,
+                isDark = isDark
             )
         }
     }
@@ -846,7 +887,8 @@ fun OdometerChainageRow(
 fun OdometerSingleDigit(
     char: Char,
     mainTextColor: Color,
-    digitFontSize: TextUnit = 62.sp
+    digitFontSize: TextUnit = 56.sp,
+    isDark: Boolean = true
 ) {
     var prevChar by remember { mutableStateOf(char) }
     var isChanging by remember { mutableStateOf(false) }
@@ -860,8 +902,10 @@ fun OdometerSingleDigit(
         }
     }
 
+    val activeAccent = if (isDark) HighlightYellow else Color(0xFF2563EB)
+
     val digitColor by animateColorAsState(
-        targetValue = if (isChanging) HighlightYellow else mainTextColor,
+        targetValue = if (isChanging) activeAccent else mainTextColor,
         animationSpec = tween(220),
         label = "digit_accent_color"
     )
@@ -909,7 +953,7 @@ fun OdometerSingleDigit(
                     .width(14.dp)
                     .height(3.dp)
                     .clip(CircleShape)
-                    .background(HighlightYellow)
+                    .background(activeAccent)
             )
         }
     }
@@ -926,21 +970,26 @@ fun ProjectStretchCardsRow(
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
-    subTextColor: Color
+    subTextColor: Color,
+    isDark: Boolean = true
 ) {
+    val iconBg = if (isDark) HighlightYellow.copy(alpha = 0.15f) else Color(0xFFEFF6FF)
+    val accentTint = if (isDark) HighlightYellow else Color(0xFF2563EB)
+
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // Project Card
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(12.dp),
             color = cardBgColor,
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+            shadowElevation = if (isDark) 0.dp else 1.dp,
             modifier = Modifier
                 .weight(1f)
-                .height(68.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .height(52.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { onEdit() },
@@ -952,36 +1001,36 @@ fun ProjectStretchCardsRow(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = HighlightYellow.copy(alpha = 0.15f),
-                    modifier = Modifier.size(38.dp)
+                    color = iconBg,
+                    modifier = Modifier.size(32.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Default.Engineering,
                             contentDescription = null,
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(20.dp)
+                            tint = accentTint,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Project",
-                        color = HighlightYellow,
-                        fontSize = 11.sp,
+                        color = accentTint,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
                     Text(
                         text = projectName.ifBlank { "Set Project" },
                         color = if (projectName.isNotBlank()) mainTextColor else subTextColor.copy(alpha = 0.7f),
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -991,20 +1040,21 @@ fun ProjectStretchCardsRow(
                     imageVector = Icons.Default.Edit,
                     contentDescription = "Edit Project",
                     tint = subTextColor.copy(alpha = 0.5f),
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(12.dp)
                 )
             }
         }
 
         // Strech Card
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(12.dp),
             color = cardBgColor,
             border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+            shadowElevation = if (isDark) 0.dp else 1.dp,
             modifier = Modifier
                 .weight(1f)
-                .height(68.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .height(52.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { onEdit() },
@@ -1016,36 +1066,36 @@ fun ProjectStretchCardsRow(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = HighlightYellow.copy(alpha = 0.15f),
-                    modifier = Modifier.size(38.dp)
+                    color = iconBg,
+                    modifier = Modifier.size(32.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Default.AltRoute,
                             contentDescription = null,
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(20.dp)
+                            tint = accentTint,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Strech",
-                        color = HighlightYellow,
-                        fontSize = 11.sp,
+                        color = accentTint,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
                     Text(
                         text = stretchName.ifBlank { "Set Strech" },
                         color = if (stretchName.isNotBlank()) mainTextColor else subTextColor.copy(alpha = 0.7f),
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -1055,7 +1105,7 @@ fun ProjectStretchCardsRow(
                     imageVector = Icons.Default.Edit,
                     contentDescription = "Edit Strech",
                     tint = subTextColor.copy(alpha = 0.5f),
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(12.dp)
                 )
             }
         }
@@ -1203,8 +1253,11 @@ fun EditProjectStretchDialog(
 @Composable
 fun KmStoneIcon(
     modifier: Modifier = Modifier,
-    sizeDp: Dp = 40.dp
+    sizeDp: Dp = 40.dp,
+    isDark: Boolean = true
 ) {
+    val domeColor = if (isDark) HighlightYellow else Color(0xFF2563EB)
+
     Canvas(
         modifier = modifier
             .size(sizeDp)
@@ -1249,7 +1302,7 @@ fun KmStoneIcon(
             color = Color.White
         )
 
-        // Yellow arch dome (authentic National Highway milestone top)
+        // Arch dome top
         val archPath = Path().apply {
             moveTo(left, top + archH)
             arcTo(
@@ -1263,7 +1316,7 @@ fun KmStoneIcon(
         }
         drawPath(
             path = archPath,
-            color = HighlightYellow
+            color = domeColor
         )
 
         // Milestone divider line
@@ -1305,26 +1358,46 @@ fun KmStoneIcon(
 fun NextChainageCard(
     nextChainage: String,
     distanceText: String,
+    detectedSide: String = "RHS",
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
-    subTextColor: Color
+    subTextColor: Color,
+    isDark: Boolean = true
 ) {
     val cleanDistance = distanceText.replace("Exact ", "", ignoreCase = true).trim()
 
+    val labelColor = if (isDark) HighlightYellow else Color(0xFF2563EB)
+    val badgeBgColor = if (isDark) HighlightYellow else Color(0xFF2563EB)
+    val badgeTextColor = if (isDark) Color.Black else Color.White
+    val iconBoxBg = if (isDark) Color.Black.copy(alpha = 0.35f) else Color(0xFFEFF6FF)
+
+    // Pulse animation for animated toaster-type badge
+    val infiniteTransition = rememberInfiniteTransition(label = "km_badge_pulse")
+    val badgePulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "badgePulse"
+    )
+
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(12.dp),
         color = cardBgColor,
         border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+        shadowElevation = if (isDark) 0.dp else 1.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .height(72.dp)
+            .height(58.dp)
             .testTag("next_chainage_card")
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -1332,49 +1405,162 @@ fun NextChainageCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color.Black.copy(alpha = 0.35f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, HighlightYellow.copy(alpha = 0.35f)),
-                    modifier = Modifier.size(46.dp)
+                    shape = RoundedCornerShape(8.dp),
+                    color = iconBoxBg,
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        KmStoneIcon(sizeDp = 38.dp)
+                        KmStoneIcon(sizeDp = 32.dp, isDark = isDark)
                     }
                 }
 
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
                 Column(
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
                         text = "NEXT KM STONE",
-                        color = HighlightYellow,
+                        color = labelColor,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.8.sp
                     )
-                    Text(
-                        text = if (!nextChainage.startsWith("KM") && !nextChainage.contains("-")) "KM $nextChainage" else nextChainage,
-                        color = mainTextColor,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.5.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (!nextChainage.startsWith("KM") && !nextChainage.contains("-")) "KM $nextChainage" else nextChainage,
+                            color = mainTextColor,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (isDark) MaterialTheme.colorScheme.secondaryContainer else Color(0xFFEFF6FF)
+                        ) {
+                            Text(
+                                text = detectedSide.uppercase(),
+                                color = if (isDark) MaterialTheme.colorScheme.onSecondaryContainer else Color(0xFF1E40AF),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
                 }
             }
 
+            // Animated Toaster Type Badge
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = HighlightYellow,
-                shadowElevation = 2.dp
+                shape = RoundedCornerShape(18.dp),
+                color = badgeBgColor.copy(alpha = badgePulseAlpha),
+                shadowElevation = 1.dp
             ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(if (isDark) Color.Black else Color.White)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = cleanDistance,
+                        color = badgeTextColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HomeQuickActionButtons(
+    onNavigateToTools: () -> Unit,
+    onNavigateToNotes: () -> Unit,
+    onNavigateToCamera: () -> Unit,
+    onNavigateToPhotos: () -> Unit,
+    onNavigateToRoutes: () -> Unit,
+    onNavigateToSettings: () -> Unit,
+    cardBgColor: Color,
+    cardBorderColor: Color,
+    isDark: Boolean = true
+) {
+    val toolsTint = if (isDark) HighlightYellow else Color(0xFF2563EB)
+    val notesTint = if (isDark) HighlightYellow else Color(0xFF0D9488)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Tools Flat Button
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = cardBgColor,
+            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+            shadowElevation = if (isDark) 0.dp else 1.dp,
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+                .clickable { onNavigateToTools() }
+                .testTag("home_btn_tools")
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Build,
+                    contentDescription = "Tools",
+                    tint = toolsTint,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = cleanDistance,
-                    color = Color.Black,
+                    text = "Tools",
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    fontWeight = FontWeight.Bold,
+                    color = if (isDark) Color.White else Color(0xFF0F172A)
+                )
+            }
+        }
+
+        // Smart Notes Flat Button
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = cardBgColor,
+            border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+            shadowElevation = if (isDark) 0.dp else 1.dp,
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+                .clickable { onNavigateToNotes() }
+                .testTag("home_btn_notes")
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Description,
+                    contentDescription = "Smart Notes",
+                    tint = notesTint,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "DPR Notes",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isDark) Color.White else Color(0xFF0F172A)
                 )
             }
         }

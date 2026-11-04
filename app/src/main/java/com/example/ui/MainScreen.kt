@@ -181,8 +181,6 @@ fun MainScreen(
                             Triple(AppTab.CAMERA, Icons.Default.CameraAlt, "Camera"),
                             Triple(AppTab.PHOTOS, Icons.Default.PhotoLibrary, "Gallery"),
                             Triple(AppTab.ROUTES, Icons.Default.AltRoute, "Routes"),
-                            Triple(AppTab.HIGHWAY_TOOLS, Icons.Default.Build, "Tools"),
-                            Triple(AppTab.SMART_NOTES, Icons.Default.Description, "Notes"),
                             Triple(AppTab.SETTINGS, Icons.Default.Settings, "Settings")
                         )
 

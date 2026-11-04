@@ -32,6 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Build
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LinearScale
 import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Opacity
@@ -114,6 +116,14 @@ enum class ToolsCategory(val label: String, val icon: ImageVector) {
     UTILITIES("Utilities", Icons.Default.Handyman)
 }
 
+data class ToolCardItem(
+    val id: String,
+    val title: String,
+    val icon: ImageVector,
+    val color: Color,
+    val category: ToolsCategory
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SmartHighwayToolsScreen(
@@ -123,34 +133,66 @@ fun SmartHighwayToolsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var selectedCategory by remember { mutableStateOf(ToolsCategory.CHAINAGE) }
+    var activeToolId by remember { mutableStateOf<String?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
     var showSavedQcDialog by remember { mutableStateOf(false) }
 
     val qcRecords by viewModel.allQcRecords.collectAsStateWithLifecycle()
 
+    val toolItems = remember {
+        listOf(
+            ToolCardItem("chainage_calc", "Chainage\nCalculator", Icons.Default.Calculate, Color(0xFF6366F1), ToolsCategory.CHAINAGE),
+            ToolCardItem("distance_calc", "Distance\nCalculator", Icons.Default.AltRoute, Color(0xFF16A34A), ToolsCategory.CHAINAGE),
+            ToolCardItem("gradient_calc", "Gradient\nCalculator", Icons.Default.LinearScale, Color(0xFFF97316), ToolsCategory.CHAINAGE),
+            ToolCardItem("area_calc", "Area\nCalculator", Icons.Default.Layers, Color(0xFF0284C7), ToolsCategory.CHAINAGE),
+            ToolCardItem("volume_calc", "Volume\nCalculator", Icons.Default.Build, Color(0xFFEC4899), ToolsCategory.CHAINAGE),
+            ToolCardItem("level_calc", "Level\nCalculator", Icons.Default.Engineering, Color(0xFF0D9488), ToolsCategory.CHAINAGE),
+            ToolCardItem("curve_calc", "Curve\nCalculator", Icons.Default.AltRoute, Color(0xFFF59E0B), ToolsCategory.CHAINAGE),
+            ToolCardItem("steel_calc", "Steel\nCalculator", Icons.Default.Build, Color(0xFF2563EB), ToolsCategory.ROAD_CONST),
+            ToolCardItem("concrete_calc", "Concrete\nCalculator", Icons.Default.Engineering, Color(0xFF8B5CF6), ToolsCategory.ROAD_CONST),
+            ToolCardItem("joint_calc", "Joint\nCalculator", Icons.Default.LinearScale, Color(0xFFEF4444), ToolsCategory.ROAD_CONST),
+            ToolCardItem("pavement_layers", "Pavement\nLayers", Icons.Default.Layers, Color(0xFF06B6D4), ToolsCategory.ROAD_CONST),
+            ToolCardItem("unit_converter", "Unit\nConverter", Icons.Default.Handyman, Color(0xFF64748B), ToolsCategory.CHAINAGE),
+            ToolCardItem("qc_register", "QC & Inspection\nRegister", Icons.Default.CheckCircle, Color(0xFF10B981), ToolsCategory.QUALITY_QC),
+            ToolCardItem("site_utilities", "Site Utilities\nCalculator", Icons.Default.Assignment, Color(0xFF4F46E5), ToolsCategory.UTILITIES)
+        )
+    }
+
+    val filteredTools = remember(searchQuery, toolItems) {
+        if (searchQuery.isBlank()) toolItems else {
+            toolItems.filter { it.title.replace("\n", " ").contains(searchQuery, ignoreCase = true) }
+        }
+    }
+
     BackHandler {
-        onNavigateBack()
+        if (activeToolId != null) {
+            activeToolId = null
+        } else {
+            onNavigateBack()
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "Smart Highway Tools",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
-                        )
-                        Text(
-                            text = "Engineering Calculations & Site Quality Register",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        text = if (activeToolId == null) "Tools" else toolItems.find { it.id == activeToolId }?.title?.replace("\n", " ") ?: "Tool",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = {
+                            if (activeToolId != null) {
+                                activeToolId = null
+                            } else {
+                                onNavigateBack()
+                            }
+                        }
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -158,11 +200,13 @@ fun SmartHighwayToolsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showSavedQcDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = "Saved QC Records"
-                        )
+                    if (activeToolId == null) {
+                        IconButton(onClick = { showSavedQcDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = "Saved QC Records"
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -172,56 +216,53 @@ fun SmartHighwayToolsScreen(
         },
         modifier = modifier
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .background(MaterialTheme.colorScheme.background)
         ) {
-            // Category Navigation Tabs
-            ScrollableTabRow(
-                selectedTabIndex = selectedCategory.ordinal,
-                edgePadding = 16.dp,
-                indicator = { tabPositions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        Modifier.tabIndicatorOffset(tabPositions[selectedCategory.ordinal]),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                },
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            ) {
-                ToolsCategory.entries.forEach { cat ->
-                    Tab(
-                        selected = selectedCategory == cat,
-                        onClick = { selectedCategory = cat },
-                        text = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = cat.icon,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = if (selectedCategory == cat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = cat.label,
-                                    fontWeight = if (selectedCategory == cat) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 13.sp
+            if (activeToolId == null) {
+                // Main Tools Grid (Image 1 Style)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    val rows = filteredTools.chunked(3)
+                    rows.forEach { rowItems ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            rowItems.forEach { item ->
+                                ToolsGlassGridCard(
+                                    item = item,
+                                    onClick = { activeToolId = item.id },
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
+                            if (rowItems.size < 3) {
+                                repeat(3 - rowItems.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
                         }
-                    )
+                    }
                 }
-            }
-
-            // Category Content
-            Box(modifier = Modifier.fillMaxSize()) {
-                when (selectedCategory) {
-                    ToolsCategory.CHAINAGE -> ChainageMeasurementToolsView(context)
-                    ToolsCategory.ROAD_CONST -> RoadConstructionCalculatorsView(context)
-                    ToolsCategory.QUALITY_QC -> QualityControlRegistersView(viewModel, context)
-                    ToolsCategory.UTILITIES -> SiteUtilitiesView(viewModel, context)
+            } else {
+                // Active Tool Detail View
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    when (activeToolId) {
+                        "qc_register" -> QualityControlRegistersView(viewModel, context)
+                        "site_utilities" -> SiteUtilitiesView(viewModel, context)
+                        "steel_calc", "concrete_calc", "joint_calc", "pavement_layers" -> RoadConstructionCalculatorsView(context)
+                        else -> ChainageMeasurementToolsView(context)
+                    }
                 }
             }
         }
@@ -239,6 +280,73 @@ fun SmartHighwayToolsScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun ToolsGlassGridCard(
+    item: ToolCardItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        shadowElevation = 1.dp,
+        modifier = modifier
+            .height(84.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable { onClick() }
+            .testTag("tool_card_${item.id}")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                // Colorful Squircle Icon Container
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = item.color,
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = item.icon,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Text(
+                    text = item.title,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 15.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp)
+            )
+        }
     }
 }
 
