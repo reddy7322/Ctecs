@@ -159,20 +159,27 @@ fun MainScreen(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (currentTab != AppTab.CAMERA) {
+                val isDarkNav = com.example.ui.theme.isAppDarkTheme()
+                val navBarBg = if (isDarkNav) Color(0xFF131B2E).copy(alpha = 0.96f) else Color.White.copy(alpha = 0.98f)
+                val navBarBorder = if (isDarkNav) Color(0xFF263554) else Color(0xFFE2E8F0)
+                val selectedPillBg = if (isDarkNav) Color(0xFF2563EB).copy(alpha = 0.25f) else Color(0xFFEFF6FF)
+                val selectedIconColor = if (isDarkNav) Color(0xFF60A5FA) else Color(0xFF2563EB)
+                val unselectedIconColor = if (isDarkNav) Color(0xFF94A3B8) else Color(0xFF64748B)
+
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars),
-                    shape = RoundedCornerShape(26.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-                    shadowElevation = 10.dp
+                    shape = RoundedCornerShape(24.dp),
+                    color = navBarBg,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, navBarBorder),
+                    shadowElevation = if (isDarkNav) 6.dp else 4.dp
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -187,21 +194,21 @@ fun MainScreen(
                         tabs.forEach { (tab, icon, contentDesc) ->
                             val isSelected = currentTab == tab
                             val iconTint by animateColorAsState(
-                                targetValue = if (isSelected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant,
+                                targetValue = if (isSelected) selectedIconColor else unselectedIconColor,
                                 animationSpec = tween(200),
                                 label = "icon_tint"
                             )
                             val bgTint by animateColorAsState(
-                                targetValue = if (isSelected) HighlightYellow else Color.Transparent,
+                                targetValue = if (isSelected) selectedPillBg else Color.Transparent,
                                 animationSpec = tween(200),
                                 label = "icon_bg"
                             )
 
                             Box(
                                 modifier = Modifier
-                                    .height(40.dp)
-                                    .width(if (isSelected) 46.dp else 34.dp)
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .height(38.dp)
+                                    .width(if (isSelected) 52.dp else 40.dp)
+                                    .clip(RoundedCornerShape(19.dp))
                                     .background(bgTint)
                                     .clickable {
                                         if (tab == AppTab.HIGHWAY_TOOLS) {
