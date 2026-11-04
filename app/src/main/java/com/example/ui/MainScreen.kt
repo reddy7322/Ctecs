@@ -275,58 +275,7 @@ fun MainScreen(
                 )
             }
 
-            // Floating Side-Flip Quick Handle & Gesture for Smart Highway Tools
-            // Strictly excluded from CameraScreen to ensure zero interference with camera preview, focus or brightness
-            if (currentTab != AppTab.CAMERA && currentTab != AppTab.HIGHWAY_TOOLS) {
-                var dragTotal by remember { mutableFloatStateOf(0f) }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 0.dp)
-                        .pointerInput(Unit) {
-                            detectHorizontalDragGestures(
-                                onDragStart = { dragTotal = 0f },
-                                onHorizontalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    dragTotal += dragAmount
-                                },
-                                onDragEnd = {
-                                    if (dragTotal < -30f) { // Leftward swipe opens tools
-                                        previousTabBeforeTools = currentTab
-                                        viewModel.setTab(AppTab.HIGHWAY_TOOLS)
-                                    }
-                                }
-                            )
-                        }
-                        .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
-                        .background(HighlightYellow.copy(alpha = 0.92f))
-                        .clickable {
-                            previousTabBeforeTools = currentTab
-                            viewModel.setTab(AppTab.HIGHWAY_TOOLS)
-                        }
-                        .padding(horizontal = 6.dp, vertical = 12.dp)
-                        .testTag("side_flip_tools_handle"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Build,
-                            contentDescription = "Open Smart Highway Tools",
-                            tint = Color.Black,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = "TOOLS",
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
-                        )
-                    }
-                }
-            }
+
         }
     }
 

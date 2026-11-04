@@ -12,6 +12,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +56,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Checklist
@@ -878,6 +881,8 @@ fun PhotosScreen(
     viewingPhoto?.let { photo ->
         FullScreenPhotoViewer(
             photo = photo,
+            photosList = filteredSortedPhotos,
+            onPhotoSelect = { viewingPhoto = it },
             onDismiss = { viewingPhoto = null },
             onShare = { shareSinglePhoto(context, photo) },
             onDelete = {
@@ -1675,6 +1680,8 @@ fun LongPressActionRow(
 @Composable
 fun FullScreenPhotoViewer(
     photo: PhotoRecordEntity,
+    photosList: List<PhotoRecordEntity> = emptyList(),
+    onPhotoSelect: (PhotoRecordEntity) -> Unit = {},
     onDismiss: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit
@@ -1682,6 +1689,24 @@ fun FullScreenPhotoViewer(
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var showInfoSheet by remember { mutableStateOf(true) }
+
+    LaunchedEffect(photo.id) {
+        scale = 1f
+        offset = Offset.Zero
+    }
+
+    val currentIndex = remember(photo.id, photosList) {
+        photosList.indexOfFirst { it.id == photo.id }
+    }
+    val hasPrev = currentIndex > 0
+    val hasNext = currentIndex >= 0 && currentIndex < photosList.size - 1
+
+    val goToPrev = {
+        if (hasPrev) onPhotoSelect(photosList[currentIndex - 1])
+    }
+    val goToNext = {
+        if (hasNext) onPhotoSelect(photosList[currentIndex + 1])
+    }
 
     val file = remember(photo.filePath) { File(photo.filePath) }
     val fileSizeMb = remember(file) { "%.2f MB".format(Locale.US, file.length() / (1024f * 1024f)) }
@@ -1714,15 +1739,28 @@ fun FullScreenPhotoViewer(
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                     }
 
-                    Text(
-                        text = photo.chainageLabel ?: photo.fileName,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
+                    ) {
+                        Text(
+                            text = photo.chainageLabel ?: photo.fileName,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (photosList.size > 1 && currentIndex >= 0) {
+                            Text(
+                                text = "Photo ${currentIndex + 1} of ${photosList.size}",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
 
                     Row {
                         IconButton(onClick = { showInfoSheet = !showInfoSheet }) {
@@ -1741,13 +1779,34 @@ fun FullScreenPhotoViewer(
                     }
                 }
 
-                // Interactive Zoomable Image Area
+                // Interactive Zoomable & Swipable Image Area
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .background(Color.Black)
-                        .pointerInput(Unit) {
+                        .pointerInput(photo.id) {
+                            var dragTotalX = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { dragTotalX = 0f },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    if (scale <= 1.05f) {
+                                        change.consume()
+                                        dragTotalX += dragAmount
+                                    }
+                                },
+                                onDragEnd = {
+                                    if (scale <= 1.05f) {
+                                        if (dragTotalX < -40f && hasNext) {
+                                            goToNext()
+                                        } else if (dragTotalX > 40f && hasPrev) {
+                                            goToPrev()
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(photo.id) {
                             detectTransformGestures { _, pan, zoom, _ ->
                                 scale = (scale * zoom).coerceIn(1f, 5f)
                                 offset = if (scale > 1f) {
@@ -1772,6 +1831,47 @@ fun FullScreenPhotoViewer(
                                 translationY = offset.y
                             )
                     )
+
+                    // Side Navigation Arrows (Intimate Side Scrolling)
+                    if (hasPrev && scale <= 1.05f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .padding(start = 12.dp)
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x80000000))
+                                .clickable { goToPrev() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Previous Photo",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
+
+                    if (hasNext && scale <= 1.05f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(end = 12.dp)
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x80000000))
+                                .clickable { goToNext() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Next Photo",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
 
                     if (scale > 1f) {
                         TextButton(

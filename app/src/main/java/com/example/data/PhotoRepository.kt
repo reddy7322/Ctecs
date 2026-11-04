@@ -11,6 +11,7 @@ import com.example.model.CaptureSnapshot
 import com.example.overlay.OverlayRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
@@ -21,7 +22,9 @@ class PhotoRepository(
     private val context: Context,
     private val photoRecordDao: PhotoRecordDao
 ) {
-    val allPhotos: Flow<List<PhotoRecordEntity>> = photoRecordDao.getAllPhotos()
+    val allPhotos: Flow<List<PhotoRecordEntity>> = photoRecordDao.getAllPhotos().map { list ->
+        list.distinctBy { it.fileName.ifBlank { it.filePath } }
+    }
 
     fun searchPhotos(query: String): Flow<List<PhotoRecordEntity>> =
         photoRecordDao.searchPhotos(query)
@@ -299,6 +302,19 @@ class PhotoRepository(
         try {
             val existingList = photoRecordDao.getAllPhotosList()
             val existingPaths = existingList.map { it.filePath }.toSet()
+            val existingNames = mutableSetOf<String>()
+
+            // Clean up existing duplicates in database
+            val seenKeys = mutableSetOf<String>()
+            for (record in existingList) {
+                val key = record.fileName.ifBlank { record.filePath }
+                if (seenKeys.contains(key)) {
+                    photoRecordDao.deletePhotoById(record.id)
+                } else {
+                    seenKeys.add(key)
+                    existingNames.add(record.fileName)
+                }
+            }
 
             val dirsToScan = listOfNotNull(
                 File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "HighwayCamera"),
@@ -315,7 +331,7 @@ class PhotoRepository(
                     if (file.isDirectory || file.length() == 0L) continue
                     val path = file.absolutePath
                     val name = file.name
-                    if (path in existingPaths) continue
+                    if (path in existingPaths || name in existingNames || name in seenKeys) continue
 
                     val isVideo = name.endsWith(".mp4", ignoreCase = true)
                     val isPhoto = name.endsWith(".jpg", ignoreCase = true) || name.endsWith(".jpeg", ignoreCase = true) || name.endsWith(".png", ignoreCase = true)

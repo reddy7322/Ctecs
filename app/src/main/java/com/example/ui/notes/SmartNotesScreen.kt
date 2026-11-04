@@ -43,7 +43,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -159,14 +161,19 @@ data class SubActivityData(
 // HELPER: AUTOMATIC CHAINAGE FORMATTER
 // -------------------------------------------------------------
 fun formatHighwayChainageInput(input: String): String {
+    if (input.isBlank()) return input
     val clean = input.replace("+", "").replace(" ", "").trim()
-    if (clean.length > 3 && !clean.contains(".")) {
-        val digits = clean.filter { it.isDigit() }
-        if (digits.length >= 4) {
-            val prefix = digits.substring(0, digits.length - 3)
-            val suffix = digits.substring(digits.length - 3)
-            return "$prefix+$suffix"
-        }
+    if (input.contains("+") && !clean.contains(" ")) return input
+
+    val parts = clean.split(".")
+    val integerPart = parts[0]
+    val decimalPart = if (parts.size > 1) "." + parts[1] else ""
+
+    val digits = integerPart.filter { it.isDigit() }
+    if (digits.length >= 4) {
+        val prefix = digits.substring(0, digits.length - 3)
+        val suffix = digits.substring(digits.length - 3)
+        return "$prefix+$suffix$decimalPart"
     }
     return input
 }
@@ -516,7 +523,7 @@ fun SmartNotesScreen(
         fromChainage = act.fromChainage
         toChainage = act.toChainage
 
-        val stdActivities = listOf("EMB", "SG", "GSB", "WMM", "DBM", "BC", "DLC", "PQC", "Tack Coat", "Prime Coat", "Milling", "Other", "None")
+        val stdActivities = listOf("EMB", "SG", "GSB", "WMM", "DBM", "BC", "DLC", "PQC", "Milling", "None")
         if (act.activityLayer.isBlank()) {
             selectedActivity = "None"
             customActivityText = ""
@@ -1186,8 +1193,25 @@ fun SmartNotesScreen(
                                         val finalSide = if (selectedSide == "Auto") (detectedSideFromRoute ?: "LHS") else selectedSide
                                         val isAuto = selectedSide == "Auto" && detectedSideFromRoute != null
 
-                                        val firstSub = subActivitiesList.firstOrNull()
-                                        val encodedSubComments = encodeSubActivitiesJson(subActivitiesList)
+                                        val formattedFromCh = formatHighwayChainageInput(fromChainage.trim())
+                                        val formattedToCh = formatHighwayChainageInput(toChainage.trim())
+                                        fromChainage = formattedFromCh
+                                        toChainage = formattedToCh
+
+                                        val formattedSubList = subActivitiesList.map { sub ->
+                                            val sFrom = formatHighwayChainageInput(sub.fromChainage.trim())
+                                            val sTo = formatHighwayChainageInput(sub.toChainage.trim())
+                                            sub.copy(
+                                                fromChainage = sFrom,
+                                                toChainage = sTo,
+                                                lengthM = calculateChainageDiffMetres(sFrom, sTo)
+                                            )
+                                        }
+                                        subActivitiesList.clear()
+                                        subActivitiesList.addAll(formattedSubList)
+
+                                        val firstSub = formattedSubList.firstOrNull()
+                                        val encodedSubComments = encodeSubActivitiesJson(formattedSubList)
 
                                         val finalAct = SmartActivityEntity(
                                             id = editingActivityId ?: 0,
@@ -1196,9 +1220,9 @@ fun SmartNotesScreen(
                                             dateString = selectedDateString,
                                             timestamp = System.currentTimeMillis(),
                                             activityLayer = effectiveActivityName,
-                                            fromChainage = fromChainage.trim(),
-                                            toChainage = toChainage.trim(),
-                                            completedLengthM = calculateChainageDiffMetres(fromChainage, toChainage),
+                                            fromChainage = formattedFromCh,
+                                            toChainage = formattedToCh,
+                                            completedLengthM = calculateChainageDiffMetres(formattedFromCh, formattedToCh),
                                             widthM = activityWidthM.toDoubleOrNull() ?: 0.0,
                                             side = finalSide,
                                             sideMode = selectedSide,
@@ -1247,24 +1271,26 @@ fun SmartNotesScreen(
                         // 1. From Chainage
                         OutlinedTextField(
                             value = fromChainage,
-                            onValueChange = { fromChainage = formatHighwayChainageInput(it) },
+                            onValueChange = { fromChainage = it },
                             label = { Text("From Chainage") },
-                            placeholder = { Text("e.g. 198+500") },
+                            placeholder = { Text("e.g. 198000 or 198+000") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
+                            keyboardActions = KeyboardActions(onNext = { fromChainage = formatHighwayChainageInput(fromChainage) }),
                             modifier = Modifier.fillMaxWidth()
                         )
 
                         // 2. To Chainage
                         OutlinedTextField(
                             value = toChainage,
-                            onValueChange = { toChainage = formatHighwayChainageInput(it) },
+                            onValueChange = { toChainage = it },
                             label = { Text("To Chainage") },
-                            placeholder = { Text("e.g. 198+880") },
+                            placeholder = { Text("e.g. 198880 or 198+880") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { toChainage = formatHighwayChainageInput(toChainage) }),
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -1309,7 +1335,7 @@ fun SmartNotesScreen(
                                 expanded = expandedAct,
                                 onDismissRequest = { expandedAct = false }
                             ) {
-                                val activitiesList = listOf("EMB", "SG", "GSB", "WMM", "DBM", "BC", "DLC", "PQC", "Tack Coat", "Prime Coat", "Milling", "Other", "None", "Manually Enter")
+                                val activitiesList = listOf("EMB", "SG", "GSB", "WMM", "DBM", "BC", "DLC", "PQC", "Milling", "None", "Manually Enter")
                                 activitiesList.forEach { item ->
                                     DropdownMenuItem(
                                         text = { Text(item, fontWeight = if (selectedActivity == item) FontWeight.Bold else FontWeight.Normal) },
@@ -1539,7 +1565,7 @@ fun SmartNotesScreen(
                                                     expanded = expandedSubName,
                                                     onDismissRequest = { expandedSubName = false }
                                                 ) {
-                                                    listOf("Glass Grid", "Geotextile", "Crack Sealing", "Tack Coat", "Prime Coat", "Milling", "Kerb / Drain", "Other").forEach { s ->
+                                                    listOf("Glass Grid", "Geotextile", "Crack Sealing", "Milling", "Kerb / Drain", "None", "Manually Enter").forEach { s ->
                                                         DropdownMenuItem(
                                                             text = { Text(s) },
                                                             onClick = {
@@ -1558,26 +1584,36 @@ fun SmartNotesScreen(
                                                 OutlinedTextField(
                                                     value = subItem.fromChainage,
                                                     onValueChange = { newFrom ->
-                                                        val fmt = formatHighwayChainageInput(newFrom)
-                                                        val len = calculateChainageDiffMetres(fmt, subItem.toChainage)
-                                                        subActivitiesList[subIndex] = subItem.copy(fromChainage = fmt, lengthM = len)
+                                                        val len = calculateChainageDiffMetres(newFrom, subItem.toChainage)
+                                                        subActivitiesList[subIndex] = subItem.copy(fromChainage = newFrom, lengthM = len)
                                                     },
                                                     label = { Text("Sub From Ch", fontSize = 11.sp) },
                                                     singleLine = true,
                                                     shape = RoundedCornerShape(8.dp),
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
+                                                    keyboardActions = KeyboardActions(onNext = {
+                                                        val fmt = formatHighwayChainageInput(subItem.fromChainage)
+                                                        val len = calculateChainageDiffMetres(fmt, subItem.toChainage)
+                                                        subActivitiesList[subIndex] = subItem.copy(fromChainage = fmt, lengthM = len)
+                                                    }),
                                                     modifier = Modifier.weight(1f)
                                                 )
 
                                                 OutlinedTextField(
                                                     value = subItem.toChainage,
                                                     onValueChange = { newTo ->
-                                                        val fmt = formatHighwayChainageInput(newTo)
-                                                        val len = calculateChainageDiffMetres(subItem.fromChainage, fmt)
-                                                        subActivitiesList[subIndex] = subItem.copy(toChainage = fmt, lengthM = len)
+                                                        val len = calculateChainageDiffMetres(subItem.fromChainage, newTo)
+                                                        subActivitiesList[subIndex] = subItem.copy(toChainage = newTo, lengthM = len)
                                                     },
                                                     label = { Text("Sub To Ch", fontSize = 11.sp) },
                                                     singleLine = true,
                                                     shape = RoundedCornerShape(8.dp),
+                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
+                                                    keyboardActions = KeyboardActions(onDone = {
+                                                        val fmt = formatHighwayChainageInput(subItem.toChainage)
+                                                        val len = calculateChainageDiffMetres(subItem.fromChainage, fmt)
+                                                        subActivitiesList[subIndex] = subItem.copy(toChainage = fmt, lengthM = len)
+                                                    }),
                                                     modifier = Modifier.weight(1f)
                                                 )
                                             }
@@ -1752,6 +1788,8 @@ fun SmartNotesScreen(
         var selectedPreset by remember { mutableStateOf("THIS_WEEK") } // "THIS_WEEK", "LAST_WEEK", "CUSTOM"
         var exportProjectId by remember { mutableStateOf(currentProject.id) }
         var isGeneratingRangePdf by remember { mutableStateOf(false) }
+        var includeLogo by remember { mutableStateOf(!dprCustomLogoUri.isNullOrBlank()) }
+        var includeSig by remember { mutableStateOf(signatureBitmapState != null) }
 
         AlertDialog(
             onDismissRequest = { showWeeklyExportDialog = false },
@@ -1893,6 +1931,44 @@ fun SmartNotesScreen(
                             }
                         }
                     }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+
+                    // Checkbox: Include Custom Logo
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = includeLogo && !dprCustomLogoUri.isNullOrBlank(),
+                            onCheckedChange = { includeLogo = it },
+                            enabled = !dprCustomLogoUri.isNullOrBlank()
+                        )
+                        Text(
+                            text = "Include Custom Logo" + if (dprCustomLogoUri.isNullOrBlank()) " (No logo set in Settings)" else "",
+                            fontSize = 12.sp,
+                            color = if (!dprCustomLogoUri.isNullOrBlank()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Checkbox: Include Saved Signature
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = includeSig && signatureBitmapState != null,
+                            onCheckedChange = { includeSig = it },
+                            enabled = signatureBitmapState != null
+                        )
+                        Text(
+                            text = "Include Saved Signature" + if (signatureBitmapState == null) " (No signature saved)" else "",
+                            fontSize = 12.sp,
+                            color = if (signatureBitmapState != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -1901,7 +1977,7 @@ fun SmartNotesScreen(
                         isGeneratingRangePdf = true
                         scope.launch {
                             val rangeActs = viewModel.getActivitiesForProjectAndDateRangeList(exportProjectId, startDateInput, endDateInput)
-                            val logoBmp = DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri)
+                            val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
                             val title = if (selectedPreset == "THIS_WEEK" || selectedPreset == "LAST_WEEK") "WEEKLY HIGHWAY SITE ACTIVITY REPORT" else "CUSTOM PERIOD SITE ACTIVITY REPORT"
 
                             val pdfFile = DprPdfGenerator.generateRangeDprPdf(
@@ -1912,9 +1988,10 @@ fun SmartNotesScreen(
                                 reportTitle = title,
                                 activities = rangeActs,
                                 preparedBy = dprPreparedByName,
-                                verifiedBy = "Resident Engineer",
                                 customLogoBitmap = logoBmp,
-                                signatureBitmap = signatureBitmapState
+                                signatureBitmap = if (includeSig) signatureBitmapState else null,
+                                includeLogo = includeLogo,
+                                includeSignature = includeSig
                             )
                             isGeneratingRangePdf = false
                             showWeeklyExportDialog = false
@@ -1938,12 +2015,15 @@ fun SmartNotesScreen(
     // DAILY DPR EXPORT DIALOG (SINGLE, ALL DAY, SELECTED)
     // -------------------------------------------------------------
     if (showDprExportDialog) {
+        var includeLogo by remember { mutableStateOf(!dprCustomLogoUri.isNullOrBlank()) }
+        var includeSig by remember { mutableStateOf(signatureBitmapState != null) }
+
         AlertDialog(
             onDismissRequest = { showDprExportDialog = false },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Generate Daily Activity PDF", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Export PDF Confirmation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             },
             text = {
@@ -1969,13 +2049,42 @@ fun SmartNotesScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Signature preview
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+
+                    // Checkbox: Include Custom Logo
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Signature: " + if (signatureBitmapState != null) "Attached ✓" else "Not set", fontSize = 11.sp)
+                        Checkbox(
+                            checked = includeLogo && !dprCustomLogoUri.isNullOrBlank(),
+                            onCheckedChange = { includeLogo = it },
+                            enabled = !dprCustomLogoUri.isNullOrBlank()
+                        )
+                        Text(
+                            text = "Include Custom Logo" + if (dprCustomLogoUri.isNullOrBlank()) " (No logo set in Settings)" else "",
+                            fontSize = 12.sp,
+                            color = if (!dprCustomLogoUri.isNullOrBlank()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Checkbox: Include Saved Signature
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = includeSig && signatureBitmapState != null,
+                            onCheckedChange = { includeSig = it },
+                            enabled = signatureBitmapState != null
+                        )
+                        Text(
+                            text = "Include Saved Signature" + if (signatureBitmapState == null) " (No signature saved)" else "",
+                            fontSize = 12.sp,
+                            color = if (signatureBitmapState != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             },
@@ -1987,16 +2096,17 @@ fun SmartNotesScreen(
                             "SELECTED" -> activitiesForDate.filter { selectedActivityIds.contains(it.id) }
                             else -> activitiesForDate
                         }
-                        val logoBmp = DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri)
+                        val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
                         val pdfFile = DprPdfGenerator.generateDprPdf(
                             context = context,
                             project = currentProject,
                             dateString = selectedDateString,
                             activities = exportList,
                             preparedBy = dprPreparedByName,
-                            verifiedBy = "Resident Engineer",
                             customLogoBitmap = logoBmp,
-                            signatureBitmap = signatureBitmapState
+                            signatureBitmap = if (includeSig) signatureBitmapState else null,
+                            includeLogo = includeLogo,
+                            includeSignature = includeSig
                         )
                         showDprExportDialog = false
                         DprPdfGenerator.shareDprPdf(context, pdfFile)
