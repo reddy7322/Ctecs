@@ -40,6 +40,9 @@ interface SmartActivityDao {
     @Query("SELECT * FROM smart_activities WHERE projectId = :projectId AND dateString = :dateString ORDER BY timestamp ASC")
     suspend fun getActivitiesByProjectAndDateList(projectId: String, dateString: String): List<SmartActivityEntity>
 
+    @Query("SELECT * FROM smart_activities WHERE projectId = :projectId AND dateString >= :startDate AND dateString <= :endDate ORDER BY dateString ASC, timestamp ASC")
+    suspend fun getActivitiesByProjectAndDateRangeList(projectId: String, startDate: String, endDate: String): List<SmartActivityEntity>
+
     @Query("SELECT DISTINCT dateString FROM smart_activities WHERE projectId = :projectId")
     fun getRecordedDatesForProject(projectId: String): Flow<List<String>>
 

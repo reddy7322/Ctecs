@@ -52,6 +52,12 @@ class SmartHighwayRepository(
         }
     }
 
+    suspend fun getActivitiesForProjectAndDateRangeList(projectId: String, startDate: String, endDate: String): List<SmartActivityEntity> {
+        return withContext(Dispatchers.IO) {
+            activityDao.getActivitiesByProjectAndDateRangeList(projectId, startDate, endDate)
+        }
+    }
+
     fun getRecordedDatesForProject(projectId: String): Flow<List<String>> {
         return activityDao.getRecordedDatesForProject(projectId)
     }

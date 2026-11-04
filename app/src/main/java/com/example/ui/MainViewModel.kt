@@ -96,6 +96,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun getActivitiesForProjectAndDate(projectId: String, dateString: String) =
         smartHighwayRepository.getActivitiesForProjectAndDate(projectId, dateString)
 
+    suspend fun getActivitiesForProjectAndDateRangeList(projectId: String, startDate: String, endDate: String) =
+        smartHighwayRepository.getActivitiesForProjectAndDateRangeList(projectId, startDate, endDate)
+
     fun getRecordedDatesForProject(projectId: String) =
         smartHighwayRepository.getRecordedDatesForProject(projectId)
 

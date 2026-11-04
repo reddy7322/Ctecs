@@ -7,7 +7,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
@@ -21,11 +20,69 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+data class SubActivityPdfItem(
+    val mainActivity: String,
+    val subName: String,
+    val fromCh: String,
+    val toCh: String,
+    val lengthM: Double,
+    val widthM: Double,
+    val comments: String
+)
+
 object DprPdfGenerator {
 
     /**
-     * Generates a professional highway Daily Project Report (DPR) PDF.
-     * Returns the created PDF file.
+     * Extracts sub-activities from a SmartActivityEntity.
+     */
+    fun extractSubActivities(act: SmartActivityEntity): List<SubActivityPdfItem> {
+        val jsonStr = act.subComments
+        if (jsonStr.startsWith("[")) {
+            try {
+                val array = org.json.JSONArray(jsonStr)
+                val result = mutableListOf<SubActivityPdfItem>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val sName = obj.optString("name", "")
+                    if (sName.isNotBlank() && !sName.equals("None", true)) {
+                        result.add(
+                            SubActivityPdfItem(
+                                mainActivity = act.activityLayer,
+                                subName = sName,
+                                fromCh = obj.optString("fromChainage", act.fromChainage),
+                                toCh = obj.optString("toChainage", act.toChainage),
+                                lengthM = obj.optDouble("lengthM", 0.0),
+                                widthM = obj.optDouble("widthM", 0.0),
+                                comments = obj.optString("comments", "")
+                            )
+                        )
+                    }
+                }
+                if (result.isNotEmpty()) return result
+            } catch (e: Exception) {
+                // Ignore JSON parse error and fallback
+            }
+        }
+
+        if (act.subActivityName.isNotBlank() && !act.subActivityName.equals("None", true)) {
+            return listOf(
+                SubActivityPdfItem(
+                    mainActivity = act.activityLayer,
+                    subName = act.subActivityName,
+                    fromCh = act.subFromChainage.ifBlank { act.fromChainage },
+                    toCh = act.subToChainage.ifBlank { act.toChainage },
+                    lengthM = act.subLengthM,
+                    widthM = act.subWidthM,
+                    comments = if (!act.subComments.startsWith("[")) act.subComments else ""
+                )
+            )
+        }
+
+        return emptyList()
+    }
+
+    /**
+     * Generates a Daily Project Report (DPR) with engineering smart tables.
      */
     fun generateDprPdf(
         context: Context,
@@ -39,300 +96,421 @@ object DprPdfGenerator {
         customLogoBitmap: Bitmap? = null,
         signatureBitmap: Bitmap? = null
     ): File {
+        val displayDate = try {
+            val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val formatter = SimpleDateFormat("dd MMMM yyyy", Locale.US)
+            formatter.format(parser.parse(dateString) ?: Date())
+        } catch (e: Exception) {
+            dateString
+        }
+
+        return generateReportPdfInternal(
+            context = context,
+            project = project,
+            reportTitle = "DAILY SITE ACTIVITY REPORT",
+            periodSubTitle = "Date: $displayDate",
+            activities = activities,
+            summary = summary,
+            remarks = remarks,
+            preparedBy = preparedBy,
+            verifiedBy = verifiedBy,
+            customLogoBitmap = customLogoBitmap,
+            signatureBitmap = signatureBitmap,
+            fileNamePrefix = "DPR_${project.id.replace(Regex("[^a-zA-Z0-9]"), "")}_${dateString.replace("-", "")}"
+        )
+    }
+
+    /**
+     * Generates a Weekly / Custom Period Site Activity Report PDF.
+     */
+    fun generateRangeDprPdf(
+        context: Context,
+        project: HighwayProjectEntity,
+        startDateString: String,
+        endDateString: String,
+        reportTitle: String = "WEEKLY HIGHWAY SITE ACTIVITY REPORT",
+        activities: List<SmartActivityEntity>,
+        summary: String = "",
+        remarks: String = "",
+        preparedBy: String = "Site Engineer",
+        verifiedBy: String = "Resident Engineer",
+        customLogoBitmap: Bitmap? = null,
+        signatureBitmap: Bitmap? = null
+    ): File {
+        val displayPeriod = try {
+            val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val formatter = SimpleDateFormat("dd MMM yyyy", Locale.US)
+            val d1 = formatter.format(parser.parse(startDateString) ?: Date())
+            val d2 = formatter.format(parser.parse(endDateString) ?: Date())
+            "Period: $d1 to $d2"
+        } catch (e: Exception) {
+            "Period: $startDateString to $endDateString"
+        }
+
+        return generateReportPdfInternal(
+            context = context,
+            project = project,
+            reportTitle = reportTitle,
+            periodSubTitle = displayPeriod,
+            activities = activities,
+            summary = summary,
+            remarks = remarks,
+            preparedBy = preparedBy,
+            verifiedBy = verifiedBy,
+            customLogoBitmap = customLogoBitmap,
+            signatureBitmap = signatureBitmap,
+            fileNamePrefix = "REPORT_${project.id.replace(Regex("[^a-zA-Z0-9]"), "")}_RANGE"
+        )
+    }
+
+    private fun generateReportPdfInternal(
+        context: Context,
+        project: HighwayProjectEntity,
+        reportTitle: String,
+        periodSubTitle: String,
+        activities: List<SmartActivityEntity>,
+        summary: String,
+        remarks: String,
+        preparedBy: String,
+        verifiedBy: String,
+        customLogoBitmap: Bitmap?,
+        signatureBitmap: Bitmap?,
+        fileNamePrefix: String
+    ): File {
         val pdfDocument = PdfDocument()
         val pageWidth = 595
         val pageHeight = 842
 
         val paint = Paint().apply { isAntiAlias = true }
 
-        val primaryColor = Color.rgb(20, 83, 45)      // Deep Forest Green
+        val primaryColor = Color.rgb(20, 83, 45)      // Forest Green Header
         val headerBgColor = Color.rgb(240, 245, 244)
+        val tableHeaderBg = Color.rgb(22, 101, 52)
+        val altRowBg = Color.rgb(245, 247, 250)
         val tableBorderColor = Color.rgb(203, 213, 225)
         val textColor = Color.rgb(15, 23, 42)
         val subTextColor = Color.rgb(100, 116, 139)
-        val accentYellow = Color.rgb(217, 119, 6)
 
         var pageNumber = 1
         var pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
         var page = pdfDocument.startPage(pageInfo)
         var canvas = page.canvas
 
-        var y = 36f
+        var y = 30f
 
-        // Helper to draw standard page header
         fun drawPageHeader(isFirstPage: Boolean) {
-            y = 30f
+            y = 28f
 
             // Top decorative bar
             paint.color = primaryColor
-            canvas.drawRect(30f, y, 565f, y + 5f, paint)
-            y += 16f
+            canvas.drawRect(30f, y, 565f, y + 4f, paint)
+            y += 14f
 
-            // Logo drawing if provided
-            var titleStartX = 30f
+            // Custom Logo (if available)
             if (customLogoBitmap != null) {
                 try {
-                    val maxLogoW = 90f
-                    val maxLogoH = 40f
+                    val maxW = 80f
+                    val maxH = 35f
                     val aspect = customLogoBitmap.width.toFloat() / customLogoBitmap.height.toFloat()
-                    val targetW: Float
-                    val targetH: Float
-                    if (aspect >= 1f) {
-                        targetW = maxLogoW
-                        targetH = (maxLogoW / aspect).coerceAtMost(maxLogoH)
-                    } else {
-                        targetH = maxLogoH
-                        targetW = (maxLogoH * aspect).coerceAtMost(maxLogoW)
-                    }
-                    val destRect = RectF(565f - targetW, y - 4f, 565f, y - 4f + targetH)
+                    val targetW = if (aspect >= 1f) maxW else maxH * aspect
+                    val targetH = if (aspect >= 1f) maxW / aspect else maxH
+                    val destRect = RectF(565f - targetW, y - 2f, 565f, y - 2f + targetH)
                     canvas.drawBitmap(customLogoBitmap, null, destRect, paint)
                 } catch (e: Exception) {
-                    // Ignore drawing error
+                    // Ignore logo drawing failure
                 }
             }
 
             paint.color = primaryColor
-            paint.textSize = 15f
+            paint.textSize = 14f
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            canvas.drawText("CTECS HIGHWAY DAILY PROJECT REPORT (DPR)", titleStartX, y, paint)
-            y += 14f
+            canvas.drawText("CTECS HIGHWAY CONSTRUCTION RECORD", 30f, y, paint)
+            y += 13f
 
             paint.color = subTextColor
             paint.textSize = 8.5f
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            val displayDate = try {
-                val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                val formatter = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale.US)
-                formatter.format(parser.parse(dateString) ?: Date())
-            } catch (e: Exception) {
-                dateString
-            }
-            canvas.drawText("Site Activity & Quality Progress Record • Date: $displayDate • Page $pageNumber", titleStartX, y, paint)
-            y += 16f
+            canvas.drawText("$reportTitle • $periodSubTitle • Page $pageNumber", 30f, y, paint)
+            y += 14f
 
             if (isFirstPage) {
-                // Project Header Summary Box
+                // Project Summary Header Box
                 paint.color = Color.rgb(248, 250, 252)
-                canvas.drawRoundRect(30f, y, 565f, y + 52f, 6f, 6f, paint)
+                canvas.drawRoundRect(30f, y, 565f, y + 48f, 4f, 4f, paint)
                 paint.color = tableBorderColor
                 paint.style = Paint.Style.STROKE
                 paint.strokeWidth = 1f
-                canvas.drawRoundRect(30f, y, 565f, y + 52f, 6f, 6f, paint)
+                canvas.drawRoundRect(30f, y, 565f, y + 48f, 4f, 4f, paint)
                 paint.style = Paint.Style.FILL
 
                 paint.color = textColor
-                paint.textSize = 10f
+                paint.textSize = 9.5f
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                val prjNameText = if (project.name.isNotBlank()) project.name else "Highway Construction Project"
-                canvas.drawText("Project: $prjNameText", 40f, y + 16f, paint)
+                val prjName = if (project.name.isNotBlank()) project.name else "Highway Construction Project"
+                canvas.drawText("Project: $prjName", 38f, y + 15f, paint)
 
-                paint.textSize = 8.5f
+                paint.textSize = 8f
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
                 paint.color = subTextColor
                 if (project.clientName.isNotBlank() && !project.clientName.equals("None", true)) {
-                    canvas.drawText("Client: ${project.clientName}", 40f, y + 30f, paint)
+                    canvas.drawText("Client: ${project.clientName}", 38f, y + 28f, paint)
                 }
                 if (project.contractorName.isNotBlank() && !project.contractorName.equals("None", true)) {
-                    canvas.drawText("Agency / Contractor: ${project.contractorName}", 40f, y + 43f, paint)
+                    canvas.drawText("Agency / Contractor: ${project.contractorName}", 38f, y + 40f, paint)
                 }
 
                 if (project.startChainage.isNotBlank() && project.endChainage.isNotBlank()) {
-                    canvas.drawText("Chainage Stretch: ${project.startChainage} to ${project.endChainage}", 340f, y + 16f, paint)
+                    canvas.drawText("Stretch: ${project.startChainage} to ${project.endChainage}", 350f, y + 15f, paint)
                 }
-                if (project.totalLengthKm > 0) {
-                    canvas.drawText("Total Project Length: ${project.totalLengthKm} km", 340f, y + 30f, paint)
-                }
+                canvas.drawText("Total Recorded Activities: ${activities.size}", 350f, y + 28f, paint)
 
-                y += 62f
+                y += 58f
             }
         }
 
-        // Draw initial page header
         drawPageHeader(isFirstPage = true)
 
-        // Summary if provided
-        if (summary.isNotBlank()) {
-            paint.color = primaryColor
-            paint.textSize = 9.5f
-            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            canvas.drawText("DAILY WORK SUMMARY", 30f, y, paint)
-            y += 12f
-
-            paint.color = textColor
-            paint.textSize = 8f
-            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            val summaryLines = wrapText(summary, paint, 530f)
-            summaryLines.forEach { line ->
-                canvas.drawText(line, 30f, y, paint)
-                y += 10f
-            }
-            y += 6f
-        }
-
-        // Section Title: Activities
+        // -------------------------------------------------------------
+        // MAIN ACTIVITY ENGINEERING TABLE
+        // -------------------------------------------------------------
         paint.color = primaryColor
         paint.textSize = 9.5f
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        val exportTitle = if (activities.size == 1) "SITE ACTIVITY DETAIL (Single Activity Export)" else "SITE ACTIVITIES RECORD (${activities.size} Entries)"
-        canvas.drawText(exportTitle, 30f, y, paint)
+        canvas.drawText("1. MAIN SITE ACTIVITIES TABLE", 30f, y, paint)
         y += 10f
 
+        fun drawMainActivityTableHeader() {
+            val hHeight = 18f
+            paint.color = tableHeaderBg
+            canvas.drawRect(30f, y, 565f, y + hHeight, paint)
+
+            paint.color = Color.WHITE
+            paint.textSize = 8f
+            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+
+            val textY = y + 12f
+            canvas.drawText("S.No", 33f, textY, paint)
+            canvas.drawText("From CH", 67f, textY, paint)
+            canvas.drawText("To CH", 132f, textY, paint)
+            canvas.drawText("Activity", 197f, textY, paint)
+            canvas.drawText("Length (m)", 302f, textY, paint)
+            canvas.drawText("Width (m)", 367f, textY, paint)
+            canvas.drawText("Side", 427f, textY, paint)
+            canvas.drawText("Location", 487f, textY, paint)
+
+            // Header Border
+            paint.color = tableBorderColor
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 0.8f
+            canvas.drawRect(30f, y, 565f, y + hHeight, paint)
+            paint.style = Paint.Style.FILL
+
+            y += hHeight
+        }
+
+        drawMainActivityTableHeader()
+
+        var totalLengthM = 0.0
+
         if (activities.isEmpty()) {
+            val rHeight = 18f
+            paint.color = Color.WHITE
+            canvas.drawRect(30f, y, 565f, y + rHeight, paint)
             paint.color = subTextColor
-            paint.textSize = 9f
+            paint.textSize = 8f
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-            canvas.drawText("No site activity recorded for this selection.", 40f, y + 14f, paint)
-            y += 30f
+            canvas.drawText("No site activity records available for this period.", 40f, y + 12f, paint)
+            y += rHeight
         } else {
-            activities.forEachIndexed { index, act ->
-                // Check if card fits on current page (card height ~75f to 95f)
-                val estimatedCardH = if (act.subActivityName.isNotBlank() || act.siteObservations.isNotBlank()) 92f else 72f
-                if (y + estimatedCardH > 720f) {
-                    // Finish current page and start a new one
+            activities.forEachIndexed { idx, act ->
+                totalLengthM += act.completedLengthM.takeIf { it > 0 } ?: act.quantity
+
+                val rowHeight = 18f
+                if (y + rowHeight > 740f) {
                     pdfDocument.finishPage(page)
                     pageNumber++
                     pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
                     page = pdfDocument.startPage(pageInfo)
                     canvas = page.canvas
                     drawPageHeader(isFirstPage = false)
+                    drawMainActivityTableHeader()
                 }
 
-                val cardTop = y
-                val cardBottom = cardTop + estimatedCardH
+                // Row Background
+                paint.color = if (idx % 2 == 0) Color.WHITE else altRowBg
+                canvas.drawRect(30f, y, 565f, y + rowHeight, paint)
 
-                // Activity Card Background
-                paint.color = if (index % 2 == 0) Color.rgb(255, 255, 255) else Color.rgb(248, 250, 252)
-                canvas.drawRoundRect(30f, cardTop, 565f, cardBottom, 5f, 5f, paint)
+                // Row Border
+                paint.color = tableBorderColor
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.5f
+                canvas.drawRect(30f, y, 565f, y + rowHeight, paint)
+                paint.style = Paint.Style.FILL
+
+                // Cell Content
+                paint.color = textColor
+                paint.textSize = 8f
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+
+                val rowY = y + 12f
+                canvas.drawText("${idx + 1}", 34f, rowY, paint)
+
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                paint.color = Color.rgb(30, 58, 138)
+                canvas.drawText(act.fromChainage.ifBlank { "-" }, 67f, rowY, paint)
+                canvas.drawText(act.toChainage.ifBlank { "-" }, 132f, rowY, paint)
+
+                paint.color = textColor
+                val actLabel = act.activityLayer.ifBlank { "BC" }
+                canvas.drawText(actLabel.take(18), 197f, rowY, paint)
+
+                val lenVal = if (act.completedLengthM > 0) "${act.completedLengthM.toInt()}" else if (act.quantity > 0) "${act.quantity.toInt()}" else "-"
+                canvas.drawText(lenVal, 302f, rowY, paint)
+
+                val widVal = if (act.widthM > 0) "%.1f".format(Locale.US, act.widthM) else "-"
+                canvas.drawText(widVal, 367f, rowY, paint)
+
+                val sideVal = act.side.ifBlank { "LHS" }
+                canvas.drawText(sideVal, 427f, rowY, paint)
+
+                val locVal = act.roadSection.ifBlank { "I/L" }
+                canvas.drawText(locVal.take(15), 487f, rowY, paint)
+
+                y += rowHeight
+            }
+
+            // Total Completed Length Summary Row
+            val totalRowH = 18f
+            paint.color = Color.rgb(241, 245, 249)
+            canvas.drawRect(30f, y, 565f, y + totalRowH, paint)
+            paint.color = tableBorderColor
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 0.8f
+            canvas.drawRect(30f, y, 565f, y + totalRowH, paint)
+            paint.style = Paint.Style.FILL
+
+            paint.color = primaryColor
+            paint.textSize = 8.5f
+            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            canvas.drawText("Total Completed Length:", 197f, y + 12f, paint)
+
+            val totalKm = totalLengthM / 1000.0
+            val totalText = "${totalLengthM.toInt()} m (${"%.2f".format(Locale.US, totalKm)} km)"
+            canvas.drawText(totalText, 302f, y + 12f, paint)
+
+            y += totalRowH + 12f
+        }
+
+        // -------------------------------------------------------------
+        // SUB ACTIVITIES ENGINEERING TABLE (IF ANY EXIST)
+        // -------------------------------------------------------------
+        val allSubActivities = mutableListOf<SubActivityPdfItem>()
+        activities.forEach { act ->
+            allSubActivities.addAll(extractSubActivities(act))
+        }
+
+        if (allSubActivities.isNotEmpty()) {
+            if (y + 40f > 740f) {
+                pdfDocument.finishPage(page)
+                pageNumber++
+                pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                page = pdfDocument.startPage(pageInfo)
+                canvas = page.canvas
+                drawPageHeader(isFirstPage = false)
+            }
+
+            paint.color = primaryColor
+            paint.textSize = 9.5f
+            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            canvas.drawText("2. SUB ACTIVITIES TABLE", 30f, y, paint)
+            y += 10f
+
+            fun drawSubActivityTableHeader() {
+                val hHeight = 18f
+                paint.color = tableHeaderBg
+                canvas.drawRect(30f, y, 565f, y + hHeight, paint)
+
+                paint.color = Color.WHITE
+                paint.textSize = 8f
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+
+                val textY = y + 12f
+                canvas.drawText("S.No", 33f, textY, paint)
+                canvas.drawText("Main Activity", 67f, textY, paint)
+                canvas.drawText("Sub Activity", 157f, textY, paint)
+                canvas.drawText("From CH", 252f, textY, paint)
+                canvas.drawText("To CH", 317f, textY, paint)
+                canvas.drawText("Length", 382f, textY, paint)
+                canvas.drawText("Width", 437f, textY, paint)
+                canvas.drawText("Comments", 487f, textY, paint)
 
                 paint.color = tableBorderColor
                 paint.style = Paint.Style.STROKE
                 paint.strokeWidth = 0.8f
-                canvas.drawRoundRect(30f, cardTop, 565f, cardBottom, 5f, 5f, paint)
+                canvas.drawRect(30f, y, 565f, y + hHeight, paint)
                 paint.style = Paint.Style.FILL
 
-                // Left Accent Stripe
-                paint.color = primaryColor
-                canvas.drawRoundRect(30f, cardTop, 35f, cardBottom, 2f, 2f, paint)
-
-                var cardY = cardTop + 14f
-
-                // Line 1: Activity Name, Main Chainage, Length, Width
-                paint.color = textColor
-                paint.textSize = 9.5f
-                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                val actLabel = if (act.activityLayer.isNotBlank() && !act.activityLayer.equals("None", true)) act.activityLayer else "Activity #${index + 1}"
-                canvas.drawText("${index + 1}. $actLabel", 42f, cardY, paint)
-
-                val chText = if (act.fromChainage.isNotBlank() && act.toChainage.isNotBlank()) {
-                    "Ch. ${act.fromChainage} → ${act.toChainage}"
-                } else if (act.fromChainage.isNotBlank()) {
-                    "Ch. ${act.fromChainage}"
-                } else ""
-                if (chText.isNotBlank()) {
-                    paint.color = Color.rgb(30, 58, 138)
-                    paint.textSize = 9f
-                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    canvas.drawText(chText, 170f, cardY, paint)
-                }
-
-                // Length & Width
-                val lenStr = if (act.completedLengthM > 0) "${act.completedLengthM.toInt()}m" else if (act.quantity > 0) "${act.quantity.toInt()}m" else ""
-                val widStr = if (act.widthM > 0) "${"%.1f".format(Locale.US, act.widthM)}m" else ""
-                val dimStr = listOf(lenStr.takeIf { it.isNotBlank() }?.let { "L: $it" }, widStr.takeIf { it.isNotBlank() }?.let { "W: $it" })
-                    .filterNotNull()
-                    .joinToString(" • ")
-
-                if (dimStr.isNotBlank()) {
-                    paint.color = textColor
-                    paint.textSize = 8.5f
-                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-                    canvas.drawText(dimStr, 340f, cardY, paint)
-                }
-
-                // Side & Road Location
-                val sideTag = when {
-                    act.isSideAutoDetected -> "${act.side} (Auto)"
-                    act.side.isNotBlank() && !act.side.equals("None", true) -> "${act.side} (Manual)"
-                    else -> ""
-                }
-                val locTag = if (act.roadSection.isNotBlank() && !act.roadSection.equals("None", true)) act.roadSection else ""
-                val sideLocText = listOf(sideTag.takeIf { it.isNotBlank() }, locTag.takeIf { it.isNotBlank() })
-                    .filterNotNull()
-                    .joinToString(" • ")
-
-                if (sideLocText.isNotBlank()) {
-                    paint.color = Color.rgb(180, 83, 9)
-                    paint.textSize = 8.5f
-                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    canvas.drawText(sideLocText, 440f, cardY, paint)
-                }
-
-                cardY += 15f
-
-                // Line 2: Sub-Activity (if present)
-                val hasSub = act.subActivityName.isNotBlank() && !act.subActivityName.equals("None", true)
-                if (hasSub) {
-                    paint.color = primaryColor
-                    paint.textSize = 8.5f
-                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    canvas.drawText("Sub Activity: ${act.subActivityName}", 42f, cardY, paint)
-
-                    val subCh = if (act.subFromChainage.isNotBlank() && act.subToChainage.isNotBlank()) {
-                        "Ch. ${act.subFromChainage} → ${act.subToChainage}"
-                    } else ""
-                    if (subCh.isNotBlank()) {
-                        paint.color = subTextColor
-                        paint.textSize = 8f
-                        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-                        canvas.drawText(subCh, 180f, cardY, paint)
-                    }
-
-                    val subLen = if (act.subLengthM > 0) "L: ${act.subLengthM.toInt()}m" else ""
-                    val subWid = if (act.subWidthM > 0) "W: ${"%.1f".format(Locale.US, act.subWidthM)}m" else ""
-                    val subDims = listOf(subLen.takeIf { it.isNotBlank() }, subWid.takeIf { it.isNotBlank() })
-                        .filterNotNull()
-                        .joinToString(" • ")
-                    if (subDims.isNotBlank()) {
-                        paint.color = subTextColor
-                        paint.textSize = 8f
-                        canvas.drawText(subDims, 340f, cardY, paint)
-                    }
-
-                    if (act.subComments.isNotBlank() && !act.subComments.equals("None", true)) {
-                        paint.color = Color.rgb(71, 85, 105)
-                        paint.textSize = 7.5f
-                        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-                        val subCommWrapped = wrapText("Note: ${act.subComments}", paint, 180f).firstOrNull() ?: ""
-                        canvas.drawText(subCommWrapped, 430f, cardY, paint)
-                    }
-
-                    cardY += 14f
-                }
-
-                // Line 3: Main Site Observations & Comments
-                val obs = act.siteObservations.ifBlank { act.remarks }
-                if (obs.isNotBlank() && !obs.equals("None", true)) {
-                    paint.color = subTextColor
-                    paint.textSize = 8f
-                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    canvas.drawText("Observations: ", 42f, cardY, paint)
-
-                    paint.color = textColor
-                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-                    val obsLines = wrapText(obs, paint, 430f).take(2)
-                    obsLines.forEachIndexed { i, l ->
-                        canvas.drawText(l, if (i == 0) 108f else 42f, cardY, paint)
-                        if (i < obsLines.size - 1) cardY += 10f
-                    }
-                }
-
-                y = cardBottom + 6f
+                y += hHeight
             }
+
+            drawSubActivityTableHeader()
+
+            allSubActivities.forEachIndexed { sIdx, sub ->
+                val rowHeight = 18f
+                if (y + rowHeight > 740f) {
+                    pdfDocument.finishPage(page)
+                    pageNumber++
+                    pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                    page = pdfDocument.startPage(pageInfo)
+                    canvas = page.canvas
+                    drawPageHeader(isFirstPage = false)
+                    drawSubActivityTableHeader()
+                }
+
+                paint.color = if (sIdx % 2 == 0) Color.WHITE else altRowBg
+                canvas.drawRect(30f, y, 565f, y + rowHeight, paint)
+
+                paint.color = tableBorderColor
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.5f
+                canvas.drawRect(30f, y, 565f, y + rowHeight, paint)
+                paint.style = Paint.Style.FILL
+
+                paint.color = textColor
+                paint.textSize = 8f
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+
+                val rowY = y + 12f
+                canvas.drawText("${sIdx + 1}", 34f, rowY, paint)
+                canvas.drawText(sub.mainActivity.take(14), 67f, rowY, paint)
+
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                canvas.drawText(sub.subName.take(15), 157f, rowY, paint)
+
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+                paint.color = Color.rgb(30, 58, 138)
+                canvas.drawText(sub.fromCh.ifBlank { "-" }, 252f, rowY, paint)
+                canvas.drawText(sub.toCh.ifBlank { "-" }, 317f, rowY, paint)
+
+                paint.color = textColor
+                val subLenStr = if (sub.lengthM > 0) "${sub.lengthM.toInt()}m" else "-"
+                canvas.drawText(subLenStr, 382f, rowY, paint)
+
+                val subWidStr = if (sub.widthM > 0) "%.1f".format(Locale.US, sub.widthM) else "-"
+                canvas.drawText(subWidStr, 437f, rowY, paint)
+
+                val commStr = if (sub.comments.isNotBlank() && !sub.comments.equals("None", true)) sub.comments.take(16) else "-"
+                canvas.drawText(commStr, 487f, rowY, paint)
+
+                y += rowHeight
+            }
+            y += 12f
         }
 
-        // Remarks Section (if provided)
-        if (remarks.isNotBlank()) {
-            if (y + 40f > 740f) {
+        // Main Comments / Remarks Section
+        val combinedComments = activities.mapNotNull { it.siteObservations.ifBlank { it.remarks }.takeIf { s -> s.isNotBlank() && !s.equals("None", true) } }
+        if (combinedComments.isNotEmpty() || remarks.isNotBlank()) {
+            if (y + 50f > 740f) {
                 pdfDocument.finishPage(page)
                 pageNumber++
                 pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
@@ -350,17 +528,22 @@ object DprPdfGenerator {
             paint.color = textColor
             paint.textSize = 8f
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            wrapText(remarks, paint, 530f).forEach { l ->
-                canvas.drawText(l, 30f, y, paint)
-                y += 10f
+
+            val textList = if (remarks.isNotBlank()) listOf(remarks) else combinedComments.take(3)
+            textList.forEach { comm ->
+                wrapText(comm, paint, 530f).take(2).forEach { l ->
+                    canvas.drawText("• $l", 32f, y, paint)
+                    y += 10f
+                }
             }
             y += 8f
         }
 
-        // Prepared By & Sign-Off Section (always at bottom of last page)
+        // -------------------------------------------------------------
+        // FOOTER & SIGNATURE SECTION
+        // -------------------------------------------------------------
         val sigAreaY = 745f
         if (y > sigAreaY - 20f) {
-            // Need an additional page for signatures if content reaches bottom
             pdfDocument.finishPage(page)
             pageNumber++
             pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
@@ -369,36 +552,26 @@ object DprPdfGenerator {
             drawPageHeader(isFirstPage = false)
         }
 
-        // Signature Lines
         val lineY = sigAreaY + 36f
         paint.color = tableBorderColor
         paint.strokeWidth = 1f
         canvas.drawLine(40f, lineY, 220f, lineY, paint)
         canvas.drawLine(360f, lineY, 540f, lineY, paint)
 
-        // Draw Signature Bitmap if available
         if (signatureBitmap != null) {
             try {
                 val targetSigW = 120f
                 val targetSigH = 34f
                 val sigAspect = signatureBitmap.width.toFloat() / signatureBitmap.height.toFloat()
-                val actualW: Float
-                val actualH: Float
-                if (sigAspect >= (targetSigW / targetSigH)) {
-                    actualW = targetSigW
-                    actualH = (targetSigW / sigAspect).coerceAtMost(targetSigH)
-                } else {
-                    actualH = targetSigH
-                    actualW = (targetSigH * sigAspect).coerceAtMost(targetSigW)
-                }
+                val actualW = if (sigAspect >= (targetSigW / targetSigH)) targetSigW else targetSigH * sigAspect
+                val actualH = if (sigAspect >= (targetSigW / targetSigH)) targetSigW / sigAspect else targetSigH
                 val sigDest = RectF(50f, lineY - actualH - 2f, 50f + actualW, lineY - 2f)
                 canvas.drawBitmap(signatureBitmap, null, sigDest, paint)
             } catch (e: Exception) {
-                // Ignore signature render failure
+                // Ignore signature render error
             }
         }
 
-        // Signatory Names
         paint.color = textColor
         paint.textSize = 9.5f
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -417,9 +590,7 @@ object DprPdfGenerator {
         pdfDocument.finishPage(page)
 
         // Write to Cache directory
-        val cleanDate = dateString.replace("-", "")
-        val cleanProject = project.id.replace(Regex("[^a-zA-Z0-9]"), "")
-        val pdfFile = File(context.cacheDir, "DPR_${cleanProject}_${cleanDate}_${System.currentTimeMillis() % 10000}.pdf")
+        val pdfFile = File(context.cacheDir, "${fileNamePrefix}_${System.currentTimeMillis() % 10000}.pdf")
         FileOutputStream(pdfFile).use { out ->
             pdfDocument.writeTo(out)
         }
@@ -440,11 +611,11 @@ object DprPdfGenerator {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "Highway Daily Project Report - ${pdfFile.nameWithoutExtension}")
-            putExtra(Intent.EXTRA_TEXT, "Attached is the official Highway Daily Project Report (DPR): ${pdfFile.name}")
+            putExtra(Intent.EXTRA_SUBJECT, "Highway Site Activity Report - ${pdfFile.nameWithoutExtension}")
+            putExtra(Intent.EXTRA_TEXT, "Attached is the official Highway Site Activity Report (PDF): ${pdfFile.name}")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Share Daily Project Report (PDF)"))
+        context.startActivity(Intent.createChooser(intent, "Share Site Activity Report (PDF)"))
     }
 
     /**
