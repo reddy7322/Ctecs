@@ -7,6 +7,7 @@ import android.graphics.Color as AndroidColor
 import android.graphics.Paint as AndroidPaint
 import android.content.res.Configuration
 import androidx.camera.view.LifecycleCameraController
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -1223,23 +1224,11 @@ fun CameraScreen(
                     timestamp = currentTimeMillis
                 )
 
-                liveLines.forEachIndexed { index, line ->
-                    val isLast = index == liveLines.lastIndex
-                    Text(
-                        text = line,
-                        color = PrimaryText,
-                        fontSize = if (isLast) 15.sp else 13.sp,
-                        fontWeight = if (isLast) FontWeight.Black else FontWeight.Bold,
-                        textAlign = TextAlign.End,
-                        style = androidx.compose.ui.text.TextStyle(
-                            shadow = androidx.compose.ui.graphics.Shadow(
-                                color = Color.Black,
-                                offset = Offset(2f, 2f),
-                                blurRadius = 4f
-                            )
-                        )
-                    )
-                }
+                LiveViewfinderWatermarkBlock(
+                    liveLines = liveLines,
+                    overlayConfig = overlayConfig,
+                    isLandscape = true
+                )
             }
 
             // 5. RIGHT CORNER: CAPTURE & RECORDING CONTROLS (Authoritative Vertical Control Bar)
@@ -1882,23 +1871,11 @@ fun CameraScreen(
                         timestamp = currentTimeMillis
                     )
 
-                    liveLines.forEachIndexed { index, line ->
-                        val isLast = index == liveLines.lastIndex
-                        Text(
-                            text = line,
-                            color = PrimaryText,
-                            fontSize = if (isLast) 18.sp else 16.sp,
-                            fontWeight = if (isLast) FontWeight.Black else FontWeight.Bold,
-                            textAlign = TextAlign.End,
-                            style = androidx.compose.ui.text.TextStyle(
-                                shadow = androidx.compose.ui.graphics.Shadow(
-                                    color = Color.Black,
-                                    offset = Offset(2f, 2f),
-                                    blurRadius = 4f
-                                )
-                            )
-                        )
-                    }
+                    LiveViewfinderWatermarkBlock(
+                        liveLines = liveLines,
+                        overlayConfig = overlayConfig,
+                        isLandscape = false
+                    )
                 }
             }
 
@@ -3026,5 +3003,83 @@ fun LiveLogoOverlay(
                 .alpha(config.logoOpacity.coerceIn(0.1f, 1f))
                 .testTag("camera_live_logo_overlay")
         )
+    }
+}
+
+/**
+ * Live Viewfinder Watermark Block that applies user preferences
+ * (text color, font size, custom font family, text shadow, and background box) exactly as configured.
+ */
+@Composable
+fun LiveViewfinderWatermarkBlock(
+    liveLines: List<String>,
+    overlayConfig: OverlayConfig,
+    modifier: Modifier = Modifier,
+    isLandscape: Boolean = false
+) {
+    val textColor = remember(overlayConfig.textColorHex) {
+        try {
+            Color(android.graphics.Color.parseColor(overlayConfig.textColorHex))
+        } catch (e: Exception) {
+            Color.White
+        }
+    }
+
+    val overlayFontFamily = remember(overlayConfig.fontFamily) {
+        when (overlayConfig.fontFamily.lowercase(Locale.US)) {
+            "monospace", "inconsolata", "roboto mono" -> FontFamily.Monospace
+            "serif", "playfair display", "merriweather" -> FontFamily.Serif
+            "sans-serif", "sans-serif-condensed", "roboto", "open sans", "montserrat", "oswald", "lato" -> FontFamily.SansSerif
+            "cursive" -> FontFamily.Cursive
+            else -> FontFamily.Default
+        }
+    }
+
+    val baseFontSizeSp = overlayConfig.fontSizeSp.coerceIn(10f, 32f)
+    val scaleFactor = if (isLandscape) 0.82f else 1.0f
+    val primaryFontSize = (baseFontSizeSp * scaleFactor).sp
+    val secondaryFontSize = (baseFontSizeSp * 0.88f * scaleFactor).sp
+
+    val textShadow = if (overlayConfig.hasTextShadow) {
+        androidx.compose.ui.graphics.Shadow(
+            color = Color.Black,
+            offset = Offset(2f, 2f),
+            blurRadius = 4f
+        )
+    } else null
+
+    val bgModifier = if (overlayConfig.backgroundOpacity > 0.05f || overlayConfig.backgroundStyle != "Transparent") {
+        val bgBoxColor = remember(overlayConfig.backgroundColorHex, overlayConfig.backgroundOpacity) {
+            try {
+                val base = android.graphics.Color.parseColor(overlayConfig.backgroundColorHex)
+                val alpha = (overlayConfig.backgroundOpacity.coerceIn(0.1f, 1f) * 255).toInt().coerceIn(0, 255)
+                Color(android.graphics.Color.argb(alpha, android.graphics.Color.red(base), android.graphics.Color.green(base), android.graphics.Color.blue(base)))
+            } catch (e: Exception) {
+                Color(0x99000000)
+            }
+        }
+        Modifier
+            .background(bgBoxColor, RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    } else Modifier
+
+    Column(
+        horizontalAlignment = Alignment.End,
+        modifier = modifier.then(bgModifier)
+    ) {
+        liveLines.forEachIndexed { index, line ->
+            val isLast = index == liveLines.lastIndex
+            Text(
+                text = line,
+                color = textColor,
+                fontSize = if (isLast) primaryFontSize else secondaryFontSize,
+                fontWeight = if (isLast) FontWeight.Black else FontWeight.Bold,
+                fontFamily = overlayFontFamily,
+                textAlign = TextAlign.End,
+                style = androidx.compose.ui.text.TextStyle(
+                    shadow = textShadow
+                )
+            )
+        }
     }
 }

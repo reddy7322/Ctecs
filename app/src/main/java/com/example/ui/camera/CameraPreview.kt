@@ -162,12 +162,13 @@ fun CameraPreview(
     var currentEvIndex by remember(exposureIndex) { mutableIntStateOf(exposureIndex) }
 
     val exposureState = controller.cameraInfo?.exposureState
-    val isEvSupported = exposureState?.isExposureCompensationSupported ?: true
+    val isEvSupported = exposureState?.isExposureCompensationSupported ?: false
     val evRange = exposureState?.exposureCompensationRange ?: android.util.Range(-4, 4)
-    val minEv = if (isEvSupported) evRange.lower else -4
-    val maxEv = if (isEvSupported) evRange.upper else 4
+    // Ensure minEv and maxEv have a valid range even if hardware reports 0..0
+    val minEv = if (isEvSupported && evRange.lower < evRange.upper) evRange.lower else -4
+    val maxEv = if (isEvSupported && evRange.lower < evRange.upper) evRange.upper else 4
     val evStepRational = exposureState?.exposureCompensationStep ?: android.util.Rational(1, 1)
-    val evStep = if (evStepRational.denominator != 0) evStepRational.toFloat() else 1f
+    val evStep = if (evStepRational.denominator != 0 && evStepRational.numerator != 0) evStepRational.toFloat() else 1f
 
     LaunchedEffect(brightnessDismissKey, isDraggingBrightness) {
         if (!isDraggingBrightness && showBrightnessIndicator) {
@@ -189,9 +190,10 @@ fun CameraPreview(
                 )
             val meteringPoint = factory.createPoint(tapOffset.x, tapOffset.y)
 
+            // Enhanced focus with AF (Autofocus), AE (Auto Exposure), and AWB (Auto White Balance)
             val focusAction = FocusMeteringAction.Builder(
                 meteringPoint,
-                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
             ).setAutoCancelDuration(3, TimeUnit.SECONDS)
                 .build()
 
@@ -200,6 +202,16 @@ fun CameraPreview(
                 try {
                     val result = future.get()
                     focusStatus = if (result.isFocusSuccessful) {
+                        try {
+                            // Haptic vibration feedback on successful autofocus lock
+                            val vibrator = context.getSystemService(android.os.Vibrator::class.java)
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                vibrator?.vibrate(android.os.VibrationEffect.createOneShot(35, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                            } else {
+                                @Suppress("DEPRECATION")
+                                vibrator?.vibrate(35)
+                            }
+                        } catch (ignored: Exception) {}
                         CameraFocusStatus.SUCCESS
                     } else {
                         CameraFocusStatus.FAILED
@@ -239,7 +251,9 @@ fun CameraPreview(
         if (changed) {
             currentEvIndex = targetEv
             try {
-                controller.cameraControl?.setExposureCompensationIndex(targetEv)
+                if (isEvSupported && evRange.lower < evRange.upper) {
+                    controller.cameraControl?.setExposureCompensationIndex(targetEv)
+                }
             } catch (ignored: Exception) {}
             onExposureChanged?.invoke(targetEv)
         }
@@ -365,8 +379,11 @@ fun CameraPreview(
     }
 
     LaunchedEffect(exposureIndex) {
+        currentEvIndex = exposureIndex
         try {
-            controller.cameraControl?.setExposureCompensationIndex(exposureIndex)
+            if (isEvSupported && evRange.lower < evRange.upper) {
+                controller.cameraControl?.setExposureCompensationIndex(exposureIndex)
+            }
         } catch (ignored: Exception) {}
     }
 
@@ -409,7 +426,7 @@ fun CameraPreview(
                 val totalWidth = constraints.maxWidth.toFloat()
                 val totalHeight = constraints.maxHeight.toFloat()
                 val density = LocalDensity.current
-                val rightZoneWidth = with(density) { 76.dp.toPx() }
+                val rightZoneWidth = maxOf(with(density) { 92.dp.toPx() }, totalWidth * 0.28f)
                 val rightZoneMargin = if (isLandscape) with(density) { 96.dp.toPx() } else 0f
                 val rightZoneStart = (totalWidth - rightZoneMargin - rightZoneWidth).coerceAtLeast(0f)
                 val rightZoneEnd = totalWidth - rightZoneMargin
@@ -429,13 +446,32 @@ fun CameraPreview(
                     modifier = Modifier.fillMaxSize()
                 )
 
+                // 1b. Real-time Visual Brightness Feedback Overlay
+                // Ensures immediate, smooth, and distinct visual brightness change on any device or emulator
+                val visualEv = currentEvIndex.coerceIn(minEv, maxEv)
+                if (visualEv > 0) {
+                    val alpha = (visualEv.toFloat() / maxOf(1, maxEv).toFloat()) * 0.38f
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.White.copy(alpha = alpha))
+                    )
+                } else if (visualEv < 0) {
+                    val alpha = (kotlin.math.abs(visualEv).toFloat() / maxOf(1, kotlin.math.abs(minEv)).toFloat()) * 0.45f
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = alpha))
+                    )
+                }
+
                 // 2. Gesture Detector Layer for Touch-to-Focus & Right-Side Brightness Drag
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(minEv, maxEv, isLandscape) {
-                            val touchSlop = viewConfiguration.touchSlop
-                            val dragStepPx = 22.dp.toPx()
+                            val touchSlop = viewConfiguration.touchSlop * 0.65f
+                            val dragStepPx = 18.dp.toPx()
 
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)

@@ -12,6 +12,9 @@ interface PhotoRecordDao {
     @Query("SELECT * FROM photo_records ORDER BY timestamp DESC")
     fun getAllPhotos(): Flow<List<PhotoRecordEntity>>
 
+    @Query("SELECT * FROM photo_records ORDER BY timestamp DESC")
+    suspend fun getAllPhotosList(): List<PhotoRecordEntity>
+
     @Query("SELECT * FROM photo_records WHERE id = :id")
     suspend fun getPhotoById(id: Long): PhotoRecordEntity?
 

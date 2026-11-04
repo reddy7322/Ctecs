@@ -41,6 +41,8 @@ enum class AppTab(val label: String) {
     CAMERA("Camera"),
     PHOTOS("Photos"),
     ROUTES("Routes"),
+    HIGHWAY_TOOLS("Tools"),
+    SMART_NOTES("Notes"),
     SETTINGS("Settings")
 }
 
@@ -66,10 +68,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val preferencesManager = PreferencesManager(application)
     val routeRepository = RouteRepository(application, db.routeDao(), preferencesManager, viewModelScope)
     val photoRepository = PhotoRepository(application, db.photoRecordDao())
+    val smartHighwayRepository = com.example.data.SmartHighwayRepository(
+        context = application,
+        projectDao = db.highwayProjectDao(),
+        activityDao = db.smartActivityDao(),
+        qcRecordDao = db.qcRecordDao(),
+        reportDao = db.dailyReportRecordDao(),
+        scope = viewModelScope
+    )
     val locationTracker = LocationTracker(application)
     val compassTracker = com.example.sensor.CompassAndOrientationTracker(application)
     val appUpdateManager = com.example.update.AppUpdateManager(application)
     val whatsNewManager = com.example.update.WhatsNewManager(application)
+
+    val allProjects = smartHighwayRepository.allProjects.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val allQcRecords = smartHighwayRepository.allQcRecords.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    fun getActivitiesForProjectAndDate(projectId: String, dateString: String) =
+        smartHighwayRepository.getActivitiesForProjectAndDate(projectId, dateString)
+
+    fun getRecordedDatesForProject(projectId: String) =
+        smartHighwayRepository.getRecordedDatesForProject(projectId)
+
+    fun getReportsForProject(projectId: String) =
+        smartHighwayRepository.getReportsForProject(projectId)
+
+    suspend fun saveSmartActivity(activity: com.example.data.SmartActivityEntity) =
+        smartHighwayRepository.saveActivity(activity)
+
+    suspend fun deleteSmartActivity(activity: com.example.data.SmartActivityEntity) =
+        smartHighwayRepository.deleteActivity(activity)
+
+    suspend fun saveProject(project: com.example.data.HighwayProjectEntity) =
+        smartHighwayRepository.saveProject(project)
+
+    suspend fun saveQcRecord(record: com.example.data.QcRecordEntity) =
+        smartHighwayRepository.saveQcRecord(record)
+
+    suspend fun deleteQcRecord(record: com.example.data.QcRecordEntity) =
+        smartHighwayRepository.deleteQcRecord(record)
+
+    suspend fun saveDailyProjectReport(report: com.example.data.DailyProjectReportEntity) =
+        smartHighwayRepository.saveReport(report)
 
     val compassState: StateFlow<com.example.sensor.CompassState> = compassTracker.compassState
     val deviceOrientation: StateFlow<com.example.sensor.DeviceOrientation> = compassTracker.deviceOrientation
@@ -353,6 +402,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Silent background check for updates
         viewModelScope.launch {
             checkForAppUpdate(isManual = false)
+        }
+
+        // Auto-sync storage videos and photos into Room
+        viewModelScope.launch {
+            photoRepository.syncMediaFilesFromStorage()
         }
 
         // Smart Startup Page Loader progression
@@ -981,6 +1035,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             _uiMessages.emit(UiMessage.Info("Deleted $count photos"))
             showToast("Deleted $count photos", ToastType.SUCCESS)
+        }
+    }
+
+    fun syncGalleryMedia(onComplete: ((Int) -> Unit)? = null) {
+        viewModelScope.launch {
+            val count = photoRepository.syncMediaFilesFromStorage()
+            onComplete?.invoke(count)
         }
     }
 

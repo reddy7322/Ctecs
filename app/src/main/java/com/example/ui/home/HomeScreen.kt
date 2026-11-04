@@ -43,12 +43,15 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CompassCalibration
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.GpsFixed
@@ -144,6 +147,8 @@ fun HomeScreen(
     onNavigateToPhotos: () -> Unit,
     onNavigateToRoutes: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToTools: () -> Unit = {},
+    onNavigateToNotes: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -339,6 +344,100 @@ fun HomeScreen(
                 mainTextColor = mainTextColor,
                 subTextColor = subTextColor
             )
+
+            // 6. Quick Access: Smart Highway Tools & Smart Notes DPR
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onNavigateToTools() }
+                        .testTag("home_quick_highway_tools"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = cardBgColor),
+                    border = BorderStroke(0.8.dp, cardBorderColor)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(HighlightYellow.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Build,
+                                contentDescription = null,
+                                tint = HighlightYellow,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Highway Tools",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = mainTextColor
+                            )
+                            Text(
+                                text = "Calculators & QC",
+                                fontSize = 11.sp,
+                                color = subTextColor
+                            )
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onNavigateToNotes() }
+                        .testTag("home_quick_smart_notes"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = cardBgColor),
+                    border = BorderStroke(0.8.dp, cardBorderColor)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF388E3C).copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Description,
+                                contentDescription = null,
+                                tint = Color(0xFF4CAF50),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Smart Notes",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = mainTextColor
+                            )
+                            Text(
+                                text = "DPR & Calendar",
+                                fontSize = 11.sp,
+                                color = subTextColor
+                            )
+                        }
+                    }
+                }
+            }
 
             // Bottom Spacing for Floating Glass Nav Bar
             Spacer(modifier = Modifier.height(72.dp))

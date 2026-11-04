@@ -659,7 +659,7 @@ fun SettingsScreen(
                 } ?: if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None (Empty)" else currentProject.workType
 
                 SmartDropdownSection(
-                    title = "1. Project Settings",
+                    title = "Project Settings",
                     subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
                     icon = Icons.Default.Engineering,
                     accentColor = Color(0xFF38BDF8),
@@ -1020,7 +1020,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("camera lens zoom shutter sound grid touch mirror battery save white balance", searchQuery)) {
                 SmartDropdownSection(
-                    title = "2. Camera and Lens",
+                    title = "Camera and Lens",
                     subtitle = "Grid ${currentCameraSettings.gridMode.label} • Shutter Sound • Lens Controls",
                     icon = Icons.Default.CameraAlt,
                     accentColor = Color(0xFF38BDF8),
@@ -1087,7 +1087,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("photo settings original picture ratio jpeg quality timer ratio exif", searchQuery)) {
                 SmartDropdownSection(
-                    title = "3. Photo Settings",
+                    title = "Photo Settings",
                     subtitle = "Resolution: ${currentCameraSettings.photoResolution} • Ratio: ${currentCameraSettings.previewRatio.label}",
                     icon = Icons.Default.PhotoCamera,
                     accentColor = Color(0xFF00BCD4),
@@ -1159,7 +1159,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("video recording settings fps audio sound mic segmentation quality", searchQuery)) {
                 SmartDropdownSection(
-                    title = "4. Video Recording Settings",
+                    title = "Video Recording Settings",
                     subtitle = "Resolution: ${currentCameraSettings.videoResolution} • Audio: ${if (currentCameraSettings.recordAudio) "ON" else "OFF"}",
                     icon = Icons.Default.Videocam,
                     accentColor = Color(0xFFEF4444),
@@ -1215,7 +1215,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("resolution frame rate photo video size dimensions megapixels 4k 1080p 720p", searchQuery)) {
                 SmartDropdownSection(
-                    title = "5. Resolution and Frame Rate",
+                    title = "Resolution and Frame Rate",
                     subtitle = "Photo: ${currentCameraSettings.photoResolution} | Video: ${currentCameraSettings.videoResolution}",
                     icon = Icons.Default.AspectRatio,
                     accentColor = Color(0xFFFFD700),
@@ -1303,7 +1303,7 @@ fun SettingsScreen(
                 var showCustomFormatInput by remember { mutableStateOf(false) }
 
                 SmartDropdownSection(
-                    title = "6. Timestamp",
+                    title = "Timestamp",
                     subtitle = "${currentOverlay.timestampFormat} • ${currentOverlay.watermarkPosition} • ${currentOverlay.fontFamily} • ${currentOverlay.fontSizeSp.toInt()}sp",
                     icon = Icons.Default.BrandingWatermark,
                     accentColor = Color(0xFFFFD700),
@@ -2322,7 +2322,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("gps location coordinates dms utm decimal accuracy threshold interval address", searchQuery)) {
                 SmartDropdownSection(
-                    title = "7. GPS and Location",
+                    title = "GPS and Location",
                     subtitle = "${currentCameraSettings.coordinateFormat.label} • Threshold ±${currentCameraSettings.gpsAccuracyThresholdMeters.toInt()}m",
                     icon = Icons.Default.MyLocation,
                     accentColor = Color(0xFF22C55E),
@@ -2383,7 +2383,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("chainage kmz kml alignment radius lhs rhs route manual offset", searchQuery)) {
                 SmartDropdownSection(
-                    title = "8. Chainage, KMZ and LHS/RHS",
+                    title = "Chainage, KMZ and LHS/RHS",
                     subtitle = "Matching Radius: ${currentCameraSettings.routeMatchingRadiusMeters.toInt()}m",
                     icon = Icons.Default.LinearScale,
                     accentColor = Color(0xFF38BDF8),
@@ -2440,7 +2440,7 @@ fun SettingsScreen(
                 val hasCustomLogo = !currentOverlay.logoUri.isNullOrBlank() && File(currentOverlay.logoUri ?: "").exists()
 
                 SmartDropdownSection(
-                    title = "10. Custom Logo",
+                    title = "Custom Logo",
                     subtitle = if (hasCustomLogo) "Custom Logo Active • ${currentOverlay.logoSizeDp}dp" else "No Logo Uploaded",
                     icon = Icons.Default.AddPhotoAlternate,
                     accentColor = Color(0xFF38BDF8),
@@ -2709,7 +2709,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("image video quality jpeg compression bitrate hardware encoder", searchQuery)) {
                 SmartDropdownSection(
-                    title = "11. Image and Video Quality",
+                    title = "Image and Video Quality",
                     subtitle = "JPEG Quality: ${currentCameraSettings.jpegQuality}% • HW Accelerated",
                     icon = Icons.Default.HighQuality,
                     accentColor = Color(0xFF38BDF8),
@@ -2756,7 +2756,7 @@ fun SettingsScreen(
                 var showInlineFormatDropdown by remember { mutableStateOf(false) }
 
                 SmartDropdownSection(
-                    title = "12. Storage, Filenames and Gallery",
+                    title = "Storage, Filenames and Gallery",
                     subtitle = "Format: $dynamicPreview",
                     icon = Icons.Default.Storage,
                     accentColor = Color(0xFF38BDF8),
@@ -2963,7 +2963,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("display appearance theme mode horizon level auto-rotate screen on", searchQuery)) {
                 SmartDropdownSection(
-                    title = "13. Display and Appearance",
+                    title = "Display and Appearance",
                     subtitle = "Theme: ${viewModel.themeMode.collectAsStateWithLifecycle().value.uppercase()}",
                     icon = Icons.Default.Palette,
                     accentColor = Color(0xFF38BDF8),
@@ -3009,7 +3009,7 @@ fun SettingsScreen(
             // ====================================================
             if (matchesSearch("permissions app information version build update restore default", searchQuery)) {
                 SmartDropdownSection(
-                    title = "14. Permissions and App Information",
+                    title = "Permissions and App Information",
                     subtitle = "Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
                     icon = Icons.Default.Info,
                     accentColor = Color(0xFF38BDF8),

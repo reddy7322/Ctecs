@@ -17,9 +17,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
@@ -34,10 +38,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.core.FastOutLinearInEasing
+import com.example.ui.tools.SmartHighwayToolsScreen
+import com.example.ui.notes.SmartNotesScreen
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -56,6 +63,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -133,10 +141,16 @@ fun MainScreen(
         }
     }
 
-    // BackHandler to return to Home if on another tab
+    var previousTabBeforeTools by remember { mutableStateOf<AppTab?>(null) }
+
+    // BackHandler to return to Home or previous tab if on another tab
     if (currentTab != AppTab.HOME) {
         BackHandler {
-            viewModel.setTab(AppTab.HOME)
+            if (currentTab == AppTab.HIGHWAY_TOOLS && previousTabBeforeTools != null) {
+                viewModel.setTab(previousTabBeforeTools ?: AppTab.HOME)
+            } else {
+                viewModel.setTab(AppTab.HOME)
+            }
         }
     }
 
@@ -148,17 +162,17 @@ fun MainScreen(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 12.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars),
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
-                    shadowElevation = 12.dp
+                    shape = RoundedCornerShape(26.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                    shadowElevation = 10.dp
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -167,6 +181,8 @@ fun MainScreen(
                             Triple(AppTab.CAMERA, Icons.Default.CameraAlt, "Camera"),
                             Triple(AppTab.PHOTOS, Icons.Default.PhotoLibrary, "Gallery"),
                             Triple(AppTab.ROUTES, Icons.Default.AltRoute, "Routes"),
+                            Triple(AppTab.HIGHWAY_TOOLS, Icons.Default.Build, "Tools"),
+                            Triple(AppTab.SMART_NOTES, Icons.Default.Description, "Notes"),
                             Triple(AppTab.SETTINGS, Icons.Default.Settings, "Settings")
                         )
 
@@ -185,11 +201,14 @@ fun MainScreen(
 
                             Box(
                                 modifier = Modifier
-                                    .height(44.dp)
-                                    .width(if (isSelected) 64.dp else 44.dp)
-                                    .clip(RoundedCornerShape(22.dp))
+                                    .height(40.dp)
+                                    .width(if (isSelected) 46.dp else 34.dp)
+                                    .clip(RoundedCornerShape(20.dp))
                                     .background(bgTint)
                                     .clickable {
+                                        if (tab == AppTab.HIGHWAY_TOOLS) {
+                                            previousTabBeforeTools = currentTab
+                                        }
                                         viewModel.setTab(tab)
                                     }
                                     .testTag("nav_item_${tab.name.lowercase()}"),
@@ -199,7 +218,7 @@ fun MainScreen(
                                     imageVector = icon,
                                     contentDescription = contentDesc,
                                     tint = iconTint,
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -220,7 +239,12 @@ fun MainScreen(
                     onNavigateToCamera = { viewModel.setTab(AppTab.CAMERA) },
                     onNavigateToPhotos = { viewModel.setTab(AppTab.PHOTOS) },
                     onNavigateToRoutes = { viewModel.setTab(AppTab.ROUTES) },
-                    onNavigateToSettings = { viewModel.setTab(AppTab.SETTINGS) }
+                    onNavigateToSettings = { viewModel.setTab(AppTab.SETTINGS) },
+                    onNavigateToTools = {
+                        previousTabBeforeTools = AppTab.HOME
+                        viewModel.setTab(AppTab.HIGHWAY_TOOLS)
+                    },
+                    onNavigateToNotes = { viewModel.setTab(AppTab.SMART_NOTES) }
                 )
                 AppTab.CAMERA -> CameraScreen(
                     viewModel = viewModel,
@@ -237,10 +261,71 @@ fun MainScreen(
                     viewModel = viewModel,
                     onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )
+                AppTab.HIGHWAY_TOOLS -> SmartHighwayToolsScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { viewModel.setTab(previousTabBeforeTools ?: AppTab.HOME) }
+                )
+                AppTab.SMART_NOTES -> SmartNotesScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { viewModel.setTab(AppTab.HOME) }
+                )
                 AppTab.SETTINGS -> SettingsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )
+            }
+
+            // Floating Side-Flip Quick Handle & Gesture for Smart Highway Tools
+            // Strictly excluded from CameraScreen to ensure zero interference with camera preview, focus or brightness
+            if (currentTab != AppTab.CAMERA && currentTab != AppTab.HIGHWAY_TOOLS) {
+                var dragTotal by remember { mutableFloatStateOf(0f) }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 0.dp)
+                        .pointerInput(Unit) {
+                            detectHorizontalDragGestures(
+                                onDragStart = { dragTotal = 0f },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragTotal += dragAmount
+                                },
+                                onDragEnd = {
+                                    if (dragTotal < -30f) { // Leftward swipe opens tools
+                                        previousTabBeforeTools = currentTab
+                                        viewModel.setTab(AppTab.HIGHWAY_TOOLS)
+                                    }
+                                }
+                            )
+                        }
+                        .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
+                        .background(HighlightYellow.copy(alpha = 0.92f))
+                        .clickable {
+                            previousTabBeforeTools = currentTab
+                            viewModel.setTab(AppTab.HIGHWAY_TOOLS)
+                        }
+                        .padding(horizontal = 6.dp, vertical = 12.dp)
+                        .testTag("side_flip_tools_handle"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Build,
+                            contentDescription = "Open Smart Highway Tools",
+                            tint = Color.Black,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "TOOLS",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black
+                        )
+                    }
+                }
             }
         }
     }

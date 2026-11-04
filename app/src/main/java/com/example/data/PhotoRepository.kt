@@ -289,4 +289,79 @@ class PhotoRepository(
         }
         photoRecordDao.deletePhoto(photo)
     }
+
+    /**
+     * Scans storage directories for any recorded videos or photos that are not yet indexed in Room,
+     * ensuring all media files appear in the gallery.
+     */
+    suspend fun syncMediaFilesFromStorage(): Int = withContext(Dispatchers.IO) {
+        var addedCount = 0
+        try {
+            val existingList = photoRecordDao.getAllPhotosList()
+            val existingPaths = existingList.map { it.filePath }.toSet()
+
+            val dirsToScan = listOfNotNull(
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "HighwayCamera"),
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "HighwayCamera"),
+                context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)?.let { File(it, "HighwayCamera") },
+                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)?.let { File(it, "HighwayCamera") },
+                File(context.filesDir, "HighwayCamera")
+            )
+
+            for (dir in dirsToScan) {
+                if (!dir.exists() || !dir.isDirectory) continue
+                val files = dir.listFiles() ?: continue
+                for (file in files) {
+                    if (file.isDirectory || file.length() == 0L) continue
+                    val path = file.absolutePath
+                    val name = file.name
+                    if (path in existingPaths) continue
+
+                    val isVideo = name.endsWith(".mp4", ignoreCase = true)
+                    val isPhoto = name.endsWith(".jpg", ignoreCase = true) || name.endsWith(".jpeg", ignoreCase = true) || name.endsWith(".png", ignoreCase = true)
+                    if (!isVideo && !isPhoto) continue
+
+                    var timestamp = file.lastModified()
+                    val match = Regex("""(?:TimePhoto|TimeVideo|Photo|Video)_(\d{8})_(\d{6})""").find(name)
+                    if (match != null) {
+                        try {
+                            val dateStr = "${match.groupValues[1]}_${match.groupValues[2]}"
+                            val parsedDate = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(dateStr)
+                            if (parsedDate != null) timestamp = parsedDate.time
+                        } catch (ignored: Exception) {}
+                    }
+
+                    val entity = PhotoRecordEntity(
+                        filePath = path,
+                        fileName = name,
+                        timestamp = timestamp,
+                        latitude = 0.0,
+                        longitude = 0.0,
+                        accuracy = 0f,
+                        altitude = 0.0,
+                        chainageMetres = null,
+                        chainageLabel = if (name.contains("+")) {
+                            Regex("""\d+\+\d+""").find(name)?.value
+                        } else null,
+                        chainageConfidence = "MANUAL",
+                        isManualChainage = true,
+                        offsetMetres = 0f,
+                        highwayId = "Highway",
+                        packageSection = "",
+                        roadSide = "RHS",
+                        lane = "Main Carriage",
+                        activity = if (isVideo) "Video Recording" else "Photo",
+                        customDescription = "",
+                        inspectorName = "",
+                        formattedOverlayText = name.substringBeforeLast(".")
+                    )
+                    photoRecordDao.insertPhoto(entity)
+                    addedCount++
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("PhotoRepository", "Media files sync error: ${e.message}", e)
+        }
+        addedCount
+    }
 }

@@ -32,6 +32,25 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import android.media.ThumbnailUtils
+import android.provider.MediaStore
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Replay5
+import androidx.compose.material.icons.filled.Forward5
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,8 +59,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
@@ -54,6 +75,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -61,6 +84,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,6 +99,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,12 +110,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
@@ -112,6 +139,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+enum class GalleryMediaTab {
+    PHOTOS,
+    VIDEOS
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotosScreen(
@@ -127,11 +159,15 @@ fun PhotosScreen(
     val gallerySortOption by viewModel.gallerySortOption.collectAsStateWithLifecycle()
     val galleryGroupOption by viewModel.galleryGroupOption.collectAsStateWithLifecycle()
 
+    var selectedMediaTab by remember { mutableStateOf(GalleryMediaTab.PHOTOS) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("All") }
+    val haptic = LocalHapticFeedback.current
     var viewingPhoto by remember { mutableStateOf<PhotoRecordEntity?>(null) }
+    var viewingVideo by remember { mutableStateOf<PhotoRecordEntity?>(null) }
     var photoToDelete by remember { mutableStateOf<PhotoRecordEntity?>(null) }
     var photoForDetails by remember { mutableStateOf<PhotoRecordEntity?>(null) }
+    var photoForOptions by remember { mutableStateOf<PhotoRecordEntity?>(null) }
 
     // Multi-selection state
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -144,6 +180,14 @@ fun PhotosScreen(
 
     // Collapsed groups state
     val collapsedGroups = remember { mutableStateListOf<String>() }
+
+    val photoCount = remember(photos) { photos.count { !it.fileName.endsWith(".mp4", ignoreCase = true) } }
+    val videoCount = remember(photos) { photos.count { it.fileName.endsWith(".mp4", ignoreCase = true) } }
+
+    // Auto-sync storage videos and photos when gallery screen opens
+    LaunchedEffect(Unit) {
+        viewModel.syncGalleryMedia()
+    }
 
     val sortOptions = listOf(
         "Newest first" to "NEWEST_FIRST",
@@ -165,8 +209,15 @@ fun PhotosScreen(
     )
 
     // Filter & Sort photos
-    val filteredSortedPhotos = remember(photos, searchQuery, selectedFilter, gallerySortOption) {
+    val filteredSortedPhotos = remember(photos, searchQuery, selectedFilter, gallerySortOption, selectedMediaTab) {
         val filtered = photos.filter { p ->
+            val isVideo = p.fileName.endsWith(".mp4", ignoreCase = true) || p.filePath.endsWith(".mp4", ignoreCase = true)
+            val matchesTab = when (selectedMediaTab) {
+                GalleryMediaTab.PHOTOS -> !isVideo
+                GalleryMediaTab.VIDEOS -> isVideo
+            }
+            if (!matchesTab) return@filter false
+
             val matchesQuery = if (searchQuery.isBlank()) true else {
                 p.chainageLabel?.contains(searchQuery, ignoreCase = true) == true ||
                         p.activity.contains(searchQuery, ignoreCase = true) ||
@@ -298,12 +349,12 @@ fun PhotosScreen(
                     title = {
                         Column {
                             Text(
-                                text = "Photos",
+                                text = if (selectedMediaTab == GalleryMediaTab.PHOTOS) "Photos" else "Videos",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp
                             )
                             Text(
-                                text = "${filteredSortedPhotos.size} of ${photos.size} items",
+                                text = "${filteredSortedPhotos.size} ${if (selectedMediaTab == GalleryMediaTab.PHOTOS) "photos" else "videos"}",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -433,13 +484,165 @@ fun PhotosScreen(
                 )
             }
         },
+        bottomBar = {
+            if (isSelectionMode) {
+                Surface(
+                    tonalElevation = 6.dp,
+                    shadowElevation = 8.dp,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                if (selectedPhotoIds.size == filteredSortedPhotos.size) {
+                                    selectedPhotoIds.clear()
+                                } else {
+                                    selectedPhotoIds.clear()
+                                    selectedPhotoIds.addAll(filteredSortedPhotos.map { it.id })
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (selectedPhotoIds.size == filteredSortedPhotos.size) Icons.Default.Close else Icons.Default.Checklist,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (selectedPhotoIds.size == filteredSortedPhotos.size) "Deselect All" else "Select All (${filteredSortedPhotos.size})",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                enabled = selectedPhotoIds.isNotEmpty(),
+                                onClick = {
+                                    val selectedList = photos.filter { it.id in selectedPhotoIds }
+                                    shareMultiplePhotos(context, selectedList)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Share (${selectedPhotoIds.size})", fontSize = 13.sp)
+                            }
+
+                            Button(
+                                enabled = selectedPhotoIds.isNotEmpty(),
+                                onClick = { showBulkDeleteDialog = true },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFDC2626),
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Delete (${selectedPhotoIds.size})", fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        },
         modifier = modifier
     ) { innerPadding ->
+        BackHandler(enabled = isSelectionMode) {
+            isSelectionMode = false
+            selectedPhotoIds.clear()
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Smart Switch Tab: Photos / Videos
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Photos Tab
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(
+                            if (selectedMediaTab == GalleryMediaTab.PHOTOS) MaterialTheme.colorScheme.primary
+                            else Color.Transparent
+                        )
+                        .clickable { selectedMediaTab = GalleryMediaTab.PHOTOS }
+                        .padding(vertical = 8.dp)
+                        .testTag("tab_photos"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PhotoLibrary,
+                            contentDescription = null,
+                            tint = if (selectedMediaTab == GalleryMediaTab.PHOTOS) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Photos ($photoCount)",
+                            color = if (selectedMediaTab == GalleryMediaTab.PHOTOS) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (selectedMediaTab == GalleryMediaTab.PHOTOS) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                // Videos Tab
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(
+                            if (selectedMediaTab == GalleryMediaTab.VIDEOS) MaterialTheme.colorScheme.primary
+                            else Color.Transparent
+                        )
+                        .clickable { selectedMediaTab = GalleryMediaTab.VIDEOS }
+                        .padding(vertical = 8.dp)
+                        .testTag("tab_videos"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Videocam,
+                            contentDescription = null,
+                            tint = if (selectedMediaTab == GalleryMediaTab.VIDEOS) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Text(
+                            text = "Videos ($videoCount)",
+                            color = if (selectedMediaTab == GalleryMediaTab.VIDEOS) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (selectedMediaTab == GalleryMediaTab.VIDEOS) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+
             // Search Input Bar
             OutlinedTextField(
                 value = searchQuery,
@@ -505,14 +708,18 @@ fun PhotosScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = Icons.Default.PhotoLibrary,
+                            imageVector = if (selectedMediaTab == GalleryMediaTab.PHOTOS) Icons.Default.PhotoLibrary else Icons.Default.Videocam,
                             contentDescription = null,
                             tint = Color(0xFF64748B),
                             modifier = Modifier.size(56.dp)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = if (photos.isEmpty()) "No highway photos captured yet" else "No photos match filter criteria",
+                            text = if (selectedMediaTab == GalleryMediaTab.PHOTOS) {
+                                if (photoCount == 0) "No highway photos captured yet" else "No photos match filter criteria"
+                            } else {
+                                if (videoCount == 0) "No recorded highway videos yet" else "No videos match filter criteria"
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 14.sp
                         )
@@ -593,13 +800,20 @@ fun PhotosScreen(
                                                                 if (isSelectionMode) {
                                                                     if (isSelected) selectedPhotoIds.remove(photo.id) else selectedPhotoIds.add(photo.id)
                                                                 } else {
-                                                                    viewingPhoto = photo
+                                                                    val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
+                                                                    if (isVideo) {
+                                                                        viewingVideo = photo
+                                                                    } else {
+                                                                        viewingPhoto = photo
+                                                                    }
                                                                 }
                                                             },
                                                             onLongClick = {
-                                                                if (!isSelectionMode) {
-                                                                    isSelectionMode = true
-                                                                    selectedPhotoIds.add(photo.id)
+                                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                if (isSelectionMode) {
+                                                                    if (isSelected) selectedPhotoIds.remove(photo.id) else selectedPhotoIds.add(photo.id)
+                                                                } else {
+                                                                    photoForOptions = photo
                                                                 }
                                                             },
                                                             modifier = Modifier.weight(1f)
@@ -625,18 +839,31 @@ fun PhotosScreen(
                                             if (isSelectionMode) {
                                                 if (isSelected) selectedPhotoIds.remove(photo.id) else selectedPhotoIds.add(photo.id)
                                             } else {
-                                                viewingPhoto = photo
+                                                val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
+                                                if (isVideo) {
+                                                    viewingVideo = photo
+                                                } else {
+                                                    viewingPhoto = photo
+                                                }
                                             }
                                         },
                                         onLongClick = {
-                                            if (!isSelectionMode) {
-                                                isSelectionMode = true
-                                                selectedPhotoIds.add(photo.id)
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            if (isSelectionMode) {
+                                                if (isSelected) selectedPhotoIds.remove(photo.id) else selectedPhotoIds.add(photo.id)
+                                            } else {
+                                                photoForOptions = photo
                                             }
                                         },
                                         onShare = { shareSinglePhoto(context, photo) },
                                         onDelete = { photoToDelete = photo },
-                                        onShowDetails = { photoForDetails = photo }
+                                        onShowDetails = { photoForDetails = photo },
+                                        onSelect = {
+                                            isSelectionMode = true
+                                            if (!selectedPhotoIds.contains(photo.id)) {
+                                                selectedPhotoIds.add(photo.id)
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -656,6 +883,19 @@ fun PhotosScreen(
             onDelete = {
                 viewingPhoto = null
                 photoToDelete = photo
+            }
+        )
+    }
+
+    // Full-Screen Interactive Video Player Dialog
+    viewingVideo?.let { video ->
+        FullScreenVideoPlayer(
+            video = video,
+            onDismiss = { viewingVideo = null },
+            onShare = { shareSinglePhoto(context, video) },
+            onDelete = {
+                viewingVideo = null
+                photoToDelete = video
             }
         )
     }
@@ -718,12 +958,66 @@ fun PhotosScreen(
             }
         )
     }
+
+    // Long-Press Quick Options Dialog
+    photoForOptions?.let { photo ->
+        PhotoLongPressOptionsDialog(
+            photo = photo,
+            isSelected = selectedPhotoIds.contains(photo.id),
+            selectedCount = selectedPhotoIds.size,
+            onDismiss = { photoForOptions = null },
+            onShare = {
+                photoForOptions = null
+                shareSinglePhoto(context, photo)
+            },
+            onDelete = {
+                photoForOptions = null
+                photoToDelete = photo
+            },
+            onSelect = {
+                photoForOptions = null
+                isSelectionMode = true
+                if (!selectedPhotoIds.contains(photo.id)) {
+                    selectedPhotoIds.add(photo.id)
+                }
+            },
+            onShareSelected = {
+                val selectedList = photos.filter { it.id in selectedPhotoIds }
+                photoForOptions = null
+                shareMultiplePhotos(context, selectedList)
+            },
+            onDeleteSelected = {
+                photoForOptions = null
+                showBulkDeleteDialog = true
+            },
+            onViewFullscreen = {
+                val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
+                photoForOptions = null
+                if (isVideo) {
+                    viewingVideo = photo
+                } else {
+                    viewingPhoto = photo
+                }
+            },
+            onShowDetails = {
+                photoForOptions = null
+                photoForDetails = photo
+            },
+            onCopyText = { text ->
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Survey Details", text))
+                android.widget.Toast.makeText(context, "Copied survey details to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                photoForOptions = null
+            }
+        )
+    }
 }
 
 /**
  * Grid Card Component:
  * Uses ContentScale.Fit inside a dark neutral background card so the original aspect ratio is displayed fully without cropping or stretching.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PhotoUncroppedGridCard(
     photo: PhotoRecordEntity,
@@ -744,7 +1038,10 @@ fun PhotoUncroppedGridCard(
                 color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF334155),
                 shape = RoundedCornerShape(12.dp)
             )
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .testTag("photo_card_${photo.id}")
     ) {
         Box(
@@ -754,16 +1051,79 @@ fun PhotoUncroppedGridCard(
                 .background(Color(0xFF0F172A))
         ) {
             val file = remember(photo.filePath) { File(photo.filePath) }
+            val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
+            val videoThumbnail = remember(photo.filePath) {
+                if (isVideo) {
+                    try {
+                        ThumbnailUtils.createVideoThumbnail(photo.filePath, MediaStore.Images.Thumbnails.MINI_KIND)
+                    } catch (e: Exception) {
+                        null
+                    }
+                } else null
+            }
 
-            // Display photo in complete original aspect ratio (ContentScale.Fit)
-            AsyncImage(
-                model = file,
-                contentDescription = photo.fileName,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .align(Alignment.Center)
-            )
+            // Display media thumbnail in complete original aspect ratio (ContentScale.Fit)
+            if (isVideo && videoThumbnail != null) {
+                Image(
+                    bitmap = videoThumbnail.asImageBitmap(),
+                    contentDescription = photo.fileName,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .align(Alignment.Center)
+                )
+            } else {
+                AsyncImage(
+                    model = file,
+                    contentDescription = photo.fileName,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .align(Alignment.Center)
+                )
+            }
+
+            // Center Play Icon for Video
+            if (isVideo) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color(0xA0000000), CircleShape)
+                        .align(Alignment.Center),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play Video",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                // Video Badge in Top-Start
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .padding(8.dp)
+                        .align(Alignment.TopStart)
+                        .background(Color(0xDD0F172A), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Videocam,
+                        contentDescription = null,
+                        tint = Color(0xFFFBBF24),
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = "VIDEO",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
 
             // Selection Checkmark Overlay
             if (isSelectionMode) {
@@ -822,6 +1182,7 @@ fun PhotoUncroppedGridCard(
  * List Item Component:
  * Displays original aspect ratio thumbnail (ContentScale.Fit) alongside complete file details.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PhotoUncroppedListItem(
     photo: PhotoRecordEntity,
@@ -832,6 +1193,7 @@ fun PhotoUncroppedListItem(
     onShare: () -> Unit,
     onDelete: () -> Unit,
     onShowDetails: () -> Unit,
+    onSelect: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -853,7 +1215,11 @@ fun PhotoUncroppedListItem(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp)
-            .clickable(onClick = onClick)
+            .clip(RoundedCornerShape(10.dp))
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -871,6 +1237,17 @@ fun PhotoUncroppedListItem(
             }
 
             // Proportional Thumbnail Container (ContentScale.Fit)
+            val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
+            val videoThumbnail = remember(photo.filePath) {
+                if (isVideo) {
+                    try {
+                        ThumbnailUtils.createVideoThumbnail(photo.filePath, MediaStore.Images.Thumbnails.MINI_KIND)
+                    } catch (e: Exception) {
+                        null
+                    }
+                } else null
+            }
+
             Box(
                 modifier = Modifier
                     .width(100.dp)
@@ -879,12 +1256,37 @@ fun PhotoUncroppedListItem(
                     .background(Color(0xFF0F172A)),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = file,
-                    contentDescription = photo.fileName,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
+                if (isVideo && videoThumbnail != null) {
+                    Image(
+                        bitmap = videoThumbnail.asImageBitmap(),
+                        contentDescription = photo.fileName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    AsyncImage(
+                        model = file,
+                        contentDescription = photo.fileName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                if (isVideo) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .background(Color(0xA0000000), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play Video",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -938,6 +1340,14 @@ fun PhotoUncroppedListItem(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
+                            text = { Text("Select / Multi-Select", fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Default.Checklist, contentDescription = null) },
+                            onClick = {
+                                showMenu = false
+                                onSelect()
+                            }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Details & Info", fontSize = 13.sp) },
                             leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
                             onClick = {
@@ -964,6 +1374,296 @@ fun PhotoUncroppedListItem(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Long-Press Quick Options Dialog:
+ * Shows rich action bottom dialog with Share, Delete, Multi-selection, Fullscreen View, Survey Details, and Copy metadata.
+ */
+@Composable
+fun PhotoLongPressOptionsDialog(
+    photo: PhotoRecordEntity,
+    isSelected: Boolean,
+    selectedCount: Int,
+    onDismiss: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
+    onSelect: () -> Unit,
+    onShareSelected: () -> Unit,
+    onDeleteSelected: () -> Unit,
+    onViewFullscreen: () -> Unit,
+    onShowDetails: () -> Unit,
+    onCopyText: (String) -> Unit
+) {
+    val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
+    val file = remember(photo.filePath) { File(photo.filePath) }
+    val fileSizeMb = remember(file) { "%.1f MB".format(Locale.US, file.length() / (1024f * 1024f)) }
+    val sdf = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
+    val resolution = remember(photo.filePath) {
+        val res = getImageResolution(photo.filePath)
+        "${res.first}x${res.second}"
+    }
+    val videoThumbnail = remember(photo.filePath) {
+        if (isVideo) {
+            try {
+                ThumbnailUtils.createVideoThumbnail(photo.filePath, MediaStore.Images.Thumbnails.MINI_KIND)
+            } catch (e: Exception) {
+                null
+            }
+        } else null
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Surface(
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = false) {}
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 24.dp)
+                ) {
+                    // Drag Handle Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                        )
+                    }
+
+                    // Header with Thumbnail, Title, and Subtitle
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        // Media Thumbnail Box
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF0F172A)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isVideo && videoThumbnail != null) {
+                                Image(
+                                    bitmap = videoThumbnail.asImageBitmap(),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            } else {
+                                AsyncImage(
+                                    model = file,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = photo.chainageLabel?.ifBlank { photo.fileName } ?: photo.fileName,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${photo.highwayId} ${photo.roadSide} ${photo.activity}".trim(),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${sdf.format(Date(photo.timestamp))} • $fileSizeMb • $resolution",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+
+                    // Options List
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        // 1. Share Option
+                        LongPressActionRow(
+                            icon = Icons.Default.Share,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            title = if (isVideo) "Share Video" else "Share Photo",
+                            subtitle = "Share highway survey media with overlay metadata",
+                            onClick = onShare
+                        )
+
+                        // 2. Delete Option
+                        LongPressActionRow(
+                            icon = Icons.Default.Delete,
+                            iconTint = Color(0xFFEF4444),
+                            title = if (isVideo) "Delete Video" else "Delete Photo",
+                            subtitle = "Permanently remove from device storage",
+                            titleColor = Color(0xFFEF4444),
+                            onClick = onDelete
+                        )
+
+                        // 3. Multi Selection Mode Option
+                        LongPressActionRow(
+                            icon = Icons.Default.Checklist,
+                            iconTint = Color(0xFF0284C7),
+                            title = "Multi-Selection Mode",
+                            subtitle = "Select this and other items to batch share or delete",
+                            onClick = onSelect
+                        )
+
+                        // If multiple items are already selected, provide quick batch actions right here:
+                        if (selectedCount > 1) {
+                            LongPressActionRow(
+                                icon = Icons.Default.Share,
+                                iconTint = Color(0xFF10B981),
+                                title = "Share All $selectedCount Selected",
+                                subtitle = "Send all selected photos and videos together",
+                                onClick = onShareSelected
+                            )
+                            LongPressActionRow(
+                                icon = Icons.Default.Delete,
+                                iconTint = Color(0xFFDC2626),
+                                title = "Delete All $selectedCount Selected",
+                                subtitle = "Delete all selected photos and videos",
+                                titleColor = Color(0xFFDC2626),
+                                onClick = onDeleteSelected
+                            )
+                        }
+
+                        // 4. View / Play Fullscreen
+                        LongPressActionRow(
+                            icon = if (isVideo) Icons.Default.PlayArrow else Icons.Default.OpenInFull,
+                            iconTint = Color(0xFF8B5CF6),
+                            title = if (isVideo) "Play Video" else "View Fullscreen",
+                            subtitle = if (isVideo) "Play with scrubber, seek and duration controls" else "Pinch to zoom and inspect full resolution",
+                            onClick = onViewFullscreen
+                        )
+
+                        // 5. Details & GPS Map
+                        LongPressActionRow(
+                            icon = Icons.Default.Info,
+                            iconTint = Color(0xFFF59E0B),
+                            title = "Details & Survey Metadata",
+                            subtitle = "Inspect chainage, offset, GPS coordinates & map",
+                            onClick = onShowDetails
+                        )
+
+                        // 6. Copy Survey Information
+                        LongPressActionRow(
+                            icon = Icons.Default.ContentCopy,
+                            iconTint = Color(0xFF059669),
+                            title = "Copy Survey Details",
+                            subtitle = "Copy chainage, road and GPS to clipboard",
+                            onClick = {
+                                val text = photo.formattedOverlayText.ifBlank {
+                                    "${photo.highwayId} | ${photo.chainageLabel ?: ""} | ${photo.roadSide} | ${photo.activity}".trim()
+                                }
+                                onCopyText(text)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LongPressActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconTint: Color,
+    title: String,
+    subtitle: String,
+    titleColor: Color = Color.Unspecified,
+    onClick: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .background(iconTint.copy(alpha = 0.12f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                color = if (titleColor != Color.Unspecified) titleColor else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -1164,6 +1864,355 @@ fun FullScreenPhotoViewer(
 }
 
 /**
+ * Full-Screen Video Player with playback controls, seeking slider, time formatting,
+ * and highway survey metadata overlay.
+ */
+@Composable
+fun FullScreenVideoPlayer(
+    video: PhotoRecordEntity,
+    onDismiss: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var isPlaying by remember { mutableStateOf(true) }
+    var currentPositionMs by remember { mutableIntStateOf(0) }
+    var durationMs by remember { mutableIntStateOf(0) }
+    var showControls by remember { mutableStateOf(true) }
+    var showInfoSheet by remember { mutableStateOf(false) }
+    var videoViewRef by remember { mutableStateOf<android.widget.VideoView?>(null) }
+    var isDraggingSlider by remember { mutableStateOf(false) }
+    var sliderValue by remember { mutableFloatStateOf(0f) }
+    var isCompleted by remember { mutableStateOf(false) }
+
+    val file = remember(video.filePath) { File(video.filePath) }
+    val fileSizeMb = remember(file) { "%.2f MB".format(Locale.US, file.length() / (1024f * 1024f)) }
+    val sdf = remember { SimpleDateFormat("dd MMMM yyyy, hh:mm:ss a", Locale.US) }
+
+    fun formatTime(ms: Int): String {
+        val totalSec = (ms / 1000).coerceAtLeast(0)
+        val minutes = totalSec / 60
+        val seconds = totalSec % 60
+        return "%02d:%02d".format(Locale.US, minutes, seconds)
+    }
+
+    // Playback ticker
+    LaunchedEffect(video.filePath, isPlaying) {
+        while (true) {
+            videoViewRef?.let { vv ->
+                if (!isDraggingSlider) {
+                    val pos = vv.currentPosition
+                    val dur = vv.duration
+                    currentPositionMs = pos
+                    if (dur > 0) durationMs = dur
+                }
+            }
+            delay(250L)
+        }
+    }
+
+    // Auto-dismiss controls after 3.5s of playing
+    LaunchedEffect(showControls, isPlaying) {
+        if (showControls && isPlaying) {
+            delay(3500L)
+            showControls = false
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color.Black
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { showControls = !showControls }
+            ) {
+                // Video View Surface
+                AndroidView(
+                    factory = { ctx ->
+                        android.widget.VideoView(ctx).apply {
+                            setVideoPath(video.filePath)
+                            setOnPreparedListener { mp ->
+                                durationMs = mp.duration
+                                mp.isLooping = false
+                                start()
+                                isPlaying = true
+                                isCompleted = false
+                            }
+                            setOnCompletionListener {
+                                isPlaying = false
+                                isCompleted = true
+                                showControls = true
+                            }
+                            setOnErrorListener { _, what, extra ->
+                                android.util.Log.e("FullScreenVideoPlayer", "Video error: $what, extra: $extra")
+                                true
+                            }
+                        }.also { videoViewRef = it }
+                    },
+                    update = { vv ->
+                        videoViewRef = vv
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Center Play/Pause/Replay Button Overlay
+                AnimatedVisibility(
+                    visible = showControls || !isPlaying,
+                    enter = fadeIn(tween(150)),
+                    exit = fadeOut(tween(200)),
+                    modifier = Modifier.align(Alignment.Center)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(68.dp)
+                            .background(Color(0x99000000), CircleShape)
+                            .clickable {
+                                videoViewRef?.let { vv ->
+                                    if (isCompleted) {
+                                        vv.seekTo(0)
+                                        vv.start()
+                                        isPlaying = true
+                                        isCompleted = false
+                                    } else if (isPlaying) {
+                                        vv.pause()
+                                        isPlaying = false
+                                    } else {
+                                        vv.start()
+                                        isPlaying = true
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = when {
+                                isCompleted -> Icons.Default.Replay
+                                isPlaying -> Icons.Default.Pause
+                                else -> Icons.Default.PlayArrow
+                            },
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(38.dp)
+                        )
+                    }
+                }
+
+                // Header Controls
+                AnimatedVisibility(
+                    visible = showControls,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                    modifier = Modifier.align(Alignment.TopCenter)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xD0000000))
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = onDismiss) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                        }
+
+                        Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                            Text(
+                                text = video.fileName,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${video.highwayId} ${video.chainageLabel ?: ""}".trim(),
+                                color = Color(0xFF38BDF8),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Row {
+                            IconButton(onClick = { showInfoSheet = !showInfoSheet }) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "Toggle Video Info",
+                                    tint = if (showInfoSheet) MaterialTheme.colorScheme.primary else Color.White
+                                )
+                            }
+                            IconButton(onClick = onShare) {
+                                Icon(imageVector = Icons.Default.Share, contentDescription = "Share Video", tint = Color.White)
+                            }
+                            IconButton(onClick = onDelete) {
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete Video", tint = Color(0xFFEF4444))
+                            }
+                        }
+                    }
+                }
+
+                // Bottom Controls Bar with Scrubber & Time
+                AnimatedVisibility(
+                    visible = showControls,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xD0000000))
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        // Time & Scrubber Row
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = formatTime(if (isDraggingSlider) sliderValue.toInt() else currentPositionMs),
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            Slider(
+                                value = if (isDraggingSlider) sliderValue else currentPositionMs.toFloat().coerceIn(0f, durationMs.toFloat().coerceAtLeast(1f)),
+                                onValueChange = {
+                                    isDraggingSlider = true
+                                    sliderValue = it
+                                },
+                                onValueChangeFinished = {
+                                    isDraggingSlider = false
+                                    videoViewRef?.seekTo(sliderValue.toInt())
+                                    currentPositionMs = sliderValue.toInt()
+                                },
+                                valueRange = 0f..durationMs.toFloat().coerceAtLeast(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                                )
+                            )
+
+                            Text(
+                                text = formatTime(durationMs),
+                                color = Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        // Playback Action Buttons Row
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            // Replay 5 seconds
+                            IconButton(onClick = {
+                                videoViewRef?.let { vv ->
+                                    val newPos = (vv.currentPosition - 5000).coerceAtLeast(0)
+                                    vv.seekTo(newPos)
+                                    currentPositionMs = newPos
+                                }
+                            }) {
+                                Icon(Icons.Default.Replay5, contentDescription = "Replay 5s", tint = Color.White)
+                            }
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            // Play / Pause toggle
+                            IconButton(
+                                onClick = {
+                                    videoViewRef?.let { vv ->
+                                        if (isCompleted) {
+                                            vv.seekTo(0)
+                                            vv.start()
+                                            isPlaying = true
+                                            isCompleted = false
+                                        } else if (isPlaying) {
+                                            vv.pause()
+                                            isPlaying = false
+                                        } else {
+                                            vv.start()
+                                            isPlaying = true
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            // Forward 5 seconds
+                            IconButton(onClick = {
+                                videoViewRef?.let { vv ->
+                                    val newPos = (vv.currentPosition + 5000).coerceAtMost(durationMs)
+                                    vv.seekTo(newPos)
+                                    currentPositionMs = newPos
+                                }
+                            }) {
+                                Icon(Icons.Default.Forward5, contentDescription = "Forward 5s", tint = Color.White)
+                            }
+                        }
+
+                        // Metadata Sheet Toggle
+                        if (showInfoSheet) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                color = Color(0xFF1E293B),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = video.formattedOverlayText.ifBlank { "${video.highwayId} ${video.chainageLabel ?: ""}" },
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                    Text("Recorded: ${sdf.format(Date(video.timestamp))}", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                                    Text("File Size: $fileSizeMb", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                                    if (video.latitude != 0.0 || video.longitude != 0.0) {
+                                        Text(
+                                            "GPS: %.5f, %.5f (±%.1fm)".format(Locale.US, video.latitude, video.longitude, video.accuracy),
+                                            color = Color(0xFF38BDF8),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * Photo Details Dialog
  */
 @Composable
@@ -1267,36 +2316,54 @@ private fun shareSinglePhoto(context: Context, photo: PhotoRecordEntity) {
             "${context.packageName}.fileprovider",
             file
         )
+        val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
+        val dynamicHighwayText = if (photo.formattedOverlayText.isNotBlank()) {
+            photo.formattedOverlayText
+        } else {
+            val parts = listOfNotNull(
+                photo.highwayId.ifBlank { null },
+                photo.packageSection.ifBlank { null },
+                photo.chainageLabel?.ifBlank { null },
+                photo.roadSide.ifBlank { null },
+                photo.lane.ifBlank { null },
+                photo.activity.ifBlank { null }
+            )
+            parts.joinToString(" ")
+        }
         val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "image/jpeg"
+            type = if (isVideo) "video/mp4" else "image/jpeg"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_TEXT, "Highway Photo: ${photo.formattedOverlayText}")
+            putExtra(Intent.EXTRA_TEXT, dynamicHighwayText)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Share Highway Photo"))
+        context.startActivity(Intent.createChooser(intent, if (isVideo) "Share Highway Video" else "Share Highway Photo"))
     } catch (ignored: Exception) {}
 }
 
 /**
- * Share multiple photos
+ * Share multiple photos or videos
  */
 private fun shareMultiplePhotos(context: Context, photos: List<PhotoRecordEntity>) {
     try {
         val uris = ArrayList<Uri>()
+        val textLines = mutableListOf<String>()
         photos.forEach { p ->
             val file = File(p.filePath)
             if (file.exists()) {
                 uris.add(FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file))
+                val t = if (p.formattedOverlayText.isNotBlank()) p.formattedOverlayText else p.fileName
+                textLines.add(t)
             }
         }
         if (uris.isEmpty()) return
 
+        val hasVideos = photos.any { it.fileName.endsWith(".mp4", ignoreCase = true) }
         val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = "image/*"
+            type = if (hasVideos) "*/*" else "image/*"
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-            putExtra(Intent.EXTRA_TEXT, "Sharing ${uris.size} Highway Photos")
+            putExtra(Intent.EXTRA_TEXT, textLines.joinToString("\n"))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Share Selected Photos"))
+        context.startActivity(Intent.createChooser(intent, "Share Selected Media"))
     } catch (ignored: Exception) {}
 }
