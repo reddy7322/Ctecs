@@ -286,9 +286,25 @@ class PhotoRepository(
     }
 
     suspend fun deletePhoto(photo: PhotoRecordEntity) = withContext(Dispatchers.IO) {
-        val file = File(photo.filePath)
-        if (file.exists()) {
-            file.delete()
+        try {
+            val file = File(photo.filePath)
+            if (file.exists()) {
+                file.delete()
+            }
+            if (!file.isAbsolute) {
+                val fallback = File(context.filesDir, photo.filePath)
+                if (fallback.exists()) fallback.delete()
+            }
+            try {
+                android.media.MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(photo.filePath),
+                    null,
+                    null
+                )
+            } catch (ignored: Exception) {}
+        } catch (e: Exception) {
+            Log.e("PhotoRepository", "Error deleting file ${photo.filePath}: ${e.message}", e)
         }
         photoRecordDao.deletePhoto(photo)
     }

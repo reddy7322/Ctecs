@@ -149,6 +149,7 @@ import kotlin.math.abs
 // -------------------------------------------------------------
 data class SubActivityData(
     val name: String = "",
+    val location: String = "",
     val fromChainage: String = "",
     val toChainage: String = "",
     val lengthM: Double = 0.0,
@@ -222,6 +223,7 @@ fun parseSubActivitiesJson(
                     list.add(
                         SubActivityData(
                             name = sName,
+                            location = obj.optString("location", ""),
                             fromChainage = obj.optString("fromChainage", ""),
                             toChainage = obj.optString("toChainage", ""),
                             lengthM = obj.optDouble("lengthM", 0.0),
@@ -242,6 +244,7 @@ fun parseSubActivitiesJson(
         return listOf(
             SubActivityData(
                 name = defaultName,
+                location = "",
                 fromChainage = defaultFrom,
                 toChainage = defaultTo,
                 lengthM = defaultLen,
@@ -261,6 +264,7 @@ fun encodeSubActivitiesJson(subList: List<SubActivityData>): String {
         if (sub.name.isNotBlank() && !sub.name.equals("None", true)) {
             val obj = JSONObject()
             obj.put("name", sub.name)
+            obj.put("location", sub.location)
             obj.put("fromChainage", sub.fromChainage)
             obj.put("toChainage", sub.toChainage)
             obj.put("lengthM", sub.lengthM)
@@ -407,6 +411,7 @@ fun SmartNotesScreen(
     var showWeeklyExportDialog by remember { mutableStateOf(false) }
 
     var dprExportMode by remember { mutableStateOf("ALL") } // "SINGLE", "ALL", "SELECTED"
+    var activityFilterMode by remember { mutableStateOf("MAIN_WITH_SUB") } // "MAIN_WITH_SUB", "MAIN_ONLY", "SUB_ONLY"
     var singleActivityToExport by remember { mutableStateOf<SmartActivityEntity?>(null) }
     var activityToDelete by remember { mutableStateOf<SmartActivityEntity?>(null) }
 
@@ -848,9 +853,66 @@ fun SmartNotesScreen(
             }
 
             // ---------------------------------------------------------
+            // 1B. 3 ACTIVITY SECTION BUTTONS (FILTER TOGGLE)
+            // ---------------------------------------------------------
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val filterButtons = listOf(
+                        "MAIN_WITH_SUB" to "Main Activity with Sub activity",
+                        "MAIN_ONLY" to "Main Activity (Only)",
+                        "SUB_ONLY" to "Sub Activity (Only)"
+                    )
+                    filterButtons.forEach { (modeKey, label) ->
+                        val isSelected = activityFilterMode == modeKey
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            ),
+                            onClick = { activityFilterMode = modeKey },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------
             // 2. SAVED ACTIVITIES LIST ONLY (MAIN SCREEN)
             // ---------------------------------------------------------
-            if (activitiesForDate.isEmpty()) {
+            val allExtractedSubs = remember(activitiesForDate) {
+                activitiesForDate.flatMap { act ->
+                    parseSubActivitiesJson(act.subComments, act.subActivityName, act.subFromChainage, act.subToChainage, act.subLengthM, act.subWidthM, "")
+                        .map { sub -> Pair(act, sub) }
+                }
+            }
+
+            val isEmptyForMode = when (activityFilterMode) {
+                "SUB_ONLY" -> allExtractedSubs.isEmpty()
+                else -> activitiesForDate.isEmpty()
+            }
+
+            if (isEmptyForMode) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -867,8 +929,13 @@ fun SmartNotesScreen(
                             tint = MaterialTheme.colorScheme.outline,
                             modifier = Modifier.size(48.dp)
                         )
+                        val emptyMsg = if (activityFilterMode == "SUB_ONLY") {
+                            "No sub-activities logged for $selectedDateString"
+                        } else {
+                            "No activities logged for $selectedDateString"
+                        }
                         Text(
-                            text = "No activities logged for $selectedDateString",
+                            text = emptyMsg,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -889,6 +956,121 @@ fun SmartNotesScreen(
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Add Site Activity")
+                        }
+                    }
+                }
+            } else if (activityFilterMode == "SUB_ONLY") {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(allExtractedSubs) { (parentAct, sub) ->
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.secondary
+                                        ) {
+                                            Text(
+                                                text = sub.name.ifBlank { "Sub Activity" },
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSecondary,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        val subChText = if (sub.fromChainage.isNotBlank() && sub.toChainage.isNotBlank()) {
+                                            "Ch. ${sub.fromChainage} → ${sub.toChainage}"
+                                        } else if (sub.fromChainage.isNotBlank()) "Ch. ${sub.fromChainage}" else "Ch. ${parentAct.fromChainage}"
+
+                                        Text(
+                                            text = subChText,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = {
+                                            populateFormForEdit(parentAct)
+                                            showAddEditDialog = true
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Edit Activity", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        if (sub.lengthM > 0) {
+                                            Text("Length: ${sub.lengthM.toInt()}m", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        if (sub.widthM > 0) {
+                                            Text("Width: ${"%.1f".format(Locale.US, sub.widthM)}m", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+
+                                    if (sub.location.isNotBlank() && !sub.location.equals("None", true)) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.secondaryContainer
+                                        ) {
+                                            Text(
+                                                text = sub.location,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Main: ${parentAct.activityLayer.ifBlank { "BC" }} (${parentAct.fromChainage} → ${parentAct.toChainage})",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                if (sub.comments.isNotBlank() && !sub.comments.equals("None", true)) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Comments: ${sub.comments}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1031,8 +1213,8 @@ fun SmartNotesScreen(
                                     }
                                 }
 
-                                // Sub-Activities Summary if any
-                                if (parsedSubs.isNotEmpty()) {
+                                // Sub-Activities Summary if mode is MAIN_WITH_SUB
+                                if (activityFilterMode == "MAIN_WITH_SUB" && parsedSubs.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "Sub Activities (${parsedSubs.size}): " + parsedSubs.joinToString(", ") { "${it.name} (${it.fromChainage}→${it.toChainage})" },
@@ -1577,6 +1759,39 @@ fun SmartNotesScreen(
                                                 }
                                             }
 
+                                            var expandedSubLoc by remember { mutableStateOf(false) }
+                                            Box(modifier = Modifier.fillMaxWidth()) {
+                                                OutlinedTextField(
+                                                    value = subItem.location,
+                                                    onValueChange = { newLoc ->
+                                                        subActivitiesList[subIndex] = subItem.copy(location = newLoc)
+                                                    },
+                                                    label = { Text("Sub Activity Location", fontSize = 11.sp) },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    trailingIcon = {
+                                                        IconButton(onClick = { expandedSubLoc = true }) {
+                                                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+                                                        }
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                                DropdownMenu(
+                                                    expanded = expandedSubLoc,
+                                                    onDismissRequest = { expandedSubLoc = false }
+                                                ) {
+                                                    listOf("I/L", "O/L", "MCW", "Shoulder", "Service Road", "None", "Enter Manually").forEach { locOpt ->
+                                                        DropdownMenuItem(
+                                                            text = { Text(locOpt) },
+                                                            onClick = {
+                                                                val selectedLoc = if (locOpt == "None" || locOpt == "Enter Manually") "" else locOpt
+                                                                subActivitiesList[subIndex] = subItem.copy(location = selectedLoc)
+                                                                expandedSubLoc = false
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
+
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1991,7 +2206,8 @@ fun SmartNotesScreen(
                                 customLogoBitmap = logoBmp,
                                 signatureBitmap = if (includeSig) signatureBitmapState else null,
                                 includeLogo = includeLogo,
-                                includeSignature = includeSig
+                                includeSignature = includeSig,
+                                exportScope = activityFilterMode
                             )
                             isGeneratingRangePdf = false
                             showWeeklyExportDialog = false
@@ -2106,7 +2322,8 @@ fun SmartNotesScreen(
                             customLogoBitmap = logoBmp,
                             signatureBitmap = if (includeSig) signatureBitmapState else null,
                             includeLogo = includeLogo,
-                            includeSignature = includeSig
+                            includeSignature = includeSig,
+                            exportScope = activityFilterMode
                         )
                         showDprExportDialog = false
                         DprPdfGenerator.shareDprPdf(context, pdfFile)

@@ -91,6 +91,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -305,16 +306,27 @@ fun PhotosScreen(
                     },
                     actions = {
                         // Select All / Deselect All
-                        TextButton(onClick = {
-                            if (selectedPhotoIds.size == filteredSortedPhotos.size) {
-                                selectedPhotoIds.clear()
-                            } else {
-                                selectedPhotoIds.clear()
-                                selectedPhotoIds.addAll(filteredSortedPhotos.map { it.id })
-                            }
-                        }) {
+                        OutlinedButton(
+                            onClick = {
+                                if (selectedPhotoIds.size == filteredSortedPhotos.size) {
+                                    selectedPhotoIds.clear()
+                                } else {
+                                    selectedPhotoIds.clear()
+                                    selectedPhotoIds.addAll(filteredSortedPhotos.map { it.id })
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (selectedPhotoIds.size == filteredSortedPhotos.size) Icons.Default.Close else Icons.Default.Checklist,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (selectedPhotoIds.size == filteredSortedPhotos.size) "Deselect All" else "Select All",
+                                text = if (selectedPhotoIds.size == filteredSortedPhotos.size) "Deselect" else "Select All",
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -338,7 +350,7 @@ fun PhotosScreen(
                             Icon(
                                 imageVector = Icons.Default.Delete,
                                 contentDescription = "Delete Selected",
-                                tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFFEF4444) else Color.Gray
+                                tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFFDC2626) else Color.Gray
                             )
                         }
                     },
@@ -502,7 +514,7 @@ fun PhotosScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TextButton(
+                        OutlinedButton(
                             onClick = {
                                 if (selectedPhotoIds.size == filteredSortedPhotos.size) {
                                     selectedPhotoIds.clear()
@@ -510,18 +522,19 @@ fun PhotosScreen(
                                     selectedPhotoIds.clear()
                                     selectedPhotoIds.addAll(filteredSortedPhotos.map { it.id })
                                 }
-                            }
+                            },
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Icon(
                                 imageVector = if (selectedPhotoIds.size == filteredSortedPhotos.size) Icons.Default.Close else Icons.Default.Checklist,
                                 contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = if (selectedPhotoIds.size == filteredSortedPhotos.size) "Deselect All" else "Select All (${filteredSortedPhotos.size})",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
                             )
                         }
 
@@ -532,26 +545,28 @@ fun PhotosScreen(
                                     val selectedList = photos.filter { it.id in selectedPhotoIds }
                                     shareMultiplePhotos(context, selectedList)
                                 },
+                                shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary
                                 )
                             ) {
-                                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Share (${selectedPhotoIds.size})", fontSize = 13.sp)
+                                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Share (${selectedPhotoIds.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
 
                             Button(
                                 enabled = selectedPhotoIds.isNotEmpty(),
                                 onClick = { showBulkDeleteDialog = true },
+                                shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFFDC2626),
                                     contentColor = Color.White
                                 )
                             ) {
-                                Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Delete (${selectedPhotoIds.size})", fontSize = 13.sp)
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Delete (${selectedPhotoIds.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -917,21 +932,35 @@ fun PhotosScreen(
     photoToDelete?.let { photo ->
         AlertDialog(
             onDismissRequest = { photoToDelete = null },
-            title = { Text("Delete Photo") },
-            text = { Text("Are you sure you want to permanently delete this photo (${photo.fileName})?") },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+            title = { Text("Delete Photo File", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                Text(
+                    text = "Are you sure you want to permanently delete '${photo.fileName}' from both the gallery and device storage?",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         viewModel.deletePhoto(photo)
                         photoToDelete = null
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Delete", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Delete File", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { photoToDelete = null }) {
-                    Text("Cancel")
+                OutlinedButton(
+                    onClick = { photoToDelete = null },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Cancel", fontSize = 12.sp)
                 }
             }
         )
@@ -941,24 +970,38 @@ fun PhotosScreen(
     if (showBulkDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showBulkDeleteDialog = false },
-            title = { Text("Delete Selected Photos") },
-            text = { Text("Are you sure you want to permanently delete ${selectedPhotoIds.size} selected photos?") },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+            title = { Text("Delete ${selectedPhotoIds.size} Selected Items", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                Text(
+                    text = "Are you sure you want to permanently delete these ${selectedPhotoIds.size} media files from device storage?",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         val selectedList = photos.filter { it.id in selectedPhotoIds }
                         viewModel.deletePhotos(selectedList)
                         selectedPhotoIds.clear()
                         isSelectionMode = false
                         showBulkDeleteDialog = false
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Delete All", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Delete All (${selectedPhotoIds.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showBulkDeleteDialog = false }) {
-                    Text("Cancel")
+                OutlinedButton(
+                    onClick = { showBulkDeleteDialog = false },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Cancel", fontSize = 12.sp)
                 }
             }
         )
@@ -2410,7 +2453,10 @@ private fun getImageResolution(filePath: String): Pair<Int, Int> {
 private fun shareSinglePhoto(context: Context, photo: PhotoRecordEntity) {
     try {
         val file = File(photo.filePath)
-        if (!file.exists()) return
+        if (!file.exists()) {
+            android.widget.Toast.makeText(context, "Media file does not exist on device", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -2434,10 +2480,15 @@ private fun shareSinglePhoto(context: Context, photo: PhotoRecordEntity) {
             type = if (isVideo) "video/mp4" else "image/jpeg"
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_TEXT, dynamicHighwayText)
+            clipData = android.content.ClipData.newUri(context.contentResolver, photo.fileName, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, if (isVideo) "Share Highway Video" else "Share Highway Photo"))
-    } catch (ignored: Exception) {}
+        val chooser = Intent.createChooser(intent, if (isVideo) "Share Highway Video" else "Share Highway Photo")
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Error sharing media: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+    }
 }
 
 /**
@@ -2450,20 +2501,36 @@ private fun shareMultiplePhotos(context: Context, photos: List<PhotoRecordEntity
         photos.forEach { p ->
             val file = File(p.filePath)
             if (file.exists()) {
-                uris.add(FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file))
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                uris.add(uri)
                 val t = if (p.formattedOverlayText.isNotBlank()) p.formattedOverlayText else p.fileName
                 textLines.add(t)
             }
         }
-        if (uris.isEmpty()) return
+        if (uris.isEmpty()) {
+            android.widget.Toast.makeText(context, "No existing media files found to share", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        val hasVideos = photos.any { it.fileName.endsWith(".mp4", ignoreCase = true) }
+        val hasVideos = photos.any { it.fileName.endsWith(".mp4", ignoreCase = true) || it.filePath.endsWith(".mp4", ignoreCase = true) }
         val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             type = if (hasVideos) "*/*" else "image/*"
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-            putExtra(Intent.EXTRA_TEXT, textLines.joinToString("\n"))
+            putExtra(Intent.EXTRA_TEXT, textLines.joinToString("\n\n"))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+            if (uris.isNotEmpty()) {
+                val clipData = android.content.ClipData.newUri(context.contentResolver, "Highway Media", uris[0])
+                for (i in 1 until uris.size) {
+                    clipData.addItem(android.content.ClipData.Item(uris[i]))
+                }
+                this.clipData = clipData
+            }
         }
-        context.startActivity(Intent.createChooser(intent, "Share Selected Media"))
-    } catch (ignored: Exception) {}
+        val chooser = Intent.createChooser(intent, "Share Selected Media (${uris.size})")
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Error sharing media: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+    }
 }
