@@ -884,14 +884,14 @@ fun CentralChainageDisplay(
             // Significantly increased chainage font size while preventing clipping on any phone width
             val digitFontSize = when {
                 charCount > 8 -> when {
-                    containerWidth < 340.dp -> 36.sp
-                    containerWidth < 390.dp -> 42.sp
-                    else -> 48.sp
+                    containerWidth < 340.dp -> 40.sp
+                    containerWidth < 390.dp -> 46.sp
+                    else -> 54.sp
                 }
-                containerWidth < 340.dp -> 44.sp
-                containerWidth < 380.dp -> 52.sp
-                containerWidth < 430.dp -> 58.sp
-                else -> 64.sp
+                containerWidth < 340.dp -> 48.sp
+                containerWidth < 380.dp -> 58.sp
+                containerWidth < 430.dp -> 66.sp
+                else -> 72.sp
             }
 
             Column(

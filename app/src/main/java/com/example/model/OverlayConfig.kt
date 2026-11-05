@@ -105,7 +105,14 @@ data class OverlayConfig(
     val locationAddressOption: String = "None", // None, India, Uttarakhand, Garhwal Division, Rehmadpur, National Highway 58, Sant Niwas, Full Address
     val customAddressText: String = "",
     val gpsAccuracyMarginPreset: String = "±5m",
-    val customTag: String = ""
+    val customTag: String = "",
+
+    // PDF Default Logo & Signature
+    val pdfLogoUri: String? = null,
+    val includePdfLogoDefault: Boolean = true,
+    val pdfSignatureUri: String? = null,
+    val includePdfSignatureDefault: Boolean = true,
+    val pdfDefaultPreparedBy: String = "Site Engineer"
 )
 
 /**

@@ -441,8 +441,8 @@ fun SmartNotesScreen(
 
     // Signature and Logo
     val overlayConfig by viewModel.overlayConfig.collectAsStateWithLifecycle()
-    var dprCustomLogoUri by remember { mutableStateOf<String?>(overlayConfig.logoUri) }
-    var dprPreparedByName by remember { mutableStateOf(projectProfile.inspectorName.ifBlank { "Site Engineer" }) }
+    var dprCustomLogoUri by remember(overlayConfig) { mutableStateOf<String?>(overlayConfig.pdfLogoUri?.takeIf { it.isNotBlank() } ?: overlayConfig.logoUri) }
+    var dprPreparedByName by remember(overlayConfig, projectProfile) { mutableStateOf(overlayConfig.pdfDefaultPreparedBy.ifBlank { projectProfile.inspectorName.ifBlank { "Site Engineer" } }) }
     var signatureBitmapState by remember { mutableStateOf<Bitmap?>(null) }
 
     // Site Register Photo
@@ -454,9 +454,10 @@ fun SmartNotesScreen(
     var tempCameraCaptureFile by remember { mutableStateOf<File?>(null) }
 
     // Load saved signature on startup
-    LaunchedEffect(Unit) {
+    LaunchedEffect(overlayConfig) {
         withContext(Dispatchers.IO) {
-            val sigFile = File(context.filesDir, "dpr_signature.png")
+            val sigPath = overlayConfig.pdfSignatureUri
+            val sigFile = if (!sigPath.isNullOrBlank() && File(sigPath).exists()) File(sigPath) else File(context.filesDir, "dpr_signature.png")
             if (sigFile.exists()) {
                 val b = BitmapFactory.decodeFile(sigFile.absolutePath)
                 if (b != null) signatureBitmapState = b
@@ -1390,7 +1391,7 @@ fun SmartNotesScreen(
                             OutlinedTextField(
                                 value = activityDepthM,
                                 onValueChange = { activityDepthM = it },
-                                label = { Text("Depth (m)") },
+                                label = { Text("Depth (mm)") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1401,7 +1402,7 @@ fun SmartNotesScreen(
                         val mainLen = calculateChainageDiffMetres(fromChainage, toChainage)
                         val mainWid = activityWidthM.toDoubleOrNull() ?: 0.0
                         val mainDepth = activityDepthM.toDoubleOrNull() ?: 0.0
-                        val mainQty = if (mainDepth > 0 && mainWid > 0) mainLen * mainWid * mainDepth else if (mainWid > 0) mainLen * mainWid else mainLen
+                        val mainQty = if (mainDepth > 0 && mainWid > 0) mainLen * mainWid * (mainDepth / 1000.0) else if (mainWid > 0) mainLen * mainWid else mainLen
                         val mainQtyUnit = if (mainDepth > 0 && mainWid > 0) "Cum (m³)" else if (mainWid > 0) "Sqm (m²)" else "Metres (m)"
 
                         Surface(
@@ -1720,18 +1721,45 @@ fun SmartNotesScreen(
                                                     )
                                                 }
 
-                                                OutlinedTextField(
-                                                    value = if (subItem.widthM > 0) "${subItem.widthM}" else "",
-                                                    onValueChange = { newW ->
-                                                        subActivitiesList[subIndex] = subItem.copy(widthM = newW.toDoubleOrNull() ?: 0.0)
-                                                    },
-                                                    label = { Text("Width (m)", fontSize = 11.sp) },
-                                                    singleLine = true,
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                            }
+                                                 OutlinedTextField(
+                                                     value = if (subItem.widthM > 0) "${subItem.widthM}" else "",
+                                                     onValueChange = { newW ->
+                                                         subActivitiesList[subIndex] = subItem.copy(widthM = newW.toDoubleOrNull() ?: 0.0)
+                                                     },
+                                                     label = { Text("Width (m)", fontSize = 11.sp) },
+                                                     singleLine = true,
+                                                     shape = RoundedCornerShape(8.dp),
+                                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                     modifier = Modifier.weight(1f)
+                                                 )
+
+                                                 OutlinedTextField(
+                                                     value = if (subItem.depthM > 0) "${subItem.depthM}" else "",
+                                                     onValueChange = { newD ->
+                                                         subActivitiesList[subIndex] = subItem.copy(depthM = newD.toDoubleOrNull() ?: 0.0)
+                                                     },
+                                                     label = { Text("Depth (mm)", fontSize = 11.sp) },
+                                                     singleLine = true,
+                                                     shape = RoundedCornerShape(8.dp),
+                                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                     modifier = Modifier.weight(1f)
+                                                 )
+                                             }
+
+                                             val subQty = if (subItem.depthM > 0 && subItem.widthM > 0) subItem.lengthM * subItem.widthM * (subItem.depthM / 1000.0) else if (subItem.widthM > 0) subItem.lengthM * subItem.widthM else subItem.lengthM
+                                             val subUnit = if (subItem.depthM > 0 && subItem.widthM > 0) "m³" else if (subItem.widthM > 0) "m²" else "m"
+                                             Surface(
+                                                 shape = RoundedCornerShape(6.dp),
+                                                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                                 modifier = Modifier.fillMaxWidth()
+                                             ) {
+                                                 Text(
+                                                     text = "Sub Qty: ${"%.2f".format(Locale.US, subQty)} $subUnit",
+                                                     fontSize = 11.sp,
+                                                     fontWeight = FontWeight.Bold,
+                                                     modifier = Modifier.padding(8.dp)
+                                                 )
+                                             }
 
                                             OutlinedTextField(
                                                 value = subItem.comments,

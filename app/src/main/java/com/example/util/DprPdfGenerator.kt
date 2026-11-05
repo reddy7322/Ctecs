@@ -296,7 +296,7 @@ object DprPdfGenerator {
                 canvas.drawText("Activity", 143f, textY, paint)
                 canvas.drawText("Len (m)", 193f, textY, paint)
                 canvas.drawText("Wid (m)", 235f, textY, paint)
-                canvas.drawText("Depth", 275f, textY, paint)
+                canvas.drawText("Depth (mm)", 265f, textY, paint)
                 canvas.drawText("Side", 315f, textY, paint)
                 canvas.drawText("Location", 345f, textY, paint)
                 canvas.drawText("Main Comments", 395f, textY, paint)
@@ -371,7 +371,7 @@ object DprPdfGenerator {
                     val widVal = if (act.widthM > 0) "%.1f".format(Locale.US, act.widthM) else "-"
                     canvas.drawText(widVal, 235f, rowY, paint)
 
-                    val depthVal = if (act.depthM > 0) "%.2f".format(Locale.US, act.depthM) else if (act.thicknessMm > 0) "%.0f".format(Locale.US, act.thicknessMm) else "-"
+                    val depthVal = if (act.depthM > 0) "${act.depthM.toInt()} mm" else if (act.thicknessMm > 0) "${act.thicknessMm.toInt()} mm" else "-"
                     canvas.drawText(depthVal, 275f, rowY, paint)
 
                     val sideVal = act.side.ifBlank { "LHS" }
@@ -451,7 +451,7 @@ object DprPdfGenerator {
                 canvas.drawText("To CH", 225f, textY, paint)
                 canvas.drawText("Len (m)", 270f, textY, paint)
                 canvas.drawText("Wid (m)", 310f, textY, paint)
-                canvas.drawText("Depth", 350f, textY, paint)
+                canvas.drawText("Depth (mm)", 340f, textY, paint)
                 canvas.drawText("Sub Comments", 395f, textY, paint)
 
                 paint.color = tableBorderColor
@@ -511,7 +511,7 @@ object DprPdfGenerator {
                 val subWidStr = if (sub.widthM > 0) "%.1f".format(Locale.US, sub.widthM) else "-"
                 canvas.drawText(subWidStr, 310f, rowY, paint)
 
-                val subDepthStr = if (sub.depthM > 0) "%.2f".format(Locale.US, sub.depthM) else "-"
+                val subDepthStr = if (sub.depthM > 0) "${sub.depthM.toInt()} mm" else "-"
                 canvas.drawText(subDepthStr, 350f, rowY, paint)
 
                 val commStr = if (sub.comments.isNotBlank() && !sub.comments.equals("None", true)) sub.comments.take(30) else "-"

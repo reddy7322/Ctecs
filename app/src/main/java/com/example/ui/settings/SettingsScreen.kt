@@ -247,6 +247,50 @@ fun SettingsScreen(
         }
     }
 
+    val pdfLogoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val input = context.contentResolver.openInputStream(uri)
+                val targetFile = File(context.filesDir, "pdf_default_logo.png")
+                input?.use { inStream ->
+                    targetFile.outputStream().use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                viewModel.saveOverlayConfigSilent(
+                    currentOverlay.copy(pdfLogoUri = targetFile.absolutePath)
+                )
+                viewModel.showToast("PDF default logo saved successfully")
+            } catch (e: Exception) {
+                viewModel.showToast("Failed to load PDF logo")
+            }
+        }
+    }
+
+    val pdfSignaturePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val input = context.contentResolver.openInputStream(uri)
+                val targetFile = File(context.filesDir, "dpr_signature.png")
+                input?.use { inStream ->
+                    targetFile.outputStream().use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                viewModel.saveOverlayConfigSilent(
+                    currentOverlay.copy(pdfSignatureUri = targetFile.absolutePath)
+                )
+                viewModel.showToast("PDF default signature saved successfully")
+            } catch (e: Exception) {
+                viewModel.showToast("Failed to load signature image")
+            }
+        }
+    }
+
     // TTF / OTF Custom Font File Picker Launcher
     val fontPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -2698,6 +2742,103 @@ fun SettingsScreen(
                                 valueText = "${currentOverlay.logoCornerRadiusDp} dp"
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "PDF Default Logo & Signature (DPR Reports)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                        Text(
+                            text = "Configure default header logo, signature, and engineer name for exported PDF reports.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { pdfLogoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (currentOverlay.pdfLogoUri.isNullOrBlank()) "Set PDF Header Logo" else "Change PDF Logo", fontSize = 11.sp)
+                            }
+                            if (!currentOverlay.pdfLogoUri.isNullOrBlank()) {
+                                OutlinedButton(
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(pdfLogoUri = null)) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        CompactSwitchRow(
+                            title = "Include PDF Logo by Default",
+                            subtitle = "Automatically include header logo in exported DPR reports",
+                            checked = currentOverlay.includePdfLogoDefault,
+                            onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(includePdfLogoDefault = it)) },
+                            tag = "switch_pdf_logo_default"
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { pdfSignaturePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (currentOverlay.pdfSignatureUri.isNullOrBlank()) "Set Default Signature" else "Change Signature", fontSize = 11.sp)
+                            }
+                            if (!currentOverlay.pdfSignatureUri.isNullOrBlank()) {
+                                OutlinedButton(
+                                    onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(pdfSignatureUri = null)) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        CompactSwitchRow(
+                            title = "Include Signature by Default",
+                            subtitle = "Automatically include saved signature in exported DPR reports",
+                            checked = currentOverlay.includePdfSignatureDefault,
+                            onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(includePdfSignatureDefault = it)) },
+                            tag = "switch_pdf_sig_default"
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        OutlinedTextField(
+                            value = currentOverlay.pdfDefaultPreparedBy,
+                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(pdfDefaultPreparedBy = it)) },
+                            label = { Text("Default Prepared By (Engineer Name)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
