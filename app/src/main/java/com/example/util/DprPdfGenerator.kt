@@ -27,6 +27,7 @@ data class SubActivityPdfItem(
     val toCh: String,
     val lengthM: Double,
     val widthM: Double,
+    val depthM: Double,
     val comments: String
 )
 
@@ -53,6 +54,7 @@ object DprPdfGenerator {
                                 toCh = obj.optString("toChainage", act.toChainage),
                                 lengthM = obj.optDouble("lengthM", 0.0),
                                 widthM = obj.optDouble("widthM", 0.0),
+                                depthM = obj.optDouble("depthM", act.subDepthM),
                                 comments = obj.optString("comments", "")
                             )
                         )
@@ -73,6 +75,7 @@ object DprPdfGenerator {
                     toCh = act.subToChainage.ifBlank { act.toChainage },
                     lengthM = act.subLengthM,
                     widthM = act.subWidthM,
+                    depthM = act.subDepthM,
                     comments = if (!act.subComments.startsWith("[")) act.subComments else ""
                 )
             )
@@ -283,19 +286,20 @@ object DprPdfGenerator {
                 canvas.drawRect(30f, y, 565f, y + hHeight, paint)
 
                 paint.color = Color.WHITE
-                paint.textSize = 8f
+                paint.textSize = 7.5f
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
 
                 val textY = y + 12f
                 canvas.drawText("S.No", 33f, textY, paint)
-                canvas.drawText("From CH", 55f, textY, paint)
-                canvas.drawText("To CH", 105f, textY, paint)
-                canvas.drawText("Activity", 155f, textY, paint)
-                canvas.drawText("Length (m)", 215f, textY, paint)
-                canvas.drawText("Width (m)", 265f, textY, paint)
-                canvas.drawText("Side", 310f, textY, paint)
-                canvas.drawText("Location", 350f, textY, paint)
-                canvas.drawText("Main Comments", 405f, textY, paint)
+                canvas.drawText("From CH", 53f, textY, paint)
+                canvas.drawText("To CH", 98f, textY, paint)
+                canvas.drawText("Activity", 143f, textY, paint)
+                canvas.drawText("Len (m)", 193f, textY, paint)
+                canvas.drawText("Wid (m)", 235f, textY, paint)
+                canvas.drawText("Depth", 275f, textY, paint)
+                canvas.drawText("Side", 315f, textY, paint)
+                canvas.drawText("Location", 345f, textY, paint)
+                canvas.drawText("Main Comments", 395f, textY, paint)
 
                 paint.color = tableBorderColor
                 paint.style = Paint.Style.STROKE
@@ -346,35 +350,38 @@ object DprPdfGenerator {
                     paint.style = Paint.Style.FILL
 
                     paint.color = textColor
-                    paint.textSize = 8f
+                    paint.textSize = 7.5f
                     paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
 
                     val rowY = y + 12f
-                    canvas.drawText("${idx + 1}", 34f, rowY, paint)
+                    canvas.drawText("${idx + 1}", 33f, rowY, paint)
 
                     paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                     paint.color = Color.rgb(30, 58, 138)
-                    canvas.drawText(act.fromChainage.ifBlank { "-" }, 55f, rowY, paint)
-                    canvas.drawText(act.toChainage.ifBlank { "-" }, 105f, rowY, paint)
+                    canvas.drawText(act.fromChainage.ifBlank { "-" }, 53f, rowY, paint)
+                    canvas.drawText(act.toChainage.ifBlank { "-" }, 98f, rowY, paint)
 
                     paint.color = textColor
                     val actLabel = act.activityLayer.ifBlank { "BC" }
-                    canvas.drawText(actLabel.take(14), 155f, rowY, paint)
+                    canvas.drawText(actLabel.take(12), 143f, rowY, paint)
 
                     val lenVal = if (act.completedLengthM > 0) "${act.completedLengthM.toInt()}" else if (act.quantity > 0) "${act.quantity.toInt()}" else "-"
-                    canvas.drawText(lenVal, 215f, rowY, paint)
+                    canvas.drawText(lenVal, 193f, rowY, paint)
 
                     val widVal = if (act.widthM > 0) "%.1f".format(Locale.US, act.widthM) else "-"
-                    canvas.drawText(widVal, 265f, rowY, paint)
+                    canvas.drawText(widVal, 235f, rowY, paint)
+
+                    val depthVal = if (act.depthM > 0) "%.2f".format(Locale.US, act.depthM) else if (act.thicknessMm > 0) "%.0f".format(Locale.US, act.thicknessMm) else "-"
+                    canvas.drawText(depthVal, 275f, rowY, paint)
 
                     val sideVal = act.side.ifBlank { "LHS" }
-                    canvas.drawText(sideVal, 310f, rowY, paint)
+                    canvas.drawText(sideVal, 315f, rowY, paint)
 
                     val locVal = act.roadSection.ifBlank { "I/L" }
-                    canvas.drawText(locVal.take(12), 350f, rowY, paint)
+                    canvas.drawText(locVal.take(10), 345f, rowY, paint)
 
                     val mainComm = act.siteObservations.ifBlank { act.remarks }.takeIf { it.isNotBlank() && !it.equals("None", true) } ?: "-"
-                    canvas.drawText(mainComm.take(28), 405f, rowY, paint)
+                    canvas.drawText(mainComm.take(32), 395f, rowY, paint)
 
                     y += rowHeight
                 }
@@ -390,13 +397,13 @@ object DprPdfGenerator {
                 paint.style = Paint.Style.FILL
 
                 paint.color = primaryColor
-                paint.textSize = 8.5f
+                paint.textSize = 8f
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                canvas.drawText("Total Completed Length:", 155f, y + 12f, paint)
+                canvas.drawText("Total Completed Length:", 35f, y + 12f, paint)
 
                 val totalKm = totalLengthM / 1000.0
                 val totalText = "${totalLengthM.toInt()} m (${"%.2f".format(Locale.US, totalKm)} km)"
-                canvas.drawText(totalText, 215f, y + 12f, paint)
+                canvas.drawText(totalText, 193f, y + 12f, paint)
 
                 y += totalRowH + 12f
             }
@@ -404,7 +411,6 @@ object DprPdfGenerator {
 
         // -------------------------------------------------------------
         // SUB ACTIVITY TABLE
-        // Columns: S.No | Sub Activity | Location | From CH | To CH | Length (m) | Width (m) | Sub Comments
         // -------------------------------------------------------------
         if (exportScope != "MAIN_ONLY") {
         val allSubActivities = mutableListOf<SubActivityPdfItem>()
@@ -434,18 +440,19 @@ object DprPdfGenerator {
                 canvas.drawRect(30f, y, 565f, y + hHeight, paint)
 
                 paint.color = Color.WHITE
-                paint.textSize = 8f
+                paint.textSize = 7.5f
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
 
                 val textY = y + 12f
                 canvas.drawText("S.No", 33f, textY, paint)
                 canvas.drawText("Sub Activity", 55f, textY, paint)
-                canvas.drawText("Location", 145f, textY, paint)
-                canvas.drawText("From CH", 200f, textY, paint)
-                canvas.drawText("To CH", 250f, textY, paint)
-                canvas.drawText("Length (m)", 300f, textY, paint)
-                canvas.drawText("Width (m)", 350f, textY, paint)
-                canvas.drawText("Sub Comments", 400f, textY, paint)
+                canvas.drawText("Location", 135f, textY, paint)
+                canvas.drawText("From CH", 180f, textY, paint)
+                canvas.drawText("To CH", 225f, textY, paint)
+                canvas.drawText("Len (m)", 270f, textY, paint)
+                canvas.drawText("Wid (m)", 310f, textY, paint)
+                canvas.drawText("Depth", 350f, textY, paint)
+                canvas.drawText("Sub Comments", 395f, textY, paint)
 
                 paint.color = tableBorderColor
                 paint.style = Paint.Style.STROKE
@@ -480,32 +487,35 @@ object DprPdfGenerator {
                 paint.style = Paint.Style.FILL
 
                 paint.color = textColor
-                paint.textSize = 8f
+                paint.textSize = 7.5f
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
 
                 val rowY = y + 12f
-                canvas.drawText("${sIdx + 1}", 34f, rowY, paint)
+                canvas.drawText("${sIdx + 1}", 33f, rowY, paint)
 
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                canvas.drawText(sub.subName.take(18), 55f, rowY, paint)
+                canvas.drawText(sub.subName.take(16), 55f, rowY, paint)
 
                 paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
                 val subLoc = sub.location.takeIf { it.isNotBlank() && !it.equals("None", true) } ?: "-"
-                canvas.drawText(subLoc.take(12), 145f, rowY, paint)
+                canvas.drawText(subLoc.take(10), 135f, rowY, paint)
 
                 paint.color = Color.rgb(30, 58, 138)
-                canvas.drawText(sub.fromCh.ifBlank { "-" }, 200f, rowY, paint)
-                canvas.drawText(sub.toCh.ifBlank { "-" }, 250f, rowY, paint)
+                canvas.drawText(sub.fromCh.ifBlank { "-" }, 180f, rowY, paint)
+                canvas.drawText(sub.toCh.ifBlank { "-" }, 225f, rowY, paint)
 
                 paint.color = textColor
                 val subLenStr = if (sub.lengthM > 0) "${sub.lengthM.toInt()}" else "-"
-                canvas.drawText(subLenStr, 300f, rowY, paint)
+                canvas.drawText(subLenStr, 270f, rowY, paint)
 
                 val subWidStr = if (sub.widthM > 0) "%.1f".format(Locale.US, sub.widthM) else "-"
-                canvas.drawText(subWidStr, 350f, rowY, paint)
+                canvas.drawText(subWidStr, 310f, rowY, paint)
 
-                val commStr = if (sub.comments.isNotBlank() && !sub.comments.equals("None", true)) sub.comments.take(28) else "-"
-                canvas.drawText(commStr, 400f, rowY, paint)
+                val subDepthStr = if (sub.depthM > 0) "%.2f".format(Locale.US, sub.depthM) else "-"
+                canvas.drawText(subDepthStr, 350f, rowY, paint)
+
+                val commStr = if (sub.comments.isNotBlank() && !sub.comments.equals("None", true)) sub.comments.take(30) else "-"
+                canvas.drawText(commStr, 395f, rowY, paint)
 
                 y += rowHeight
             }

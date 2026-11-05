@@ -154,6 +154,7 @@ data class SubActivityData(
     val toChainage: String = "",
     val lengthM: Double = 0.0,
     val widthM: Double = 0.0,
+    val depthM: Double = 0.0,
     val comments: String = "",
     var isExpanded: Boolean = true
 )
@@ -210,6 +211,7 @@ fun parseSubActivitiesJson(
     defaultTo: String,
     defaultLen: Double,
     defaultWidth: Double,
+    defaultDepth: Double,
     defaultComm: String
 ): List<SubActivityData> {
     if (jsonStr.startsWith("[")) {
@@ -228,6 +230,7 @@ fun parseSubActivitiesJson(
                             toChainage = obj.optString("toChainage", ""),
                             lengthM = obj.optDouble("lengthM", 0.0),
                             widthM = obj.optDouble("widthM", 0.0),
+                            depthM = obj.optDouble("depthM", 0.0),
                             comments = obj.optString("comments", ""),
                             isExpanded = false
                         )
@@ -249,6 +252,7 @@ fun parseSubActivitiesJson(
                 toChainage = defaultTo,
                 lengthM = defaultLen,
                 widthM = defaultWidth,
+                depthM = defaultDepth,
                 comments = if (!defaultComm.startsWith("[")) defaultComm else "",
                 isExpanded = false
             )
@@ -269,6 +273,7 @@ fun encodeSubActivitiesJson(subList: List<SubActivityData>): String {
             obj.put("toChainage", sub.toChainage)
             obj.put("lengthM", sub.lengthM)
             obj.put("widthM", sub.widthM)
+            obj.put("depthM", sub.depthM)
             obj.put("comments", sub.comments)
             array.put(obj)
         }
@@ -422,6 +427,7 @@ fun SmartNotesScreen(
     var selectedActivity by remember { mutableStateOf("BC") }
     var customActivityText by remember { mutableStateOf("") }
     var activityWidthM by remember { mutableStateOf("7.0") }
+    var activityDepthM by remember { mutableStateOf("") }
 
     // Multi Sub Activity state list
     val subActivitiesList = remember { mutableStateListOf<SubActivityData>() }
@@ -512,6 +518,7 @@ fun SmartNotesScreen(
         selectedActivity = "BC"
         customActivityText = ""
         activityWidthM = "7.0"
+        activityDepthM = ""
         subActivitiesList.clear()
         showSubActivitySection = false
         selectedSide = "Auto"
@@ -540,6 +547,7 @@ fun SmartNotesScreen(
         }
 
         activityWidthM = if (act.widthM > 0) "${act.widthM}" else ""
+        activityDepthM = if (act.depthM > 0) "${act.depthM}" else ""
 
         // Sub activities
         subActivitiesList.clear()
@@ -550,6 +558,7 @@ fun SmartNotesScreen(
             defaultTo = act.subToChainage,
             defaultLen = act.subLengthM,
             defaultWidth = act.subWidthM,
+            defaultDepth = act.subDepthM,
             defaultComm = act.subComments
         )
         subActivitiesList.addAll(parsedSubs)
@@ -905,7 +914,7 @@ fun SmartNotesScreen(
                     items(activitiesForDate, key = { it.id }) { act ->
                         val isChecked = selectedActivityIds.contains(act.id)
                         val parsedSubs = remember(act) {
-                            parseSubActivitiesJson(act.subComments, act.subActivityName, act.subFromChainage, act.subToChainage, act.subLengthM, act.subWidthM, "")
+                            parseSubActivitiesJson(act.subComments, act.subActivityName, act.subFromChainage, act.subToChainage, act.subLengthM, act.subWidthM, act.subDepthM, "")
                         }
 
                         Card(
@@ -1363,16 +1372,54 @@ fun SmartNotesScreen(
                             )
                         }
 
-                        // 5. Width (m)
-                        OutlinedTextField(
-                            value = activityWidthM,
-                            onValueChange = { activityWidthM = it },
-                            label = { Text("Width (m)") },
-                            singleLine = true,
+                        // 5. Width & Depth (m) & Smart Quantity Calculation
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = activityWidthM,
+                                onValueChange = { activityWidthM = it },
+                                label = { Text("Width (m)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            OutlinedTextField(
+                                value = activityDepthM,
+                                onValueChange = { activityDepthM = it },
+                                label = { Text("Depth (m)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        val mainLen = calculateChainageDiffMetres(fromChainage, toChainage)
+                        val mainWid = activityWidthM.toDoubleOrNull() ?: 0.0
+                        val mainDepth = activityDepthM.toDoubleOrNull() ?: 0.0
+                        val mainQty = if (mainDepth > 0 && mainWid > 0) mainLen * mainWid * mainDepth else if (mainWid > 0) mainLen * mainWid else mainLen
+                        val mainQtyUnit = if (mainDepth > 0 && mainWid > 0) "Cum (m³)" else if (mainWid > 0) "Sqm (m²)" else "Metres (m)"
+
+                        Surface(
                             shape = RoundedCornerShape(8.dp),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
                             modifier = Modifier.fillMaxWidth()
-                        )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Smart Quantity: Length × Width × Depth", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                Text("${"%.2f".format(Locale.US, mainQty)} $mainQtyUnit", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
+                        }
 
                         // 6. Side Dropdown
                         var expandedSide by remember { mutableStateOf(false) }

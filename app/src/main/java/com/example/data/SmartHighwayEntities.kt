@@ -30,6 +30,7 @@ data class SmartActivityEntity(
     val activityLayer: String = "BC", // BC, DBM, WMM, GSB, Tack Coat, Prime Coat, Glass Grid, Subgrade, PQC, Custom
     val completedLengthM: Double = 0.0,
     val widthM: Double = 0.0,
+    val depthM: Double = 0.0,
     val thicknessMm: Double = 0.0,
     val quantity: Double = 0.0,
     val unit: String = "MT", // MT, Sqm, Cum, Rm, Litres
@@ -50,6 +51,7 @@ data class SmartActivityEntity(
     val subToChainage: String = "",
     val subLengthM: Double = 0.0,
     val subWidthM: Double = 0.0,
+    val subDepthM: Double = 0.0,
     val subComments: String = "",
     val sideMode: String = "Auto",
     val isSideAutoDetected: Boolean = false
