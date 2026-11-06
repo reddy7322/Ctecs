@@ -9,6 +9,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -99,6 +101,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -191,6 +194,7 @@ fun SettingsScreen(
     var showPhotoResolutionDialog by remember { mutableStateOf(false) }
     var showVideoResolutionDialog by remember { mutableStateOf(false) }
     var showFileNameFormatDialog by remember { mutableStateOf(false) }
+    var showSignatureDrawDialog by remember { mutableStateOf(false) }
 
     // Query real camera capability lists
     val photoResolutions = remember(isFrontCamera) {
@@ -2759,7 +2763,56 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // --- PDF HEADER LOGO ---
+                        Text(
+                            text = "Default PDF Header Logo",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Logo Thumbnail Preview if present
+                        if (!currentOverlay.pdfLogoUri.isNullOrBlank()) {
+                            val pdfLogoFile = File(currentOverlay.pdfLogoUri ?: "")
+                            if (pdfLogoFile.exists()) {
+                                val pdfLogoBmp = remember(currentOverlay.pdfLogoUri) {
+                                    try {
+                                        android.graphics.BitmapFactory.decodeFile(pdfLogoFile.absolutePath)
+                                    } catch (e: Exception) { null }
+                                }
+                                if (pdfLogoBmp != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Image(
+                                                bitmap = pdfLogoBmp.asImageBitmap(),
+                                                contentDescription = "PDF Header Logo Preview",
+                                                modifier = Modifier.height(36.dp)
+                                            )
+                                            Text(
+                                                text = "Active Header Logo (${pdfLogoBmp.width}×${pdfLogoBmp.height}px)",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color(0xFF16A34A)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -2773,7 +2826,7 @@ fun SettingsScreen(
                             ) {
                                 Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (currentOverlay.pdfLogoUri.isNullOrBlank()) "Set PDF Header Logo" else "Change PDF Logo", fontSize = 11.sp)
+                                Text(if (currentOverlay.pdfLogoUri.isNullOrBlank()) "Upload Header Logo" else "Change Logo", fontSize = 11.sp)
                             }
                             if (!currentOverlay.pdfLogoUri.isNullOrBlank()) {
                                 OutlinedButton(
@@ -2794,7 +2847,56 @@ fun SettingsScreen(
                             tag = "switch_pdf_logo_default"
                         )
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // --- PDF DEFAULT SIGNATURE ---
+                        Text(
+                            text = "Default PDF Signature",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Signature Thumbnail Preview if present
+                        if (!currentOverlay.pdfSignatureUri.isNullOrBlank()) {
+                            val pdfSigFile = File(currentOverlay.pdfSignatureUri ?: "")
+                            if (pdfSigFile.exists()) {
+                                val pdfSigBmp = remember(currentOverlay.pdfSignatureUri) {
+                                    try {
+                                        android.graphics.BitmapFactory.decodeFile(pdfSigFile.absolutePath)
+                                    } catch (e: Exception) { null }
+                                }
+                                if (pdfSigBmp != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp)
+                                            .background(Color.White, RoundedCornerShape(8.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Image(
+                                                bitmap = pdfSigBmp.asImageBitmap(),
+                                                contentDescription = "PDF Signature Preview",
+                                                modifier = Modifier.height(40.dp)
+                                            )
+                                            Text(
+                                                text = "Active Signature Stamp",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color(0xFF16A34A)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -2807,8 +2909,17 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (currentOverlay.pdfSignatureUri.isNullOrBlank()) "Set Default Signature" else "Change Signature", fontSize = 11.sp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (currentOverlay.pdfSignatureUri.isNullOrBlank()) "Upload" else "Change", fontSize = 11.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { showSignatureDrawDialog = true },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Draw", fontSize = 11.sp)
                             }
                             if (!currentOverlay.pdfSignatureUri.isNullOrBlank()) {
                                 OutlinedButton(
@@ -3332,6 +3443,25 @@ fun SettingsScreen(
             onDismiss = { showFileNameFormatDialog = false }
         )
     }
+
+    if (showSignatureDrawDialog) {
+        SignatureDrawPadDialog(
+            onDismiss = { showSignatureDrawDialog = false },
+            onSaveSignature = { drawnBitmap ->
+                try {
+                    val targetFile = File(context.filesDir, "dpr_signature.png")
+                    targetFile.outputStream().use { outStream ->
+                        drawnBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outStream)
+                    }
+                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(pdfSignatureUri = targetFile.absolutePath))
+                    viewModel.showToast("Signature saved successfully")
+                } catch (e: Exception) {
+                    viewModel.showToast("Failed to save drawn signature")
+                }
+                showSignatureDrawDialog = false
+            }
+        )
+    }
 }
 
 /**
@@ -3514,6 +3644,146 @@ private fun FileNameFormatDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Close", color = Color(0xFF0284C7), fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+/**
+ * On-screen finger/stylus signature drawing pad with live path rendering and smooth saving.
+ */
+@Composable
+private fun SignatureDrawPadDialog(
+    onDismiss: () -> Unit,
+    onSaveSignature: (android.graphics.Bitmap) -> Unit
+) {
+    val strokes = remember { mutableStateListOf<List<Offset>>() }
+    var currentStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2563EB))
+                Text("Draw Digital Signature", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Sign inside the box using your finger or stylus:",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(170.dp)
+                        .background(Color.White, RoundedCornerShape(8.dp))
+                        .border(1.5.dp, Color(0xFF2563EB), RoundedCornerShape(8.dp))
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { offset ->
+                                    currentStroke = listOf(offset)
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    currentStroke = currentStroke + change.position
+                                },
+                                onDragEnd = {
+                                    if (currentStroke.isNotEmpty()) {
+                                        strokes.add(currentStroke)
+                                        currentStroke = emptyList()
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val strokeStyle = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = 4f,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round
+                        )
+                        for (stroke in strokes) {
+                            if (stroke.size > 1) {
+                                val path = androidx.compose.ui.graphics.Path()
+                                path.moveTo(stroke.first().x, stroke.first().y)
+                                for (i in 1 until stroke.size) {
+                                    path.lineTo(stroke[i].x, stroke[i].y)
+                                }
+                                drawPath(path, Color.Black, style = strokeStyle)
+                            }
+                        }
+                        if (currentStroke.size > 1) {
+                            val path = androidx.compose.ui.graphics.Path()
+                            path.moveTo(currentStroke.first().x, currentStroke.first().y)
+                            for (i in 1 until currentStroke.size) {
+                                path.lineTo(currentStroke[i].x, currentStroke[i].y)
+                            }
+                            drawPath(path, Color.Black, style = strokeStyle)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = {
+                            strokes.clear()
+                            currentStroke = emptyList()
+                        }
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Clear Drawing", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (strokes.isNotEmpty()) {
+                        val bmp = android.graphics.Bitmap.createBitmap(480, 180, android.graphics.Bitmap.Config.ARGB_8888)
+                        val canvas = android.graphics.Canvas(bmp)
+                        canvas.drawColor(android.graphics.Color.WHITE)
+                        val paint = android.graphics.Paint().apply {
+                            color = android.graphics.Color.BLACK
+                            strokeWidth = 6f
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeCap = android.graphics.Paint.Cap.ROUND
+                            strokeJoin = android.graphics.Paint.Join.ROUND
+                            isAntiAlias = true
+                        }
+                        for (stroke in strokes) {
+                            if (stroke.size > 1) {
+                                val path = android.graphics.Path()
+                                path.moveTo(stroke.first().x, stroke.first().y)
+                                for (i in 1 until stroke.size) {
+                                    path.lineTo(stroke[i].x, stroke[i].y)
+                                }
+                                canvas.drawPath(path, paint)
+                            }
+                        }
+                        onSaveSignature(bmp)
+                    }
+                    onDismiss()
+                },
+                enabled = strokes.isNotEmpty()
+            ) {
+                Text("Save Signature")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
             }
         }
     )

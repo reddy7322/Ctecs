@@ -436,11 +436,13 @@ fun CameraPreview(
                     factory = { ctx ->
                         PreviewView(ctx).apply {
                             this.controller = controller
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
                             // COMPATIBLE uses TextureView which eliminates SurfaceView EGL_BAD_ATTRIBUTE emulation errors
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                         }.also { previewViewInstance = it }
                     },
                     update = { pv ->
+                        pv.scaleType = PreviewView.ScaleType.FILL_CENTER
                         previewViewInstance = pv
                     },
                     modifier = Modifier.fillMaxSize()
@@ -1045,15 +1047,6 @@ class VideoRecordingManager(private val context: Context) {
                 }
             }
 
-            // Ensure real-time video overlay effect is actively bound to video capture use case
-            val effect = overlayManager?.getOrCreateEffect()
-            if (effect != null) {
-                try {
-                    controller.setEffects(setOf(effect))
-                } catch (e: Exception) {
-                    Log.w("VideoRecordingManager", "Effect attachment: ${e.message}")
-                }
-            }
             overlayManager?.notifyRecordingStarted(initialRotation)
 
             val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
@@ -1084,6 +1077,9 @@ class VideoRecordingManager(private val context: Context) {
                 if (event is VideoRecordEvent.Finalize) {
                     activeRecording = null
                     overlayManager?.notifyRecordingStopped()
+                    if (event.hasError()) {
+                        Log.e("VideoRecordingManager", "Video recording finalized with error: ${event.error}, cause: ${event.cause}")
+                    }
                 }
                 onEvent(event, recFile)
             }

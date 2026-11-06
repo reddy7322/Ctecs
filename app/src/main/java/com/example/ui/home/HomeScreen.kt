@@ -875,23 +875,23 @@ fun CentralChainageDisplay(
                 .fillMaxWidth()
                 .padding(
                     horizontal = 10.dp,
-                    vertical = if (isCompact) 6.dp else 8.dp
+                    vertical = if (isCompact) 10.dp else 14.dp
                 ),
             contentAlignment = Alignment.Center
         ) {
             val containerWidth = maxWidth
             val charCount = chainageText.length.coerceAtLeast(6)
-            // Significantly increased chainage font size while preventing clipping on any phone width
+            // Even larger, commanding chainage font size
             val digitFontSize = when {
                 charCount > 8 -> when {
-                    containerWidth < 340.dp -> 40.sp
-                    containerWidth < 390.dp -> 46.sp
-                    else -> 54.sp
+                    containerWidth < 340.dp -> 52.sp
+                    containerWidth < 390.dp -> 62.sp
+                    else -> 74.sp
                 }
-                containerWidth < 340.dp -> 48.sp
-                containerWidth < 380.dp -> 58.sp
-                containerWidth < 430.dp -> 66.sp
-                else -> 72.sp
+                containerWidth < 340.dp -> 62.sp
+                containerWidth < 380.dp -> 76.sp
+                containerWidth < 430.dp -> 88.sp
+                else -> 98.sp
             }
 
             Column(
@@ -905,18 +905,18 @@ fun CentralChainageDisplay(
                 ) {
                     // Compact Left Label: KM
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(7.dp),
                         color = kmBadgeBg,
-                        border = BorderStroke(0.8.dp, kmBadgeBorder),
+                        border = BorderStroke(0.9.dp, kmBadgeBorder),
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
                         Text(
                             text = "KM",
                             color = kmBadgeText,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 0.6.sp,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
 
@@ -930,18 +930,18 @@ fun CentralChainageDisplay(
 
                     // Compact Right Badge: LHS / RHS / BHS
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(7.dp),
                         color = sideBadgeBg,
-                        border = BorderStroke(0.8.dp, sideBadgeBorder),
+                        border = BorderStroke(0.9.dp, sideBadgeBorder),
                         modifier = Modifier.padding(start = 8.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(5.dp)
+                                    .size(6.dp)
                                     .clip(CircleShape)
                                     .background(sideBadgeText)
                             )
@@ -949,7 +949,7 @@ fun CentralChainageDisplay(
                             Text(
                                 text = detectedSide,
                                 color = sideBadgeText,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 maxLines = 1
                             )
@@ -1129,7 +1129,7 @@ fun ProjectStretchCardsRow(
 ) {
     val projectAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
     val stretchAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
-    val cardHeight = if (isCompact) 48.dp else 52.dp
+    val cardHeight = if (isCompact) 52.dp else 56.dp
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1153,59 +1153,77 @@ fun ProjectStretchCardsRow(
                 }
                 .testTag("home_card_project")
         ) {
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
+                // Left Icon Badge
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(projectAccent.copy(alpha = 0.12f)),
+                        .size(26.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(projectAccent.copy(alpha = 0.12f))
+                        .align(Alignment.CenterStart),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Engineering,
                         contentDescription = null,
                         tint = projectAccent,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
+
+                // Centered Content Column (Smart Dynamic Font Sizing & Center Alignment)
+                val pText = projectName.ifBlank { "Set Project" }
+                val pFontSize = when {
+                    pText.length > 20 -> 10.5.sp
+                    pText.length > 14 -> 11.5.sp
+                    else -> 12.5.sp
+                }
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 28.dp, end = 22.dp)
+                        .align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
                         text = "PROJECT",
                         color = subTextColor,
-                        fontSize = 9.5.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
+                        letterSpacing = 0.5.sp,
+                        textAlign = TextAlign.Center
                     )
                     Text(
-                        text = projectName.ifBlank { "Set Project" },
+                        text = pText,
                         color = if (projectName.isNotBlank()) mainTextColor else subTextColor,
-                        fontSize = 12.5.sp,
+                        fontSize = pFontSize,
                         fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        lineHeight = (pFontSize.value + 2).sp,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                // Right Edit Pencil Badge
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(20.dp)
                         .clip(CircleShape)
-                        .background(subTextColor.copy(alpha = 0.10f)),
+                        .background(subTextColor.copy(alpha = 0.08f))
+                        .align(Alignment.CenterEnd),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = "Edit Project",
                         tint = subTextColor,
-                        modifier = Modifier.size(11.dp)
+                        modifier = Modifier.size(10.dp)
                     )
                 }
             }
@@ -1229,59 +1247,77 @@ fun ProjectStretchCardsRow(
                 }
                 .testTag("home_card_stretch")
         ) {
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
+                // Left Icon Badge
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(stretchAccent.copy(alpha = 0.12f)),
+                        .size(26.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(stretchAccent.copy(alpha = 0.12f))
+                        .align(Alignment.CenterStart),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.AltRoute,
                         contentDescription = null,
                         tint = stretchAccent,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
+
+                // Centered Content Column (Smart Dynamic Font Sizing & Center Alignment)
+                val sText = stretchName.ifBlank { "Set Stretch" }
+                val sFontSize = when {
+                    sText.length > 20 -> 10.5.sp
+                    sText.length > 14 -> 11.5.sp
+                    else -> 12.5.sp
+                }
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 28.dp, end = 22.dp)
+                        .align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
                         text = "STRETCH",
                         color = subTextColor,
-                        fontSize = 9.5.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
+                        letterSpacing = 0.5.sp,
+                        textAlign = TextAlign.Center
                     )
                     Text(
-                        text = stretchName.ifBlank { "Set Stretch" },
+                        text = sText,
                         color = if (stretchName.isNotBlank()) mainTextColor else subTextColor,
-                        fontSize = 12.5.sp,
+                        fontSize = sFontSize,
                         fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        lineHeight = (sFontSize.value + 2).sp,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                // Right Edit Pencil Badge
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(20.dp)
                         .clip(CircleShape)
-                        .background(subTextColor.copy(alpha = 0.10f)),
+                        .background(subTextColor.copy(alpha = 0.08f))
+                        .align(Alignment.CenterEnd),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = "Edit Stretch",
                         tint = subTextColor,
-                        modifier = Modifier.size(11.dp)
+                        modifier = Modifier.size(10.dp)
                     )
                 }
             }

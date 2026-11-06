@@ -37,89 +37,43 @@ object VideoOverlayProcessor {
         defaultSnapshot: CaptureSnapshot,
         onProgress: ((Float) -> Unit)? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        // 1. If raw input file is missing or 0 bytes:
-        if (!inputFile.exists() || inputFile.length() == 0L) {
-            Log.i(TAG, "Raw video file missing or empty, synthesizing video with overlays from snapshots")
-            return@withContext generateVideoFromSnapshots(
-                context = context,
-                outputFile = outputFile,
-                snapshotsTimeline = snapshotsTimeline,
-                defaultSnapshot = defaultSnapshot
-            )
+        // Quick Save Optimization:
+        // When real-time video overlay effect is active during capture, the recorded MP4 file
+        // already has all dynamic overlays permanently burnt in directly by the GPU/EGL pipeline.
+        // Check if raw input file exists, is non-empty, and has valid MP4 metadata.
+        if (inputFile.exists() && inputFile.length() > 0L) {
+            try {
+                outputFile.parentFile?.mkdirs()
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(inputFile.absolutePath)
+                val durationMsStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                val durationMs = durationMsStr?.toLongOrNull() ?: 0L
+                val widthStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                val hasVideo = widthStr != null || retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) != null
+                retriever.release()
+
+                if (hasVideo && durationMs > 0L) {
+                    Log.i(TAG, "Input MP4 already contains real-time burnt overlays (${durationMs}ms). Fast-finalizing container directly.")
+                    if (inputFile.renameTo(outputFile)) {
+                        return@withContext true
+                    }
+                    inputFile.copyTo(outputFile, overwrite = true)
+                    try { inputFile.delete() } catch (ignored: Exception) {}
+                    return@withContext true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Quick-save check of recorded MP4 failed: ${e.message}")
+            }
         }
 
-        try {
-            outputFile.parentFile?.mkdirs()
-
-            val retriever = MediaMetadataRetriever()
-            retriever.setDataSource(inputFile.absolutePath)
-
-            val durationMsStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            val durationMs = durationMsStr?.toLongOrNull() ?: max(1000L, snapshotsTimeline.size * 1000L)
-
-            val widthStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-            val heightStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-
-            val origWidth = widthStr?.toIntOrNull() ?: 1280
-            val origHeight = heightStr?.toIntOrNull() ?: 720
-
-            // Check sample frame dimensions to determine exact upright orientation
-            val sampleFrame = try {
-                retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST)
-            } catch (ignored: Exception) {
-                null
-            }
-
-            var targetWidth = sampleFrame?.width ?: origWidth
-            var targetHeight = sampleFrame?.height ?: origHeight
-            sampleFrame?.recycle()
-
-            retriever.release()
-
-            // Ensure dimensions are even numbers (strictly required by H.264 AVC codecs)
-            if (targetWidth % 2 != 0) targetWidth -= 1
-            if (targetHeight % 2 != 0) targetHeight -= 1
-            targetWidth = targetWidth.coerceAtLeast(320)
-            targetHeight = targetHeight.coerceAtLeast(240)
-
-            Log.i(TAG, "Processing video frames with overlay: ${targetWidth}x${targetHeight}, duration: ${durationMs}ms")
-
-            // Transcode & burn overlay on every frame
-            val success = processVideoFrames(
-                context = context,
-                inputFile = inputFile,
-                outputFile = outputFile,
-                durationMs = durationMs,
-                snapshotsTimeline = snapshotsTimeline,
-                defaultSnapshot = defaultSnapshot,
-                videoWidth = targetWidth,
-                videoHeight = targetHeight,
-                onProgress = onProgress
-            )
-
-            if (success && outputFile.exists() && outputFile.length() > 0) {
-                Log.i(TAG, "Video with overlay created successfully: ${outputFile.length()} bytes")
-                return@withContext true
-            }
-
-            // Fallback: If frame extraction had codec issue, synthesize video directly with overlays
-            Log.w(TAG, "Frame transcode did not produce valid file, falling back to snapshot video synthesis")
-            val fallbackSuccess = generateVideoFromSnapshots(
-                context = context,
-                outputFile = outputFile,
-                snapshotsTimeline = snapshotsTimeline,
-                defaultSnapshot = defaultSnapshot
-            )
-            fallbackSuccess
-        } catch (e: Exception) {
-            Log.e(TAG, "Video overlay processing error: ${e.message}", e)
-            generateVideoFromSnapshots(
-                context = context,
-                outputFile = outputFile,
-                snapshotsTimeline = snapshotsTimeline,
-                defaultSnapshot = defaultSnapshot
-            )
-        }
+        // If raw file was empty or missing or invalid, generate video directly from snapshots
+        Log.i(TAG, "Raw video file empty or unfinalized, synthesizing video with overlays from snapshots")
+        return@withContext generateVideoFromSnapshots(
+            context = context,
+            outputFile = outputFile,
+            snapshotsTimeline = snapshotsTimeline,
+            defaultSnapshot = defaultSnapshot
+        )
     }
 
     private fun processVideoFrames(
@@ -707,8 +661,10 @@ object VideoOverlayProcessor {
         var muxer: MediaMuxer? = null
         var encoder: MediaCodec? = null
         try {
-            val videoWidth = 1280
-            val videoHeight = 720
+            val rot = defaultSnapshot.deviceRotationDegrees
+            val isLandscape = rot == 90 || rot == 270
+            val videoWidth = if (isLandscape) 1280 else 720
+            val videoHeight = if (isLandscape) 720 else 1280
             val targetFps = 20
             val frameIntervalMs = 1000L / targetFps
             val durationMs = max(1000L, snapshotsTimeline.size * 1000L)
@@ -734,10 +690,18 @@ object VideoOverlayProcessor {
             val trackState = IntArray(2) { -1 }
             trackState[1] = 0
 
-            val baseFrame = com.example.ui.camera.createSimulatedCameraFrame(context, 0)
-            val scaledFrame = Bitmap.createScaledBitmap(baseFrame, videoWidth, videoHeight, true)
-            if (baseFrame != scaledFrame && !baseFrame.isRecycled) {
-                baseFrame.recycle()
+            val baseFrame = com.example.ui.camera.createSimulatedCameraFrame(
+                context = context,
+                rotationDegrees = rot,
+                isLandscapeMode = isLandscape,
+                resolutionStr = "${videoWidth} x ${videoHeight}"
+            )
+            val scaledFrame = if (baseFrame.width != videoWidth || baseFrame.height != videoHeight) {
+                Bitmap.createScaledBitmap(baseFrame, videoWidth, videoHeight, true).also {
+                    if (it != baseFrame && !baseFrame.isRecycled) baseFrame.recycle()
+                }
+            } else {
+                baseFrame
             }
 
             val reusableBitmap = Bitmap.createBitmap(videoWidth, videoHeight, Bitmap.Config.ARGB_8888)

@@ -245,6 +245,8 @@ fun CameraScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val coroutineScope = rememberCoroutineScope()
     val controller = remember {
         LifecycleCameraController(context).apply {
@@ -257,8 +259,13 @@ fun CameraScreen(
     val overlayManager = remember {
         com.example.overlay.RealtimeVideoOverlayManager(
             context = context.applicationContext,
-            snapshotProvider = { viewModel.createCurrentSnapshot() },
-            rotationProvider = { viewModel.rotationDegrees.value.toInt() }
+            snapshotProvider = {
+                val effRot = if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && (viewModel.rotationDegrees.value == 0f || viewModel.rotationDegrees.value == 180f)) 90 else viewModel.rotationDegrees.value.toInt()
+                viewModel.createCurrentSnapshot(effRot)
+            },
+            rotationProvider = {
+                if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && (viewModel.rotationDegrees.value == 0f || viewModel.rotationDegrees.value == 180f)) 90 else viewModel.rotationDegrees.value.toInt()
+            }
         )
     }
 
@@ -305,8 +312,6 @@ fun CameraScreen(
     var showQuickSettingsPopup by remember { mutableStateOf(false) }
     var showCustomCommentDialog by remember { mutableStateOf(false) }
     var commentInput by remember { mutableStateOf("") }
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     var isTopToolbarExpanded by remember { mutableStateOf(true) }
     var showLaneMenu by remember { mutableStateOf(false) }
     var isHdrEnabled by remember { mutableStateOf(false) }
@@ -336,10 +341,11 @@ fun CameraScreen(
 
     fun startVideoRecording(audioEnabled: Boolean) {
         viewModel.onVideoRecordingStarted()
+        val effectiveRotation = if (isLandscape && (rotationDegrees == 0f || rotationDegrees == 180f)) 90 else rotationDegrees.toInt()
         videoManager.startRecording(
             controller = controller,
             recordAudio = audioEnabled,
-            initialRotation = rotationDegrees.toInt(),
+            initialRotation = effectiveRotation,
             onEvent = { event, recFile ->
                 when (event) {
                     is androidx.camera.video.VideoRecordEvent.Start -> {
@@ -353,8 +359,11 @@ fun CameraScreen(
                     }
                     is androidx.camera.video.VideoRecordEvent.Finalize -> {
                         viewModel.onVideoRecordingStopped()
+                        if (event.hasError()) {
+                            android.util.Log.e("CameraScreen", "Video recording finalized with error: ${event.error}, cause: ${event.cause}")
+                        }
                         val finalRecFile = recFile ?: videoManager.currentRecordingFile ?: File(context.cacheDir, "temp_video/raw_video.mp4")
-                        viewModel.processRecordedVideo(context, finalRecFile)
+                        viewModel.processRecordedVideo(context, finalRecFile, effectiveRotation)
                     }
                 }
             },
@@ -2960,22 +2969,91 @@ fun createSimulatedCameraFrame(
     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
 
-    // Dark asphalt road color
-    val roadPaint = AndroidPaint().apply { color = AndroidColor.rgb(20, 20, 20) }
-    canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), roadPaint)
+    val horizonY = h * 0.30f
 
-    // Sky / Horizon at top
-    val skyPaint = AndroidPaint().apply { color = AndroidColor.rgb(40, 40, 40) }
-    canvas.drawRect(0f, 0f, w.toFloat(), h * 0.35f, skyPaint)
-
-    // Centerline markings (Yellow)
-    val linePaint = AndroidPaint().apply {
-        color = AndroidColor.rgb(255, 214, 0)
-        strokeWidth = 14f
+    // 1. Natural daylight sky (soft atmospheric blue to horizon gradient)
+    val skyShader = android.graphics.LinearGradient(
+        0f, 0f, 0f, horizonY,
+        AndroidColor.rgb(115, 168, 218),
+        AndroidColor.rgb(205, 225, 240),
+        android.graphics.Shader.TileMode.CLAMP
+    )
+    val skyPaint = AndroidPaint().apply {
+        shader = skyShader
+        isAntiAlias = true
     }
-    val startY = (h * 0.4f).toInt()
-    for (y in startY until h step 140) {
-        canvas.drawLine(w * 0.5f, y.toFloat(), w * 0.5f, (y + 80).toFloat(), linePaint)
+    canvas.drawRect(0f, 0f, w.toFloat(), horizonY, skyPaint)
+
+    // 2. Distant hills / terrain skyline
+    val hillPaint = AndroidPaint().apply {
+        color = AndroidColor.rgb(130, 160, 150)
+        isAntiAlias = true
+    }
+    val hillPath = android.graphics.Path().apply {
+        moveTo(0f, horizonY)
+        lineTo(w * 0.25f, horizonY - h * 0.04f)
+        lineTo(w * 0.55f, horizonY - h * 0.02f)
+        lineTo(w * 0.80f, horizonY - h * 0.05f)
+        lineTo(w.toFloat(), horizonY)
+        close()
+    }
+    canvas.drawPath(hillPath, hillPaint)
+
+    // 3. Roadside terrain / embankment
+    val terrainPaint = AndroidPaint().apply {
+        color = AndroidColor.rgb(78, 102, 68)
+        isAntiAlias = true
+    }
+    canvas.drawRect(0f, horizonY, w.toFloat(), h.toFloat(), terrainPaint)
+
+    // 4. Perspective Asphalt Highway Road
+    val roadTopWidth = w * 0.22f
+    val roadBottomWidth = w * 1.18f
+    val roadCenterX = w * 0.50f
+
+    val roadPath = android.graphics.Path().apply {
+        moveTo(roadCenterX - roadTopWidth / 2f, horizonY)
+        lineTo(roadCenterX + roadTopWidth / 2f, horizonY)
+        lineTo(roadCenterX + roadBottomWidth / 2f, h.toFloat())
+        lineTo(roadCenterX - roadBottomWidth / 2f, h.toFloat())
+        close()
+    }
+    val roadShader = android.graphics.LinearGradient(
+        0f, horizonY, 0f, h.toFloat(),
+        AndroidColor.rgb(68, 72, 76),
+        AndroidColor.rgb(44, 46, 50),
+        android.graphics.Shader.TileMode.CLAMP
+    )
+    val roadPaint = AndroidPaint().apply {
+        shader = roadShader
+        isAntiAlias = true
+    }
+    canvas.drawPath(roadPath, roadPaint)
+
+    // 5. White Road Shoulder / Edge Lines
+    val edgePaint = AndroidPaint().apply {
+        color = AndroidColor.rgb(245, 245, 245)
+        isAntiAlias = true
+        strokeWidth = (w * 0.007f).coerceIn(4f, 14f)
+        style = AndroidPaint.Style.STROKE
+    }
+    canvas.drawLine(roadCenterX - roadTopWidth / 2f, horizonY, roadCenterX - roadBottomWidth / 2f, h.toFloat(), edgePaint)
+    canvas.drawLine(roadCenterX + roadTopWidth / 2f, horizonY, roadCenterX + roadBottomWidth / 2f, h.toFloat(), edgePaint)
+
+    // 6. Yellow Centerline Dashes (Perspective-scaled)
+    val centerLinePaint = AndroidPaint().apply {
+        color = AndroidColor.rgb(255, 214, 0)
+        isAntiAlias = true
+        strokeWidth = (w * 0.009f).coerceIn(5f, 18f)
+        strokeCap = AndroidPaint.Cap.ROUND
+    }
+    val steps = 12
+    for (i in 0 until steps) {
+        val t1 = Math.pow(i.toDouble() / steps, 1.8).toFloat()
+        val t2 = Math.pow((i + 0.52).coerceAtMost(steps.toDouble()) / steps, 1.8).toFloat()
+        val y1 = horizonY + (h - horizonY) * t1
+        val y2 = horizonY + (h - horizonY) * t2
+        canvas.drawLine(roadCenterX, y1, roadCenterX, y2, centerLinePaint)
     }
 
     return bmp

@@ -1,10 +1,16 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.ContentValues
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.data.AppDatabase
 import com.example.data.PhotoRecordEntity
 import com.example.data.PhotoRepository
@@ -768,7 +774,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val videoSnapshotsTimeline = mutableListOf<CaptureSnapshot>()
     private var videoTickerJob: kotlinx.coroutines.Job? = null
 
-    fun createCurrentSnapshot(): CaptureSnapshot {
+    fun createCurrentSnapshot(forcedRotation: Int? = null): CaptureSnapshot {
+        val rot = forcedRotation ?: rotationDegrees.value.toInt()
         return CaptureSnapshot(
             timestamp = System.currentTimeMillis(),
             location = locationState.value.point,
@@ -778,7 +785,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             projectProfile = projectProfile.value,
             overlayConfig = overlayConfig.value,
             activeRoute = activeRouteData.value,
-            deviceRotationDegrees = rotationDegrees.value.toInt(),
+            deviceRotationDegrees = rot,
             compassHeading = compassState.value.displayHeading,
             compassAzimuth = compassState.value.azimuthDegrees,
             filenameFormatPreset = cameraSettings.value.filenameFormatPreset,
@@ -824,10 +831,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         videoTickerJob?.cancel()
     }
 
-    fun processRecordedVideo(context: android.content.Context, rawVideoFile: java.io.File) {
-        viewModelScope.launch {
+    fun processRecordedVideo(context: android.content.Context, rawVideoFile: java.io.File, forcedRotation: Int? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
             val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
-            val defaultSnapshot = createCurrentSnapshot()
+            val defaultSnapshot = createCurrentSnapshot(forcedRotation)
 
             val addrText = if (defaultSnapshot.overlayConfig.locationAddressOption != "None") {
                 defaultSnapshot.overlayConfig.customAddressText.ifBlank { defaultSnapshot.overlayConfig.locationAddressOption }
@@ -851,14 +858,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isVideo = true
             )
 
-            val outputDir = java.io.File(
-                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES),
+            // Reliable App-Specific Storage (guaranteed writable across all Android versions)
+            val localDir = java.io.File(
+                context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir,
                 "HighwayCamera"
             ).apply { mkdirs() }
+            val finalFile = java.io.File(localDir, fileName)
 
-            val finalFile = java.io.File(outputDir, fileName)
-
-            // Instant Video Saving:
+            // Instant Video Saving Optimization:
             // Since CameraX real-time overlay rendering embeds dynamic timestamp and all enabled
             // metadata directly into video frames during active recording, the recorded file is
             // already permanently burnt-in and immediately playable!
@@ -877,9 +884,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // Fallback: Only if raw recorded file was empty or missing, synthesize or transcode
+            // Fallback: If raw recorded file was empty or missing, synthesize video with overlays from snapshots
             if (!isSaved) {
-                showToast("Finalizing video overlays...", ToastType.INFO)
+                withContext(Dispatchers.Main) {
+                    showToast("Finalizing video overlays...", ToastType.INFO)
+                }
                 isSaved = com.example.overlay.VideoOverlayProcessor.applyOverlayToVideo(
                     context = context,
                     inputFile = rawVideoFile,
@@ -890,11 +899,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (isSaved && finalFile.exists() && finalFile.length() > 0) {
-                android.media.MediaScannerConnection.scanFile(
-                    context,
-                    arrayOf(finalFile.absolutePath),
-                    arrayOf("video/mp4")
-                ) { _, _ -> }
+                // Publish to Shared Device Storage via Android MediaStore (Movies/HighwayCamera)
+                try {
+                    val resolver = context.contentResolver
+                    val contentValues = ContentValues().apply {
+                        put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                        put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                        put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                        put(MediaStore.Video.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                        put(MediaStore.Video.Media.DATE_TAKEN, defaultSnapshot.timestamp)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/HighwayCamera")
+                            put(MediaStore.Video.Media.IS_PENDING, 1)
+                        }
+                    }
+
+                    val videoCollection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    } else {
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    }
+
+                    val itemUri = resolver.insert(videoCollection, contentValues)
+                    if (itemUri != null) {
+                        resolver.openOutputStream(itemUri)?.use { outStream ->
+                            finalFile.inputStream().use { inStream ->
+                                inStream.copyTo(outStream)
+                            }
+                            outStream.flush()
+                        }
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            contentValues.clear()
+                            contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                            resolver.update(itemUri, contentValues, null, null)
+                        }
+                    }
+                } catch (mediaStoreEx: Exception) {
+                    android.util.Log.w("MainViewModel", "Publishing to MediaStore failed: ${mediaStoreEx.message}")
+                }
+
+                // Also try copy to public Movies/HighwayCamera folder if accessible
+                try {
+                    val publicDir = java.io.File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                        "HighwayCamera"
+                    ).apply { mkdirs() }
+                    val publicFile = java.io.File(publicDir, fileName)
+                    if (!publicFile.exists() || publicFile.length() == 0L) {
+                        finalFile.copyTo(publicFile, overwrite = true)
+                    }
+                    android.media.MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(publicFile.absolutePath, finalFile.absolutePath),
+                        arrayOf("video/mp4")
+                    ) { _, _ -> }
+                } catch (ignored: Exception) {}
 
                 try {
                     val record = com.example.data.PhotoRecordEntity(
@@ -922,11 +982,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     photoRepository.insertRecord(record)
                 } catch (ignored: Exception) {}
 
-                showToast("Video saved with dynamic overlays to Movies/HighwayCamera", ToastType.SUCCESS)
+                withContext(Dispatchers.Main) {
+                    showToast("Video saved with dynamic overlays to Movies/HighwayCamera", ToastType.SUCCESS)
+                }
 
                 try { rawVideoFile.delete() } catch (ignored: Exception) {}
             } else {
-                showToast("Video saved to Movies/HighwayCamera", ToastType.SUCCESS)
+                withContext(Dispatchers.Main) {
+                    showToast("Video saved to Movies/HighwayCamera", ToastType.SUCCESS)
+                }
             }
         }
     }

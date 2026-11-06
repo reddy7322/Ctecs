@@ -7,14 +7,18 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.material.icons.filled.Search
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -23,7 +27,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -157,7 +163,10 @@ data class SubActivityData(
     val depthM: Double = 0.0,
     val comments: String = "",
     var isExpanded: Boolean = true
-)
+) {
+    val quantityM3: Double
+        get() = if (depthM > 0 && widthM > 0 && lengthM > 0) lengthM * widthM * (depthM / 1000.0) else 0.0
+}
 
 // -------------------------------------------------------------
 // HELPER: AUTOMATIC CHAINAGE FORMATTER
@@ -230,7 +239,13 @@ fun parseSubActivitiesJson(
                             toChainage = obj.optString("toChainage", ""),
                             lengthM = obj.optDouble("lengthM", 0.0),
                             widthM = obj.optDouble("widthM", 0.0),
-                            depthM = obj.optDouble("depthM", 0.0),
+                            depthM = if (obj.has("depthM")) {
+                                obj.optDouble("depthM", 0.0)
+                            } else if (obj.has("depth")) {
+                                obj.optDouble("depth", 0.0)
+                            } else if (obj.has("depthMm")) {
+                                obj.optDouble("depthMm", 0.0)
+                            } else 0.0,
                             comments = obj.optString("comments", ""),
                             isExpanded = false
                         )
@@ -352,6 +367,273 @@ fun saveScanBitmapToFile(context: Context, bmp: Bitmap): String {
 }
 
 // -------------------------------------------------------------
+// HELPER: REAL-TIME ACTIVITY INPUT DRAFT MANAGER (AUTO-SAVE)
+// -------------------------------------------------------------
+object ActivityDraftManager {
+    private const val PREFS_NAME = "ctecs_activity_draft_prefs"
+    private const val KEY_HAS_DRAFT = "has_draft"
+    private const val KEY_FROM_CH = "from_ch"
+    private const val KEY_TO_CH = "to_ch"
+    private const val KEY_ACT = "act"
+    private const val KEY_CUSTOM_ACT = "custom_act"
+    private const val KEY_WIDTH = "width"
+    private const val KEY_DEPTH = "depth"
+    private const val KEY_SIDE = "side"
+    private const val KEY_LOC = "loc"
+    private const val KEY_CUSTOM_LOC = "custom_loc"
+    private const val KEY_COMMENTS = "comments"
+    private const val KEY_PHOTO = "photo"
+    private const val KEY_SUBS_JSON = "subs_json"
+
+    fun saveDraft(
+        context: Context,
+        fromCh: String,
+        toCh: String,
+        act: String,
+        customAct: String,
+        width: String,
+        depth: String,
+        side: String,
+        loc: String,
+        customLoc: String,
+        comments: String,
+        photo: String,
+        subsJson: String
+    ) {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        sp.edit()
+            .putBoolean(KEY_HAS_DRAFT, true)
+            .putString(KEY_FROM_CH, fromCh)
+            .putString(KEY_TO_CH, toCh)
+            .putString(KEY_ACT, act)
+            .putString(KEY_CUSTOM_ACT, customAct)
+            .putString(KEY_WIDTH, width)
+            .putString(KEY_DEPTH, depth)
+            .putString(KEY_SIDE, side)
+            .putString(KEY_LOC, loc)
+            .putString(KEY_CUSTOM_LOC, customLoc)
+            .putString(KEY_COMMENTS, comments)
+            .putString(KEY_PHOTO, photo)
+            .putString(KEY_SUBS_JSON, subsJson)
+            .apply()
+    }
+
+    fun hasDraft(context: Context): Boolean {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return sp.getBoolean(KEY_HAS_DRAFT, false)
+    }
+
+    data class DraftData(
+        val fromCh: String,
+        val toCh: String,
+        val act: String,
+        val customAct: String,
+        val width: String,
+        val depth: String,
+        val side: String,
+        val loc: String,
+        val customLoc: String,
+        val comments: String,
+        val photo: String,
+        val subsJson: String
+    )
+
+    fun loadDraft(context: Context): DraftData? {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (!sp.getBoolean(KEY_HAS_DRAFT, false)) return null
+        return DraftData(
+            fromCh = sp.getString(KEY_FROM_CH, "") ?: "",
+            toCh = sp.getString(KEY_TO_CH, "") ?: "",
+            act = sp.getString(KEY_ACT, "BC") ?: "BC",
+            customAct = sp.getString(KEY_CUSTOM_ACT, "") ?: "",
+            width = sp.getString(KEY_WIDTH, "7.0") ?: "7.0",
+            depth = sp.getString(KEY_DEPTH, "") ?: "",
+            side = sp.getString(KEY_SIDE, "Auto") ?: "Auto",
+            loc = sp.getString(KEY_LOC, "I/L") ?: "I/L",
+            customLoc = sp.getString(KEY_CUSTOM_LOC, "") ?: "",
+            comments = sp.getString(KEY_COMMENTS, "") ?: "",
+            photo = sp.getString(KEY_PHOTO, "") ?: "",
+            subsJson = sp.getString(KEY_SUBS_JSON, "[]") ?: "[]"
+        )
+    }
+
+    fun clearDraft(context: Context) {
+        val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        sp.edit().clear().apply()
+    }
+}
+
+// -------------------------------------------------------------
+// FULL-PAGE RENDERED PDF PREVIEW DIALOG (PdfRenderer)
+// -------------------------------------------------------------
+@Composable
+fun PdfDocumentPreviewDialog(
+    pdfFile: File,
+    onDismiss: () -> Unit,
+    onShare: () -> Unit
+) {
+    var currentPageIndex by remember { mutableStateOf(0) }
+    var totalPageCount by remember { mutableStateOf(1) }
+    var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var isRendering by remember { mutableStateOf(true) }
+
+    LaunchedEffect(pdfFile, currentPageIndex) {
+        withContext(Dispatchers.IO) {
+            try {
+                isRendering = true
+                val pfd = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                val renderer = PdfRenderer(pfd)
+                totalPageCount = renderer.pageCount.coerceAtLeast(1)
+                val safeIndex = currentPageIndex.coerceIn(0, totalPageCount - 1)
+                val page = renderer.openPage(safeIndex)
+
+                val bmp = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bmp)
+                canvas.drawColor(android.graphics.Color.WHITE)
+                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                page.close()
+                renderer.close()
+                pfd.close()
+
+                withContext(Dispatchers.Main) {
+                    pageBitmap = bmp
+                    isRendering = false
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    isRendering = false
+                }
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .background(Color(0xFF0F172A)),
+            color = Color(0xFF0F172A)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                            Column {
+                                Text("Document Preview", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Page ${currentPageIndex + 1} of $totalPageCount", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            IconButton(
+                                onClick = { if (currentPageIndex > 0) currentPageIndex-- },
+                                enabled = currentPageIndex > 0,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Prev Page")
+                            }
+                            IconButton(
+                                onClick = { if (currentPageIndex < totalPageCount - 1) currentPageIndex++ },
+                                enabled = currentPageIndex < totalPageCount - 1,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next Page")
+                            }
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isRendering) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(color = Color.White)
+                            Text("Rendering PDF page preview...", color = Color.White, fontSize = 12.sp)
+                        }
+                    } else if (pageBitmap != null) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            shadowElevation = 8.dp,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Image(
+                                bitmap = pageBitmap!!.asImageBitmap(),
+                                contentDescription = "PDF Rendered Page ${currentPageIndex + 1}",
+                                contentScale = ContentScale.FillWidth,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else {
+                        Text("Could not render page preview", color = Color.White)
+                    }
+                }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 4.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("Close")
+                        }
+
+                        Button(
+                            onClick = onShare,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Share / Save PDF", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
 // MAIN COMPOSABLE: SMART NOTES (SITE ACTIVITY - DPR)
 // -------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
@@ -414,6 +696,11 @@ fun SmartNotesScreen(
     var showProjectSwitcherDialog by remember { mutableStateOf(false) }
     var showDprExportDialog by remember { mutableStateOf(false) }
     var showWeeklyExportDialog by remember { mutableStateOf(false) }
+
+    var activitySearchQuery by remember { mutableStateOf("") }
+    var previewPdfFile by remember { mutableStateOf<File?>(null) }
+    var showPdfPreviewModal by remember { mutableStateOf(false) }
+    var isAutoSaved by remember { mutableStateOf(false) }
 
     var dprExportMode by remember { mutableStateOf("ALL") } // "SINGLE", "ALL", "SELECTED"
     var singleActivityToExport by remember { mutableStateOf<SmartActivityEntity?>(null) }
@@ -529,6 +816,66 @@ fun SmartNotesScreen(
         siteRegisterPhotoPath = ""
     }
 
+    fun restoreDraftIfAvailable(): Boolean {
+        val draft = ActivityDraftManager.loadDraft(context) ?: return false
+        isEditingActivity = false
+        editingActivityId = null
+        fromChainage = draft.fromCh.ifBlank { "198+500" }
+        toChainage = draft.toCh.ifBlank { "198+880" }
+        selectedActivity = draft.act.ifBlank { "BC" }
+        customActivityText = draft.customAct
+        activityWidthM = draft.width.ifBlank { "7.0" }
+        activityDepthM = draft.depth
+        selectedSide = draft.side.ifBlank { "Auto" }
+        selectedRoadLocation = draft.loc.ifBlank { "I/L" }
+        customRoadLocationText = draft.customLoc
+        mainComments = draft.comments
+        siteRegisterPhotoPath = draft.photo
+
+        subActivitiesList.clear()
+        val parsedSubs = parseSubActivitiesJson(
+            jsonStr = draft.subsJson,
+            defaultName = "",
+            defaultFrom = "",
+            defaultTo = "",
+            defaultLen = 0.0,
+            defaultWidth = 0.0,
+            defaultDepth = 0.0,
+            defaultComm = ""
+        )
+        subActivitiesList.addAll(parsedSubs)
+        showSubActivitySection = subActivitiesList.isNotEmpty()
+        return true
+    }
+
+    LaunchedEffect(
+        showAddEditDialog,
+        fromChainage, toChainage, selectedActivity, customActivityText,
+        activityWidthM, activityDepthM, selectedSide, selectedRoadLocation,
+        customRoadLocationText, mainComments, siteRegisterPhotoPath,
+        subActivitiesList.toList()
+    ) {
+        if (showAddEditDialog && !isEditingActivity) {
+            val encoded = encodeSubActivitiesJson(subActivitiesList.toList())
+            ActivityDraftManager.saveDraft(
+                context = context,
+                fromCh = fromChainage,
+                toCh = toChainage,
+                act = selectedActivity,
+                customAct = customActivityText,
+                width = activityWidthM,
+                depth = activityDepthM,
+                side = selectedSide,
+                loc = selectedRoadLocation,
+                customLoc = customRoadLocationText,
+                comments = mainComments,
+                photo = siteRegisterPhotoPath,
+                subsJson = encoded
+            )
+            isAutoSaved = true
+        }
+    }
+
     fun populateFormForEdit(act: SmartActivityEntity) {
         isEditingActivity = true
         editingActivityId = act.id
@@ -547,8 +894,9 @@ fun SmartNotesScreen(
             customActivityText = act.activityLayer
         }
 
-        activityWidthM = if (act.widthM > 0) "${act.widthM}" else ""
-        activityDepthM = if (act.depthM > 0) "${act.depthM}" else ""
+        activityWidthM = if (act.widthM > 0) "${if (act.widthM % 1.0 == 0.0) act.widthM.toInt() else act.widthM}" else ""
+        val dVal = if (act.depthM > 0) act.depthM else if (act.thicknessMm > 0) act.thicknessMm else 0.0
+        activityDepthM = if (dVal > 0) "${if (dVal % 1.0 == 0.0) dVal.toInt() else dVal}" else ""
 
         // Sub activities
         subActivitiesList.clear()
@@ -646,7 +994,9 @@ fun SmartNotesScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    resetEntryForm()
+                    if (!restoreDraftIfAvailable()) {
+                        resetEntryForm()
+                    }
                     showAddEditDialog = true
                 },
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -896,7 +1246,9 @@ fun SmartNotesScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
-                                resetEntryForm()
+                                if (!restoreDraftIfAvailable()) {
+                                    resetEntryForm()
+                                }
                                 showAddEditDialog = true
                             }
                         ) {
@@ -907,12 +1259,107 @@ fun SmartNotesScreen(
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                val filteredActivities = remember(activitiesForDate, activitySearchQuery) {
+                    if (activitySearchQuery.isBlank()) activitiesForDate
+                    else {
+                        val q = activitySearchQuery.trim().lowercase(Locale.ROOT)
+                        activitiesForDate.filter { act ->
+                            act.activityLayer.lowercase(Locale.ROOT).contains(q) ||
+                            act.fromChainage.lowercase(Locale.ROOT).contains(q) ||
+                            act.toChainage.lowercase(Locale.ROOT).contains(q) ||
+                            act.roadSection.lowercase(Locale.ROOT).contains(q) ||
+                            act.side.lowercase(Locale.ROOT).contains(q) ||
+                            act.siteObservations.lowercase(Locale.ROOT).contains(q) ||
+                            act.remarks.lowercase(Locale.ROOT).contains(q) ||
+                            act.subActivityName.lowercase(Locale.ROOT).contains(q) ||
+                            act.subComments.lowercase(Locale.ROOT).contains(q)
+                        }
+                    }
+                }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    items(activitiesForDate, key = { it.id }) { act ->
+                    OutlinedTextField(
+                        value = activitySearchQuery,
+                        onValueChange = { activitySearchQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = {
+                            Text(
+                                "Search activities by name or chainage...",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            if (activitySearchQuery.isNotBlank()) {
+                                IconButton(onClick = { activitySearchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Clear,
+                                        contentDescription = "Clear",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+
+                if (filteredActivities.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(40.dp)
+                            )
+                            Text(
+                                text = "No activities matching \"$activitySearchQuery\"",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            TextButton(onClick = { activitySearchQuery = "" }) {
+                                Text("Clear Search Filter")
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredActivities, key = { it.id }) { act ->
                         val isChecked = selectedActivityIds.contains(act.id)
                         val parsedSubs = remember(act) {
                             parseSubActivitiesJson(act.subComments, act.subActivityName, act.subFromChainage, act.subToChainage, act.subLengthM, act.subWidthM, act.subDepthM, "")
@@ -1137,134 +1584,274 @@ fun SmartNotesScreen(
                     // Top Header Bar
                     Surface(
                         color = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 1.dp,
+                        tonalElevation = 0.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        if (mainComments.isNotBlank() || subActivitiesList.isNotEmpty()) {
-                                            showUnsavedConfirmation = true
-                                        } else {
-                                            showAddEditDialog = false
-                                            resetEntryForm()
-                                        }
-                                    },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Close",
-                                        tint = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-
-                                Text(
-                                    text = if (isEditingActivity) "Edit Activity" else "Add Activity",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 18.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val availableWidth = maxWidth
+                            val isUltraCompact = availableWidth < 360.dp
+                            val isCompact = availableWidth < 430.dp
+                            val btnHeight = 36.dp
+                            val btnSpacing = if (isUltraCompact) 4.dp else 6.dp
+                            val btnPaddingHorizontal = if (isUltraCompact) 6.dp else if (isCompact) 8.dp else 12.dp
 
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = if (isUltraCompact) 8.dp else 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                TextButton(
-                                    onClick = {
-                                        showAddEditDialog = false
-                                        resetEntryForm()
-                                    }
+                                // Left side: Back button + Title + Auto-saved badge
+                                Row(
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(if (isUltraCompact) 6.dp else 8.dp)
                                 ) {
-                                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-
-                                Button(
-                                    onClick = {
-                                        val effectiveActivityName = when (selectedActivity) {
-                                            "None" -> ""
-                                            "Manually Enter", "Other" -> customActivityText.trim()
-                                            else -> selectedActivity.trim()
-                                        }
-
-                                        val effectiveLocation = when (selectedRoadLocation) {
-                                            "None" -> ""
-                                            "Manually Enter" -> customRoadLocationText.trim()
-                                            else -> selectedRoadLocation.trim()
-                                        }
-
-                                        val finalSide = if (selectedSide == "Auto") (detectedSideFromRoute ?: "LHS") else selectedSide
-                                        val isAuto = selectedSide == "Auto" && detectedSideFromRoute != null
-
-                                        val formattedFromCh = formatHighwayChainageInput(fromChainage.trim())
-                                        val formattedToCh = formatHighwayChainageInput(toChainage.trim())
-                                        fromChainage = formattedFromCh
-                                        toChainage = formattedToCh
-
-                                        val formattedSubList = subActivitiesList.map { sub ->
-                                            val sFrom = formatHighwayChainageInput(sub.fromChainage.trim())
-                                            val sTo = formatHighwayChainageInput(sub.toChainage.trim())
-                                            sub.copy(
-                                                fromChainage = sFrom,
-                                                toChainage = sTo,
-                                                lengthM = calculateChainageDiffMetres(sFrom, sTo)
+                                    // Materialistic Flat Back Button
+                                    Surface(
+                                        onClick = {
+                                            if (mainComments.isNotBlank() || subActivitiesList.isNotEmpty()) {
+                                                showUnsavedConfirmation = true
+                                            } else {
+                                                showAddEditDialog = false
+                                                resetEntryForm()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                                        modifier = Modifier.size(btnHeight)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                                contentDescription = "Close",
+                                                tint = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.size(18.dp)
                                             )
                                         }
-                                        subActivitiesList.clear()
-                                        subActivitiesList.addAll(formattedSubList)
+                                    }
 
-                                        val firstSub = formattedSubList.firstOrNull()
-                                        val encodedSubComments = encodeSubActivitiesJson(formattedSubList)
+                                    Text(
+                                        text = if (isEditingActivity) "Edit Activity" else "Add Activity",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = if (isUltraCompact) 15.sp else 17.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
 
-                                        val finalAct = SmartActivityEntity(
-                                            id = editingActivityId ?: 0,
-                                            projectId = currentProject.id,
-                                            projectName = currentProject.name,
-                                            dateString = selectedDateString,
-                                            timestamp = System.currentTimeMillis(),
-                                            activityLayer = effectiveActivityName,
-                                            fromChainage = formattedFromCh,
-                                            toChainage = formattedToCh,
-                                            completedLengthM = calculateChainageDiffMetres(formattedFromCh, formattedToCh),
-                                            widthM = activityWidthM.toDoubleOrNull() ?: 0.0,
-                                            side = finalSide,
-                                            sideMode = selectedSide,
-                                            isSideAutoDetected = isAuto,
-                                            roadSection = effectiveLocation,
-                                            siteObservations = mainComments.trim(),
-                                            subActivityName = firstSub?.name ?: "",
-                                            subFromChainage = firstSub?.fromChainage ?: "",
-                                            subToChainage = firstSub?.toChainage ?: "",
-                                            subLengthM = firstSub?.lengthM ?: 0.0,
-                                            subWidthM = firstSub?.widthM ?: 0.0,
-                                            subComments = encodedSubComments,
-                                            photoUris = siteRegisterPhotoPath.trim()
-                                        )
+                                    if (!isEditingActivity) {
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = Color(0xFF16A34A).copy(alpha = 0.12f),
+                                            border = BorderStroke(1.dp, Color(0xFF16A34A).copy(alpha = 0.3f))
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CheckCircle,
+                                                    contentDescription = "Auto-saved",
+                                                    tint = Color(0xFF16A34A),
+                                                    modifier = Modifier.size(11.dp)
+                                                )
+                                                if (!isCompact) {
+                                                    Text(
+                                                        text = "Auto-saved",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF16A34A)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
 
-                                        scope.launch {
-                                            viewModel.saveSmartActivity(finalAct)
-                                            Toast.makeText(context, if (isEditingActivity) "Activity Updated" else "Activity Saved", Toast.LENGTH_SHORT).show()
+                                Spacer(modifier = Modifier.width(4.dp))
+
+                                // Right side: Materialistic Flat Action Buttons with Smart Dynamic Fit
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(btnSpacing),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (!isEditingActivity && ActivityDraftManager.hasDraft(context)) {
+                                        Button(
+                                            onClick = {
+                                                ActivityDraftManager.clearDraft(context)
+                                                resetEntryForm()
+                                                Toast.makeText(context, "Draft cleared", Toast.LENGTH_SHORT).show()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                                                contentColor = MaterialTheme.colorScheme.error
+                                            ),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+                                            contentPadding = PaddingValues(horizontal = btnPaddingHorizontal, vertical = 0.dp),
+                                            modifier = Modifier
+                                                .height(btnHeight)
+                                                .defaultMinSize(minHeight = btnHeight, minWidth = 1.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = if (isCompact) "Clear" else "Clear Draft",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = {
                                             showAddEditDialog = false
                                             resetEntryForm()
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                ) {
-                                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Save Activity", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f),
+                                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        ),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                                        contentPadding = PaddingValues(horizontal = btnPaddingHorizontal, vertical = 0.dp),
+                                        modifier = Modifier
+                                            .height(btnHeight)
+                                            .defaultMinSize(minHeight = btnHeight, minWidth = 1.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = "Cancel",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            val effectiveActivityName = when (selectedActivity) {
+                                                "None" -> ""
+                                                "Manually Enter", "Other" -> customActivityText.trim()
+                                                else -> selectedActivity.trim()
+                                            }
+
+                                            val effectiveLocation = when (selectedRoadLocation) {
+                                                "None" -> ""
+                                                "Manually Enter" -> customRoadLocationText.trim()
+                                                else -> selectedRoadLocation.trim()
+                                            }
+
+                                            val finalSide = if (selectedSide == "Auto") (detectedSideFromRoute ?: "LHS") else selectedSide
+                                            val isAuto = selectedSide == "Auto" && detectedSideFromRoute != null
+
+                                            val formattedFromCh = formatHighwayChainageInput(fromChainage.trim())
+                                            val formattedToCh = formatHighwayChainageInput(toChainage.trim())
+                                            fromChainage = formattedFromCh
+                                            toChainage = formattedToCh
+
+                                            val formattedSubList = subActivitiesList.map { sub ->
+                                                val sFrom = formatHighwayChainageInput(sub.fromChainage.trim())
+                                                val sTo = formatHighwayChainageInput(sub.toChainage.trim())
+                                                sub.copy(
+                                                    fromChainage = sFrom,
+                                                    toChainage = sTo,
+                                                    lengthM = calculateChainageDiffMetres(sFrom, sTo)
+                                                )
+                                            }
+                                            subActivitiesList.clear()
+                                            subActivitiesList.addAll(formattedSubList)
+
+                                            val firstSub = formattedSubList.firstOrNull()
+                                            val encodedSubComments = encodeSubActivitiesJson(formattedSubList)
+
+                                            val mainLen = calculateChainageDiffMetres(formattedFromCh, formattedToCh)
+                                            val mainWid = activityWidthM.toDoubleOrNull() ?: 0.0
+                                            val mainDepth = activityDepthM.toDoubleOrNull() ?: 0.0
+                                            val mainVol = if (mainDepth > 0 && mainWid > 0 && mainLen > 0) mainLen * mainWid * (mainDepth / 1000.0) else 0.0
+
+                                            val finalAct = SmartActivityEntity(
+                                                id = editingActivityId ?: 0,
+                                                projectId = currentProject.id,
+                                                projectName = currentProject.name,
+                                                dateString = selectedDateString,
+                                                timestamp = System.currentTimeMillis(),
+                                                activityLayer = effectiveActivityName,
+                                                fromChainage = formattedFromCh,
+                                                toChainage = formattedToCh,
+                                                completedLengthM = mainLen,
+                                                widthM = mainWid,
+                                                depthM = mainDepth,
+                                                thicknessMm = mainDepth,
+                                                quantity = mainVol,
+                                                unit = if (mainDepth > 0) "Cum" else if (mainWid > 0) "Sqm" else "Rm",
+                                                side = finalSide,
+                                                sideMode = selectedSide,
+                                                isSideAutoDetected = isAuto,
+                                                roadSection = effectiveLocation,
+                                                siteObservations = mainComments.trim(),
+                                                subActivityName = firstSub?.name ?: "",
+                                                subFromChainage = firstSub?.fromChainage ?: "",
+                                                subToChainage = firstSub?.toChainage ?: "",
+                                                subLengthM = firstSub?.lengthM ?: 0.0,
+                                                subWidthM = firstSub?.widthM ?: 0.0,
+                                                subDepthM = firstSub?.depthM ?: 0.0,
+                                                subComments = encodedSubComments,
+                                                photoUris = siteRegisterPhotoPath.trim()
+                                            )
+
+                                            scope.launch {
+                                                viewModel.saveSmartActivity(finalAct)
+                                                ActivityDraftManager.clearDraft(context)
+                                                Toast.makeText(context, if (isEditingActivity) "Activity Updated" else "Activity Saved", Toast.LENGTH_SHORT).show()
+                                                showAddEditDialog = false
+                                                resetEntryForm()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary
+                                        ),
+                                        contentPadding = PaddingValues(
+                                            horizontal = if (isUltraCompact) 8.dp else if (isCompact) 10.dp else 14.dp,
+                                            vertical = 0.dp
+                                        ),
+                                        modifier = Modifier
+                                            .height(btnHeight)
+                                            .defaultMinSize(minHeight = btnHeight, minWidth = 1.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isEditingActivity) Icons.Default.Check else Icons.Default.Save,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (isCompact) {
+                                                if (isEditingActivity) "Update" else "Save"
+                                            } else {
+                                                if (isEditingActivity) "Update Activity" else "Save Activity"
+                                            },
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.5.sp
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1900,8 +2487,8 @@ fun SmartNotesScreen(
         var selectedPreset by remember { mutableStateOf("THIS_WEEK") } // "THIS_WEEK", "LAST_WEEK", "CUSTOM"
         var exportProjectId by remember { mutableStateOf(currentProject.id) }
         var isGeneratingRangePdf by remember { mutableStateOf(false) }
-        var includeLogo by remember { mutableStateOf(!dprCustomLogoUri.isNullOrBlank()) }
-        var includeSig by remember { mutableStateOf(signatureBitmapState != null) }
+        var includeLogo by remember(overlayConfig.includePdfLogoDefault, dprCustomLogoUri) { mutableStateOf(overlayConfig.includePdfLogoDefault && !dprCustomLogoUri.isNullOrBlank()) }
+        var includeSig by remember(overlayConfig.includePdfSignatureDefault, signatureBitmapState) { mutableStateOf(overlayConfig.includePdfSignatureDefault && signatureBitmapState != null) }
 
         AlertDialog(
             onDismissRequest = { showWeeklyExportDialog = false },
@@ -2084,37 +2671,73 @@ fun SmartNotesScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        isGeneratingRangePdf = true
-                        scope.launch {
-                            val rangeActs = viewModel.getActivitiesForProjectAndDateRangeList(exportProjectId, startDateInput, endDateInput)
-                            val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
-                            val title = if (selectedPreset == "THIS_WEEK" || selectedPreset == "LAST_WEEK") "WEEKLY HIGHWAY SITE ACTIVITY REPORT" else "CUSTOM PERIOD SITE ACTIVITY REPORT"
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = {
+                            isGeneratingRangePdf = true
+                            scope.launch {
+                                val targetProject = appProjects.find { it.id == exportProjectId } ?: currentProject
+                                val rangeActs = viewModel.getActivitiesForProjectAndDateRangeList(exportProjectId, startDateInput, endDateInput)
+                                val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
+                                val title = if (selectedPreset == "THIS_WEEK" || selectedPreset == "LAST_WEEK") "WEEKLY HIGHWAY SITE ACTIVITY REPORT" else "CUSTOM PERIOD SITE ACTIVITY REPORT"
 
-                            val pdfFile = DprPdfGenerator.generateRangeDprPdf(
-                                context = context,
-                                project = currentProject,
-                                startDateString = startDateInput,
-                                endDateString = endDateInput,
-                                reportTitle = title,
-                                activities = rangeActs,
-                                preparedBy = dprPreparedByName,
-                                customLogoBitmap = logoBmp,
-                                signatureBitmap = if (includeSig) signatureBitmapState else null,
-                                includeLogo = includeLogo,
-                                includeSignature = includeSig
-                            )
-                            isGeneratingRangePdf = false
-                            showWeeklyExportDialog = false
-                            DprPdfGenerator.shareDprPdf(context, pdfFile)
+                                val pdfFile = DprPdfGenerator.generateRangeDprPdf(
+                                    context = context,
+                                    project = targetProject,
+                                    startDateString = startDateInput,
+                                    endDateString = endDateInput,
+                                    reportTitle = title,
+                                    activities = rangeActs,
+                                    preparedBy = dprPreparedByName,
+                                    customLogoBitmap = logoBmp,
+                                    signatureBitmap = if (includeSig) signatureBitmapState else null,
+                                    includeLogo = includeLogo,
+                                    includeSignature = includeSig
+                                )
+                                isGeneratingRangePdf = false
+                                previewPdfFile = pdfFile
+                                showPdfPreviewModal = true
+                            }
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
-                ) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Generate & Share PDF")
+                    ) {
+                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Preview")
+                    }
+
+                    Button(
+                        onClick = {
+                            isGeneratingRangePdf = true
+                            scope.launch {
+                                val targetProject = appProjects.find { it.id == exportProjectId } ?: currentProject
+                                val rangeActs = viewModel.getActivitiesForProjectAndDateRangeList(exportProjectId, startDateInput, endDateInput)
+                                val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
+                                val title = if (selectedPreset == "THIS_WEEK" || selectedPreset == "LAST_WEEK") "WEEKLY HIGHWAY SITE ACTIVITY REPORT" else "CUSTOM PERIOD SITE ACTIVITY REPORT"
+
+                                val pdfFile = DprPdfGenerator.generateRangeDprPdf(
+                                    context = context,
+                                    project = targetProject,
+                                    startDateString = startDateInput,
+                                    endDateString = endDateInput,
+                                    reportTitle = title,
+                                    activities = rangeActs,
+                                    preparedBy = dprPreparedByName,
+                                    customLogoBitmap = logoBmp,
+                                    signatureBitmap = if (includeSig) signatureBitmapState else null,
+                                    includeLogo = includeLogo,
+                                    includeSignature = includeSig
+                                )
+                                isGeneratingRangePdf = false
+                                showWeeklyExportDialog = false
+                                DprPdfGenerator.shareDprPdf(context, pdfFile)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Share PDF")
+                    }
                 }
             },
             dismissButton = {
@@ -2127,8 +2750,8 @@ fun SmartNotesScreen(
     // DAILY DPR EXPORT DIALOG (SINGLE, ALL DAY, SELECTED)
     // -------------------------------------------------------------
     if (showDprExportDialog) {
-        var includeLogo by remember { mutableStateOf(!dprCustomLogoUri.isNullOrBlank()) }
-        var includeSig by remember { mutableStateOf(signatureBitmapState != null) }
+        var includeLogo by remember(overlayConfig.includePdfLogoDefault, dprCustomLogoUri) { mutableStateOf(overlayConfig.includePdfLogoDefault && !dprCustomLogoUri.isNullOrBlank()) }
+        var includeSig by remember(overlayConfig.includePdfSignatureDefault, signatureBitmapState) { mutableStateOf(overlayConfig.includePdfSignatureDefault && signatureBitmapState != null) }
 
         AlertDialog(
             onDismissRequest = { showDprExportDialog = false },
@@ -2201,36 +2824,77 @@ fun SmartNotesScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val exportList = when (dprExportMode) {
-                            "SINGLE" -> listOfNotNull(singleActivityToExport)
-                            "SELECTED" -> activitiesForDate.filter { selectedActivityIds.contains(it.id) }
-                            else -> activitiesForDate
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = {
+                            val exportList = when (dprExportMode) {
+                                "SINGLE" -> listOfNotNull(singleActivityToExport)
+                                "SELECTED" -> activitiesForDate.filter { selectedActivityIds.contains(it.id) }
+                                else -> activitiesForDate
+                            }
+                            val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
+                            val pdfFile = DprPdfGenerator.generateDprPdf(
+                                context = context,
+                                project = currentProject,
+                                dateString = selectedDateString,
+                                activities = exportList,
+                                preparedBy = dprPreparedByName,
+                                customLogoBitmap = logoBmp,
+                                signatureBitmap = if (includeSig) signatureBitmapState else null,
+                                includeLogo = includeLogo,
+                                includeSignature = includeSig
+                            )
+                            previewPdfFile = pdfFile
+                            showPdfPreviewModal = true
                         }
-                        val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
-                        val pdfFile = DprPdfGenerator.generateDprPdf(
-                            context = context,
-                            project = currentProject,
-                            dateString = selectedDateString,
-                            activities = exportList,
-                            preparedBy = dprPreparedByName,
-                            customLogoBitmap = logoBmp,
-                            signatureBitmap = if (includeSig) signatureBitmapState else null,
-                            includeLogo = includeLogo,
-                            includeSignature = includeSig
-                        )
-                        showDprExportDialog = false
-                        DprPdfGenerator.shareDprPdf(context, pdfFile)
+                    ) {
+                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Preview")
                     }
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Generate & Share PDF")
+
+                    Button(
+                        onClick = {
+                            val exportList = when (dprExportMode) {
+                                "SINGLE" -> listOfNotNull(singleActivityToExport)
+                                "SELECTED" -> activitiesForDate.filter { selectedActivityIds.contains(it.id) }
+                                else -> activitiesForDate
+                            }
+                            val logoBmp = if (includeLogo) DprPdfGenerator.loadBitmapFromUri(context, dprCustomLogoUri) else null
+                            val pdfFile = DprPdfGenerator.generateDprPdf(
+                                context = context,
+                                project = currentProject,
+                                dateString = selectedDateString,
+                                activities = exportList,
+                                preparedBy = dprPreparedByName,
+                                customLogoBitmap = logoBmp,
+                                signatureBitmap = if (includeSig) signatureBitmapState else null,
+                                includeLogo = includeLogo,
+                                includeSignature = includeSig
+                            )
+                            showDprExportDialog = false
+                            DprPdfGenerator.shareDprPdf(context, pdfFile)
+                        }
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Share PDF")
+                    }
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDprExportDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Full Page Rendered Document Preview Dialog
+    if (showPdfPreviewModal && previewPdfFile != null) {
+        PdfDocumentPreviewDialog(
+            pdfFile = previewPdfFile!!,
+            onDismiss = { showPdfPreviewModal = false },
+            onShare = {
+                DprPdfGenerator.shareDprPdf(context, previewPdfFile!!)
             }
         )
     }
@@ -2285,6 +2949,8 @@ fun SmartNotesScreen(
         )
     }
 }
+}
+
 
 // -------------------------------------------------------------
 // SMART SCAN DOCUMENT EDITOR DIALOG
