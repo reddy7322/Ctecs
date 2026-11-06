@@ -1023,15 +1023,18 @@ fun PhotosScreen(
 
     // Single Photo Delete Confirmation Dialog
     photoToDelete?.let { photo ->
+        val dialogColors = com.example.ui.theme.rememberDialogColors()
         AlertDialog(
             onDismissRequest = { photoToDelete = null },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
             icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
-            title = { Text("Delete Photo File", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            title = { Text("Delete Photo File", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor) },
             text = {
                 Text(
                     text = "Are you sure you want to permanently delete '${photo.fileName}' from both the gallery and device storage?",
                     fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = dialogColors.textSecondaryColor
                 )
             },
             confirmButton = {
@@ -1041,7 +1044,7 @@ fun PhotosScreen(
                         photoToDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -1051,7 +1054,9 @@ fun PhotosScreen(
             dismissButton = {
                 OutlinedButton(
                     onClick = { photoToDelete = null },
-                    shape = RoundedCornerShape(8.dp)
+                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.textColor),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Cancel", fontSize = 12.sp)
                 }
@@ -1061,15 +1066,18 @@ fun PhotosScreen(
 
     // Bulk Delete Confirmation Dialog
     if (showBulkDeleteDialog) {
+        val dialogColors = com.example.ui.theme.rememberDialogColors()
         AlertDialog(
             onDismissRequest = { showBulkDeleteDialog = false },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
             icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
-            title = { Text("Delete ${selectedPhotoIds.size} Selected Items", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            title = { Text("Delete ${selectedPhotoIds.size} Selected Items", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor) },
             text = {
                 Text(
                     text = "Are you sure you want to permanently delete these ${selectedPhotoIds.size} media files from device storage?",
                     fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = dialogColors.textSecondaryColor
                 )
             },
             confirmButton = {
@@ -1082,7 +1090,7 @@ fun PhotosScreen(
                         showBulkDeleteDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -1092,7 +1100,9 @@ fun PhotosScreen(
             dismissButton = {
                 OutlinedButton(
                     onClick = { showBulkDeleteDialog = false },
-                    shape = RoundedCornerShape(8.dp)
+                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.textColor),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("Cancel", fontSize = 12.sp)
                 }
@@ -1556,6 +1566,8 @@ fun PhotoLongPressOptionsDialog(
         } else null
     }
 
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -1569,7 +1581,8 @@ fun PhotoLongPressOptionsDialog(
         ) {
             Surface(
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                color = MaterialTheme.colorScheme.surface,
+                color = dialogColors.containerColor,
+                border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
                 tonalElevation = 6.dp,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1592,7 +1605,7 @@ fun PhotoLongPressOptionsDialog(
                                 .width(36.dp)
                                 .height(4.dp)
                                 .clip(RoundedCornerShape(2.dp))
-                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                                .background(dialogColors.textSecondaryColor.copy(alpha = 0.35f))
                         )
                     }
 
@@ -1608,7 +1621,8 @@ fun PhotoLongPressOptionsDialog(
                             modifier = Modifier
                                 .size(56.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF0F172A)),
+                                .background(dialogColors.surfaceColor)
+                                .border(1.dp, dialogColors.borderColor, RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             if (isVideo && videoThumbnail != null) {
@@ -1641,6 +1655,7 @@ fun PhotoLongPressOptionsDialog(
                                 text = photo.chainageLabel?.ifBlank { photo.fileName } ?: photo.fileName,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
+                                color = dialogColors.titleColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1655,19 +1670,19 @@ fun PhotoLongPressOptionsDialog(
                             Text(
                                 text = "${sdf.format(Date(photo.timestamp))} • $fileSizeMb • $resolution",
                                 fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = dialogColors.textSecondaryColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
 
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = dialogColors.textSecondaryColor)
                         }
                     }
 
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        color = dialogColors.borderColor,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
 
@@ -2465,28 +2480,32 @@ fun PhotoDetailsDialog(
     }
     val sdf = remember { SimpleDateFormat("EEEE, dd MMMM yyyy 'at' hh:mm:ss a", Locale.US) }
 
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Photo Details", fontWeight = FontWeight.Bold) },
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
+        title = { Text("Photo Details", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.verticalScroll(rememberScrollState())
             ) {
-                DetailRow("Filename", photo.fileName)
-                DetailRow("Chainage", photo.chainageLabel ?: "N/A")
-                DetailRow("Overlay Text", photo.formattedOverlayText)
-                DetailRow("Captured Time", sdf.format(Date(photo.timestamp)))
-                DetailRow("Resolution", resolution)
-                DetailRow("File Size", fileSizeMb)
-                DetailRow("Highway / Project", photo.highwayId)
-                DetailRow("Road Side / Lane", "${photo.roadSide} / ${photo.lane}")
-                DetailRow("Activity / Desc", "${photo.activity}${if (photo.customDescription.isNotBlank()) " / " + photo.customDescription else ""}")
-                DetailRow("GPS Coordinates", "%.6f, %.6f".format(Locale.US, photo.latitude, photo.longitude))
-                DetailRow("GPS Accuracy", "±%.1f meters".format(Locale.US, photo.accuracy))
-                DetailRow("Match Offset", "%.1f meters".format(Locale.US, photo.offsetMetres))
-                DetailRow("Match Type", if (photo.isManualChainage) "Manual Input" else "Auto KMZ Match")
-                DetailRow("File Path", photo.filePath)
+                DetailRow("Filename", photo.fileName, dialogColors)
+                DetailRow("Chainage", photo.chainageLabel ?: "N/A", dialogColors)
+                DetailRow("Overlay Text", photo.formattedOverlayText, dialogColors)
+                DetailRow("Captured Time", sdf.format(Date(photo.timestamp)), dialogColors)
+                DetailRow("Resolution", resolution, dialogColors)
+                DetailRow("File Size", fileSizeMb, dialogColors)
+                DetailRow("Highway / Project", photo.highwayId, dialogColors)
+                DetailRow("Road Side / Lane", "${photo.roadSide} / ${photo.lane}", dialogColors)
+                DetailRow("Activity / Desc", "${photo.activity}${if (photo.customDescription.isNotBlank()) " / " + photo.customDescription else ""}", dialogColors)
+                DetailRow("GPS Coordinates", "%.6f, %.6f".format(Locale.US, photo.latitude, photo.longitude), dialogColors)
+                DetailRow("GPS Accuracy", "±%.1f meters".format(Locale.US, photo.accuracy), dialogColors)
+                DetailRow("Match Offset", "%.1f meters".format(Locale.US, photo.offsetMetres), dialogColors)
+                DetailRow("Match Type", if (photo.isManualChainage) "Manual Input" else "Auto KMZ Match", dialogColors)
+                DetailRow("File Path", photo.filePath, dialogColors)
 
                 if (photo.latitude != 0.0 || photo.longitude != 0.0) {
                     Spacer(modifier = Modifier.height(4.dp))
@@ -2513,17 +2532,17 @@ fun PhotoDetailsDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", fontWeight = FontWeight.Bold)
+                Text("Close", fontWeight = FontWeight.Bold, color = dialogColors.textColor)
             }
         }
     )
 }
 
 @Composable
-private fun DetailRow(label: String, value: String) {
+private fun DetailRow(label: String, value: String, dialogColors: com.example.ui.theme.DialogThemeTokens = com.example.ui.theme.rememberDialogColors()) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Text(text = label, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-        Text(text = value.ifBlank { "N/A" }, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+        Text(text = value.ifBlank { "N/A" }, fontSize = 13.sp, color = dialogColors.textColor)
     }
 }
 

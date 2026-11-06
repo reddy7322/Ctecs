@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -99,8 +100,11 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -180,17 +184,20 @@ fun HomeScreen(
     ) {
         val maxH = maxHeight
         val isCompactHeight = maxH < 690.dp
+        val isScrollableLayout = maxH < 560.dp
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(
                     start = 12.dp,
                     end = 12.dp,
                     top = if (isCompactHeight) 3.dp else 6.dp,
                     bottom = if (isCompactHeight) 2.dp else 4.dp
-                ),
+                )
+                .then(if (isScrollableLayout) Modifier.verticalScroll(rememberScrollState()) else Modifier),
             verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 5.dp else 7.dp)
         ) {
             // 1. Top Telemetry Header Row (4 Theme-Matched Cards)
@@ -295,7 +302,10 @@ fun HomeScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .then(
+                        if (isScrollableLayout) Modifier.height(140.dp)
+                        else Modifier.weight(1f)
+                    )
                     .clip(RoundedCornerShape(14.dp))
                     .border(1.dp, cardBorderColor, RoundedCornerShape(14.dp))
             ) {
@@ -861,6 +871,8 @@ fun CentralChainageDisplay(
     val sideBadgeBorder = if (isDark) Color(0xFF10B981).copy(alpha = 0.4f) else Color(0xFFA7F3D0)
     val sideBadgeText = if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
 
+    val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = cardBgColor,
@@ -874,25 +886,27 @@ fun CentralChainageDisplay(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = 10.dp,
-                    vertical = if (isCompact) 10.dp else 14.dp
+                    horizontal = if (isCompact) 6.dp else 10.dp,
+                    vertical = if (isCompact) 8.dp else 12.dp
                 ),
             contentAlignment = Alignment.Center
         ) {
             val containerWidth = maxWidth
+            val sideLen = detectedSide.length
+            val approxBadgeWidth = if (sideLen > 6) 95.dp else 80.dp
+            val availableForDigits = (containerWidth - approxBadgeWidth).coerceAtLeast(120.dp)
             val charCount = chainageText.length.coerceAtLeast(6)
-            // Even larger, commanding chainage font size
-            val digitFontSize = when {
-                charCount > 8 -> when {
-                    containerWidth < 340.dp -> 52.sp
-                    containerWidth < 390.dp -> 62.sp
-                    else -> 74.sp
-                }
-                containerWidth < 340.dp -> 62.sp
-                containerWidth < 380.dp -> 76.sp
-                containerWidth < 430.dp -> 88.sp
-                else -> 98.sp
+
+            // Dynamic font sizing that adapts to available width, char count, and system font scale
+            val calculatedSp = (availableForDigits.value / (charCount * 0.54f * fontScale))
+            val maxSpCap = when {
+                containerWidth < 320.dp -> 48f
+                containerWidth < 360.dp -> 58f
+                containerWidth < 400.dp -> 70f
+                containerWidth < 460.dp -> 82f
+                else -> 92f
             }
+            val digitFontSize = calculatedSp.coerceIn(26f, maxSpCap).sp
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -903,20 +917,23 @@ fun CentralChainageDisplay(
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Compact Left Label: KM
+                    // Left Badge: KM
                     Surface(
                         shape = RoundedCornerShape(7.dp),
                         color = kmBadgeBg,
                         border = BorderStroke(0.9.dp, kmBadgeBorder),
-                        modifier = Modifier.padding(end = 8.dp)
+                        modifier = Modifier.padding(end = if (containerWidth < 340.dp) 4.dp else 6.dp)
                     ) {
                         Text(
                             text = "KM",
                             color = kmBadgeText,
-                            fontSize = 12.sp,
+                            fontSize = if (containerWidth < 340.dp) 10.5.sp else 12.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.6.sp,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            letterSpacing = 0.5.sp,
+                            modifier = Modifier.padding(
+                                horizontal = if (containerWidth < 340.dp) 6.dp else 8.dp,
+                                vertical = if (containerWidth < 340.dp) 3.dp else 4.dp
+                            )
                         )
                     }
 
@@ -928,20 +945,23 @@ fun CentralChainageDisplay(
                         isDark = isDark
                     )
 
-                    // Compact Right Badge: LHS / RHS / BHS
+                    // Right Badge: LHS / RHS / BHS / SEARCHING / LOAD ROUTE
                     Surface(
                         shape = RoundedCornerShape(7.dp),
                         color = sideBadgeBg,
                         border = BorderStroke(0.9.dp, sideBadgeBorder),
-                        modifier = Modifier.padding(start = 8.dp)
+                        modifier = Modifier.padding(start = if (containerWidth < 340.dp) 4.dp else 6.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            modifier = Modifier.padding(
+                                horizontal = if (containerWidth < 340.dp) 6.dp else 8.dp,
+                                vertical = if (containerWidth < 340.dp) 3.dp else 4.dp
+                            )
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(6.dp)
+                                    .size(if (containerWidth < 340.dp) 5.dp else 6.dp)
                                     .clip(CircleShape)
                                     .background(sideBadgeText)
                             )
@@ -949,9 +969,10 @@ fun CentralChainageDisplay(
                             Text(
                                 text = detectedSide,
                                 color = sideBadgeText,
-                                fontSize = 12.sp,
+                                fontSize = if (containerWidth < 340.dp) 10.5.sp else 12.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -968,24 +989,26 @@ fun CentralChainageDisplay(
                     Text(
                         text = if (hasActiveRoute) "Project Alignment" else "GPS-Derived",
                         color = subTextColor,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
                     )
                     Text(
                         text = "  •  ",
                         color = subTextColor.copy(alpha = 0.6f),
-                        fontSize = 11.sp
+                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp
                     )
                     Text(
                         text = String.format(Locale.US, "Offset: %.1fm", offsetMetres),
                         color = mainTextColor,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
                     )
                     Text(
                         text = "  •  ",
                         color = subTextColor.copy(alpha = 0.6f),
-                        fontSize = 11.sp
+                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp
                     )
 
                     val (confText, confCol) = when (confidence) {
@@ -997,8 +1020,9 @@ fun CentralChainageDisplay(
                     Text(
                         text = confText,
                         color = confCol,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             }
@@ -1339,13 +1363,13 @@ fun EditProjectStretchDialog(
     var stretch by remember { mutableStateOf(initialStretch) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val isDark = com.example.ui.theme.isAppDarkTheme()
-    val dialogAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+    val dialogAccent = if (dialogColors.isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
-        containerColor = if (isDark) Color(0xFF131B2E) else Color.White,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
         modifier = Modifier.imePadding(),
         icon = {
             Box(
@@ -1368,7 +1392,7 @@ fun EditProjectStretchDialog(
                 text = "Edit Project & Stretch",
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
-                color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+                color = dialogColors.titleColor
             )
         },
         text = {
@@ -1379,7 +1403,7 @@ fun EditProjectStretchDialog(
                 Text(
                     text = "Update project information for camera watermark and documentation:",
                     fontSize = 12.sp,
-                    color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+                    color = dialogColors.textSecondaryColor
                 )
 
                 OutlinedTextField(
@@ -1399,9 +1423,12 @@ fun EditProjectStretchDialog(
                         .fillMaxWidth()
                         .testTag("edit_project_input"),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = dialogColors.textColor,
+                        unfocusedTextColor = dialogColors.textColor,
                         focusedBorderColor = dialogAccent,
-                        unfocusedBorderColor = if (isDark) Color(0xFF263554) else Color(0xFFCBD5E1),
+                        unfocusedBorderColor = dialogColors.inputBorder,
                         focusedLabelColor = dialogAccent,
+                        unfocusedLabelColor = dialogColors.textSecondaryColor,
                         cursorColor = dialogAccent
                     )
                 )
@@ -1428,9 +1455,12 @@ fun EditProjectStretchDialog(
                         .fillMaxWidth()
                         .testTag("edit_stretch_input"),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = dialogColors.textColor,
+                        unfocusedTextColor = dialogColors.textColor,
                         focusedBorderColor = dialogAccent,
-                        unfocusedBorderColor = if (isDark) Color(0xFF263554) else Color(0xFFCBD5E1),
+                        unfocusedBorderColor = dialogColors.inputBorder,
                         focusedLabelColor = dialogAccent,
+                        unfocusedLabelColor = dialogColors.textSecondaryColor,
                         cursorColor = dialogAccent
                     )
                 )
@@ -1454,7 +1484,7 @@ fun EditProjectStretchDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B))
+                Text("Cancel", color = dialogColors.textSecondaryColor)
             }
         }
     )

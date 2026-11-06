@@ -253,6 +253,84 @@ fun ChainageCalculatorScreen(context: Context) {
             }
         }
 
+        // Card 4: Chainage Station Interval Generator
+        var intervalStartCh by remember { mutableStateOf("177+000") }
+        var intervalEndCh by remember { mutableStateOf("177+500") }
+        var stationIntervalM by remember { mutableStateOf("25") }
+        var selectedSideOption by remember { mutableStateOf("Both") }
+
+        val intStartM = parseChainageToMeters(intervalStartCh)
+        val intEndM = parseChainageToMeters(intervalEndCh)
+        val intervalStep = (stationIntervalM.toDoubleOrNull() ?: 25.0).coerceAtLeast(5.0)
+        val minM = min(intStartM, intEndM)
+        val maxM = max(intStartM, intEndM)
+        val stationCount = if (intervalStep > 0) (floor((maxM - minM) / intervalStep).toInt() + 1) else 0
+
+        val previewStations = remember(minM, maxM, intervalStep, selectedSideOption) {
+            val list = mutableListOf<String>()
+            var cur = minM
+            var count = 0
+            while (cur <= maxM + 0.001 && count < 8) {
+                list.add("${formatMetersToChainage(cur)} ($selectedSideOption)")
+                cur += intervalStep
+                count++
+            }
+            if (stationCount > 8) {
+                list.add("... and ${stationCount - 8} more stations")
+            }
+            list
+        }
+
+        ToolSectionCard(
+            title = "Station Interval Generator",
+            subtitle = "Generate highway survey / cross-section stationing at set intervals",
+            icon = Icons.Default.LinearScale
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ToolTextField(value = intervalStartCh, onValueChange = { intervalStartCh = it }, label = "From Station", modifier = Modifier.weight(1f), isChainage = true)
+                ToolTextField(value = intervalEndCh, onValueChange = { intervalEndCh = it }, label = "To Station", modifier = Modifier.weight(1f), isChainage = true)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                ToolTextField(value = stationIntervalM, onValueChange = { stationIntervalM = it }, label = "Interval (m)", modifier = Modifier.weight(1f))
+                listOf("LHS", "RHS", "Both").forEach { side ->
+                    ToolChoiceChip(
+                        selected = selectedSideOption == side,
+                        onClick = { selectedSideOption = side },
+                        text = side,
+                        modifier = Modifier.weight(0.7f)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            ResultBox(
+                onCopy = {
+                    val fullList = buildString {
+                        var cur = minM
+                        while (cur <= maxM + 0.001) {
+                            appendLine("${formatMetersToChainage(cur)} [$selectedSideOption]")
+                            cur += intervalStep
+                        }
+                    }
+                    copyToolResult(context, "Highway Stations (Interval ${intervalStep}m):\n$fullList")
+                }
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Total Stations", color = ToolColors.textSecondary, fontSize = 11.sp)
+                        Text("$stationCount Peg Points", color = ToolColors.accentBlue, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        previewStations.joinToString(" • "),
+                        color = ToolColors.textPrimary,
+                        fontSize = 12.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(84.dp))
     }
 }
@@ -456,6 +534,172 @@ fun DistanceGradientCalculatorScreen(context: Context) {
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 18.sp
                         )
+                    }
+                }
+            }
+        }
+
+        // Card 3: IRC:73 / IRC:SP:84 Camber & Superelevation Calculator
+        var pavementType by remember { mutableStateOf("Bituminous (2.5%)") }
+        var isTwoWayCrown by remember { mutableStateOf(true) }
+        var carriagewayW by remember { mutableStateOf("7.0") }
+        var designSpeed by remember { mutableStateOf("80") } // km/h
+        var curveRad by remember { mutableStateOf("400") } // m
+
+        val camberPct = when {
+            pavementType.contains("2.0") -> 2.0
+            pavementType.contains("3.0") -> 3.0
+            else -> 2.5
+        }
+        val roadW = carriagewayW.toDoubleOrNull() ?: 7.0
+        val effectiveW = if (isTwoWayCrown) roadW / 2.0 else roadW
+        val crownDropM = effectiveW * (camberPct / 100.0)
+        val crownDropMm = crownDropM * 1000.0
+        val vSpeed = designSpeed.toDoubleOrNull() ?: 80.0
+        val rCurve = curveRad.toDoubleOrNull() ?: 400.0
+        // IRC:73 design superelevation formula: e = V^2 / (225 * R)
+        val calculatedE = if (rCurve > 0) (vSpeed * vSpeed) / (225.0 * rCurve) else 0.0
+        val ePct = calculatedE * 100.0
+        val maxEPlain = 7.0 // max 7% in plain per IRC:73
+        val maxEHilly = 10.0 // max 10% in hilly
+        val finalEPct = min(ePct, maxEPlain)
+
+        ToolSectionCard(
+            title = "Camber & Superelevation (IRC:73 / IRC:SP:84)",
+            subtitle = "MoRTH Table 100-1 Camber & IRC:73 Curve Superelevation e = V² / (225*R)",
+            icon = Icons.Default.AltRoute
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Bituminous (2.5%)", "Concrete (2.0%)", "WMM/GSB (3.0%)").forEach { pt ->
+                    ToolChoiceChip(
+                        selected = pavementType == pt,
+                        onClick = { pavementType = pt },
+                        text = pt.substringBefore(" "),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ToolChoiceChip(
+                    selected = isTwoWayCrown,
+                    onClick = { isTwoWayCrown = true },
+                    text = "Center Crown (W/2)",
+                    modifier = Modifier.weight(1f)
+                )
+                ToolChoiceChip(
+                    selected = !isTwoWayCrown,
+                    onClick = { isTwoWayCrown = false },
+                    text = "Unidirectional (Full W)",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ToolTextField(value = carriagewayW, onValueChange = { carriagewayW = it }, label = "Carriageway Width (m)", modifier = Modifier.weight(1f))
+                ToolTextField(value = designSpeed, onValueChange = { designSpeed = it }, label = "Design Speed V (km/h)", modifier = Modifier.weight(1f))
+                ToolTextField(value = curveRad, onValueChange = { curveRad = it }, label = "Radius R (m)", modifier = Modifier.weight(1f))
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            ResultBox(
+                onCopy = {
+                    copyToolResult(
+                        context,
+                        "Camber: $camberPct% (Slope W: ${String.format(Locale.US, "%.2fm", effectiveW)}, Drop: ${String.format(Locale.US, "%.0f mm", crownDropMm)}) | Superelevation e: ${String.format(Locale.US, "%.2f%%", ePct)} (Max Plain 7%: ${String.format(Locale.US, "%.2f%%", finalEPct)})"
+                    )
+                }
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("Crown Drop / Raise", color = ToolColors.textSecondary, fontSize = 11.sp)
+                            Text(String.format(Locale.US, "%.0f mm (%.3f m)", crownDropMm, crownDropM), color = ToolColors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Column {
+                            Text("Superelevation e", color = ToolColors.textSecondary, fontSize = 11.sp)
+                            Text(String.format(Locale.US, "%.2f%%", ePct), color = ToolColors.accentBlue, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Max Allowable (7%)", color = ToolColors.textSecondary, fontSize = 11.sp)
+                            Text(
+                                if (ePct <= 7.0) "Complies (≤ 7%)" else "Capped at 7.0%",
+                                color = if (ePct <= 7.0) ToolColors.accentGreen else ToolColors.accentOrange,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = ToolColors.border)
+                    Text(
+                        text = "Effective Slope Width: ${String.format(Locale.US, "%.2f m", effectiveW)} • Type: ${if (isTwoWayCrown) "Dual Slope Crown" else "Single Sloped Carriageway"}",
+                        color = ToolColors.textSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+
+        // Card 4: GPS Coordinate Distance & Forward Azimuth / Bearing Calculator
+        var lat1Str by remember { mutableStateOf("18.5204") }
+        var lon1Str by remember { mutableStateOf("73.8567") }
+        var lat2Str by remember { mutableStateOf("18.5310") }
+        var lon2Str by remember { mutableStateOf("73.8645") }
+
+        val lat1 = lat1Str.toDoubleOrNull() ?: 0.0
+        val lon1 = lon1Str.toDoubleOrNull() ?: 0.0
+        val lat2 = lat2Str.toDoubleOrNull() ?: 0.0
+        val lon2 = lon2Str.toDoubleOrNull() ?: 0.0
+
+        // Haversine formula
+        val phi1 = Math.toRadians(lat1)
+        val phi2 = Math.toRadians(lat2)
+        val deltaPhi = Math.toRadians(lat2 - lat1)
+        val deltaLambda = Math.toRadians(lon2 - lon1)
+        val aHaversine = sin(deltaPhi / 2.0).pow(2.0) + cos(phi1) * cos(phi2) * sin(deltaLambda / 2.0).pow(2.0)
+        val cHaversine = 2.0 * atan2(sqrt(aHaversine), sqrt(1.0 - aHaversine))
+        val earthRadiusM = 6371000.0
+        val gpsDistM = earthRadiusM * cHaversine
+
+        // Forward Azimuth / Bearing
+        val yAz = sin(deltaLambda) * cos(phi2)
+        val xAz = cos(phi1) * sin(phi2) - sin(phi1) * cos(phi2) * cos(deltaLambda)
+        val bearingDeg = (Math.toDegrees(atan2(yAz, xAz)) + 360.0) % 360.0
+
+        ToolSectionCard(
+            title = "GPS Distance & Azimuth / Bearing Calculator",
+            subtitle = "Great circle Haversine distance and forward bearing angle between coordinates",
+            icon = Icons.Default.Explore
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ToolTextField(value = lat1Str, onValueChange = { lat1Str = it }, label = "Point 1 Lat", modifier = Modifier.weight(1f))
+                ToolTextField(value = lon1Str, onValueChange = { lon1Str = it }, label = "Point 1 Lon", modifier = Modifier.weight(1f))
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ToolTextField(value = lat2Str, onValueChange = { lat2Str = it }, label = "Point 2 Lat", modifier = Modifier.weight(1f))
+                ToolTextField(value = lon2Str, onValueChange = { lon2Str = it }, label = "Point 2 Lon", modifier = Modifier.weight(1f))
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            ResultBox(
+                onCopy = {
+                    copyToolResult(
+                        context,
+                        "GPS Distance: ${String.format(Locale.US, "%.1f m (%.3f km)", gpsDistM, gpsDistM / 1000.0)} | Bearing: ${String.format(Locale.US, "%.1f°", bearingDeg)}"
+                    )
+                }
+            ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("GPS Distance", color = ToolColors.textSecondary, fontSize = 11.sp)
+                        Text(String.format(Locale.US, "%.1f m", gpsDistM), color = ToolColors.accentBlue, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Column {
+                        Text("In Kilometers", color = ToolColors.textSecondary, fontSize = 11.sp)
+                        Text(String.format(Locale.US, "%.3f km", gpsDistM / 1000.0), color = ToolColors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Column {
+                        Text("Forward Azimuth", color = ToolColors.textSecondary, fontSize = 11.sp)
+                        Text(String.format(Locale.US, "%.1f°", bearingDeg), color = ToolColors.accentGreen, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1831,10 +2075,12 @@ fun UnitConverterScreen(context: Context) {
 @Composable
 fun ToolChoiceChip(
     selected: Boolean,
-    label: String,
+    label: String = "",
+    text: String = label,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val displayLabel = if (text.isNotBlank()) text else label
     val isDark = isAppDarkTheme()
     val containerColor = when {
         selected && isDark -> Color(0xFF1E3A8A).copy(alpha = 0.55f)
@@ -1866,7 +2112,7 @@ fun ToolChoiceChip(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = label,
+                text = displayLabel,
                 color = textColor,
                 fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,

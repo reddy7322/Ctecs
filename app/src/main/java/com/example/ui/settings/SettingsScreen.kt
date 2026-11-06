@@ -3268,17 +3268,23 @@ fun SettingsScreen(
                     isExpanded = expandedSections["permissions_about"] ?: false,
                     onToggleExpand = { expandedSections["permissions_about"] = !(expandedSections["permissions_about"] ?: false) }
                 ) {
+                    val isDark = com.example.ui.theme.isAppDarkTheme()
                     val currentChannel = com.example.update.AppReleaseChannel.current()
                     val isBetaApp = currentChannel == com.example.update.AppReleaseChannel.BETA
-                    val channelColor = if (isBetaApp) Color(0xFFFBBF24) else Color(0xFF38BDF8)
-                    val channelBg = if (isBetaApp) Color(0xFFB45309).copy(alpha = 0.25f) else Color(0xFF0369A1).copy(alpha = 0.25f)
+                    val channelColor = if (isBetaApp) Color(0xFFF59E0B) else Color(0xFF0284C7)
+                    val channelBg = if (isBetaApp) Color(0xFFB45309).copy(alpha = 0.2f) else Color(0xFF0284C7).copy(alpha = 0.15f)
 
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            text = "App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = channelBg
@@ -3301,6 +3307,72 @@ fun SettingsScreen(
                         modifier = Modifier.padding(top = 2.dp)
                     )
 
+                    // Available Update or Downloading Status Card
+                    availableUpdate?.let { updateInfo ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isDark) Color(0xFF1E293B) else Color(0xFFF0F9FF),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, channelColor.copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = channelColor, modifier = Modifier.size(16.dp))
+                                        Text(
+                                            text = "Update Available: ${updateInfo.tagName}",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    if (updateInfo.apkSize > 0) {
+                                        Text(
+                                            text = "%.1f MB".format(updateInfo.apkSize / (1024.0 * 1024.0)),
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                if (isDownloadingUpdate) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("Downloading update...", fontSize = 11.sp, color = channelColor)
+                                        Text("${(updateDownloadProgress * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    LinearProgressIndicator(
+                                        progress = { updateDownloadProgress },
+                                        color = channelColor,
+                                        trackColor = if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0),
+                                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape)
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { viewModel.downloadAndInstallUpdate() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = channelColor, contentColor = Color.White),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Download & Install Update", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
 
                     if (isCheckingUpdate) {
@@ -3316,7 +3388,7 @@ fun SettingsScreen(
                     } else {
                         Button(
                             onClick = { viewModel.checkForAppUpdate(isManual = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = if (isBetaApp) Color(0xFFB45309) else Color(0xFF0284C7)),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (isBetaApp) Color(0xFFB45309) else Color(0xFF0284C7), contentColor = Color.White),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                         ) {
@@ -3406,27 +3478,30 @@ fun SettingsScreen(
 
     // Restore Defaults Dialog
     if (showRestoreDialog) {
+        val dialogColors = com.example.ui.theme.rememberDialogColors()
         AlertDialog(
             onDismissRequest = { showRestoreDialog = false },
-            title = { Text("Restore Default Settings?", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
-            text = { Text("All custom project profile names, camera settings, timestamp formats, and logo preferences will be reset to factory defaults.", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
+            title = { Text("Restore Default Settings?", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
+            text = { Text("All custom project profile names, camera settings, timestamp formats, and logo preferences will be reset to factory defaults.", color = dialogColors.textSecondaryColor) },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.resetAllSettings()
                         showRestoreDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), contentColor = Color.White),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Reset Everything")
+                    Text("Reset Everything", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showRestoreDialog = false }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Cancel", color = dialogColors.textSecondaryColor)
                 }
-            },
-            containerColor = MaterialTheme.colorScheme.surface
+            }
         )
     }
 
@@ -3475,20 +3550,25 @@ private fun ResolutionSelectionDialog(
     onSelect: (CameraResolution) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+    val accentColor = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
         title = {
             Column {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF38BDF8)
+                        color = accentColor
                     )
                 )
                 Text(
                     text = "${resolutions.size} supported hardware outputs detected",
-                    style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    style = MaterialTheme.typography.labelSmall.copy(color = dialogColors.textSecondaryColor)
                 )
             }
         },
@@ -3515,28 +3595,26 @@ private fun ResolutionSelectionDialog(
                             text = res.displayTitle,
                             fontSize = 15.sp,
                             fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal,
-                            color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface
+                            color = if (isSelected) accentColor else dialogColors.textColor
                         )
                         RadioButton(
                             selected = isSelected,
                             onClick = { onSelect(res) },
                             colors = RadioButtonDefaults.colors(
-                                selectedColor = Color(0xFF38BDF8),
-                                unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                selectedColor = accentColor,
+                                unselectedColor = dialogColors.textSecondaryColor
                             )
                         )
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    HorizontalDivider(color = dialogColors.borderColor)
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                Text("Close", color = dialogColors.textColor, fontWeight = FontWeight.Bold)
             }
-        },
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(16.dp)
+        }
     )
 }
 
@@ -3551,10 +3629,13 @@ private fun FileNameFormatDialog(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+    val accentColor = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(16.dp),
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
         title = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -3565,13 +3646,13 @@ private fun FileNameFormatDialog(
                         modifier = Modifier
                             .size(32.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF38BDF8).copy(alpha = 0.15f)),
+                            .background(accentColor.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = "File name format",
-                            tint = Color(0xFF0284C7),
+                            tint = accentColor,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -3579,13 +3660,13 @@ private fun FileNameFormatDialog(
                         text = "File name format",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0284C7)
+                        color = dialogColors.titleColor
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
                 HorizontalDivider(
-                    thickness = 1.8.dp,
-                    color = Color(0xFF38BDF8)
+                    thickness = 1.5.dp,
+                    color = accentColor
                 )
             }
         },
@@ -3620,7 +3701,7 @@ private fun FileNameFormatDialog(
                             text = previewText,
                             fontSize = 13.5.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = if (isSelected) accentColor else dialogColors.textColor,
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(end = 10.dp)
@@ -3629,21 +3710,21 @@ private fun FileNameFormatDialog(
                             selected = isSelected,
                             onClick = { onSelect(option.id) },
                             colors = RadioButtonDefaults.colors(
-                                selectedColor = Color(0xFF0284C7),
-                                unselectedColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+                                selectedColor = accentColor,
+                                unselectedColor = dialogColors.textSecondaryColor
                             )
                         )
                     }
                     HorizontalDivider(
                         thickness = 0.6.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                        color = dialogColors.borderColor
                     )
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = Color(0xFF0284C7), fontWeight = FontWeight.Bold)
+                Text("Close", color = accentColor, fontWeight = FontWeight.Bold)
             }
         }
     )
@@ -3659,13 +3740,17 @@ private fun SignatureDrawPadDialog(
 ) {
     val strokes = remember { mutableStateListOf<List<Offset>>() }
     var currentStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+    val accentColor = if (dialogColors.isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF2563EB))
-                Text("Draw Digital Signature", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Icon(Icons.Default.Edit, contentDescription = null, tint = accentColor)
+                Text("Draw Digital Signature", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor)
             }
         },
         text = {
@@ -3676,15 +3761,15 @@ private fun SignatureDrawPadDialog(
                 Text(
                     text = "Sign inside the box using your finger or stylus:",
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = dialogColors.textSecondaryColor
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(170.dp)
-                        .background(Color.White, RoundedCornerShape(8.dp))
-                        .border(1.5.dp, Color(0xFF2563EB), RoundedCornerShape(8.dp))
+                        .background(Color.White, RoundedCornerShape(10.dp))
+                        .border(1.5.dp, accentColor, RoundedCornerShape(10.dp))
                         .pointerInput(Unit) {
                             detectDragGestures(
                                 onDragStart = { offset ->
@@ -3776,14 +3861,16 @@ private fun SignatureDrawPadDialog(
                     }
                     onDismiss()
                 },
-                enabled = strokes.isNotEmpty()
+                enabled = strokes.isNotEmpty(),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = Color.White)
             ) {
-                Text("Save Signature")
+                Text("Save Signature", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text("Cancel", color = dialogColors.textSecondaryColor)
             }
         }
     )

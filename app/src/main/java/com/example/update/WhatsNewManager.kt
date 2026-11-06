@@ -16,69 +16,75 @@ class WhatsNewManager(private val context: Context) {
     companion object {
         private val KEY_LAST_SEEN_VERSION = stringPreferencesKey("last_seen_version")
 
+        val SIMPLIFIED_FEATURES = listOf(
+            WhatsNewFeature(
+                title = "Minor Bugs Fixed",
+                description = "General stability, UI layout, and performance improvements across modules.",
+                category = "FIX"
+            ),
+            WhatsNewFeature(
+                title = "New Improved Features Added",
+                description = "Complete Dark/Light theme consistency and enhanced workflow capabilities.",
+                category = "FEATURE"
+            )
+        )
+
         val DEFAULT_FEATURES = listOf(
             WhatsNewFeature(
                 title = "Automatic Highway Chainage",
-                description = "Loads KMZ/KML alignments and matches 50m highway chainage markers in real-time.",
-                category = "ACCURACY"
+                description = "Real-time live chainage calculation with high precision interpolation.",
+                category = "FEATURE"
             ),
             WhatsNewFeature(
-                title = "Professional Timestamp Overlay",
-                description = "High-contrast white bold typography with dark outline matching the NH-58 reference photo style.",
-                category = "OVERLAY"
-            ),
-            WhatsNewFeature(
-                title = "Offline Vector Mini-Map",
-                description = "In-camera vector mini-map rendering road alignment, nearby chainage ticks, and GPS location pin.",
-                category = "MAP"
-            ),
-            WhatsNewFeature(
-                title = "Single-Tap Field Selectors",
-                description = "Instant toggles for Road Side (RHS/LHS), Lane (I/L, M/L, O/L), and Pavement Layers (DBM, BC, GSB).",
-                category = "FIELD"
-            ),
-            WhatsNewFeature(
-                title = "Smart In-App Updates",
-                description = "Automatic background update checking with direct secure in-app OTA installation.",
-                category = "UPDATE"
+                title = "Offline Highway Alignment",
+                description = "Full offline support for KML, GeoJSON, and CSV survey alignments.",
+                category = "FEATURE"
             )
         )
 
         /**
-         * Parses GitHub release markdown body into structured feature highlights.
+         * Parses release notes markdown into structured features with graceful fallback.
          */
         fun parseReleaseNotesToFeatures(notes: String): List<WhatsNewFeature> {
-            val items = mutableListOf<WhatsNewFeature>()
-            val lines = notes.lines()
+            if (notes.isBlank()) return DEFAULT_FEATURES
 
-            for (line in lines) {
-                val trimmed = line.trim()
-                if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ")) {
-                    val clean = trimmed.removePrefix("- ").removePrefix("* ").removePrefix("• ").trim()
-                    if (clean.isNotBlank()) {
-                        val parts = clean.split(":", limit = 2)
-                        if (parts.size == 2) {
-                            items.add(
-                                WhatsNewFeature(
-                                    title = parts[0].replace("**", "").trim(),
-                                    description = parts[1].trim(),
-                                    category = "RELEASE"
-                                )
-                            )
-                        } else {
-                            items.add(
-                                WhatsNewFeature(
-                                    title = clean.take(40).replace("**", ""),
-                                    description = clean,
-                                    category = "RELEASE"
-                                )
-                            )
-                        }
-                    }
+            val lines = notes.lines()
+            val parsed = mutableListOf<WhatsNewFeature>()
+
+            for (rawLine in lines) {
+                val line = rawLine.trim()
+                if (!line.startsWith("-") && !line.startsWith("*")) continue
+                val content = line.removePrefix("-").removePrefix("*").trim()
+                if (content.isBlank()) continue
+
+                val boldRegex = Regex("""\*\*(.+?)\*\*:\s*(.*)""")
+                val boldMatch = boldRegex.find(content)
+
+                if (boldMatch != null) {
+                    val title = boldMatch.groupValues[1].trim()
+                    val desc = boldMatch.groupValues[2].trim()
+                    parsed.add(
+                        WhatsNewFeature(
+                            title = title,
+                            description = desc,
+                            category = if (title.contains("Fix", ignoreCase = true) || title.contains("Bug", ignoreCase = true)) "FIX" else "FEATURE"
+                        )
+                    )
+                } else if (content.contains(":")) {
+                    val idx = content.indexOf(":")
+                    val title = content.substring(0, idx).replace("*", "").trim()
+                    val desc = content.substring(idx + 1).trim()
+                    parsed.add(
+                        WhatsNewFeature(
+                            title = title,
+                            description = desc,
+                            category = if (title.contains("Fix", ignoreCase = true) || title.contains("Bug", ignoreCase = true)) "FIX" else "FEATURE"
+                        )
+                    )
                 }
             }
 
-            return if (items.isNotEmpty()) items else DEFAULT_FEATURES
+            return if (parsed.isNotEmpty()) parsed else DEFAULT_FEATURES
         }
     }
 

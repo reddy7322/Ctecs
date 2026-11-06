@@ -507,6 +507,8 @@ fun PdfDocumentPreviewDialog(
         }
     }
 
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
@@ -515,14 +517,14 @@ fun PdfDocumentPreviewDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .background(Color(0xFF0F172A)),
-            color = Color(0xFF0F172A)
+                .navigationBarsPadding(),
+            color = dialogColors.containerColor
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Surface(
-                    color = MaterialTheme.colorScheme.surface,
+                    color = dialogColors.surfaceColor,
                     tonalElevation = 2.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -537,11 +539,11 @@ fun PdfDocumentPreviewDialog(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = dialogColors.titleColor)
                             }
                             Column {
-                                Text("Document Preview", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                Text("Page ${currentPageIndex + 1} of $totalPageCount", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Document Preview", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = dialogColors.titleColor)
+                                Text("Page ${currentPageIndex + 1} of $totalPageCount", fontSize = 11.sp, color = dialogColors.textSecondaryColor)
                             }
                         }
 
@@ -645,6 +647,7 @@ fun SmartNotesScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
 
     // 1. Projects State
     val appProjects by viewModel.allProjects.collectAsStateWithLifecycle()
@@ -2445,10 +2448,13 @@ fun SmartNotesScreen(
 
         // Unsaved Changes Confirmation
         if (showUnsavedConfirmation) {
+            val dialogColors = com.example.ui.theme.rememberDialogColors()
             AlertDialog(
                 onDismissRequest = { showUnsavedConfirmation = false },
-                title = { Text("Discard Unsaved Changes?") },
-                text = { Text("You have un-saved activity details. Are you sure you want to close without saving?") },
+                shape = dialogColors.shape,
+                containerColor = dialogColors.containerColor,
+                title = { Text("Discard Unsaved Changes?", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
+                text = { Text("You have un-saved activity details. Are you sure you want to close without saving?", color = dialogColors.textSecondaryColor) },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -2456,14 +2462,15 @@ fun SmartNotesScreen(
                             showAddEditDialog = false
                             resetEntryForm()
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         Text("Discard & Close")
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showUnsavedConfirmation = false }) {
-                        Text("Keep Editing")
+                        Text("Keep Editing", color = dialogColors.textSecondaryColor)
                     }
                 }
             )
@@ -2474,6 +2481,7 @@ fun SmartNotesScreen(
     // WEEKLY / CUSTOM DATE RANGE EXPORT DIALOG
     // -------------------------------------------------------------
     if (showWeeklyExportDialog) {
+        val dialogColors = com.example.ui.theme.rememberDialogColors()
         var startDateInput by remember {
             mutableStateOf(
                 run {
@@ -2492,10 +2500,12 @@ fun SmartNotesScreen(
 
         AlertDialog(
             onDismissRequest = { showWeeklyExportDialog = false },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Default.DateRange, contentDescription = null, tint = Color(0xFF2563EB))
-                    Text("Weekly / Custom Date Export", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Weekly / Custom Date Export", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor)
                 }
             },
             text = {
@@ -2505,14 +2515,15 @@ fun SmartNotesScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Quick Range Presets:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Quick Range Presets:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (selectedPreset == "THIS_WEEK") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (selectedPreset == "THIS_WEEK") MaterialTheme.colorScheme.primary else dialogColors.surfaceColor,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
                             onClick = {
                                 selectedPreset = "THIS_WEEK"
                                 val cal = Calendar.getInstance()
@@ -2526,7 +2537,7 @@ fun SmartNotesScreen(
                                 "This Week",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (selectedPreset == "THIS_WEEK") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (selectedPreset == "THIS_WEEK") Color.White else dialogColors.textColor,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(vertical = 6.dp)
                             )
@@ -2534,7 +2545,8 @@ fun SmartNotesScreen(
 
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (selectedPreset == "LAST_WEEK") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (selectedPreset == "LAST_WEEK") MaterialTheme.colorScheme.primary else dialogColors.surfaceColor,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
                             onClick = {
                                 selectedPreset = "LAST_WEEK"
                                 val cal = Calendar.getInstance()
@@ -2549,7 +2561,7 @@ fun SmartNotesScreen(
                                 "Last Week",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (selectedPreset == "LAST_WEEK") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (selectedPreset == "LAST_WEEK") Color.White else dialogColors.textColor,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(vertical = 6.dp)
                             )
@@ -2557,7 +2569,8 @@ fun SmartNotesScreen(
 
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (selectedPreset == "CUSTOM") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (selectedPreset == "CUSTOM") MaterialTheme.colorScheme.primary else dialogColors.surfaceColor,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
                             onClick = { selectedPreset = "CUSTOM" },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -2565,7 +2578,7 @@ fun SmartNotesScreen(
                                 "Custom",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (selectedPreset == "CUSTOM") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (selectedPreset == "CUSTOM") Color.White else dialogColors.textColor,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(vertical = 6.dp)
                             )
@@ -2584,6 +2597,14 @@ fun SmartNotesScreen(
                             },
                             label = { Text("From Date (YYYY-MM-DD)", fontSize = 10.sp) },
                             singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = dialogColors.textColor,
+                                unfocusedTextColor = dialogColors.textColor,
+                                focusedBorderColor = Color(0xFF2563EB),
+                                unfocusedBorderColor = dialogColors.inputBorder,
+                                focusedLabelColor = Color(0xFF2563EB),
+                                unfocusedLabelColor = dialogColors.textSecondaryColor
+                            ),
                             modifier = Modifier.weight(1f)
                         )
 
@@ -2595,11 +2616,19 @@ fun SmartNotesScreen(
                             },
                             label = { Text("To Date (YYYY-MM-DD)", fontSize = 10.sp) },
                             singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = dialogColors.textColor,
+                                unfocusedTextColor = dialogColors.textColor,
+                                focusedBorderColor = Color(0xFF2563EB),
+                                unfocusedBorderColor = dialogColors.inputBorder,
+                                focusedLabelColor = Color(0xFF2563EB),
+                                unfocusedLabelColor = dialogColors.textSecondaryColor
+                            ),
                             modifier = Modifier.weight(1f)
                         )
                     }
 
-                    Text("Project:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Project:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
                     var expandedPrj by remember { mutableStateOf(false) }
                     Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
@@ -2608,20 +2637,27 @@ fun SmartNotesScreen(
                             readOnly = true,
                             trailingIcon = {
                                 IconButton(onClick = { expandedPrj = true }) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = dialogColors.textSecondaryColor)
                                 }
                             },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = dialogColors.textColor,
+                                unfocusedTextColor = dialogColors.textColor,
+                                focusedBorderColor = Color(0xFF2563EB),
+                                unfocusedBorderColor = dialogColors.inputBorder
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { expandedPrj = true }
                         )
                         DropdownMenu(
                             expanded = expandedPrj,
-                            onDismissRequest = { expandedPrj = false }
+                            onDismissRequest = { expandedPrj = false },
+                            modifier = Modifier.background(dialogColors.containerColor)
                         ) {
                             appProjects.forEach { prj ->
                                 DropdownMenuItem(
-                                    text = { Text("${prj.id} - ${prj.name}") },
+                                    text = { Text("${prj.id} - ${prj.name}", color = dialogColors.textColor) },
                                     onClick = {
                                         exportProjectId = prj.id
                                         expandedPrj = false
@@ -2631,9 +2667,9 @@ fun SmartNotesScreen(
                         }
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(color = dialogColors.borderColor)
 
-                    Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
 
                     // Checkbox: Include Custom Logo
                     Row(
@@ -2648,7 +2684,7 @@ fun SmartNotesScreen(
                         Text(
                             text = "Include Custom Logo" + if (dprCustomLogoUri.isNullOrBlank()) " (No logo set in Settings)" else "",
                             fontSize = 12.sp,
-                            color = if (!dprCustomLogoUri.isNullOrBlank()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (!dprCustomLogoUri.isNullOrBlank()) dialogColors.textColor else dialogColors.textSecondaryColor
                         )
                     }
 
@@ -2665,7 +2701,7 @@ fun SmartNotesScreen(
                         Text(
                             text = "Include Saved Signature" + if (signatureBitmapState == null) " (No signature saved)" else "",
                             fontSize = 12.sp,
-                            color = if (signatureBitmapState != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (signatureBitmapState != null) dialogColors.textColor else dialogColors.textSecondaryColor
                         )
                     }
                 }
@@ -2698,7 +2734,10 @@ fun SmartNotesScreen(
                                 previewPdfFile = pdfFile
                                 showPdfPreviewModal = true
                             }
-                        }
+                        },
+                        border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.textColor),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2732,7 +2771,8 @@ fun SmartNotesScreen(
                                 DprPdfGenerator.shareDprPdf(context, pdfFile)
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB), contentColor = Color.White),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2741,7 +2781,7 @@ fun SmartNotesScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showWeeklyExportDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showWeeklyExportDialog = false }) { Text("Cancel", color = dialogColors.textSecondaryColor) }
             }
         )
     }
@@ -2755,10 +2795,13 @@ fun SmartNotesScreen(
 
         AlertDialog(
             onDismissRequest = { showDprExportDialog = false },
+            containerColor = dialogColors.containerColor,
+            tonalElevation = dialogColors.tonalElevation,
+            shape = RoundedCornerShape(dialogColors.cornerRadius),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Export PDF Confirmation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = dialogColors.primaryAccent)
+                    Text("Export PDF Confirmation", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor)
                 }
             },
             text = {
@@ -2774,19 +2817,28 @@ fun SmartNotesScreen(
                         else -> activitiesForDate
                     }
 
-                    Text("Selected Activities: ${exportList.size} item(s)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Selected Activities: ${exportList.size} item(s)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
 
                     OutlinedTextField(
                         value = dprPreparedByName,
                         onValueChange = { dprPreparedByName = it },
                         label = { Text("Prepared By (Site Engineer Name)") },
                         singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = dialogColors.inputFocusedBorder,
+                            unfocusedBorderColor = dialogColors.inputUnfocusedBorder,
+                            focusedTextColor = dialogColors.titleColor,
+                            unfocusedTextColor = dialogColors.titleColor,
+                            focusedLabelColor = dialogColors.primaryAccent,
+                            unfocusedLabelColor = dialogColors.textSecondaryColor,
+                            cursorColor = dialogColors.primaryAccent
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(color = dialogColors.dividerColor)
 
-                    Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
 
                     // Checkbox: Include Custom Logo
                     Row(
@@ -2801,7 +2853,7 @@ fun SmartNotesScreen(
                         Text(
                             text = "Include Custom Logo" + if (dprCustomLogoUri.isNullOrBlank()) " (No logo set in Settings)" else "",
                             fontSize = 12.sp,
-                            color = if (!dprCustomLogoUri.isNullOrBlank()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (!dprCustomLogoUri.isNullOrBlank()) dialogColors.titleColor else dialogColors.textSecondaryColor
                         )
                     }
 
@@ -2818,7 +2870,7 @@ fun SmartNotesScreen(
                         Text(
                             text = "Include Saved Signature" + if (signatureBitmapState == null) " (No signature saved)" else "",
                             fontSize = 12.sp,
-                            color = if (signatureBitmapState != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (signatureBitmapState != null) dialogColors.titleColor else dialogColors.textSecondaryColor
                         )
                     }
                 }
@@ -2846,7 +2898,9 @@ fun SmartNotesScreen(
                             )
                             previewPdfFile = pdfFile
                             showPdfPreviewModal = true
-                        }
+                        },
+                        border = BorderStroke(1.dp, dialogColors.borderColor),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.titleColor)
                     ) {
                         Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2874,7 +2928,8 @@ fun SmartNotesScreen(
                             )
                             showDprExportDialog = false
                             DprPdfGenerator.shareDprPdf(context, pdfFile)
-                        }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = dialogColors.primaryAccent, contentColor = Color.White)
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2883,7 +2938,7 @@ fun SmartNotesScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDprExportDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showDprExportDialog = false }) { Text("Cancel", color = dialogColors.textSecondaryColor) }
             }
         )
     }
@@ -2899,12 +2954,72 @@ fun SmartNotesScreen(
         )
     }
 
+    // Date Picker Dialog for Site Activity Date Header
+    if (showDatePickerDialog) {
+        val initialMillis = remember(selectedDateString) {
+            try {
+                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                sdf.parse(selectedDateString)?.time ?: System.currentTimeMillis()
+            } catch (e: Exception) {
+                System.currentTimeMillis()
+            }
+        }
+        val datePickerState = androidx.compose.material3.rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        androidx.compose.material3.DatePickerDialog(
+            onDismissRequest = { showDatePickerDialog = false },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+                            cal.timeInMillis = millis
+                            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                            selectedDateString = sdf.format(cal.time)
+                        }
+                        showDatePickerDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = dialogColors.primaryAccent, contentColor = Color.White)
+                ) {
+                    Text("Select")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePickerDialog = false }) {
+                    Text("Cancel", color = dialogColors.textSecondaryColor)
+                }
+            },
+            colors = androidx.compose.material3.DatePickerDefaults.colors(
+                containerColor = dialogColors.containerColor
+            ),
+            shape = RoundedCornerShape(dialogColors.cornerRadius)
+        ) {
+            androidx.compose.material3.DatePicker(
+                state = datePickerState,
+                colors = androidx.compose.material3.DatePickerDefaults.colors(
+                    containerColor = dialogColors.containerColor,
+                    titleContentColor = dialogColors.titleColor,
+                    headlineContentColor = dialogColors.titleColor,
+                    weekdayContentColor = dialogColors.textSecondaryColor,
+                    subheadContentColor = dialogColors.textSecondaryColor,
+                    dayContentColor = dialogColors.titleColor,
+                    selectedDayContainerColor = dialogColors.primaryAccent,
+                    selectedDayContentColor = Color.White,
+                    todayDateBorderColor = dialogColors.primaryAccent,
+                    todayContentColor = dialogColors.primaryAccent
+                )
+            )
+        }
+    }
+
     // Delete Confirmation Dialog
     if (activityToDelete != null) {
         AlertDialog(
             onDismissRequest = { activityToDelete = null },
-            title = { Text("Delete Site Activity?") },
-            text = { Text("Are you sure you want to delete this activity entry (${activityToDelete?.activityLayer} Ch. ${activityToDelete?.fromChainage})?") },
+            containerColor = dialogColors.containerColor,
+            tonalElevation = dialogColors.tonalElevation,
+            shape = RoundedCornerShape(dialogColors.cornerRadius),
+            title = { Text("Delete Site Activity?", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
+            text = { Text("Are you sure you want to delete this activity entry (${activityToDelete?.activityLayer} Ch. ${activityToDelete?.fromChainage})?", color = dialogColors.textSecondaryColor) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -2916,13 +3031,13 @@ fun SmartNotesScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    colors = ButtonDefaults.buttonColors(containerColor = dialogColors.errorColor, contentColor = Color.White)
                 ) {
                     Text("Delete")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { activityToDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { activityToDelete = null }) { Text("Cancel", color = dialogColors.textSecondaryColor) }
             }
         )
     }
@@ -2961,6 +3076,7 @@ fun SmartScanEditorDialog(
     onDismiss: () -> Unit,
     onSaveScanned: (Bitmap) -> Unit
 ) {
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
     var selectedFilterMode by remember { mutableStateOf("DOCUMENT") }
     var rotationDegrees by remember { mutableStateOf(0f) }
     var currentProcessedBmp by remember(selectedFilterMode, rotationDegrees) {
@@ -2974,13 +3090,16 @@ fun SmartScanEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = dialogColors.containerColor,
+        tonalElevation = dialogColors.tonalElevation,
+        shape = RoundedCornerShape(dialogColors.cornerRadius),
         title = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("Smart Document Scanner", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Icon(Icons.Default.Tune, contentDescription = null, tint = dialogColors.primaryAccent)
+                Text("Smart Document Scanner", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor)
             }
         },
         text = {
@@ -2993,7 +3112,7 @@ fun SmartScanEditorDialog(
                 Text(
                     text = "Enhance readability for site register, level sheet, or inspection logs without watermarks or timestamps.",
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = dialogColors.textSecondaryColor
                 )
 
                 Box(
@@ -3001,8 +3120,8 @@ fun SmartScanEditorDialog(
                         .fillMaxWidth()
                         .height(260.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black.copy(alpha = 0.05f))
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+                        .background(dialogColors.surfaceCardColor)
+                        .border(1.dp, dialogColors.borderColor, RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
@@ -3013,7 +3132,7 @@ fun SmartScanEditorDialog(
                     )
                 }
 
-                Text("Scan Filter Presets:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("Scan Filter Presets:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -3028,7 +3147,8 @@ fun SmartScanEditorDialog(
                         val isSelected = selectedFilterMode == modeKey
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (isSelected) dialogColors.primaryAccent else dialogColors.surfaceCardColor,
+                            border = if (!isSelected) BorderStroke(1.dp, dialogColors.borderColor) else null,
                             onClick = { selectedFilterMode = modeKey },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -3036,7 +3156,7 @@ fun SmartScanEditorDialog(
                                 text = label,
                                 fontSize = 10.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isSelected) Color.White else dialogColors.textSecondaryColor,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp)
                             )
@@ -3051,7 +3171,9 @@ fun SmartScanEditorDialog(
                 ) {
                     OutlinedButton(
                         onClick = { rotationDegrees = (rotationDegrees + 90f) % 360f },
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        border = BorderStroke(1.dp, dialogColors.borderColor),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.titleColor)
                     ) {
                         Icon(Icons.Default.RotateRight, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -3061,7 +3183,7 @@ fun SmartScanEditorDialog(
                     Text(
                         text = "Clean scan • No metadata",
                         fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = dialogColors.textSecondaryColor
                     )
                 }
             }
@@ -3069,7 +3191,7 @@ fun SmartScanEditorDialog(
         confirmButton = {
             Button(
                 onClick = { onSaveScanned(currentProcessedBmp) },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                colors = ButtonDefaults.buttonColors(containerColor = dialogColors.primaryAccent, contentColor = Color.White)
             ) {
                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
@@ -3078,7 +3200,7 @@ fun SmartScanEditorDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", fontSize = 12.sp)
+                Text("Cancel", fontSize = 12.sp, color = dialogColors.textSecondaryColor)
             }
         }
     )
@@ -3092,6 +3214,7 @@ fun FullPhotoViewerDialog(
     photoPath: String,
     onDismiss: () -> Unit
 ) {
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
     val bitmap = remember(photoPath) {
         try {
             BitmapFactory.decodeFile(photoPath)
@@ -3102,6 +3225,9 @@ fun FullPhotoViewerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = dialogColors.containerColor,
+        tonalElevation = dialogColors.tonalElevation,
+        shape = RoundedCornerShape(dialogColors.cornerRadius),
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3112,11 +3238,11 @@ fun FullPhotoViewerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Site Register Photo", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Icon(Icons.Default.Description, contentDescription = null, tint = dialogColors.primaryAccent)
+                    Text("Site Register Photo", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = dialogColors.titleColor)
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp), tint = dialogColors.titleColor)
                 }
             }
         },
@@ -3146,19 +3272,19 @@ fun FullPhotoViewerDialog(
                     Text(
                         text = "Unable to load image file.",
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.error
+                        color = dialogColors.errorColor
                     )
                 }
                 Text(
                     text = "Clean Document Photo (No Timestamp / Watermark Overlay)",
                     fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = dialogColors.textSecondaryColor
                 )
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text("Close", color = dialogColors.primaryAccent)
             }
         }
     )

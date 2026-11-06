@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -77,7 +78,9 @@ private data class ToolGridItem(
     val title: String,
     val subtitle: String,
     val icon: ImageVector,
-    val badgeBg: Color
+    val badgeBg: Color,
+    val category: String,
+    val aliases: List<String> = emptyList()
 )
 
 @Composable
@@ -87,6 +90,7 @@ fun SmartHighwayToolsScreen(
 ) {
     var activeToolId by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("All Tools") }
     var isSearchExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val isDark = isAppDarkTheme()
@@ -100,109 +104,264 @@ fun SmartHighwayToolsScreen(
         }
     }
 
-    // 13 unique, canonical highway engineering tools — zero duplicates
+    val categories = remember {
+        listOf(
+            "All Tools",
+            "Survey & Geometry",
+            "Earthwork & Pavements",
+            "Concrete & Structures",
+            "Materials & QC Tests",
+            "Quantity & Equipment",
+            "MoRTH Standards"
+        )
+    }
+
+    // 24 Canonical Highway Engineering Tools based on MoRTH & IRC Standards
+    // Deduplicated, unique canonical tools with aliases for search discovery
     val gridTools = remember {
         listOf(
+            // Category 1: Survey & Geometry
             ToolGridItem(
                 id = "chainage_calc",
                 title = "Chainage Calculator",
-                subtitle = "Distance, offset & progress",
+                subtitle = "Distance, offset & station generator",
                 icon = Icons.Default.Straighten,
-                badgeBg = Color(0xFF4F46E5)
+                badgeBg = Color(0xFF4F46E5),
+                category = "Survey & Geometry",
+                aliases = listOf("Station", "Chainage Distance", "Chainage Offset", "Add Chainage", "Subtract Chainage")
             ),
             ToolGridItem(
                 id = "distance_gradient_calc",
                 title = "Distance & Gradient",
-                subtitle = "Slope %, 1:N ratio & RL",
+                subtitle = "Slope %, 1:N, camber & superelevation",
                 icon = Icons.Default.Terrain,
-                badgeBg = Color(0xFFEA580C)
-            ),
-            ToolGridItem(
-                id = "area_calc",
-                title = "Area Calculator",
-                subtitle = "m², ha, sq.yd & taper area",
-                icon = Icons.Default.Layers,
-                badgeBg = Color(0xFF2563EB)
-            ),
-            ToolGridItem(
-                id = "volume_calc",
-                title = "Volume Calculator",
-                subtitle = "Layer & earthwork m³",
-                icon = Icons.Default.ViewInAr,
-                badgeBg = Color(0xFFDB2777)
-            ),
-            ToolGridItem(
-                id = "level_calc",
-                title = "Level Calculator",
-                subtitle = "Auto-level HI, RL & dip",
-                icon = Icons.Default.Speed,
-                badgeBg = Color(0xFF0D9488)
+                badgeBg = Color(0xFFEA580C),
+                category = "Survey & Geometry",
+                aliases = listOf("Camber", "Cross-fall", "Crown Drop", "Superelevation", "Slope", "Gradient", "Slope Ratio", "Grade", "Level Interpolation")
             ),
             ToolGridItem(
                 id = "curve_calc",
                 title = "Curve Calculator",
-                subtitle = "Horizontal curve & e%",
+                subtitle = "Horizontal & vertical curve geometry",
                 icon = Icons.Default.TurnRight,
-                badgeBg = Color(0xFF7C3AED)
+                badgeBg = Color(0xFF7C3AED),
+                category = "Survey & Geometry",
+                aliases = listOf("Circular Curve", "Vertical Curve", "Summit Curve", "Valley Curve", "Parabolic Curve", "Tangent Length")
             ),
             ToolGridItem(
-                id = "steel_calc",
-                title = "Steel Calculator",
-                subtitle = "Rebar weight & BBS",
-                icon = Icons.Default.Architecture,
-                badgeBg = Color(0xFF0284C7)
+                id = "level_calc",
+                title = "Level Calculator",
+                subtitle = "Auto-level HI, RL, rise/fall & dip check",
+                icon = Icons.Default.Speed,
+                badgeBg = Color(0xFF0D9488),
+                category = "Survey & Geometry",
+                aliases = listOf("Height of Instrument", "Rise and Fall", "Reduced Level", "Auto Level", "Dumpy Level", "Fly Level")
             ),
             ToolGridItem(
-                id = "concrete_calc",
-                title = "Concrete Calculator",
-                subtitle = "PQC & grade M15–M40",
-                icon = Icons.Default.Foundation,
-                badgeBg = Color(0xFF4338CA)
+                id = "area_calc",
+                title = "Area Calculator",
+                subtitle = "m², ha, cross-section & taper area",
+                icon = Icons.Default.Layers,
+                badgeBg = Color(0xFF2563EB),
+                category = "Survey & Geometry",
+                aliases = listOf("Surface Area", "Carriageway Area", "Paving Area", "Taper Area", "Transition Widening", "Square Yards")
             ),
             ToolGridItem(
-                id = "joint_calc",
-                title = "Joint Calculator",
-                subtitle = "PQC dowel & tie bars",
-                icon = Icons.Default.GridOn,
-                badgeBg = Color(0xFFDC2626)
+                id = "volume_calc",
+                title = "Volume Calculator",
+                subtitle = "Highway layers, cut/fill & tipper loads",
+                icon = Icons.Default.ViewInAr,
+                badgeBg = Color(0xFFDB2777),
+                category = "Survey & Geometry",
+                aliases = listOf("Compacted Volume", "Loose Volume", "Bulking", "Embankment Volume", "Trench Volume", "Cut Fill", "Trapezoidal Volume", "Cubic Feet")
+            ),
+
+            // Category 2: Earthwork & Pavements
+            ToolGridItem(
+                id = "earthwork_eng",
+                title = "Earthwork & Embankment",
+                subtitle = "MoRTH Cl. 305 lift & field dry density",
+                icon = Icons.Default.Landscape,
+                badgeBg = Color(0xFFB45309),
+                category = "Earthwork & Pavements",
+                aliases = listOf("FDD", "Field Dry Density", "Compaction Check", "Embankment Lift", "Subgrade Top 500mm", "MoRTH Section 300", "Borrow Area")
             ),
             ToolGridItem(
                 id = "pavement_layers",
                 title = "Pavement Layers",
-                subtitle = "BC, DBM, WMM & Tack",
+                subtitle = "BC, DBM, WMM, GSB & Binder Content",
                 icon = Icons.Default.AddRoad,
-                badgeBg = Color(0xFF0891B2)
+                badgeBg = Color(0xFF0891B2),
+                category = "Earthwork & Pavements",
+                aliases = listOf("BC Quantity", "DBM Quantity", "WMM Mix", "GSB Layer", "Tipper Trips", "Bitumen Binder JMF", "Asphalt Mix")
             ),
             ToolGridItem(
-                id = "unit_converter",
-                title = "Unit Converter",
-                subtitle = "Length, area, vol & mass",
-                icon = Icons.Default.Calculate,
-                badgeBg = Color(0xFF475569)
+                id = "tack_prime_coat",
+                title = "Tack & Prime Coat",
+                subtitle = "MoRTH Cl. 502/503 spray rates, liters & drums",
+                icon = Icons.Default.FormatPaint,
+                badgeBg = Color(0xFF0284C7),
+                category = "Earthwork & Pavements",
+                aliases = listOf("Tack Coat", "Prime Coat", "Emulsion", "RS-1", "SS-1", "Spray Rate", "Tray Test", "Bitumen Emulsion Drums")
+            ),
+
+            // Category 3: Concrete & Structures
+            ToolGridItem(
+                id = "concrete_calc",
+                title = "Concrete Calculator",
+                subtitle = "PCC/RCC structural mix design & TM loads",
+                icon = Icons.Default.Foundation,
+                badgeBg = Color(0xFF4338CA),
+                category = "Concrete & Structures",
+                aliases = listOf("Mix Design", "Cement Sand Aggregate", "Transit Mixer", "Concrete Batch", "M15", "M20", "M25", "M30", "M35", "M40")
+            ),
+            ToolGridItem(
+                id = "steel_calc",
+                title = "Steel Calculator",
+                subtitle = "Rebar weight D²/162, cutting length & BBS",
+                icon = Icons.Default.Architecture,
+                badgeBg = Color(0xFF0284C7),
+                category = "Concrete & Structures",
+                aliases = listOf("Rebar Weight", "BBS", "Bar Bending Schedule", "Cutting Length", "Steel Tonnage", "Bundle Weight", "D2/162")
+            ),
+            ToolGridItem(
+                id = "joint_calc",
+                title = "Joint Calculator",
+                subtitle = "PQC dowel & tie bars, cutting & sealant",
+                icon = Icons.Default.GridOn,
+                badgeBg = Color(0xFFDC2626),
+                category = "Concrete & Structures",
+                aliases = listOf("Dowel Bars", "Tie Bars", "PQC Joint", "Contraction Joint", "Longitudinal Joint", "Joint Sealant")
+            ),
+            ToolGridItem(
+                id = "drainage_culverts",
+                title = "Drainage & Culverts",
+                subtitle = "Side drain, box & pipe culvert quantities",
+                icon = Icons.Default.WaterDrop,
+                badgeBg = Color(0xFF0E7490),
+                category = "Concrete & Structures",
+                aliases = listOf("Box Culvert", "Pipe Culvert", "Hume Pipe", "Side Drain", "Trapezoidal Drain", "Culvert Concrete")
+            ),
+
+            // Category 4: Materials & QC Tests
+            ToolGridItem(
+                id = "soil_lab_tests",
+                title = "Soil & Subgrade Lab",
+                subtitle = "IS:2720 Atterberg LL/PL/PI & soaked CBR",
+                icon = Icons.Default.Science,
+                badgeBg = Color(0xFF059669),
+                category = "Materials & QC Tests",
+                aliases = listOf("CBR Test", "Atterberg Limits", "Liquid Limit", "Plastic Limit", "Plasticity Index", "Proctor Test", "MDD OMC")
+            ),
+            ToolGridItem(
+                id = "aggregate_tests",
+                title = "Aggregate Quality Tests",
+                subtitle = "Flakiness, AIV, LA Abrasion & Stripping",
+                icon = Icons.Default.Category,
+                badgeBg = Color(0xFFD97706),
+                category = "Materials & QC Tests",
+                aliases = listOf("AIV", "Impact Value", "Los Angeles Abrasion", "Flakiness Index", "Elongation Index", "Stripping Value", "Water Absorption")
+            ),
+            ToolGridItem(
+                id = "bitumen_tests",
+                title = "Bitumen Binder Testing",
+                subtitle = "IS:73 Penetration, softening pt & ductility",
+                icon = Icons.Default.Opacity,
+                badgeBg = Color(0xFF6D28D9),
+                category = "Materials & QC Tests",
+                aliases = listOf("Penetration Test", "Softening Point", "Ductility Test", "Bitumen Viscosity", "VG-30", "VG-40", "CRMB", "PMB")
+            ),
+            ToolGridItem(
+                id = "asphalt_plant_qc",
+                title = "Asphalt Plant Mix QC",
+                subtitle = "Marshall volumetrics: Va, VMA, VFB & flow",
+                icon = Icons.Default.Factory,
+                badgeBg = Color(0xFFBE123C),
+                category = "Materials & QC Tests",
+                aliases = listOf("Marshall Stability", "Marshall Flow", "Air Voids", "VMA", "VFB", "HMP Mix QC", "Hot Mix Plant")
+            ),
+            ToolGridItem(
+                id = "safety_inspection",
+                title = "Work-Zone Safety Audit",
+                subtitle = "IRC:SP:55 signs, barricades & PPE audit",
+                icon = Icons.Default.HealthAndSafety,
+                badgeBg = Color(0xFF15803D),
+                category = "Materials & QC Tests",
+                aliases = listOf("Safety Audit", "Work Zone Safety", "IRC:SP:55", "Traffic Diversion", "Retroreflective Signs", "Barricades")
             ),
             ToolGridItem(
                 id = "qc_register",
                 title = "QC & Inspection Register",
-                subtitle = "MORTH logs & NCR tracker",
+                subtitle = "MORTH logs, RFI, WIR & NCR tracker",
                 icon = Icons.Default.FactCheck,
-                badgeBg = Color(0xFF059669)
+                badgeBg = Color(0xFF059669),
+                category = "Materials & QC Tests",
+                aliases = listOf("RFI", "WIR", "NCR Tracker", "QC Logbook", "Temperature Register", "Glass Grid Inspection", "Pre Construction Survey")
+            ),
+
+            // Category 5: Quantity & Equipment
+            ToolGridItem(
+                id = "road_furniture",
+                title = "Road Marking & Furniture",
+                subtitle = "MoRTH Cl. 803 thermo, crash barrier & studs",
+                icon = Icons.Default.Traffic,
+                badgeBg = Color(0xFFCA8A04),
+                category = "Quantity & Equipment",
+                aliases = listOf("Thermoplastic Paint", "Glass Beads", "Crash Barrier", "W-Beam", "Thrie-Beam", "Road Studs", "Cat Eyes", "Delineators")
+            ),
+            ToolGridItem(
+                id = "equipment_prod",
+                title = "Equipment Productivity",
+                subtitle = "Sensor paver MT/hr, roller & tipper trips",
+                icon = Icons.Default.PrecisionManufacturing,
+                badgeBg = Color(0xFF475569),
+                category = "Quantity & Equipment",
+                aliases = listOf("Sensor Paver Speed", "Roller Passes", "Compactor Fleet", "Tipper Requirement", "Cycle Time", "Paving Fleet")
+            ),
+            ToolGridItem(
+                id = "unit_converter",
+                title = "Unit Converter",
+                subtitle = "Length, area, volume, mass & pressure",
+                icon = Icons.Default.Calculate,
+                badgeBg = Color(0xFF475569),
+                category = "Quantity & Equipment",
+                aliases = listOf("Unit Conversion", "Metric Imperial", "Cubic Meters to CFT", "SqM to SqFt", "PSI to MPa")
             ),
             ToolGridItem(
                 id = "site_utilities",
-                title = "Site Utilities Calculator",
-                subtitle = "GPS, camber & workdays",
+                title = "Project Schedule & Coordinates",
+                subtitle = "GPS to DMS/UTM conversion & working-day deadline estimator",
                 icon = Icons.Default.Explore,
-                badgeBg = Color(0xFF1D4ED8)
+                badgeBg = Color(0xFF1D4ED8),
+                category = "Quantity & Equipment",
+                aliases = listOf("Site Utilities", "GPS Coordinates", "Geodetic Converter", "Decimal Degrees to DMS", "UTM Zone", "Working Days", "Milestone Deadline", "Paving Schedule")
+            ),
+
+            // Category 6: MoRTH Standards
+            ToolGridItem(
+                id = "standards_library",
+                title = "MoRTH & IRC Standards",
+                subtitle = "Dynamic specifications & clause viewer",
+                icon = Icons.Default.MenuBook,
+                badgeBg = Color(0xFF2563EB),
+                category = "MoRTH Standards",
+                aliases = listOf("MoRTH Specifications", "IRC Codes", "Clause 300", "Clause 400", "Clause 500", "Clause 800", "IRC:37", "IRC:58", "IRC:SP:84")
             )
         )
     }
 
-    val filteredTools = remember(searchQuery, gridTools) {
-        if (searchQuery.isBlank()) gridTools
-        else gridTools.filter {
-            it.title.contains(searchQuery, ignoreCase = true) ||
-                it.subtitle.contains(searchQuery, ignoreCase = true)
-        }
+    val filteredTools = remember(searchQuery, selectedCategory, gridTools) {
+        val query = searchQuery.trim()
+        gridTools.filter { tool ->
+            val matchesCategory = selectedCategory == "All Tools" || tool.category == selectedCategory
+            val matchesSearch = if (query.isBlank()) true else {
+                tool.title.contains(query, ignoreCase = true) ||
+                tool.subtitle.contains(query, ignoreCase = true) ||
+                tool.category.contains(query, ignoreCase = true) ||
+                tool.aliases.any { it.contains(query, ignoreCase = true) }
+            }
+            matchesCategory && matchesSearch
+        }.distinctBy { it.id }
     }
 
     val pageBackground = if (isDark) Color(0xFF0A0E17) else Color(0xFFF8FAFC)
@@ -247,7 +406,7 @@ fun SmartHighwayToolsScreen(
                 }
                 Spacer(modifier = Modifier.width(4.dp))
                 val currentTitle = if (activeToolId == null) {
-                    "Tools"
+                    "Highway Tools"
                 } else {
                     gridTools.find { it.id == activeToolId }?.title ?: "Tools"
                 }
@@ -279,6 +438,18 @@ fun SmartHighwayToolsScreen(
                         )
                     }
                     IconButton(
+                        onClick = { activeToolId = "standards_library" },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .testTag("tools_standards_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MenuBook,
+                            contentDescription = "MoRTH Standards",
+                            tint = headerTextColor
+                        )
+                    }
+                    IconButton(
                         onClick = { viewModel.setTab(AppTab.SMART_NOTES) },
                         modifier = Modifier
                             .size(40.dp)
@@ -298,7 +469,7 @@ fun SmartHighwayToolsScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Search calculators & registers...", fontSize = 13.sp) },
+                placeholder = { Text("Search 24 tools, tests, MoRTH clauses...", fontSize = 13.sp) },
                 singleLine = true,
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = null, tint = subTextColor)
@@ -324,6 +495,33 @@ fun SmartHighwayToolsScreen(
         }
 
         if (activeToolId == null) {
+            // Category Filter Chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 4.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                categories.forEach { cat ->
+                    val isSelected = selectedCategory == cat
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (isSelected) ToolColors.accentBlue else ToolColors.cardBgElevated,
+                        border = BorderStroke(1.dp, if (isSelected) ToolColors.accentBlue else ToolColors.border),
+                        modifier = Modifier.clickable { selectedCategory = cat }
+                    ) {
+                        Text(
+                            text = cat,
+                            color = if (isSelected) Color.White else ToolColors.textSecondary,
+                            fontSize = 11.5.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
             // Responsive Tools Grid using BoxWithConstraints
             BoxWithConstraints(
                 modifier = Modifier
@@ -381,17 +579,28 @@ fun SmartHighwayToolsScreen(
                 when (activeToolId) {
                     "chainage_calc" -> ChainageCalculatorScreen(context)
                     "distance_gradient_calc" -> DistanceGradientCalculatorScreen(context)
+                    "curve_calc" -> CurveCalculatorScreen(context)
+                    "level_calc" -> LevelCalculatorScreen(context)
                     "area_calc" -> AreaCalculatorScreen(context)
                     "volume_calc" -> VolumeCalculatorScreen(context)
-                    "level_calc" -> LevelCalculatorScreen(context)
-                    "curve_calc" -> CurveCalculatorScreen(context)
-                    "steel_calc" -> SteelCalculatorScreen(context)
-                    "concrete_calc" -> ConcreteCalculatorScreen(context)
-                    "joint_calc" -> JointCalculatorScreen(context)
+                    "earthwork_eng" -> EarthworkEmbankmentToolScreen(viewModel, context)
                     "pavement_layers" -> PavementLayersCalculatorScreen(context)
-                    "unit_converter" -> UnitConverterScreen(context)
+                    "tack_prime_coat" -> TackPrimeCoatToolScreen(viewModel, context)
+                    "concrete_calc" -> ConcreteCalculatorScreen(context)
+                    "steel_calc" -> SteelCalculatorScreen(context)
+                    "joint_calc" -> JointCalculatorScreen(context)
+                    "drainage_culverts" -> DrainageCulvertToolScreen(viewModel, context)
+                    "soil_lab_tests" -> SoilSubgradeLabToolScreen(viewModel, context)
+                    "aggregate_tests" -> AggregateQuarryToolScreen(viewModel, context)
+                    "bitumen_tests" -> BitumenBinderTestingToolScreen(viewModel, context)
+                    "asphalt_plant_qc" -> AsphaltPlantMixToolScreen(viewModel, context)
+                    "safety_inspection" -> RoadSafetyWorkZoneToolScreen(viewModel, context)
                     "qc_register" -> QualityControlRegistersView(viewModel, context)
+                    "road_furniture" -> RoadMarkingSignageToolScreen(viewModel, context)
+                    "equipment_prod" -> EquipmentProductivityToolScreen(viewModel, context)
+                    "unit_converter" -> UnitConverterScreen(context)
                     "site_utilities" -> SiteUtilitiesView(viewModel, context)
+                    "standards_library" -> StandardsLibraryBrowserScreen(context)
                     else -> ChainageCalculatorScreen(context)
                 }
             }
@@ -474,6 +683,144 @@ private fun ToolsResponsiveCard(
                 modifier = Modifier.size(16.dp)
             )
         }
+    }
+}
+
+// ============================================================================
+// DYNAMIC STANDARDS & SPECIFICATIONS LIBRARY BROWSER
+// ============================================================================
+@Composable
+fun StandardsLibraryBrowserScreen(context: Context) {
+    var query by remember { mutableStateOf("") }
+    var selectedOrg by remember { mutableStateOf("All Standards") }
+    val allClauses = remember { MorthIrcStandardsRepository.allClauses }
+
+    val filteredClauses = remember(query, selectedOrg) {
+        allClauses.filter { clause ->
+            val matchesOrg = when (selectedOrg) {
+                "MoRTH" -> clause.org == StandardOrg.MORTH
+                "IRC" -> clause.org == StandardOrg.IRC
+                "BIS/IS" -> clause.org == StandardOrg.BIS
+                else -> true
+            }
+            val matchesQuery = if (query.isBlank()) true else {
+                clause.codeNumber.contains(query, ignoreCase = true) ||
+                clause.title.contains(query, ignoreCase = true) ||
+                clause.clauseNumber.contains(query, ignoreCase = true) ||
+                clause.workItem.contains(query, ignoreCase = true) ||
+                clause.materialCategory.contains(query, ignoreCase = true) ||
+                clause.testRequirement.contains(query, ignoreCase = true) ||
+                clause.acceptanceCriteria.contains(query, ignoreCase = true)
+            }
+            matchesOrg && matchesQuery
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        ToolSectionCard(
+            title = "MoRTH & IRC Standards Library",
+            subtitle = "Verified clauses, sampling frequencies & acceptance criteria for Indian highway works",
+            icon = Icons.Default.MenuBook
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("All Standards", "MoRTH", "IRC", "BIS/IS").forEach { org ->
+                    ToolChoiceChip(
+                        selected = selectedOrg == org,
+                        onClick = { selectedOrg = org },
+                        text = org,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search clause, test, material...", fontSize = 13.sp) },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ToolColors.textSecondary) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", tint = ToolColors.textSecondary)
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = ToolColors.cardBg,
+                    unfocusedContainerColor = ToolColors.cardBg,
+                    focusedBorderColor = ToolColors.accentBlue,
+                    unfocusedBorderColor = ToolColors.border
+                )
+            )
+        }
+
+        Text(
+            text = "VERIFIED CLAUSES (${filteredClauses.size})",
+            color = ToolColors.accentBlue,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp
+        )
+
+        filteredClauses.forEach { clause ->
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = ToolColors.cardBg,
+                border = BorderStroke(1.dp, ToolColors.border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = ToolColors.accentBlue.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, ToolColors.accentBlue.copy(alpha = 0.3f))
+                        ) {
+                            Text(
+                                text = "${clause.codeNumber} • Cl. ${clause.clauseNumber}",
+                                color = ToolColors.accentBlue,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                copyToolResult(
+                                    context,
+                                    "${clause.codeNumber} Cl. ${clause.clauseNumber} (${clause.workItem}):\nCriteria: ${clause.acceptanceCriteria}\nFrequency: ${clause.samplingFrequency}\nSource: ${clause.sourceDocument}"
+                                )
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Clause", tint = ToolColors.textSecondary, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    Text(clause.title, color = ToolColors.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Work Item: ${clause.workItem} | Material: ${clause.materialCategory}", color = ToolColors.textSecondary, fontSize = 11.sp)
+                    HorizontalDivider(color = ToolColors.border.copy(alpha = 0.6f), modifier = Modifier.padding(vertical = 2.dp))
+                    Text("Test Requirement: ${clause.testRequirement}", color = ToolColors.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("Acceptance Criteria: ${clause.acceptanceCriteria}", color = ToolColors.accentGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Sampling Frequency: ${clause.samplingFrequency}", color = ToolColors.textSecondary, fontSize = 11.sp)
+                    Text("Table Reference: ${clause.tableOrFigure}", color = ToolColors.textSecondary, fontSize = 10.5.sp)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(84.dp))
     }
 }
 
@@ -804,110 +1151,7 @@ fun PavementLayersCalculatorScreen(context: Context) {
             }
         }
 
-        // 4. Tack Coat & Prime Coat Emulsion Calculator
-        var tackLen by remember { mutableStateOf("500") }
-        var tackWid by remember { mutableStateOf("7.0") }
-        var tackRate by remember { mutableStateOf("0.25") } // kg/sqm
-
-        val tArea = (tackLen.toDoubleOrNull() ?: 0.0) * (tackWid.toDoubleOrNull() ?: 0.0)
-        val tRate = tackRate.toDoubleOrNull() ?: 0.25
-        val tKg = tArea * tRate
-        val tTons = tKg / 1000.0
-        val tDrums = ceil(tKg / 200.0).toInt()
-
-        ToolSectionCard(
-            title = "Tack Coat / Prime Coat Emulsion Calculator",
-            subtitle = "MORTH Clause 502 / 503 • Spray Rate (kg/m²) & Drum Count",
-            icon = Icons.Default.WaterDrop
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                ToolTextField(
-                    value = tackLen,
-                    onValueChange = { tackLen = it },
-                    label = "Length (m)",
-                    modifier = Modifier.weight(1f)
-                )
-                ToolTextField(
-                    value = tackWid,
-                    onValueChange = { tackWid = it },
-                    label = "Width (m)",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            ToolTextField(
-                value = tackRate,
-                onValueChange = { tackRate = it },
-                label = "Application Spray Rate (kg/m²)",
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(
-                    "0.20 (Bituminous)" to "0.20",
-                    "0.25 (Granular)" to "0.25",
-                    "0.60 (Prime)" to "0.60"
-                ).forEach { (label, rateVal) ->
-                    ToolChoiceChip(
-                        selected = tackRate == rateVal,
-                        label = label,
-                        onClick = { tackRate = rateVal },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            ResultBox(
-                onCopy = {
-                    copyToolResult(
-                        context,
-                        String.format(Locale.US, "Emulsion: %.1f kg (%.3f MT) | Area: %.1f m² | Drums: %d", tKg, tTons, tArea, tDrums)
-                    )
-                }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Spray Area", color = ToolColors.textSecondary, fontSize = 11.sp)
-                        Text(
-                            String.format(Locale.US, "%,.1f m²", tArea),
-                            color = ToolColors.textPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Emulsion Needed", color = ToolColors.textSecondary, fontSize = 11.sp)
-                        Text(
-                            String.format(Locale.US, "%,.1f kg", tKg),
-                            color = ToolColors.accentBlue,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 16.sp
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                        Text("200kg Drums", color = ToolColors.textSecondary, fontSize = 11.sp)
-                        Text(
-                            "$tDrums Drums",
-                            color = ToolColors.accentGreen,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        // 5. Bitumen Binder Content Calculator
+        // 4. Bitumen Binder Content Calculator
         var totalMixTons by remember { mutableStateOf("330") }
         var binderPct by remember { mutableStateOf("5.4") }
         val mixT = totalMixTons.toDoubleOrNull() ?: 0.0
@@ -1997,107 +2241,7 @@ fun SiteUtilitiesView(viewModel: MainViewModel, context: Context) {
             }
         }
 
-        // 2. Camber / Cross-Fall & Superelevation Calculator
-        var carriagewayWidth by remember { mutableStateOf("7.0") }
-        var camberPercent by remember { mutableStateOf("2.5") }
-        var isTwoWayCrown by remember { mutableStateOf(true) }
-
-        val cw = carriagewayWidth.toDoubleOrNull() ?: 7.0
-        val cPct = camberPercent.toDoubleOrNull() ?: 2.5
-        val effectiveWidth = if (isTwoWayCrown) cw / 2.0 else cw
-        val crownDropMeters = effectiveWidth * (cPct / 100.0)
-        val crownDropMm = crownDropMeters * 1000.0
-
-        ToolSectionCard(
-            title = "Camber & Cross-Slope Calculator",
-            subtitle = "Calculate crown height / edge drop for BC, DBM, WMM & earthen shoulder",
-            icon = Icons.Default.Architecture
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                ToolTextField(
-                    value = carriagewayWidth,
-                    onValueChange = { carriagewayWidth = it },
-                    label = "Carriageway Width (m)",
-                    modifier = Modifier.weight(1f)
-                )
-                ToolTextField(
-                    value = camberPercent,
-                    onValueChange = { camberPercent = it },
-                    label = "Camber / Cross-Fall (%)",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ToolChoiceChip(
-                    selected = isTwoWayCrown,
-                    label = "Center Crown (B/2)",
-                    onClick = { isTwoWayCrown = true },
-                    modifier = Modifier.weight(1f)
-                )
-                ToolChoiceChip(
-                    selected = !isTwoWayCrown,
-                    label = "Unidirectional (Full B)",
-                    onClick = { isTwoWayCrown = false },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("2.0% (PQC)" to "2.0", "2.5% (BC/DBM)" to "2.5", "3.0% (Shoulder)" to "3.0").forEach { (lbl, v) ->
-                    ToolChoiceChip(
-                        selected = camberPercent == v,
-                        label = lbl,
-                        onClick = { camberPercent = v },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            ResultBox(
-                onCopy = {
-                    copyToolResult(
-                        context,
-                        String.format(Locale.US, "Camber Drop: %.1f mm (%.3f m) over %.2f m", crownDropMm, crownDropMeters, effectiveWidth)
-                    )
-                }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Effective Slope Width", color = ToolColors.textSecondary, fontSize = 11.sp)
-                        Text(
-                            String.format(Locale.US, "%.2f m", effectiveWidth),
-                            color = ToolColors.textPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                        Text("Vertical Drop / Raise", color = ToolColors.textSecondary, fontSize = 11.sp)
-                        Text(
-                            String.format(Locale.US, "%.0f mm (%.3f m)", crownDropMm, crownDropMeters),
-                            color = ToolColors.accentGreen,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 16.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        // 3. Working Days & Milestone Estimator (Fixed spacing between columns)
+        // 2. Highway Working Days & Milestone Deadline Estimator
         var calendarDays by remember { mutableStateOf("60") }
         var rainStoppageDays by remember { mutableStateOf("8") }
         var maintenanceDays by remember { mutableStateOf("4") }

@@ -2,6 +2,7 @@ package com.example.ui.update
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,23 +19,20 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AltRoute
-import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.NewReleases
-import androidx.compose.material.icons.filled.OpenInBrowser
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Stars
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,13 +41,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
+import com.example.ui.theme.rememberDialogColors
 import com.example.update.AppReleaseInfo
 import com.example.update.WhatsNewFeature
 
@@ -61,14 +59,15 @@ fun UpdateAvailableDialog(
     onDownloadAndInstall: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
-
+    val dialogColors = rememberDialogColors()
     val isBetaUpdate = releaseInfo.isBeta || releaseInfo.channel.equals("beta", ignoreCase = true)
-    val accentColor = if (isBetaUpdate) Color(0xFFFBBF24) else Color(0xFF38BDF8)
+    val accentColor = if (isBetaUpdate) Color(0xFFF59E0B) else Color(0xFF0284C7)
     val badgeBgColor = if (isBetaUpdate) Color(0xFFB45309) else Color(0xFF0369A1)
 
     AlertDialog(
         onDismissRequest = { if (!isDownloading) onDismiss() },
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
         icon = {
             Box(
                 modifier = Modifier
@@ -94,11 +93,12 @@ fun UpdateAvailableDialog(
                     Text(
                         text = if (isBetaUpdate) "Beta Update Available" else "Update Available",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp
+                        fontSize = 18.sp,
+                        color = dialogColors.titleColor
                     )
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = accentColor.copy(alpha = 0.2f)
+                        color = accentColor.copy(alpha = 0.15f)
                     ) {
                         Text(
                             text = if (isBetaUpdate) "BETA" else "STABLE",
@@ -116,16 +116,17 @@ fun UpdateAvailableDialog(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF1E293B)
+                        color = dialogColors.surfaceColor,
+                        border = BorderStroke(1.dp, dialogColors.borderColor)
                     ) {
                         Text(
                             text = "Current: v${BuildConfig.VERSION_NAME}",
                             fontSize = 11.sp,
-                            color = Color(0xFF94A3B8),
+                            color = dialogColors.textSecondaryColor,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
-                    Text("→", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Text("→", color = dialogColors.textSecondaryColor, fontSize = 12.sp)
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = badgeBgColor
@@ -153,27 +154,28 @@ fun UpdateAvailableDialog(
                     Text(
                         text = "Download Size: %.1f MB".format(sizeMb),
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = dialogColors.textSecondaryColor
                     )
                 }
 
-                // Release notes box
+                // Release notes box with adaptive colors
                 Card(
-                    shape = RoundedCornerShape(10.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = dialogColors.surfaceColor),
+                    border = BorderStroke(1.dp, dialogColors.borderColor)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
                             text = "Release Notes:",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
-                            color = Color(0xFF38BDF8)
+                            color = accentColor
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = releaseInfo.releaseNotes.trim(),
                             fontSize = 12.sp,
-                            color = Color(0xFFE2E8F0),
+                            color = dialogColors.textColor,
                             lineHeight = 16.sp
                         )
                     }
@@ -185,12 +187,26 @@ fun UpdateAvailableDialog(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Downloading update APK...", fontSize = 12.sp, color = Color(0xFF38BDF8))
-                            Text("${(downloadProgress * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(
+                                text = "Downloading update APK...",
+                                fontSize = 12.sp,
+                                color = accentColor
+                            )
+                            Text(
+                                text = "${(downloadProgress * 100).toInt()}%",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = dialogColors.titleColor
+                            )
                         }
                         LinearProgressIndicator(
                             progress = { downloadProgress },
-                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape)
+                            color = accentColor,
+                            trackColor = dialogColors.surfaceColor,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape)
                         )
                     }
                 }
@@ -200,6 +216,8 @@ fun UpdateAvailableDialog(
             Button(
                 onClick = onDownloadAndInstall,
                 enabled = !isDownloading && releaseInfo.apkDownloadUrl != null,
+                colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = Color.White),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.testTag("install_update_button")
             ) {
                 Icon(imageVector = Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -210,7 +228,7 @@ fun UpdateAvailableDialog(
         dismissButton = {
             if (!isDownloading) {
                 TextButton(onClick = onDismiss) {
-                    Text("Later")
+                    Text("Later", color = dialogColors.textSecondaryColor)
                 }
             }
         }
@@ -223,20 +241,27 @@ fun WhatsNewDialog(
     features: List<WhatsNewFeature>,
     onDismiss: () -> Unit
 ) {
+    val dialogColors = rememberDialogColors()
+
+    // Enforce simplified change log showing only the two requested descriptions
+    val simplifiedFeatures = com.example.update.WhatsNewManager.SIMPLIFIED_FEATURES
+
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
         icon = {
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFF59E0B).copy(alpha = 0.2f)),
+                    .background(Color(0xFFF59E0B).copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.NewReleases,
                     contentDescription = null,
-                    tint = Color(0xFFFBBF24),
+                    tint = Color(0xFFF59E0B),
                     modifier = Modifier.size(28.dp)
                 )
             }
@@ -246,13 +271,15 @@ fun WhatsNewDialog(
                 Text(
                     text = "What's New in Ctecs",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
+                    fontSize = 18.sp,
+                    color = dialogColors.titleColor
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Version $versionName",
                     fontSize = 12.sp,
-                    color = Color(0xFF38BDF8),
-                    fontWeight = FontWeight.SemiBold
+                    color = dialogColors.textSecondaryColor,
+                    fontWeight = FontWeight.Medium
                 )
             }
         },
@@ -261,70 +288,87 @@ fun WhatsNewDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                features.forEach { feature ->
-                    WhatsNewFeatureRow(feature = feature)
+                simplifiedFeatures.forEach { feature ->
+                    WhatsNewSimplifiedRow(feature = feature, dialogColors = dialogColors)
                 }
             }
         },
         confirmButton = {
             Button(
                 onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth().testTag("whats_new_got_it_button")
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (dialogColors.isDark) Color(0xFF2563EB) else Color(0xFF0284C7),
+                    contentColor = Color.White
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("whats_new_got_it_button")
             ) {
                 Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Got It")
+                Text("Got It", fontWeight = FontWeight.Bold)
             }
         }
     )
 }
 
 @Composable
-fun WhatsNewFeatureRow(feature: WhatsNewFeature) {
-    val (icon, color) = when (feature.category.uppercase()) {
-        "ACCURACY" -> Pair(Icons.Default.AltRoute, Color(0xFF38BDF8))
-        "OVERLAY" -> Pair(Icons.Default.CameraAlt, Color(0xFFFBBF24))
-        "MAP" -> Pair(Icons.Default.Map, Color(0xFF34D399))
-        "UPDATE" -> Pair(Icons.Default.CloudDownload, Color(0xFFA855F7))
-        else -> Pair(Icons.Default.Star, Color(0xFFF43F5E))
+fun WhatsNewSimplifiedRow(
+    feature: WhatsNewFeature,
+    dialogColors: com.example.ui.theme.DialogThemeTokens
+) {
+    val (icon, iconColor) = if (feature.title.contains("Bug", ignoreCase = true)) {
+        Pair(Icons.Default.Build, Color(0xFF10B981))
+    } else {
+        Pair(Icons.Default.Stars, Color(0xFFF59E0B))
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.Top
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = dialogColors.surfaceColor,
+        border = BorderStroke(1.dp, dialogColors.borderColor),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(color.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = color,
-                modifier = Modifier.size(18.dp)
-            )
-        }
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(iconColor.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
 
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = feature.title,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                color = Color.White
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = feature.description,
-                fontSize = 12.sp,
-                color = Color(0xFF94A3B8),
-                lineHeight = 16.sp
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = feature.title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = dialogColors.titleColor
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = feature.description,
+                    fontSize = 12.sp,
+                    color = dialogColors.textSecondaryColor,
+                    lineHeight = 16.sp
+                )
+            }
         }
     }
 }

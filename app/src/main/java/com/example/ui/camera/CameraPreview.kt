@@ -38,6 +38,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -135,11 +136,29 @@ fun CameraPreview(
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
     onExposureChanged: ((Int) -> Unit)? = null,
+    onZoomChanged: ((Float) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestSnapshotProvider by rememberUpdatedState(currentSnapshotProvider)
+
+    // Camera Hardware Zoom Range State
+    var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
+    var maxZoomRatio by remember { mutableFloatStateOf(10.0f) }
+
+    DisposableEffect(controller, lifecycleOwner) {
+        val observer = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { state ->
+            if (state != null) {
+                minZoomRatio = state.minZoomRatio
+                maxZoomRatio = state.maxZoomRatio
+            }
+        }
+        controller.zoomState.observe(lifecycleOwner, observer)
+        onDispose {
+            controller.zoomState.removeObserver(observer)
+        }
+    }
 
     // Touch-to-Focus State
     var previewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
@@ -309,7 +328,7 @@ fun CameraPreview(
     LaunchedEffect(hasCameraPermission, isVideoMode, overlayManager) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
-            controller.isPinchToZoomEnabled = true
+            controller.isPinchToZoomEnabled = false
             controller.isTapToFocusEnabled = false
 
             if (isVideoMode) {
@@ -372,9 +391,9 @@ fun CameraPreview(
         } catch (ignored: Exception) {}
     }
 
-    LaunchedEffect(zoomRatio) {
+    LaunchedEffect(zoomRatio, minZoomRatio, maxZoomRatio) {
         try {
-            controller.setZoomRatio(zoomRatio.coerceIn(0.5f, 10.0f))
+            controller.setZoomRatio(zoomRatio.coerceIn(minZoomRatio, maxZoomRatio))
         } catch (ignored: Exception) {}
     }
 
@@ -467,11 +486,22 @@ fun CameraPreview(
                     )
                 }
 
-                // 2. Gesture Detector Layer for Touch-to-Focus & Right-Side Brightness Drag
+                fun resetBrightness() {
+                    currentEvIndex = 0
+                    accumulatedDragY = 0f
+                    try {
+                        if (isEvSupported && evRange.lower < evRange.upper) {
+                            controller.cameraControl?.setExposureCompensationIndex(0)
+                        }
+                    } catch (ignored: Exception) {}
+                    onExposureChanged?.invoke(0)
+                }
+
+                // 2. Gesture Detector Layer for Pinch-to-Zoom, Touch-to-Focus & Right-Side Brightness Drag
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(minEv, maxEv, isLandscape) {
+                        .pointerInput(minEv, maxEv, isLandscape, minZoomRatio, maxZoomRatio) {
                             val touchSlop = viewConfiguration.touchSlop * 0.65f
                             val dragStepPx = 18.dp.toPx()
 
@@ -480,52 +510,78 @@ fun CameraPreview(
                                 val startPos = down.position
                                 val inRightZone = startPos.x in rightZoneStart..rightZoneEnd
 
-                                var isDragging = false
+                                var isDraggingEv = false
+                                var isPinchActive = false
                                 var hasMovedPastSlop = false
                                 var lastY = startPos.y
+                                var previousSpan = -1f
+                                var activeZoom = zoomRatio
 
                                 while (true) {
                                     val event = awaitPointerEvent()
-                                    if (event.changes.size > 1) {
-                                        // Multi-touch active (e.g. pinch to zoom)
-                                        hasMovedPastSlop = true
-                                    }
-                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    val pressedPointers = event.changes.filter { it.pressed }
 
-                                    if (!change.pressed) {
-                                        // Finger lifted
-                                        if (!isDragging && !hasMovedPastSlop) {
+                                    if (pressedPointers.size >= 2) {
+                                        // Two-finger pinch to zoom!
+                                        isPinchActive = true
+                                        hasMovedPastSlop = true
+
+                                        if (isDraggingEv) {
+                                            isDraggingEv = false
+                                            isDraggingBrightness = false
+                                        }
+
+                                        val p0 = pressedPointers[0].position
+                                        val p1 = pressedPointers[1].position
+                                        val currentSpan = (p0 - p1).getDistance()
+
+                                        if (previousSpan > 0f && currentSpan > 0f) {
+                                            val scaleFactor = currentSpan / previousSpan
+                                            val targetZoom = (activeZoom * scaleFactor).coerceIn(minZoomRatio, maxZoomRatio)
+                                            if (kotlin.math.abs(targetZoom - activeZoom) > 0.005f) {
+                                                activeZoom = targetZoom
+                                                onZoomChanged?.invoke(targetZoom)
+                                            }
+                                        }
+                                        previousSpan = currentSpan
+                                        event.changes.forEach { it.consume() }
+                                    } else if (pressedPointers.size == 1 && !isPinchActive) {
+                                        val change = pressedPointers[0]
+                                        val currentPos = change.position
+                                        val deltaY = currentPos.y - lastY
+                                        val totalDistY = currentPos.y - startPos.y
+                                        val totalDistX = currentPos.x - startPos.x
+
+                                        if (kotlin.math.abs(totalDistY) > touchSlop || kotlin.math.abs(totalDistX) > touchSlop) {
+                                            hasMovedPastSlop = true
+                                        }
+
+                                        if (!isDraggingEv) {
+                                            if (inRightZone && kotlin.math.abs(totalDistY) > touchSlop && kotlin.math.abs(totalDistY) > kotlin.math.abs(totalDistX)) {
+                                                isDraggingEv = true
+                                                isDraggingBrightness = true
+                                                showBrightnessIndicator = true
+                                                change.consume()
+                                                updateBrightness(totalDistY, dragStepPx)
+                                                lastY = currentPos.y
+                                            }
+                                        } else {
+                                            change.consume()
+                                            updateBrightness(deltaY, dragStepPx)
+                                            lastY = currentPos.y
+                                        }
+                                    }
+
+                                    if (pressedPointers.isEmpty()) {
+                                        // All fingers lifted
+                                        if (!isDraggingEv && !hasMovedPastSlop && !isPinchActive) {
                                             // Tap detected! Focus at exact touched position
                                             triggerTouchToFocus(startPos, constraints.maxWidth, constraints.maxHeight)
-                                        } else if (isDragging) {
+                                        } else if (isDraggingEv) {
                                             isDraggingBrightness = false
                                             brightnessDismissKey++
                                         }
                                         break
-                                    }
-
-                                    val currentPos = change.position
-                                    val deltaY = currentPos.y - lastY
-                                    val totalDistY = currentPos.y - startPos.y
-                                    val totalDistX = currentPos.x - startPos.x
-
-                                    if (kotlin.math.abs(totalDistY) > touchSlop || kotlin.math.abs(totalDistX) > touchSlop) {
-                                        hasMovedPastSlop = true
-                                    }
-
-                                    if (!isDragging) {
-                                        if (inRightZone && kotlin.math.abs(totalDistY) > touchSlop && kotlin.math.abs(totalDistY) > kotlin.math.abs(totalDistX)) {
-                                            isDragging = true
-                                            isDraggingBrightness = true
-                                            showBrightnessIndicator = true
-                                            change.consume()
-                                            updateBrightness(totalDistY, dragStepPx)
-                                            lastY = currentPos.y
-                                        }
-                                    } else {
-                                        change.consume()
-                                        updateBrightness(deltaY, dragStepPx)
-                                        lastY = currentPos.y
                                     }
                                 }
                             }
@@ -545,6 +601,7 @@ fun CameraPreview(
                     minEv = minEv,
                     maxEv = maxEv,
                     step = evStep,
+                    onReset = { resetBrightness() },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(end = if (isLandscape) 104.dp else 16.dp)
@@ -729,6 +786,7 @@ fun CameraBrightnessIndicator(
     minEv: Int,
     maxEv: Int,
     step: Float,
+    onReset: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -751,11 +809,16 @@ fun CameraBrightnessIndicator(
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = Color(0xD0141414),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (currentEv != 0) HighlightYellow else Color.White.copy(alpha = 0.25f)),
             shadowElevation = 8.dp,
             modifier = Modifier
                 .width(44.dp)
                 .height(168.dp)
+                .then(
+                    if (currentEv != 0 && onReset != null) {
+                        Modifier.clickable { onReset() }
+                    } else Modifier
+                )
                 .testTag("camera_brightness_indicator")
         ) {
             Column(
@@ -800,15 +863,15 @@ fun CameraBrightnessIndicator(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = evText,
-                        color = Color.White,
+                        color = if (currentEv != 0) HighlightYellow else Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = "EV",
-                        color = HighlightYellow,
-                        fontSize = 8.sp,
+                        text = if (currentEv != 0) "RESET" else "EV",
+                        color = if (currentEv != 0) HighlightYellow else SecondaryText,
+                        fontSize = 7.sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )

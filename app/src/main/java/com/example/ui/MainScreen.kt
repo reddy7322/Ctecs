@@ -404,10 +404,11 @@ fun AnimatedGlassToast(
                     formatSmartTinyFeedback(msg.message, msg.type)
                 }
 
+                val isDark = com.example.ui.theme.isAppDarkTheme()
                 Surface(
                     shape = CircleShape,
-                    color = Color(0xB8090D14), // Ultra sleek minimalist frosted glass
-                    border = BorderStroke(0.75.dp, Color(0x38FFFFFF)),
+                    color = if (isDark) Color(0xB8090D14) else Color(0xF2FFFFFF), // Ultra sleek frosted glass
+                    border = BorderStroke(0.75.dp, if (isDark) Color(0x38FFFFFF) else Color(0x28000000)),
                     shadowElevation = 6.dp,
                     modifier = Modifier
                         .testTag("tiny_glass_toast")
@@ -443,7 +444,7 @@ fun AnimatedGlassToast(
                         // Smart tiny feedback text: minimal, single-line, no clutter
                         Text(
                             text = smartText,
-                            color = Color(0xFFF8FAFC),
+                            color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A),
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             letterSpacing = 0.25.sp,

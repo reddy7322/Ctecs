@@ -193,10 +193,13 @@ fun RoutesScreen(
 
     // Delete Confirmation Dialog
     routeToDelete?.let { route ->
+        val dialogColors = com.example.ui.theme.rememberDialogColors()
         AlertDialog(
             onDismissRequest = { routeToDelete = null },
-            title = { Text("Delete Alignment") },
-            text = { Text("Are you sure you want to delete '${route.name}'? Chainage matching will no longer use this route.") },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
+            title = { Text("Delete Alignment", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
+            text = { Text("Are you sure you want to delete '${route.name}'? Chainage matching will no longer use this route.", color = dialogColors.textSecondaryColor) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -204,12 +207,12 @@ fun RoutesScreen(
                         routeToDelete = null
                     }
                 ) {
-                    Text("Delete", color = Color(0xFFEF4444))
+                    Text("Delete", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { routeToDelete = null }) {
-                    Text("Cancel")
+                    Text("Cancel", color = dialogColors.textSecondaryColor)
                 }
             }
         )
@@ -428,15 +431,18 @@ fun MarkerInspectorDialog(
     routeData: RouteData,
     onDismiss: () -> Unit
 ) {
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Parsed Chainage Markers (${routeData.markers.size})", fontWeight = FontWeight.Bold) },
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
+        title = { Text("Parsed Chainage Markers (${routeData.markers.size})", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().height(360.dp)) {
                 Text(
                     "Displaying chainage markers parsed from ${routeData.fileName}:",
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = dialogColors.textSecondaryColor
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -452,22 +458,22 @@ fun MarkerInspectorDialog(
                                 text = marker.chainage.format(),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
-                                color = Color(0xFF38BDF8)
+                                color = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
                             )
                             Text(
                                 text = "%.5fN, %.5fE".format(Locale.US, marker.point.latitude, marker.point.longitude),
                                 fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = dialogColors.textColor
                             )
                         }
-                        Divider(color = Color(0x33475569))
+                        Divider(color = dialogColors.borderColor)
                     }
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text("Close", fontWeight = FontWeight.Bold, color = dialogColors.textColor)
             }
         }
     )

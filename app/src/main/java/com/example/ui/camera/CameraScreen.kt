@@ -19,6 +19,7 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -287,6 +288,23 @@ fun CameraScreen(
     val exposureCompensation by viewModel.exposureCompensation.collectAsStateWithLifecycle()
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
 
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
+    var maxZoomRatio by remember { mutableFloatStateOf(10.0f) }
+
+    DisposableEffect(controller, lifecycleOwner) {
+        val observer = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { state ->
+            if (state != null) {
+                minZoomRatio = state.minZoomRatio
+                maxZoomRatio = state.maxZoomRatio
+            }
+        }
+        controller.zoomState.observe(lifecycleOwner, observer)
+        onDispose {
+            controller.zoomState.removeObserver(observer)
+        }
+    }
+
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
@@ -466,6 +484,7 @@ fun CameraScreen(
             currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
             overlayManager = overlayManager,
             onExposureChanged = { newEv -> viewModel.setExposureCompensation(newEv) },
+            onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -1173,7 +1192,7 @@ fun CameraScreen(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 58.dp)
-                        .width(280.dp)
+                        .width(320.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1198,9 +1217,29 @@ fun CameraScreen(
                             ),
                             modifier = Modifier.weight(1f)
                         )
+                        TextButton(
+                            onClick = { viewModel.setExposureCompensation(0) },
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Reset", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
+
+            // 3b. ON-SCREEN ZOOM CONTROLS (LANDSCAPE)
+            CameraZoomControlBar(
+                currentZoomRatio = currentZoomRatio,
+                minZoomRatio = minZoomRatio,
+                maxZoomRatio = maxZoomRatio,
+                onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
+                onResetZoom = { viewModel.setZoomRatio(1.0f) },
+                isLandscape = true,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(bottom = 12.dp)
+            )
 
             // 4. BOTTOM-RIGHT TIMESTAMP & WATERMARK OVERLAY
             Column(
@@ -2105,6 +2144,21 @@ fun CameraScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            // On-Screen Zoom Controls (Portrait)
+            CameraZoomControlBar(
+                currentZoomRatio = currentZoomRatio,
+                minZoomRatio = minZoomRatio,
+                maxZoomRatio = maxZoomRatio,
+                onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
+                onResetZoom = { viewModel.setZoomRatio(1.0f) },
+                isLandscape = false,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
             // Mode Selector Pill: PHOTO | VIDEO
             Row(
                 modifier = Modifier
@@ -2366,19 +2420,24 @@ fun CameraScreen(
 
         // Manual Chainage Dialog
         if (showManualDialog) {
+            val dialogColors = com.example.ui.theme.rememberDialogColors()
             var inputVal by remember { mutableStateOf(matchResult.chainage?.format() ?: "196+040") }
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
+            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
+            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+
             AlertDialog(
                 onDismissRequest = { viewModel.closeManualChainageDialog() },
-                containerColor = SurfaceDark,
-                title = { Text("Highway Chainage", color = PrimaryText, fontWeight = FontWeight.Bold) },
+                shape = dialogColors.shape,
+                containerColor = dialogColors.containerColor,
+                title = { Text("Highway Chainage", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
                     Column {
                         Text(
                             "Enter chainage for this location (e.g. 196+040). Auto GPS will be overridden until cleared.",
                             fontSize = 13.sp,
-                            color = SecondaryText
+                            color = dialogColors.textSecondaryColor
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
@@ -2397,6 +2456,15 @@ fun CameraScreen(
                                     viewModel.setManualChainage(inputVal)
                                 }
                             ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = dialogColors.textColor,
+                                unfocusedTextColor = dialogColors.textColor,
+                                focusedBorderColor = primaryAccent,
+                                unfocusedBorderColor = dialogColors.inputBorder,
+                                focusedLabelColor = primaryAccent,
+                                unfocusedLabelColor = dialogColors.textSecondaryColor,
+                                cursorColor = primaryAccent
+                            ),
                             modifier = Modifier.fillMaxWidth().testTag("manual_chainage_input")
                         )
                     }
@@ -2404,7 +2472,8 @@ fun CameraScreen(
                 confirmButton = {
                     Button(
                         onClick = { viewModel.setManualChainage(inputVal) },
-                        colors = ButtonDefaults.buttonColors(containerColor = HighlightYellow, contentColor = PrimaryBackground),
+                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.testTag("save_manual_chainage_button")
                     ) {
                         Text("Set Chainage", fontWeight = FontWeight.Bold)
@@ -2417,7 +2486,7 @@ fun CameraScreen(
                         }
                     } else {
                         TextButton(onClick = { viewModel.closeManualChainageDialog() }) {
-                            Text("Cancel", color = SecondaryText)
+                            Text("Cancel", color = dialogColors.textSecondaryColor)
                         }
                     }
                 }
@@ -2426,19 +2495,24 @@ fun CameraScreen(
 
         // Manual Activity / Layer Dialog
         if (showManualActivityDialog) {
+            val dialogColors = com.example.ui.theme.rememberDialogColors()
             var activityInput by remember { mutableStateOf(projectProfile.activity) }
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
+            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
+            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+
             AlertDialog(
                 onDismissRequest = { showManualActivityDialog = false },
-                containerColor = SurfaceDark,
-                title = { Text("Custom Activity / Pavement Layer", color = PrimaryText, fontWeight = FontWeight.Bold) },
+                shape = dialogColors.shape,
+                containerColor = dialogColors.containerColor,
+                title = { Text("Custom Activity / Pavement Layer", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             "Type custom activity or pavement layer (e.g. Main CW to MCW):",
                             fontSize = 13.sp,
-                            color = SecondaryText
+                            color = dialogColors.textSecondaryColor
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         OutlinedTextField(
@@ -2462,10 +2536,13 @@ fun CameraScreen(
                                 }
                             ),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = HighlightYellow,
-                                unfocusedBorderColor = BorderColor,
-                                focusedTextColor = PrimaryText,
-                                unfocusedTextColor = PrimaryText
+                                focusedTextColor = dialogColors.textColor,
+                                unfocusedTextColor = dialogColors.textColor,
+                                focusedBorderColor = primaryAccent,
+                                unfocusedBorderColor = dialogColors.inputBorder,
+                                focusedLabelColor = primaryAccent,
+                                unfocusedLabelColor = dialogColors.textSecondaryColor,
+                                cursorColor = primaryAccent
                             ),
                             modifier = Modifier.fillMaxWidth().testTag("manual_activity_input")
                         )
@@ -2480,7 +2557,8 @@ fun CameraScreen(
                             }
                             showManualActivityDialog = false
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = HighlightYellow, contentColor = PrimaryBackground),
+                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.testTag("save_manual_activity_button")
                     ) {
                         Text("Apply", fontWeight = FontWeight.Bold)
@@ -2488,7 +2566,7 @@ fun CameraScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showManualActivityDialog = false }) {
-                        Text("Cancel", color = PrimaryText)
+                        Text("Cancel", color = dialogColors.textSecondaryColor)
                     }
                 }
             )
@@ -2496,25 +2574,30 @@ fun CameraScreen(
 
         // Custom Comment Dialog
         if (showCustomCommentDialog) {
+            val dialogColors = com.example.ui.theme.rememberDialogColors()
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
+            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
+            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+
             AlertDialog(
                 onDismissRequest = { showCustomCommentDialog = false },
-                containerColor = SurfaceDark,
-                title = { Text("Custom Comment Watermark", color = PrimaryText, fontWeight = FontWeight.Bold) },
+                shape = dialogColors.shape,
+                containerColor = dialogColors.containerColor,
+                title = { Text("Custom Comment Watermark", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             "Add a custom comment line. When set, this will be displayed dynamically on the next line under the highway timestamp watermark.",
                             fontSize = 13.sp,
-                            color = SecondaryText
+                            color = dialogColors.textSecondaryColor
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         OutlinedTextField(
                             value = commentInput,
                             onValueChange = { commentInput = it },
                             label = { Text("Custom Comment") },
-                            placeholder = { Text("e.g. Culvert Inspection / Patch Work", color = SecondaryText.copy(alpha = 0.6f)) },
+                            placeholder = { Text("e.g. Culvert Inspection / Patch Work", color = dialogColors.textSecondaryColor.copy(alpha = 0.6f)) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
                                 capitalization = KeyboardCapitalization.Sentences,
@@ -2532,10 +2615,13 @@ fun CameraScreen(
                                 }
                             ),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = HighlightYellow,
-                                unfocusedBorderColor = BorderColor,
-                                focusedTextColor = PrimaryText,
-                                unfocusedTextColor = PrimaryText
+                                focusedTextColor = dialogColors.textColor,
+                                unfocusedTextColor = dialogColors.textColor,
+                                focusedBorderColor = primaryAccent,
+                                unfocusedBorderColor = dialogColors.inputBorder,
+                                focusedLabelColor = primaryAccent,
+                                unfocusedLabelColor = dialogColors.textSecondaryColor,
+                                cursorColor = primaryAccent
                             ),
                             modifier = Modifier.fillMaxWidth().testTag("custom_comment_input")
                         )
@@ -2550,7 +2636,8 @@ fun CameraScreen(
                             }
                             showCustomCommentDialog = false
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = HighlightYellow, contentColor = PrimaryBackground),
+                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.testTag("save_custom_comment_button")
                     ) {
                         Text("Apply", fontWeight = FontWeight.Bold)
@@ -2571,7 +2658,7 @@ fun CameraScreen(
                             }
                         }
                         TextButton(onClick = { showCustomCommentDialog = false }) {
-                            Text("Cancel", color = PrimaryText)
+                            Text("Cancel", color = dialogColors.textSecondaryColor)
                         }
                     }
                 }
@@ -2580,16 +2667,18 @@ fun CameraScreen(
 
         // GPS Simulation Dialog
         if (showSimDialog) {
+            val dialogColors = com.example.ui.theme.rememberDialogColors()
             AlertDialog(
                 onDismissRequest = { showSimDialog = false },
-                containerColor = SurfaceDark,
-                title = { Text("GPS Location Test Presets", color = PrimaryText, fontWeight = FontWeight.Bold) },
+                shape = dialogColors.shape,
+                containerColor = dialogColors.containerColor,
+                title = { Text("GPS Location Test Presets", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             "Select a GPS position along NH-58 to test chainage matching and permanent overlays immediately:",
                             fontSize = 13.sp,
-                            color = SecondaryText
+                            color = dialogColors.textSecondaryColor
                         )
 
                         Button(
@@ -2597,7 +2686,9 @@ fun CameraScreen(
                                 viewModel.simulateGps(29.9183, 78.1064, 2.5f)
                                 showSimDialog = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = ElevatedSurface, contentColor = PrimaryText),
+                            colors = ButtonDefaults.buttonColors(containerColor = dialogColors.surfaceColor, contentColor = dialogColors.textColor),
+                            border = BorderStroke(1.dp, dialogColors.borderColor),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Reference Photo (196+040, 29.9183N 78.1064E)")
@@ -2608,7 +2699,9 @@ fun CameraScreen(
                                 viewModel.simulateGps(29.8680, 77.9250, 3.0f)
                                 showSimDialog = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = ElevatedSurface, contentColor = PrimaryText),
+                            colors = ButtonDefaults.buttonColors(containerColor = dialogColors.surfaceColor, contentColor = dialogColors.textColor),
+                            border = BorderStroke(1.dp, dialogColors.borderColor),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Roorkee Section (185+000, 29.8680N 77.9250E)")
@@ -2619,7 +2712,9 @@ fun CameraScreen(
                                 viewModel.simulateGps(29.4750, 77.7120, 3.5f)
                                 showSimDialog = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = ElevatedSurface, contentColor = PrimaryText),
+                            colors = ButtonDefaults.buttonColors(containerColor = dialogColors.surfaceColor, contentColor = dialogColors.textColor),
+                            border = BorderStroke(1.dp, dialogColors.borderColor),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Muzaffarnagar Start (130+000, 29.4750N 77.7120E)")
@@ -2630,15 +2725,17 @@ fun CameraScreen(
                                 viewModel.startLocation()
                                 showSimDialog = false
                             },
+                            border = BorderStroke(1.dp, if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Use Real Device Hardware GPS", color = HighlightYellow)
+                            Text("Use Real Device Hardware GPS", color = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7))
                         }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { showSimDialog = false }) {
-                        Text("Close", color = PrimaryText)
+                        Text("Close", color = dialogColors.textSecondaryColor)
                     }
                 }
             )
@@ -2674,9 +2771,14 @@ fun CameraQuickSettingsDialog(
     onNavigateToFullSettings: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+    val accentColor = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
+    val onAccentColor = if (dialogColors.isDark) Color.Black else Color.White
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = SurfaceDark,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2687,17 +2789,17 @@ fun CameraQuickSettingsDialog(
                     Icon(
                         imageVector = Icons.Default.Camera,
                         contentDescription = null,
-                        tint = HighlightYellow,
+                        tint = accentColor,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Camera Settings", color = PrimaryText, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Camera Settings", color = dialogColors.titleColor, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
-                        tint = SecondaryText
+                        tint = dialogColors.textSecondaryColor
                     )
                 }
             }
@@ -2710,7 +2812,7 @@ fun CameraQuickSettingsDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Section 1: Capture Controls
-                Text("HARDWARE & CAPTURE", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text("HARDWARE & CAPTURE", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                 // Flash Toggle
                 Row(
@@ -2718,11 +2820,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Camera Flash", color = PrimaryText, fontSize = 13.sp)
+                    Text("Camera Flash", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = isFlashOn,
                         onCheckedChange = { onToggleFlash() },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
@@ -2734,11 +2836,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Shutter Sound", color = PrimaryText, fontSize = 13.sp)
+                    Text("Shutter Sound", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = cameraSettings.captureSound,
                         onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(captureSound = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
@@ -2750,11 +2852,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Touch to Take Photo", color = PrimaryText, fontSize = 13.sp)
+                    Text("Touch to Take Photo", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = cameraSettings.touchToCapture,
                         onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(touchToCapture = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
@@ -2766,11 +2868,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Electronic Level Indicator", color = PrimaryText, fontSize = 13.sp)
+                    Text("Electronic Level Indicator", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = cameraSettings.showHorizonLevel,
                         onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(showHorizonLevel = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
@@ -2782,22 +2884,22 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save Clean Original Photo", color = PrimaryText, fontSize = 13.sp)
+                    Text("Save Clean Original Photo", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = cameraSettings.saveOriginalAndStamped,
                         onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(saveOriginalAndStamped = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
-                HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
+                HorizontalDivider(color = dialogColors.borderColor)
 
                 // Section 2: Grid & Timer
-                Text("GRID & COUNTDOWN TIMER", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text("GRID & COUNTDOWN TIMER", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                 // Grid Mode Selector
                 Column {
-                    Text("Viewfinder Grid", color = SecondaryText, fontSize = 12.sp)
+                    Text("Viewfinder Grid", color = dialogColors.textSecondaryColor, fontSize = 12.sp)
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2810,10 +2912,15 @@ fun CameraQuickSettingsDialog(
                                 onClick = { onUpdateCameraSettings(cameraSettings.copy(gridMode = gMode)) },
                                 label = { Text(gMode.name, fontSize = 10.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = HighlightYellow,
-                                    selectedLabelColor = Color.Black,
-                                    containerColor = ElevatedSurface,
-                                    labelColor = PrimaryText
+                                    selectedContainerColor = accentColor,
+                                    selectedLabelColor = onAccentColor,
+                                    containerColor = dialogColors.surfaceColor,
+                                    labelColor = dialogColors.textColor
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    borderColor = dialogColors.borderColor,
+                                    enabled = true,
+                                    selected = isSel
                                 )
                             )
                         }
@@ -2822,7 +2929,7 @@ fun CameraQuickSettingsDialog(
 
                 // Timer Selector
                 Column {
-                    Text("Capture Timer", color = SecondaryText, fontSize = 12.sp)
+                    Text("Capture Timer", color = dialogColors.textSecondaryColor, fontSize = 12.sp)
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2835,20 +2942,25 @@ fun CameraQuickSettingsDialog(
                                 onClick = { onUpdateCameraSettings(cameraSettings.copy(captureTimer = timerVal)) },
                                 label = { Text(if (timerVal == CaptureTimer.OFF) "OFF" else "${timerVal.seconds}s", fontSize = 10.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = HighlightYellow,
-                                    selectedLabelColor = Color.Black,
-                                    containerColor = ElevatedSurface,
-                                    labelColor = PrimaryText
+                                    selectedContainerColor = accentColor,
+                                    selectedLabelColor = onAccentColor,
+                                    containerColor = dialogColors.surfaceColor,
+                                    labelColor = dialogColors.textColor
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    borderColor = dialogColors.borderColor,
+                                    enabled = true,
+                                    selected = isSel
                                 )
                             )
                         }
                     }
                 }
 
-                HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
+                HorizontalDivider(color = dialogColors.borderColor)
 
                 // Section 3: Watermark Overlay Toggles
-                Text("CAMERA WATERMARK OVERLAYS", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text("CAMERA WATERMARK OVERLAYS", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable {
@@ -2857,11 +2969,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Timestamp Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Text("Timestamp Stamp", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = overlayConfig.showTimestamp,
                         onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showTimestamp = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
@@ -2872,11 +2984,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("GPS Coordinates Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Text("GPS Coordinates Stamp", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = overlayConfig.showCoordinates,
                         onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showCoordinates = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
@@ -2887,11 +2999,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Compass Heading Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Text("Compass Heading Stamp", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = overlayConfig.showCompass,
                         onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showCompass = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
 
@@ -2902,11 +3014,11 @@ fun CameraQuickSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Live MiniMap Stamp", color = PrimaryText, fontSize = 13.sp)
+                    Text("Live MiniMap Stamp", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
                         checked = overlayConfig.showMapInset,
                         onCheckedChange = { onUpdateOverlayConfig(overlayConfig.copy(showMapInset = it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = HighlightYellow)
+                        colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }
             }
@@ -2914,7 +3026,8 @@ fun CameraQuickSettingsDialog(
         confirmButton = {
             Button(
                 onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = HighlightYellow, contentColor = Color.Black)
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = onAccentColor)
             ) {
                 Text("Done", fontWeight = FontWeight.Bold)
             }
@@ -2926,7 +3039,7 @@ fun CameraQuickSettingsDialog(
                     onNavigateToFullSettings()
                 }
             ) {
-                Text("All App Settings...", color = PrimaryText)
+                Text("All App Settings...", color = dialogColors.textSecondaryColor)
             }
         }
     )

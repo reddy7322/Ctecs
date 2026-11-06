@@ -1,0 +1,1235 @@
+CTECS – Complete Highway Engineering Tools Upgrade Based on Applicable MoRTH & IRC Standards
+
+PROJECT OBJECTIVE
+
+Deeply inspect the complete existing CTECS Tools Page, every calculator, all related screens, calculation engines, inputs, outputs, navigation, validation, saved records and QC modules.
+
+Upgrade the existing Tools section into a comprehensive, professional, full-fledged Highway Engineering and Construction Toolkit for Indian National Highway and State Highway construction projects.
+
+Use the applicable MoRTH Specifications for Road and Bridge Works, current applicable IRC Codes and Special Publications, approved project drawings, contract specifications, amendments, addenda and project Quality Assurance Plan (QAP).
+
+Do not simply add more cards. Complete the engineering functionality inside every existing tool, identify missing tools, missing inputs, missing calculations, missing validation, missing outputs and missing reporting functions.
+
+The system must be modular, extensible, accurate and suitable for actual highway construction site engineers, quality-control engineers, surveyors and project management teams.
+
+---
+
+PART A – STANDARDS AND SPECIFICATION MANAGEMENT
+
+1. Dynamic Standards Library
+
+Create an internal standards-reference architecture for:
+
+- MoRTH Specifications for Road and Bridge Works.
+- Applicable IRC Codes and Special Publications.
+- Relevant BIS/IS standards referenced by the applicable specifications.
+- Project-specific technical specifications.
+- Approved construction drawings.
+- Approved Quality Assurance Plan.
+- Contract-specific amendments and addenda.
+
+Required standard-management inputs
+
+- Standard organisation.
+- Standard/code number.
+- Standard title.
+- Edition/revision/year.
+- Applicable amendment number.
+- Section/chapter.
+- Clause number.
+- Table/figure reference.
+- Applicable work item.
+- Material category.
+- Test requirement.
+- Sampling frequency.
+- Acceptance criteria.
+- Units.
+- Source document.
+- Effective date.
+- Project applicability.
+- Approval status.
+
+Critical requirements
+
+1. Never assume that the newest published standard automatically applies to an existing contract.
+2. Allow the project engineer to select the contractually applicable edition and amendments.
+3. Allow project-specific approved criteria to override generic reference defaults where contractually permitted.
+4. Display the exact clause and source for every specification-based compliance result.
+5. Show an alert when a reference is missing, outdated or not verified.
+6. Never invent a MoRTH clause, IRC code, test frequency, tolerance or acceptance limit.
+7. Allow standards to be updated without changing historical inspection results.
+8. Preserve the original reference version used when a report was created.
+
+---
+
+PART B – EXISTING TOOLS: COMPLETE EACH MODULE
+
+2. Chainage Calculator
+
+Complete the existing Chainage Calculator with:
+
+- From Chainage.
+- To Chainage.
+- Chainage difference.
+- Forward offset.
+- Reverse offset.
+- Chainage addition.
+- Chainage subtraction.
+- Multiple intermediate chainages.
+- Chainage interval generation.
+- Chainage station list.
+- Chainage range validation.
+- Project start and end chainage.
+- Main carriageway and service road chainage.
+- LHS/RHS/BHS identification.
+- Existing chainage progress.
+- Remaining project length.
+- Completed length.
+- Multiple work stretches.
+- Chainage-wise activity history.
+- Chainage-wise inspection history.
+- Chainage-wise photographs.
+
+Advanced requirements
+
+- Support Km+metre formatting.
+- Accept both formatted and unformatted numeric inputs.
+- Handle reverse chainage correctly.
+- Support increasing and decreasing chainage.
+- Handle route direction using imported KML/KMZ where available.
+- Support multiple carriageways and independent alignments.
+- Prevent duplicate or invalid stationing.
+- Preserve existing chainage and LHS/RHS logic.
+
+3. Distance & Gradient Calculator
+
+Add:
+
+- Horizontal distance.
+- Slope distance.
+- Vertical difference.
+- Longitudinal gradient.
+- Transverse gradient.
+- Cross-fall.
+- Percentage slope.
+- Ratio slope (1 in N).
+- Angle in degrees.
+- Rise and fall.
+- Distance between GPS coordinates.
+- Bearing and azimuth.
+- Offset distance.
+- Road cross-slope.
+- Camber.
+- Superelevation calculations.
+- Cross-section width and elevation difference.
+
+Inputs
+
+- Start and end chainage.
+- Horizontal distance.
+- Vertical difference.
+- Start RL.
+- End RL.
+- Cross-section width.
+- Left elevation.
+- Right elevation.
+- Slope direction.
+- Units.
+- Selected alignment.
+
+Show formulas, intermediate values and final results.
+
+4. Area Calculator
+
+Add:
+
+- Rectangle.
+- Triangle.
+- Trapezoid.
+- Circle.
+- Sector.
+- Irregular polygon.
+- Multiple coordinate polygon.
+- Road cross-section area.
+- Excavation area.
+- Embankment cross-section area.
+- Layer-wise pavement area.
+- Shoulder area.
+- Median area.
+- Drain cross-section area.
+- Land measurement.
+- Area from length × width.
+- Area from GPS coordinates where supported.
+
+Inputs
+
+- Length.
+- Width.
+- Top width.
+- Bottom width.
+- Height.
+- Side slopes.
+- Coordinates.
+- Number of sections.
+- Measurement units.
+
+Show area in m², hectares and other supported units.
+
+5. Volume Calculator
+
+Complete the existing Volume Calculator with:
+
+- Length × width × depth.
+- Excavation volume.
+- Embankment volume.
+- Pavement layer volume.
+- BC volume.
+- DBM volume.
+- WMM volume.
+- GSB volume.
+- Soil replacement volume.
+- Borrow earth volume.
+- Backfilling volume.
+- Drain excavation volume.
+- Trench volume.
+- Concrete volume.
+- Retaining structure volume.
+- Cross-section average end area.
+- Prismoidal method.
+- Irregular cross-section volume.
+- Cut and fill volume.
+- Swell and shrinkage adjustments.
+- Truck/tipper load calculations.
+- Material wastage allowance.
+
+Inputs
+
+- From Chainage.
+- To Chainage.
+- Length.
+- Width.
+- Top width.
+- Bottom width.
+- Depth/thickness.
+- Start cross-sectional area.
+- End cross-sectional area.
+- Intermediate areas.
+- Material type.
+- Density.
+- Compaction factor, where applicable.
+- Swell/shrinkage factor, where applicable.
+- Truck capacity.
+- Wastage percentage.
+
+Do not assume a default density, compaction factor, swell factor or wastage percentage without an explicitly identified source or user-entered value.
+
+Show volume, quantity, applicable adjustments and final estimated requirement separately.
+
+6. Level Calculator
+
+Complete:
+
+- Reduced Level calculation.
+- Height of Instrument method.
+- Rise and Fall method.
+- Back Sight.
+- Intermediate Sight.
+- Fore Sight.
+- Change Point.
+- Benchmark.
+- Temporary Benchmark.
+- Closing error.
+- Levelling arithmetic check.
+- Longitudinal profile.
+- Cross-section levels.
+- Formation level.
+- Subgrade level.
+- Pavement layer levels.
+- Cutting depth.
+- Filling height.
+- Level difference.
+- Gradient-based level interpolation.
+- Setting-out levels.
+
+Inputs
+
+- Benchmark RL.
+- BS.
+- IS.
+- FS.
+- Instrument station.
+- Change point.
+- Chainage.
+- Existing ground level.
+- Proposed formation level.
+- Design gradient.
+- Cross-section offset.
+
+Display complete level books, arithmetic checks and error warnings.
+
+7. Curve Calculator
+
+Add complete existing and missing curve functionality:
+
+Horizontal curves
+
+- Radius.
+- Deflection angle.
+- Tangent length.
+- Curve length.
+- Long chord.
+- Mid-ordinate.
+- External distance.
+- Degree of curve using selected definition.
+- PC/T1 chainage.
+- PT/T2 chainage.
+- PI chainage.
+- Curve setting-out.
+- Deflection angles.
+- Chord lengths.
+- Coordinate-based setting-out.
+- Compound curves.
+- Reverse curves.
+- Transition curves.
+
+Vertical curves
+
+- Summit curves.
+- Valley curves.
+- Algebraic gradient difference.
+- Curve length.
+- Rate of change of grade.
+- High/low point.
+- Elevation at selected chainage.
+- Vertical curve setting-out.
+
+Clearly identify the selected design method and applicable standard reference. Do not invent design criteria.
+
+8. Steel Calculator
+
+Complete:
+
+- Reinforcement bar weight.
+- Bar length.
+- Cutting length.
+- Lap length.
+- Development length.
+- Hook length.
+- Bend allowance.
+- Crank length.
+- Bar spacing.
+- Number of bars.
+- Bar diameter.
+- Unit weight.
+- Reinforcement quantity.
+- Steel percentage.
+- Bar bending schedule.
+- Cutting list.
+- Steel wastage.
+- Total weight by diameter.
+- Reinforcement reconciliation.
+
+Inputs
+
+- Structural element.
+- Bar mark.
+- Bar diameter.
+- Bar spacing.
+- Number of bars.
+- Clear cover.
+- Member length.
+- Member width.
+- Member depth.
+- Hook type.
+- Bend angles.
+- Lap length.
+- Development length.
+- Applicable reinforcement grade.
+- Applicable detailing reference.
+
+Show cutting length and weight separately. Do not assume lap or development lengths without the relevant design details and code inputs.
+
+9. Concrete Calculator
+
+Complete:
+
+- Concrete volume.
+- Structural concrete quantity.
+- PCC quantity.
+- RCC quantity.
+- Footing quantity.
+- Column quantity.
+- Beam quantity.
+- Slab quantity.
+- Wall quantity.
+- Culvert concrete quantity.
+- Pavement concrete quantity.
+- Cement quantity.
+- Sand quantity.
+- Aggregate quantity.
+- Water quantity.
+- Admixture quantity.
+- Concrete material reconciliation.
+- Transit mixer load.
+- Pour planning.
+- Concrete wastage.
+
+Inputs
+
+- Grade of concrete.
+- Mix design reference.
+- Element dimensions.
+- Number of elements.
+- Approved mix proportions or design quantities.
+- Cement content.
+- Water content.
+- Fine aggregate quantity.
+- Coarse aggregate quantity.
+- Admixture dosage.
+- Moisture correction.
+- Material density.
+- Truck capacity.
+
+Never generate an assumed mix design and present it as an approved mix.
+
+10. Joint Calculator
+
+Complete:
+
+- Contraction joints.
+- Expansion joints.
+- Construction joints.
+- Longitudinal joints.
+- Transverse joints.
+- Dowel bars.
+- Tie bars.
+- Joint spacing.
+- Joint depth.
+- Joint width.
+- Sealant quantity.
+- Dowel bar quantity.
+- Tie bar quantity.
+- Joint cutting length.
+- Joint filler quantity.
+- Joint layout chainage.
+- Joint-wise inspection record.
+
+Inputs
+
+- Pavement slab dimensions.
+- Slab thickness.
+- Joint spacing.
+- Joint type.
+- Dowel diameter.
+- Dowel length.
+- Dowel spacing.
+- Tie-bar diameter.
+- Tie-bar length.
+- Tie-bar spacing.
+- Joint sealant dimensions.
+- Approved drawing details.
+
+Use approved pavement design and applicable concrete pavement specifications for design-dependent values.
+
+11. Pavement Layers
+
+Complete and expand existing GSB, WMM, DBM and BC functionality.
+
+Layer categories
+
+- Prepared subgrade.
+- Selected subgrade.
+- Granular sub-base.
+- Granular base.
+- WMM.
+- WBM, where applicable.
+- Bituminous macadam.
+- Dense bituminous macadam.
+- Bituminous concrete.
+- Other approved bituminous layers.
+- Cement-treated layers.
+- Recycled pavement layers.
+- Rigid pavement.
+- Bonded rigid pavement.
+- Other project-approved pavement systems.
+
+Common inputs for every layer
+
+- Project.
+- Stretch.
+- From chainage.
+- To chainage.
+- Side.
+- Lane.
+- Length.
+- Width.
+- Design thickness.
+- Actual thickness.
+- Compacted thickness.
+- Material type.
+- Design density.
+- Actual density, where applicable.
+- Quantity.
+- Mix/design reference.
+- Date.
+- Contractor.
+- Approved drawing reference.
+
+BC and DBM
+
+Add:
+
+- Mix design details.
+- Approved JMF reference.
+- Binder content.
+- Aggregate gradation.
+- Theoretical maximum specific gravity.
+- Bulk specific gravity.
+- Air voids.
+- VMA and VFB, where applicable.
+- Plant production quantity.
+- Truck-wise quantity.
+- Laying temperature.
+- Rolling temperature.
+- Ambient temperature.
+- Site arrival temperature.
+- Breakdown rolling.
+- Intermediate rolling.
+- Finish rolling.
+- Compacted thickness.
+- Field density.
+- Core test results.
+- Surface regularity.
+- Segregation observations.
+- Longitudinal and transverse joint inspection.
+
+GSB and WMM
+
+Add:
+
+- Gradation.
+- Material source.
+- Moisture content.
+- OMC.
+- MDD.
+- Field density.
+- Compaction percentage.
+- Layer thickness.
+- Gradation compliance.
+- Surface level.
+- Cross-fall.
+- Width.
+- Finished surface inspection.
+- Test results and frequencies.
+
+Glass Grid and Geosynthetics
+
+Add a dedicated installation workflow:
+
+- Product manufacturer.
+- Product type.
+- Approved technical data.
+- Roll number.
+- Roll width.
+- Chainage start/end.
+- Application width.
+- Surface preparation.
+- Crack sealing status.
+- Tack coat details, if specified.
+- Tack coat application time.
+- Grid application time.
+- Temperature and weather conditions.
+- Overlap width.
+- Wrinkles and defects.
+- PTR/roller passes, as applicable to approved methodology.
+- Waiting period.
+- Inspection status.
+- Photographs.
+- Rectification details.
+- Approval.
+
+Do not hardcode installation requirements independently of the approved product data and method statement.
+
+---
+
+PART C – MISSING HIGHWAY ENGINEERING TOOLS
+
+Add the following genuinely distinct tool modules.
+
+12. Earthwork & Embankment Engineering
+
+- Excavation quantity.
+- Embankment quantity.
+- Cut/fill calculations.
+- Borrow earth quantity.
+- Soil replacement.
+- Compaction calculations.
+- Field density records.
+- MDD/OMC records.
+- Layer-wise embankment records.
+- Lift thickness.
+- Formation preparation.
+- Side slope calculations.
+- Settlement monitoring.
+- Earthwork lead and lift.
+- Mass haul summary.
+
+Inputs
+
+Chainage, side, layer, width, thickness, soil type, source, density, MDD, OMC, field moisture, dry density, compaction percentage, lead distance, lift height and approved acceptance limits.
+
+13. Soil & Subgrade Laboratory Tests
+
+Provide structured test-record modules for applicable tests:
+
+- Sieve analysis.
+- Grain-size distribution.
+- Atterberg limits.
+- Liquid limit.
+- Plastic limit.
+- Plasticity index.
+- Moisture content.
+- Specific gravity.
+- Proctor compaction.
+- MDD.
+- OMC.
+- Field density.
+- CBR.
+- Free swell, where applicable.
+- Organic content, where specified.
+- Soil classification.
+- Subgrade strength records.
+
+Support test method, apparatus, sample identification, sample source, date, test readings, calculation, result, specification reference and acceptance status.
+
+14. Aggregate & Quarry Quality Tests
+
+Add:
+
+- Sieve analysis.
+- Gradation.
+- Flakiness index.
+- Elongation index.
+- Combined flakiness and elongation.
+- Aggregate crushing value.
+- Aggregate impact value.
+- Los Angeles abrasion.
+- Water absorption.
+- Specific gravity.
+- Soundness, where applicable.
+- Deleterious materials.
+- Stripping value.
+- Particle shape.
+- Aggregate source approval.
+- Stockpile reconciliation.
+
+15. Bitumen & Binder Testing
+
+Add applicable test-record templates for:
+
+- Penetration.
+- Softening point.
+- Ductility.
+- Flash and fire point.
+- Specific gravity.
+- Viscosity.
+- Elastic recovery, where applicable.
+- Binder content.
+- Modified binder tests.
+- Emulsion tests.
+- Tack coat and prime coat records.
+
+Include binder grade, batch number, manufacturer, source, sample ID, test date, test method, results, acceptance criteria and report attachment.
+
+16. Asphalt Mix Design & Plant Quality Control
+
+Add:
+
+- Job Mix Formula management.
+- Aggregate blend calculations.
+- Binder percentage.
+- Gradation blending.
+- Marshall mix design records.
+- Bulk specific gravity.
+- Maximum theoretical specific gravity.
+- Air voids.
+- VMA.
+- VFB.
+- Stability.
+- Flow.
+- Moisture susceptibility, where required.
+- Plant calibration.
+- Hot bin gradation.
+- Production temperature.
+- Batch-wise production.
+- Truck-wise dispatch.
+- Rejected mix tracking.
+- Mix quantity reconciliation.
+
+Do not substitute generic design values for an approved JMF.
+
+17. Field Quality Control & Inspection
+
+Expand QC & Inspection Register into a complete QC system.
+
+Categories
+
+- Earthwork.
+- Subgrade.
+- GSB.
+- WMM.
+- DBM.
+- BC.
+- Tack coat.
+- Prime coat.
+- Glass grid.
+- Geosynthetics.
+- Concrete.
+- Steel.
+- Drainage.
+- Culverts.
+- Road markings.
+- Road furniture.
+- Safety installations.
+
+Each inspection record must support
+
+- Inspection ID.
+- Project.
+- Chainage.
+- Side.
+- Lane.
+- Layer/activity.
+- Inspection date and time.
+- Contractor.
+- Inspector.
+- Specification reference.
+- Inspection checklist.
+- Measurement.
+- Test result.
+- Acceptance criteria.
+- Pass/Fail/Conditional status.
+- Photographs.
+- Observation.
+- Non-conformance.
+- Rectification.
+- Reinspection.
+- Closure approval.
+
+Add QC workflows
+
+- Inspection Request.
+- Request for Inspection (RFI).
+- Work Inspection Request (WIR), where used.
+- Material Inspection Request.
+- Material Approval.
+- Test Request.
+- Test Register.
+- Calibration Register.
+- NCR Tracker.
+- Corrective Action.
+- Preventive Action.
+- Reinspection.
+- Approval history.
+
+18. Temperature & Bituminous Laying Register
+
+Create a complete truck-wise and chainage-wise register.
+
+Inputs:
+
+- Vehicle number.
+- Batch number.
+- Mix type.
+- Plant dispatch time.
+- Plant temperature.
+- Arrival time.
+- Site arrival temperature.
+- Laying temperature.
+- Ambient temperature.
+- Breakdown rolling temperature.
+- Intermediate rolling temperature.
+- Finish rolling temperature.
+- From chainage.
+- To chainage.
+- Side.
+- Lane.
+- Length.
+- Width.
+- Thickness.
+- Quantity.
+- Remarks.
+- Contractor engineer.
+- Inspection engineer.
+
+Allow multiple temperature readings and multiple trucks per work stretch.
+
+Compare values only against the selected approved mix and project specifications.
+
+19. Tack Coat & Prime Coat Calculator and Register
+
+Add:
+
+- Surface area.
+- Application width.
+- Application length.
+- Surface type.
+- Emulsion/bitumen type.
+- Approved application rate.
+- Required quantity.
+- Actual quantity.
+- Sprayer calibration.
+- Temperature.
+- Application time.
+- Uniformity.
+- Coverage.
+- Surface condition.
+- Existing defects.
+- Road studs/thermoplastic removal status, where required.
+- Inspection and approval.
+
+Calculate quantity using the user-entered approved application rate and area, with explicit units.
+
+20. Rigid Pavement & Concrete Pavement QC
+
+Add:
+
+- Pavement slab geometry.
+- Concrete quantity.
+- Mix design reference.
+- Batching records.
+- Water-cement ratio, where applicable.
+- Slump.
+- Concrete temperature.
+- Cube/cylinder sample register.
+- Compressive strength.
+- Flexural strength.
+- Thickness.
+- Surface regularity.
+- Texture depth.
+- Joint cutting.
+- Dowel alignment.
+- Tie bar installation.
+- Curing.
+- Saw-cut timing.
+- Joint sealing.
+- Defect and repair register.
+
+Support applicable tests and methods based on the approved specification.
+
+21. Drainage, Culvert & Minor Structures
+
+Add:
+
+- Side drain geometry.
+- Longitudinal drain slope.
+- Drain excavation.
+- Drain concrete.
+- Culvert dimensions.
+- Pipe culvert quantities.
+- Box culvert quantities.
+- Headwall.
+- Wing wall.
+- Apron.
+- Pitching.
+- Protection works.
+- Reinforcement.
+- Formwork.
+- Concrete.
+- Excavation and backfill.
+- Hydraulic design inputs where supported by the relevant approved design.
+
+Separate quantity estimation from structural/hydraulic design verification.
+
+22. Road Marking, Signage & Safety Furniture
+
+Add:
+
+- Road marking length and area.
+- Thermoplastic quantity.
+- Paint quantity.
+- Glass bead quantity.
+- Marking thickness.
+- Retroreflectivity test records.
+- Signboard dimensions.
+- Sign foundation concrete.
+- Signpost steel.
+- Guardrail length.
+- Crash barrier quantity.
+- Road studs.
+- Delineators.
+- Kilometre stones.
+- Hectometre stones.
+- Median markers.
+- Installation and inspection register.
+
+23. Bridge & Structural Works
+
+Provide quantity and inspection modules for:
+
+- Foundations.
+- Piles.
+- Open foundations.
+- Well foundations.
+- Substructure.
+- Piers.
+- Abutments.
+- Bearings.
+- Expansion joints.
+- Reinforcement.
+- Structural concrete.
+- Prestressing.
+- Structural steel.
+- Formwork.
+- Bridge deck.
+- Wearing coat.
+- Approach slab.
+- Bridge protection works.
+
+Use applicable bridge codes and approved structural drawings. Do not create structural design approvals from quantity calculations.
+
+24. Survey & Setting-Out Tools
+
+Add:
+
+- GPS coordinate converter.
+- Latitude/longitude.
+- DMS.
+- UTM.
+- Bearing and azimuth.
+- Coordinate distance.
+- Coordinate offset.
+- Chainage interpolation.
+- Curve setting-out.
+- Centreline offset.
+- Cross-section offset.
+- Formation level.
+- Benchmark register.
+- Survey point register.
+- KML/KMZ route comparison.
+- As-built coordinate records.
+- Survey discrepancy report.
+
+Preserve existing KML/KMZ and GPS processing.
+
+25. Measurement Book & Quantity Reconciliation
+
+Add:
+
+- Measurement Book.
+- Chainage-wise measurement.
+- Item-wise measurement.
+- Abstract of quantities.
+- BOQ item mapping.
+- Executed quantity.
+- Approved quantity.
+- Balance quantity.
+- Daily measurements.
+- Weekly measurements.
+- Monthly measurements.
+- Contractor quantity.
+- Engineer-verified quantity.
+- Variation quantity.
+- Material reconciliation.
+- Bitumen consumption.
+- Cement consumption.
+- Aggregate consumption.
+- Steel consumption.
+- Truck-wise quantity.
+- Stock reconciliation.
+
+Do not automatically treat calculated quantities as certified or approved measurements.
+
+26. Equipment & Productivity Tools
+
+Add:
+
+- Paver productivity.
+- Roller productivity.
+- Milling machine productivity.
+- Excavator productivity.
+- Grader productivity.
+- Tipper trips.
+- Plant production.
+- Daily laying output.
+- Downtime.
+- Fuel consumption records.
+- Equipment working hours.
+- Equipment idle time.
+- Labour productivity.
+- Weather-related downtime.
+- Planned versus actual progress.
+
+Clearly distinguish actual recorded performance from estimated production.
+
+27. Road Safety & Site Inspection
+
+Add:
+
+- Traffic diversion inspection.
+- Barricade inspection.
+- Signage inspection.
+- Night visibility inspection.
+- Work-zone safety.
+- PPE checklist.
+- Machinery safety.
+- Excavation safety.
+- Traffic management observations.
+- Road hazard register.
+- Incident register.
+- Corrective action tracking.
+
+---
+
+PART D – COMMON INPUTS AND CALCULATION ENGINE
+
+28. Standardised Engineering Inputs
+
+Use common reusable input components where appropriate.
+
+Support:
+
+- Project.
+- Stretch.
+- From Chainage.
+- To Chainage.
+- Side.
+- Lane.
+- Activity.
+- Material.
+- Layer.
+- Date.
+- Time.
+- Unit.
+- Design value.
+- Actual value.
+- Approved value.
+- Reference specification.
+- Remarks.
+- Attachments.
+- Inspector.
+
+Do not force unrelated fields into every calculator. Show inputs dynamically according to the selected calculation or work item.
+
+29. Calculation Engine
+
+Build reusable calculation functions with:
+
+- Explicit input validation.
+- Correct unit conversion.
+- Decimal precision.
+- Formula display.
+- Intermediate calculations.
+- Result explanation.
+- Error handling.
+- Boundary checks.
+- Missing-input warnings.
+- Configurable specification values.
+- Calculation history.
+- Reproducible results.
+
+Never silently substitute missing inputs with zero or assumed defaults.
+
+30. Engineering Result Presentation
+
+Every calculator should display, as applicable:
+
+1. Input summary.
+2. Formula.
+3. Step-by-step calculation.
+4. Final result.
+5. Unit.
+6. Design/actual comparison.
+7. Specification reference.
+8. Acceptance criteria.
+9. Pass/Fail/Not Assessed.
+10. Warnings.
+11. Save record.
+12. Export PDF.
+
+Do not display PASS or FAIL if the required criteria or inputs are unavailable. Show NOT ASSESSED instead.
+
+---
+
+PART E – SMART TOOL ORGANISATION
+
+31. Tools Page Architecture
+
+Retain all existing unique tools and organise them into clear categories.
+
+Recommended categories:
+
+1. Survey & Chainage.
+2. Geometry & Levels.
+3. Earthwork & Soil.
+4. Pavement Layers.
+5. Bituminous Works.
+6. Concrete & Structures.
+7. Steel & Reinforcement.
+8. Quantity & Measurement.
+9. QC & Inspection.
+10. Materials & Laboratory Tests.
+11. Drainage & Culverts.
+12. Road Safety & Furniture.
+13. Equipment & Productivity.
+14. Site Utilities & Converters.
+
+Requirements:
+
+- Unique tools only.
+- No duplicate calculator cards.
+- Searchable tools.
+- Clear full tool names.
+- Compact responsive cards.
+- Favourites.
+- Recently used tools.
+- Tool history.
+- Clear category navigation.
+- Preserve correct screen mapping.
+- Do not place one calculator's content inside another calculator screen.
+
+Use a shared calculation engine internally where appropriate, but maintain unique and clearly identified tools.
+
+---
+
+PART F – DATA, HISTORY AND REPORTING
+
+32. Tool Records
+
+Each saved record should retain the appropriate information:
+
+- Project.
+- Stretch.
+- Work item.
+- Chainage.
+- Side.
+- Date.
+- User.
+- Input values.
+- Calculated outputs.
+- Units.
+- Formula version.
+- Standards reference.
+- Remarks.
+- Attachments.
+- Approval status.
+
+Provide searchable calculation history and editing without destroying original records.
+
+33. PDF and Excel Reporting
+
+Where appropriate, provide:
+
+- Single calculation report.
+- Daily report.
+- Weekly report.
+- Custom date-range report.
+- Chainage-wise report.
+- Layer-wise report.
+- QC test report.
+- Material test report.
+- Inspection report.
+- NCR report.
+- Measurement book.
+- Quantity abstract.
+- Material reconciliation.
+- Project summary.
+
+Reports must include complete inputs, units, formulas where useful, results, dates and applicable reference clauses.
+
+Prevent clipping, overlapping and truncated content.
+
+---
+
+PART G – QUALITY AND SAFETY OF ENGINEERING RESULTS
+
+34. Important Engineering Safeguards
+
+- Never fabricate MoRTH or IRC clauses.
+- Never use an unverified specification value as a mandatory limit.
+- Never assume a universal density, thickness, temperature, gradient, application rate or test frequency.
+- Distinguish design values, actual measurements and approved acceptance limits.
+- Distinguish calculations from certified engineering approval.
+- Require appropriate input data before calculating.
+- Show NOT ASSESSED when information is insufficient.
+- Preserve the project's approved design and contract requirements.
+- Keep all historical calculation records reproducible.
+- Provide source references for specification-dependent results.
+- Flag outdated standards and unverified criteria.
+- Do not replace engineering judgement or approved design verification with automated calculator outputs.
+
+---
+
+PART H – IMPLEMENTATION AND VERIFICATION
+
+35. Existing Code Audit First
+
+Before implementation:
+
+1. Inventory every existing Tools Page card.
+2. Identify all existing screens.
+3. Map every card to its actual destination.
+4. Inspect existing formulas and inputs.
+5. Identify missing functions.
+6. Identify actual duplicate functionality.
+7. Identify incorrect navigation mappings.
+8. Identify broken calculations.
+9. Identify missing input validation.
+10. Identify missing reporting and record storage.
+
+Create an implementation checklist before changing the code.
+
+Do not delete existing unique functionality.
+
+36. Testing
+
+For every tool, verify:
+
+- Inputs.
+- Formula.
+- Units.
+- Expected result.
+- Boundary conditions.
+- Missing values.
+- Invalid values.
+- Decimal precision.
+- Responsive UI.
+- Saved records.
+- PDF output.
+- Standards reference.
+- Navigation.
+
+Use independently calculated test cases for formula verification.
+
+37. Strict Scope
+
+Modify the existing Tools module and its directly related calculation, data and reporting components only.
+
+Do not modify:
+
+- Home Page.
+- Camera.
+- Video recording.
+- Gallery.
+- Routes.
+- GPS/KML/KMZ processing.
+- Site Activity – DPR.
+- Settings.
+- Authentication.
+- Unrelated database modules.
+
+Preserve all existing project data, saved records, calculations and functionality.
+
+Do not create placeholder tools.
+
+Do not display fake PASS/FAIL statuses.
+
+Do not invent engineering criteria.
+
+FINAL EXPECTED RESULT
+
+A complete, professional CTECS Highway Engineering Toolkit suitable for practical highway construction, survey, pavement execution, material testing, quality control, quantity measurement and site engineering.
+
+Every existing tool must be completed, every important missing functionality and input must be identified and added, every calculation must be traceable, and all specification-dependent limits must be configurable against the project's applicable MoRTH/IRC requirements.
+
+The system must be extensible so that future MoRTH amendments, IRC revisions and project-specific specifications can be added without redesigning the entire Tools module.

@@ -97,11 +97,13 @@ fun SmartGlassPageLoader(
             label = "aura_alpha"
         )
 
+        val isDark = com.example.ui.theme.isAppDarkTheme()
+
         // Fullscreen translucent glass overlay backdrop
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0x99050811))
+                .background(if (isDark) Color(0x99050811) else Color(0x66000000))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
@@ -114,14 +116,18 @@ fun SmartGlassPageLoader(
             // Central Minimalist Glass Card
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = Color(0xDD0C1322), // Translucent frosted glass obsidian
+                color = if (isDark) Color(0xDD0C1322) else Color(0xF4FFFFFF), // Translucent frosted glass
                 border = BorderStroke(
                     width = 1.dp,
                     brush = Brush.linearGradient(
-                        colors = listOf(
+                        colors = if (isDark) listOf(
                             Color(0x44FFFFFF),
                             Color(0x15FFFFFF),
                             Color(0x40FF6D00) // Subtle highway orange reflection
+                        ) else listOf(
+                            Color(0x30000000),
+                            Color(0x12000000),
+                            Color(0x30FF6D00)
                         )
                     )
                 ),
@@ -180,7 +186,7 @@ fun SmartGlassPageLoader(
                             text = "${(animatedProgress * 100).toInt()}",
                             fontSize = 32.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = if (isDark) Color.White else Color(0xFF0F172A),
                             letterSpacing = 0.5.sp
                         )
                         Text(
@@ -198,7 +204,7 @@ fun SmartGlassPageLoader(
                             .fillMaxWidth()
                             .height(6.dp)
                             .clip(CircleShape)
-                            .background(Color(0x28FFFFFF))
+                            .background(if (isDark) Color(0x28FFFFFF) else Color(0x18000000))
                     ) {
                         val maxW = maxWidth
                         val currentW = maxW * animatedProgress
@@ -226,7 +232,7 @@ fun SmartGlassPageLoader(
                         text = if (animatedProgress >= 1f) "Ready" else status,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color(0xFF94A3B8),
+                        color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier.padding(horizontal = 4.dp)
