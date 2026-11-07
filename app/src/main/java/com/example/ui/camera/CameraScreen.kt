@@ -150,6 +150,8 @@ import com.example.model.CameraMode
 import com.example.model.CaptureMode
 import com.example.model.CaptureTimer
 import com.example.model.Chainage
+import com.example.model.ChainageSource
+import com.example.ui.dialogs.ChainageManagementDialog
 import com.example.model.LogoPosition
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
@@ -1109,7 +1111,14 @@ fun CameraScreen(
                 Surface(
                     shape = RoundedCornerShape(18.dp),
                     color = Color(0x751A1A1A),
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, if (matchResult.isManual) AccentRed else Color.White.copy(alpha = 0.25f)),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.8.dp,
+                        when (matchResult.source) {
+                            ChainageSource.MANUAL -> AccentRed
+                            ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                            else -> Color.White.copy(alpha = 0.25f)
+                        }
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(34.dp)
@@ -1126,9 +1135,20 @@ fun CameraScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            RoadMarkingIcon(tint = if (matchResult.isManual) AccentRed else PrimaryText)
+                            RoadMarkingIcon(
+                                tint = when (matchResult.source) {
+                                    ChainageSource.MANUAL -> AccentRed
+                                    ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                                    else -> PrimaryText
+                                }
+                            )
+                            val prefix = when (matchResult.source) {
+                                ChainageSource.MANUAL -> "M: "
+                                ChainageSource.CUSTOM_CORRECTION -> "CAL: "
+                                else -> "CH: "
+                            }
                             Text(
-                                text = "CH: ${matchResult.displayChainage}",
+                                text = "$prefix${matchResult.displayChainage}",
                                 color = PrimaryText,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -2072,10 +2092,25 @@ fun CameraScreen(
 
                 // Chainage quick edit button
                 item {
+                    val chipBg = when (matchResult.source) {
+                        ChainageSource.MANUAL -> Color(0x99DC2626)
+                        ChainageSource.CUSTOM_CORRECTION -> Color(0x997C3AED)
+                        else -> Color(0x701A1A1A)
+                    }
+                    val chipBorder = when (matchResult.source) {
+                        ChainageSource.MANUAL -> AccentRed
+                        ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                        else -> BorderColor.copy(alpha = 0.5f)
+                    }
+                    val chipText = when (matchResult.source) {
+                        ChainageSource.MANUAL -> "Manual: ${matchResult.displayChainage}"
+                        ChainageSource.CUSTOM_CORRECTION -> "Cal: ${matchResult.displayChainage}"
+                        else -> "CH: ${matchResult.displayChainage}"
+                    }
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = if (matchResult.isManual) Color(0x99DC2626) else Color(0x701A1A1A),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, if (matchResult.isManual) AccentRed else BorderColor.copy(alpha = 0.5f)),
+                        color = chipBg,
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, chipBorder),
                         modifier = Modifier
                             .height(36.dp)
                             .clickable { viewModel.openManualChainageDialog() }
@@ -2093,7 +2128,7 @@ fun CameraScreen(
                                 modifier = Modifier.size(12.dp)
                             )
                             Text(
-                                text = if (matchResult.isManual) "Manual: ${matchResult.displayChainage}" else "CH: ${matchResult.displayChainage}",
+                                text = chipText,
                                 color = PrimaryText,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -2418,78 +2453,21 @@ fun CameraScreen(
         }
     }
 
-        // Manual Chainage Dialog
+        // Smart Chainage Management & Manual Dialog
         if (showManualDialog) {
-            val dialogColors = com.example.ui.theme.rememberDialogColors()
-            var inputVal by remember { mutableStateOf(matchResult.chainage?.format() ?: "196+040") }
-            val keyboardController = LocalSoftwareKeyboardController.current
-            val focusManager = LocalFocusManager.current
-            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
-            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+            val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
+            val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
 
-            AlertDialog(
-                onDismissRequest = { viewModel.closeManualChainageDialog() },
-                shape = dialogColors.shape,
-                containerColor = dialogColors.containerColor,
-                title = { Text("Highway Chainage", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column {
-                        Text(
-                            "Enter chainage for this location (e.g. 196+040). Auto GPS will be overridden until cleared.",
-                            fontSize = 13.sp,
-                            color = dialogColors.textSecondaryColor
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = inputVal,
-                            onValueChange = { inputVal = it },
-                            label = { Text("Chainage (km+m)") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Text,
-                                imeAction = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    keyboardController?.hide()
-                                    focusManager.clearFocus()
-                                    viewModel.setManualChainage(inputVal)
-                                }
-                            ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = dialogColors.textColor,
-                                unfocusedTextColor = dialogColors.textColor,
-                                focusedBorderColor = primaryAccent,
-                                unfocusedBorderColor = dialogColors.inputBorder,
-                                focusedLabelColor = primaryAccent,
-                                unfocusedLabelColor = dialogColors.textSecondaryColor,
-                                cursorColor = primaryAccent
-                            ),
-                            modifier = Modifier.fillMaxWidth().testTag("manual_chainage_input")
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { viewModel.setManualChainage(inputVal) },
-                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.testTag("save_manual_chainage_button")
-                    ) {
-                        Text("Set Chainage", fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    if (matchResult.isManual) {
-                        TextButton(onClick = { viewModel.clearManualChainage() }) {
-                            Text("Reset to Auto GPS", color = AccentRed)
-                        }
-                    } else {
-                        TextButton(onClick = { viewModel.closeManualChainageDialog() }) {
-                            Text("Cancel", color = dialogColors.textSecondaryColor)
-                        }
-                    }
-                }
+            ChainageManagementDialog(
+                viewModel = viewModel,
+                matchResult = matchResult,
+                activeRoute = activeRoute,
+                currentGpsPoint = locationState.point,
+                currentGpsAccuracy = locationState.accuracy,
+                correctionPoints = correctionsForRoute,
+                isCorrectionsEnabled = isCorrectionsEnabled,
+                initialTab = 0,
+                onDismiss = { viewModel.closeManualChainageDialog() }
             )
         }
 

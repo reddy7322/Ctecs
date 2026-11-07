@@ -7,6 +7,9 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.model.Chainage
+import com.example.model.ChainageCorrectionPoint
+import com.example.model.ChainageLogEntry
 import com.example.model.DefinedProject
 import com.example.model.LogoPosition
 import com.example.model.LogoShape
@@ -16,6 +19,8 @@ import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import org.json.JSONArray
+import org.json.JSONObject
 
 private val Context.dataStore by preferencesDataStore(name = "ctecs_user_preferences")
 
@@ -24,6 +29,8 @@ class PreferencesManager(private val context: Context) {
     companion object {
         val KEY_HIGHWAY_ID = stringPreferencesKey("highway_id")
         val KEY_PACKAGE_SECTION = stringPreferencesKey("package_section")
+        val KEY_PROJECT_START_CHAINAGE = stringPreferencesKey("project_start_chainage")
+        val KEY_PROJECT_END_CHAINAGE = stringPreferencesKey("project_end_chainage")
         val KEY_WORK_TYPE = stringPreferencesKey("work_type")
         val KEY_ROAD_SIDE = stringPreferencesKey("road_side")
         val KEY_LANE = stringPreferencesKey("lane")
@@ -137,6 +144,12 @@ class PreferencesManager(private val context: Context) {
         val KEY_GALLERY_VIEW_MODE = stringPreferencesKey("gallery_view_mode")
         val KEY_GALLERY_SORT_OPTION = stringPreferencesKey("gallery_sort_option")
         val KEY_GALLERY_GROUP_OPTION = stringPreferencesKey("gallery_group_option")
+
+        // Smart KMZ Chainage Correction & Manual Override Keys
+        val KEY_ROUTE_CORRECTIONS_JSON = stringPreferencesKey("route_chainage_corrections_json")
+        val KEY_ROUTE_CORRECTIONS_ENABLED = booleanPreferencesKey("route_chainage_corrections_enabled")
+        val KEY_MANUAL_CHAINAGE_OVERRIDE = stringPreferencesKey("manual_chainage_override")
+        val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
     }
 
     val galleryViewModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -234,6 +247,8 @@ class PreferencesManager(private val context: Context) {
         ProjectProfile(
             highwayId = prefs[KEY_HIGHWAY_ID] ?: "",
             packageSection = prefs[KEY_PACKAGE_SECTION] ?: "",
+            startChainage = prefs[KEY_PROJECT_START_CHAINAGE] ?: "0+000",
+            endChainage = prefs[KEY_PROJECT_END_CHAINAGE] ?: "50+000",
             workType = rawWorkType,
             roadSide = RoadSide.fromString(prefs[KEY_ROAD_SIDE]),
             lane = prefs[KEY_LANE] ?: "I/L",
@@ -329,6 +344,8 @@ class PreferencesManager(private val context: Context) {
             obj.put("name", p.name)
             obj.put("stretch", p.stretch)
             obj.put("workType", p.workType)
+            obj.put("startChainage", p.startChainage)
+            obj.put("endChainage", p.endChainage)
             array.put(obj)
         }
         return array.toString()
@@ -347,7 +364,9 @@ class PreferencesManager(private val context: Context) {
                         DefinedProject(
                             name = name,
                             stretch = obj.optString("stretch", "").trim(),
-                            workType = obj.optString("workType", "MM").trim()
+                            workType = obj.optString("workType", "MM").trim(),
+                            startChainage = obj.optString("startChainage", "0+000").trim(),
+                            endChainage = obj.optString("endChainage", "50+000").trim()
                         )
                     )
                 }
@@ -362,6 +381,8 @@ class PreferencesManager(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HIGHWAY_ID] = profile.highwayId
             prefs[KEY_PACKAGE_SECTION] = profile.packageSection
+            prefs[KEY_PROJECT_START_CHAINAGE] = profile.startChainage
+            prefs[KEY_PROJECT_END_CHAINAGE] = profile.endChainage
             prefs[KEY_WORK_TYPE] = profile.workType
             prefs[KEY_ROAD_SIDE] = profile.roadSide.name
             prefs[KEY_LANE] = profile.lane
@@ -499,5 +520,148 @@ class PreferencesManager(private val context: Context) {
                 prefs.remove(KEY_ACTIVE_ROUTE_ID)
             }
         }
+    }
+
+    val routeCorrectionsFlow: Flow<Map<String, List<ChainageCorrectionPoint>>> = context.dataStore.data.map { prefs ->
+        parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON])
+    }
+
+    val routeCorrectionsEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_ROUTE_CORRECTIONS_ENABLED] ?: true
+    }
+
+    val manualChainageOverrideFlow: Flow<Chainage?> = context.dataStore.data.map { prefs ->
+        val raw = prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]
+        if (!raw.isNullOrBlank()) Chainage.parse(raw) else null
+    }
+
+    suspend fun setManualChainageOverride(chainage: Chainage?) {
+        context.dataStore.edit { prefs ->
+            if (chainage != null) {
+                prefs[KEY_MANUAL_CHAINAGE_OVERRIDE] = chainage.format()
+            } else {
+                prefs.remove(KEY_MANUAL_CHAINAGE_OVERRIDE)
+            }
+        }
+    }
+
+    suspend fun setRouteCorrectionsEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_ROUTE_CORRECTIONS_ENABLED] = enabled
+        }
+    }
+
+    suspend fun saveRouteCorrectionPoint(point: ChainageCorrectionPoint) {
+        context.dataStore.edit { prefs ->
+            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
+            val list = currentMap[point.routeId]?.toMutableList() ?: mutableListOf()
+            val existingIdx = list.indexOfFirst { it.id == point.id }
+            if (existingIdx != -1) {
+                list[existingIdx] = point
+            } else {
+                list.add(point)
+            }
+            list.sortBy { it.originalKmzMetres }
+            currentMap[point.routeId] = list
+            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
+        }
+    }
+
+    suspend fun deleteRouteCorrectionPoint(routeId: String, pointId: String) {
+        context.dataStore.edit { prefs ->
+            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
+            val list = currentMap[routeId]?.filter { it.id != pointId } ?: emptyList()
+            if (list.isEmpty()) {
+                currentMap.remove(routeId)
+            } else {
+                currentMap[routeId] = list
+            }
+            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
+        }
+    }
+
+    suspend fun toggleRouteCorrectionPoint(routeId: String, pointId: String, isEnabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
+            val list = currentMap[routeId]?.map {
+                if (it.id == pointId) it.copy(isEnabled = isEnabled) else it
+            } ?: emptyList()
+            currentMap[routeId] = list
+            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
+        }
+    }
+
+    suspend fun resetRouteCorrections(routeId: String) {
+        context.dataStore.edit { prefs ->
+            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
+            currentMap.remove(routeId)
+            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
+        }
+    }
+
+    private fun parseRouteCorrections(rawJson: String?): Map<String, List<ChainageCorrectionPoint>> {
+        if (rawJson.isNullOrBlank()) return emptyMap()
+        val result = mutableMapOf<String, List<ChainageCorrectionPoint>>()
+        try {
+            val root = JSONObject(rawJson)
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val rId = keys.next()
+                val arr = root.optJSONArray(rId) ?: continue
+                val pts = mutableListOf<ChainageCorrectionPoint>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    pts.add(ChainageCorrectionPoint.fromJson(obj))
+                }
+                pts.sortBy { it.originalKmzMetres }
+                result[rId] = pts
+            }
+        } catch (ignored: Exception) {}
+        return result
+    }
+
+    private fun serializeRouteCorrections(map: Map<String, List<ChainageCorrectionPoint>>): String {
+        val root = JSONObject()
+        for ((rId, pts) in map) {
+            val arr = JSONArray()
+            pts.forEach { arr.put(it.toJson()) }
+            root.put(rId, arr)
+        }
+        return root.toString()
+    }
+
+    val chainageAuditLogFlow: Flow<List<ChainageLogEntry>> = context.dataStore.data.map { prefs ->
+        parseChainageLogs(prefs[KEY_CHAINAGE_AUDIT_LOG_JSON])
+    }
+
+    suspend fun addChainageLogEntry(entry: ChainageLogEntry) {
+        context.dataStore.edit { prefs ->
+            val list = parseChainageLogs(prefs[KEY_CHAINAGE_AUDIT_LOG_JSON]).toMutableList()
+            list.add(0, entry) // Prepend newest first
+            // Retain recent 50 entries
+            val trimmed = if (list.size > 50) list.take(50) else list
+            val arr = JSONArray()
+            trimmed.forEach { arr.put(it.toJson()) }
+            prefs[KEY_CHAINAGE_AUDIT_LOG_JSON] = arr.toString()
+        }
+    }
+
+    suspend fun clearChainageAuditLog() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(KEY_CHAINAGE_AUDIT_LOG_JSON)
+        }
+    }
+
+    private fun parseChainageLogs(raw: String?): List<ChainageLogEntry> {
+        if (raw.isNullOrBlank()) return emptyList()
+        val result = mutableListOf<ChainageLogEntry>()
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                result.add(ChainageLogEntry.fromJson(obj))
+            }
+        } catch (ignored: Exception) {}
+        return result
     }
 }

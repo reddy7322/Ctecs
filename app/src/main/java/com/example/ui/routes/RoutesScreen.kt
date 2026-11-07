@@ -26,10 +26,13 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import com.example.ui.dialogs.ChainageManagementDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -79,6 +82,7 @@ fun RoutesScreen(
 
     var routeToDelete by remember { mutableStateOf<RouteEntity?>(null) }
     var showMarkerInspector by remember { mutableStateOf(false) }
+    var showCalibrationDialog by remember { mutableStateOf(false) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -137,7 +141,8 @@ fun RoutesScreen(
             item {
                 ActiveRouteCard(
                     activeRoute = activeRoute,
-                    onInspectMarkers = { showMarkerInspector = true }
+                    onInspectMarkers = { showMarkerInspector = true },
+                    onCalibrate = { showCalibrationDialog = true }
                 )
             }
 
@@ -225,12 +230,33 @@ fun RoutesScreen(
             onDismiss = { showMarkerInspector = false }
         )
     }
+
+    // Smart Chainage Calibration Modal
+    if (showCalibrationDialog && activeRoute != null) {
+        val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
+        val locationState by viewModel.locationState.collectAsStateWithLifecycle()
+        val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
+        val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
+
+        ChainageManagementDialog(
+            viewModel = viewModel,
+            matchResult = matchResult,
+            activeRoute = activeRoute,
+            currentGpsPoint = locationState.point,
+            currentGpsAccuracy = locationState.accuracy,
+            correctionPoints = correctionsForRoute,
+            isCorrectionsEnabled = isCorrectionsEnabled,
+            initialTab = 1,
+            onDismiss = { showCalibrationDialog = false }
+        )
+    }
 }
 
 @Composable
 fun ActiveRouteCard(
     activeRoute: RouteData?,
     onInspectMarkers: () -> Unit,
+    onCalibrate: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isDark = isAppDarkTheme()
@@ -338,13 +364,31 @@ fun ActiveRouteCard(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                OutlinedButton(
-                    onClick = onInspectMarkers,
-                    modifier = Modifier.fillMaxWidth().testTag("inspect_markers_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Place, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.size(6.dp))
-                    Text("Inspect Parsed Chainage Markers")
+                    OutlinedButton(
+                        onClick = onInspectMarkers,
+                        modifier = Modifier.weight(1f).testTag("inspect_markers_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.Place, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text("Markers", maxLines = 1)
+                    }
+
+                    Button(
+                        onClick = onCalibrate,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isDark) Color(0xFF7C3AED) else Color(0xFF6D28D9),
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f).testTag("calibrate_route_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text("Smart Calibration", maxLines = 1)
+                    }
                 }
             } else {
                 Text(

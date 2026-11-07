@@ -107,7 +107,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.testTag
+import com.example.model.ChainageSource
+import com.example.ui.dialogs.ChainageManagementDialog
+import com.example.ui.dialogs.ChainageSourceBadge
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -184,13 +188,11 @@ fun HomeScreen(
     ) {
         val maxH = maxHeight
         val isCompactHeight = maxH < 690.dp
-        val isScrollableLayout = maxH < 560.dp
+        val isScrollableLayout = maxH < 760.dp
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(
                     start = 12.dp,
                     end = 12.dp,
@@ -246,11 +248,18 @@ fun HomeScreen(
             }
 
             val detectedSide = when {
-                activeRoute == null -> "Load Route"
-                locationState.point == null -> "Searching"
-                matchResult.detectedSide.isNotBlank() -> matchResult.detectedSide.uppercase(Locale.ROOT)
+                matchResult.detectedSide.equals("LHS", ignoreCase = true) -> "LHS"
+                matchResult.detectedSide.equals("RHS", ignoreCase = true) -> "RHS"
+                matchResult.detectedSide.equals("MEDIAN", ignoreCase = true) -> "MEDIAN"
+                matchResult.detectedSide.equals("BOTH", ignoreCase = true) -> "BHS"
+                projectProfile.roadSide == com.example.model.RoadSide.LHS -> "LHS"
+                projectProfile.roadSide == com.example.model.RoadSide.RHS -> "RHS"
+                projectProfile.roadSide == com.example.model.RoadSide.MEDIAN -> "MEDIAN"
+                projectProfile.roadSide == com.example.model.RoadSide.BOTH -> "BHS"
                 else -> "RHS"
             }
+
+            var showChainageManagementDialog by remember { mutableStateOf(false) }
 
             CentralChainageDisplay(
                 chainageText = displayChainageText,
@@ -258,13 +267,37 @@ fun HomeScreen(
                 confidence = matchResult.confidence,
                 offsetMetres = matchResult.offsetMetres,
                 hasActiveRoute = activeRoute != null,
+                source = matchResult.source,
+                rawChainage = matchResult.rawUncorrectedChainage?.format(),
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
                 subTextColor = subTextColor,
                 isDark = isDark,
-                isCompact = isCompactHeight
+                isCompact = isCompactHeight,
+                onClick = { showChainageManagementDialog = true },
+                onToggleSide = {
+                    val nextSide = if (detectedSide == "LHS") com.example.model.RoadSide.RHS else com.example.model.RoadSide.LHS
+                    viewModel.updateSide(nextSide)
+                    viewModel.showToast("Road Side switched to ${nextSide.name}", com.example.ui.ToastType.INFO)
+                }
             )
+
+            if (showChainageManagementDialog) {
+                val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
+                val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
+                ChainageManagementDialog(
+                    viewModel = viewModel,
+                    matchResult = matchResult,
+                    activeRoute = activeRoute,
+                    currentGpsPoint = locationState.point,
+                    currentGpsAccuracy = locationState.accuracy,
+                    correctionPoints = correctionsForRoute,
+                    isCorrectionsEnabled = isCorrectionsEnabled,
+                    initialTab = 0,
+                    onDismiss = { showChainageManagementDialog = false }
+                )
+            }
 
             // 3. Project & Stretch Information Cards
             var showEditProjectStretchDialog by remember { mutableStateOf(false) }
@@ -303,7 +336,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(
-                        if (isScrollableLayout) Modifier.height(140.dp)
+                        if (isScrollableLayout) Modifier.height(if (isCompactHeight) 120.dp else 145.dp)
                         else Modifier.weight(1f)
                     )
                     .clip(RoundedCornerShape(14.dp))
@@ -856,174 +889,335 @@ fun CentralChainageDisplay(
     confidence: MatchConfidence,
     offsetMetres: Double,
     hasActiveRoute: Boolean,
+    source: ChainageSource = ChainageSource.GPS,
+    rawChainage: String? = null,
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
     subTextColor: Color,
     isDark: Boolean = false,
-    isCompact: Boolean = false
+    isCompact: Boolean = false,
+    onClick: () -> Unit = {},
+    onToggleSide: (() -> Unit)? = null
 ) {
     val kmBadgeBg = if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.45f) else Color(0xFFEFF6FF)
     val kmBadgeBorder = if (isDark) Color(0xFF3B82F6).copy(alpha = 0.4f) else Color(0xFFBFDBFE)
     val kmBadgeText = if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
 
-    val sideBadgeBg = if (isDark) Color(0xFF064E3B).copy(alpha = 0.45f) else Color(0xFFECFDF5)
-    val sideBadgeBorder = if (isDark) Color(0xFF10B981).copy(alpha = 0.4f) else Color(0xFFA7F3D0)
-    val sideBadgeText = if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
+    val isLhs = detectedSide.equals("LHS", ignoreCase = true)
+    val isRhs = detectedSide.equals("RHS", ignoreCase = true)
+
+    val sideBadgeBg = when {
+        isLhs -> if (isDark) Color(0xFF064E3B).copy(alpha = 0.5f) else Color(0xFFECFDF5)
+        isRhs -> if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.5f) else Color(0xFFEFF6FF)
+        else -> if (isDark) Color(0xFF4C1D95).copy(alpha = 0.5f) else Color(0xFFF3E8FF)
+    }
+    val sideBadgeBorder = when {
+        isLhs -> if (isDark) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFFA7F3D0)
+        isRhs -> if (isDark) Color(0xFF3B82F6).copy(alpha = 0.45f) else Color(0xFFBFDBFE)
+        else -> if (isDark) Color(0xFF8B5CF6).copy(alpha = 0.45f) else Color(0xFFDDD6FE)
+    }
+    val sideBadgeText = when {
+        isLhs -> if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
+        isRhs -> if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
+        else -> if (isDark) Color(0xFFC084FC) else Color(0xFF7E22CE)
+    }
 
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+
+    val borderStroke = when (source) {
+        ChainageSource.MANUAL -> BorderStroke(1.5.dp, AccentRed)
+        ChainageSource.CUSTOM_CORRECTION -> BorderStroke(1.5.dp, if (isDark) Color(0xFFA855F7) else Color(0xFF7C3AED))
+        else -> BorderStroke(1.dp, cardBorderColor)
+    }
 
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = cardBgColor,
-        border = BorderStroke(1.dp, cardBorderColor),
+        border = borderStroke,
         shadowElevation = if (isDark) 0.dp else 1.dp,
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable { onClick() }
             .testTag("central_chainage_card")
     ) {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = if (isCompact) 6.dp else 10.dp,
-                    vertical = if (isCompact) 8.dp else 12.dp
+                    horizontal = if (isCompact) 8.dp else 12.dp,
+                    vertical = if (isCompact) 6.dp else 10.dp
                 ),
             contentAlignment = Alignment.Center
         ) {
             val containerWidth = maxWidth
             val sideLen = detectedSide.length
-            val approxBadgeWidth = if (sideLen > 6) 95.dp else 80.dp
-            val availableForDigits = (containerWidth - approxBadgeWidth).coerceAtLeast(120.dp)
-            val charCount = chainageText.length.coerceAtLeast(6)
+            val isLongSideText = sideLen > 6 // "SEARCHING", "LOAD ROUTE", etc.
+            
+            // Dynamic check: on compact widths (< 350dp), high font scale (> 1.25f), or when side badge text is long
+            // we place badges in a top micro-header strip so the huge chainage text has 100% full width and never truncates!
+            val useStackedBadges = containerWidth < 350.dp || fontScale > 1.25f || (isLongSideText && containerWidth < 390.dp)
 
-            // Dynamic font sizing that adapts to available width, char count, and system font scale
-            val calculatedSp = (availableForDigits.value / (charCount * 0.54f * fontScale))
-            val maxSpCap = when {
-                containerWidth < 320.dp -> 48f
-                containerWidth < 360.dp -> 58f
-                containerWidth < 400.dp -> 70f
-                containerWidth < 460.dp -> 82f
-                else -> 92f
+            // Dynamic font sizing calculation
+            val charCount = chainageText.length.coerceAtLeast(6)
+            val digitFontSize: TextUnit = if (useStackedBadges) {
+                val availForDigits = (containerWidth - 20.dp).coerceAtLeast(140.dp)
+                val calculatedSp = (availForDigits.value / (charCount * 0.58f * fontScale))
+                calculatedSp.coerceIn(28f, if (containerWidth < 330.dp) 44f else 54f).sp
+            } else {
+                val kmBadgeW = if (containerWidth < 360.dp) 38.dp else 44.dp
+                val sideBadgeW = if (isLongSideText) 95.dp else if (containerWidth < 360.dp) 68.dp else 80.dp
+                val availForDigits = (containerWidth - kmBadgeW - sideBadgeW - 24.dp).coerceAtLeast(110.dp)
+                val calculatedSp = (availForDigits.value / (charCount * 0.58f * fontScale))
+                val maxCap = when {
+                    containerWidth < 360.dp -> 44f
+                    containerWidth < 400.dp -> 54f
+                    containerWidth < 460.dp -> 64f
+                    else -> 72f
+                }
+                calculatedSp.coerceIn(24f, maxCap).sp
             }
-            val digitFontSize = calculatedSp.coerceIn(26f, maxSpCap).sp
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Left Badge: KM
-                    Surface(
-                        shape = RoundedCornerShape(7.dp),
-                        color = kmBadgeBg,
-                        border = BorderStroke(0.9.dp, kmBadgeBorder),
-                        modifier = Modifier.padding(end = if (containerWidth < 340.dp) 4.dp else 6.dp)
+                if (useStackedBadges) {
+                    // Micro-Header Row with KM Badge on Left and Side Badge on Right
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "KM",
-                            color = kmBadgeText,
-                            fontSize = if (containerWidth < 340.dp) 10.5.sp else 12.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.5.sp,
-                            modifier = Modifier.padding(
-                                horizontal = if (containerWidth < 340.dp) 6.dp else 8.dp,
-                                vertical = if (containerWidth < 340.dp) 3.dp else 4.dp
+                        // Left: KM Badge
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = kmBadgeBg,
+                            border = BorderStroke(0.8.dp, kmBadgeBorder)
+                        ) {
+                            Text(
+                                text = "KM",
+                                color = kmBadgeText,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.5.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
                             )
-                        )
+                        }
+
+                        // Right: LHS / RHS / BHS Badge
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = sideBadgeBg,
+                            border = BorderStroke(0.8.dp, sideBadgeBorder),
+                            modifier = Modifier.then(
+                                if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier
+                            )
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(sideBadgeText)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = detectedSide,
+                                    color = sideBadgeText,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
 
-                    // Dominant Live Chainage Digits
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    // Dominant Full-Width Live Chainage Digits
                     OdometerChainageRow(
                         chainageText = chainageText,
                         mainTextColor = mainTextColor,
                         digitFontSize = digitFontSize,
                         isDark = isDark
                     )
-
-                    // Right Badge: LHS / RHS / BHS / SEARCHING / LOAD ROUTE
-                    Surface(
-                        shape = RoundedCornerShape(7.dp),
-                        color = sideBadgeBg,
-                        border = BorderStroke(0.9.dp, sideBadgeBorder),
-                        modifier = Modifier.padding(start = if (containerWidth < 340.dp) 4.dp else 6.dp)
+                } else {
+                    // Inline Hero Row: [KM]  173+720  [RHS]
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(
-                                horizontal = if (containerWidth < 340.dp) 6.dp else 8.dp,
-                                vertical = if (containerWidth < 340.dp) 3.dp else 4.dp
-                            )
+                        Surface(
+                            shape = RoundedCornerShape(7.dp),
+                            color = kmBadgeBg,
+                            border = BorderStroke(0.9.dp, kmBadgeBorder),
+                            modifier = Modifier.padding(end = if (containerWidth < 360.dp) 4.dp else 8.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(if (containerWidth < 340.dp) 5.dp else 6.dp)
-                                    .clip(CircleShape)
-                                    .background(sideBadgeText)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = detectedSide,
-                                color = sideBadgeText,
-                                fontSize = if (containerWidth < 340.dp) 10.5.sp else 12.sp,
+                                text = "KM",
+                                color = kmBadgeText,
+                                fontSize = if (containerWidth < 360.dp) 11.sp else 12.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                letterSpacing = 0.5.sp,
+                                modifier = Modifier.padding(
+                                    horizontal = if (containerWidth < 360.dp) 6.dp else 8.dp,
+                                    vertical = if (containerWidth < 360.dp) 3.dp else 4.dp
+                                )
                             )
+                        }
+
+                        OdometerChainageRow(
+                            chainageText = chainageText,
+                            mainTextColor = mainTextColor,
+                            digitFontSize = digitFontSize,
+                            isDark = isDark
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(7.dp),
+                            color = sideBadgeBg,
+                            border = BorderStroke(0.9.dp, sideBadgeBorder),
+                            modifier = Modifier
+                                .padding(start = if (containerWidth < 360.dp) 4.dp else 8.dp)
+                                .then(if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(
+                                    horizontal = if (containerWidth < 360.dp) 6.dp else 8.dp,
+                                    vertical = if (containerWidth < 360.dp) 3.dp else 4.dp
+                                )
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (containerWidth < 360.dp) 5.dp else 6.dp)
+                                        .clip(CircleShape)
+                                        .background(sideBadgeText)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = detectedSide,
+                                    color = sideBadgeText,
+                                    fontSize = if (containerWidth < 360.dp) 11.sp else 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 4.dp))
+                Spacer(modifier = Modifier.height(if (isCompact) 3.dp else 5.dp))
 
-                // Subtle Telemetry Metadata Strip Beneath Dominant Chainage
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = if (hasActiveRoute) "Project Alignment" else "GPS-Derived",
-                        color = subTextColor,
-                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = "  •  ",
-                        color = subTextColor.copy(alpha = 0.6f),
-                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp
-                    )
-                    Text(
-                        text = String.format(Locale.US, "Offset: %.1fm", offsetMetres),
-                        color = mainTextColor,
-                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = "  •  ",
-                        color = subTextColor.copy(alpha = 0.6f),
-                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp
-                    )
+                // Responsive Telemetry Metadata Strip
+                val sourceLabel = when (source) {
+                    ChainageSource.MANUAL -> "Manual"
+                    ChainageSource.CUSTOM_CORRECTION -> if (rawChainage != null) "Calibrated ($rawChainage)" else "Smart Calibrated"
+                    ChainageSource.KMZ -> "KMZ Route"
+                    ChainageSource.GPS -> "GPS-Derived"
+                }
 
-                    val (confText, confCol) = when (confidence) {
-                        MatchConfidence.HIGH -> "Good" to (if (isDark) Color(0xFF34D399) else Color(0xFF059669))
-                        MatchConfidence.MEDIUM -> "Moderate" to (if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB))
-                        MatchConfidence.LOW -> "Poor" to AccentRed
-                        MatchConfidence.NO_MATCH -> "No Fix" to subTextColor
+                val (confText, confCol) = when (confidence) {
+                    MatchConfidence.HIGH -> "Good" to (if (isDark) Color(0xFF34D399) else Color(0xFF059669))
+                    MatchConfidence.MEDIUM -> "Moderate" to (if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB))
+                    MatchConfidence.LOW -> "Poor" to AccentRed
+                    MatchConfidence.NO_MATCH -> "No Fix" to subTextColor
+                }
+
+                if (containerWidth < 350.dp || fontScale > 1.25f) {
+                    // 2-line compact metadata strip
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        ChainageSourceBadge(source = source, isDark = isDark)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = sourceLabel,
+                            color = subTextColor,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
-                    Text(
-                        text = confText,
-                        color = confCol,
-                        fontSize = if (containerWidth < 340.dp) 10.sp else 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = String.format(Locale.US, "Offset: %.1fm", offsetMetres),
+                            color = mainTextColor,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "  •  ",
+                            color = subTextColor.copy(alpha = 0.6f),
+                            fontSize = 10.5.sp
+                        )
+                        Text(
+                            text = confText,
+                            color = confCol,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
+                } else {
+                    // 1-line standard metadata strip
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        ChainageSourceBadge(source = source, isDark = isDark)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = sourceLabel,
+                            color = subTextColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "  •  ",
+                            color = subTextColor.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = String.format(Locale.US, "Offset: %.1fm", offsetMetres),
+                            color = mainTextColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "  •  ",
+                            color = subTextColor.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = confText,
+                            color = confCol,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
@@ -1084,6 +1278,8 @@ fun OdometerSingleDigit(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        val effectiveSpacing = if (digitFontSize < 34.sp) 0.sp else (-0.5).sp
+
         if (!char.isDigit()) {
             Text(
                 text = char.toString(),
@@ -1091,7 +1287,7 @@ fun OdometerSingleDigit(
                 fontSize = digitFontSize,
                 lineHeight = digitFontSize,
                 fontWeight = FontWeight.Black,
-                letterSpacing = (-1.0).sp,
+                letterSpacing = effectiveSpacing,
                 softWrap = false,
                 maxLines = 1,
                 textAlign = TextAlign.Center
@@ -1111,7 +1307,7 @@ fun OdometerSingleDigit(
                     fontSize = digitFontSize,
                     lineHeight = digitFontSize,
                     fontWeight = FontWeight.Black,
-                    letterSpacing = (-1.0).sp,
+                    letterSpacing = effectiveSpacing,
                     softWrap = false,
                     maxLines = 1,
                     textAlign = TextAlign.Center

@@ -100,6 +100,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -189,6 +190,51 @@ fun SettingsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showRestoreDialog by remember { mutableStateOf(false) }
     var isPreviewLandscape by remember { mutableStateOf(false) }
+
+    // Responsive local input states for zero-lag typing across all sections
+    var projectNameInput by remember { mutableStateOf(currentProject.highwayId) }
+    var projectStretchInput by remember { mutableStateOf(currentProject.packageSection) }
+    var projectStartChainageInput by remember { mutableStateOf(currentProject.startChainage) }
+    var projectEndChainageInput by remember { mutableStateOf(currentProject.endChainage) }
+    var pdfPreparedByInput by remember { mutableStateOf(currentOverlay.pdfDefaultPreparedBy) }
+    var customFilenamePrefixInput by remember { mutableStateOf(currentCameraSettings.customFilenamePrefix) }
+    var customStoragePathInput by remember { mutableStateOf(currentCameraSettings.customStoragePath) }
+
+    LaunchedEffect(currentProject.highwayId) {
+        if (projectNameInput != currentProject.highwayId) {
+            projectNameInput = currentProject.highwayId
+        }
+    }
+    LaunchedEffect(currentProject.packageSection) {
+        if (projectStretchInput != currentProject.packageSection) {
+            projectStretchInput = currentProject.packageSection
+        }
+    }
+    LaunchedEffect(currentProject.startChainage) {
+        if (projectStartChainageInput != currentProject.startChainage) {
+            projectStartChainageInput = currentProject.startChainage
+        }
+    }
+    LaunchedEffect(currentProject.endChainage) {
+        if (projectEndChainageInput != currentProject.endChainage) {
+            projectEndChainageInput = currentProject.endChainage
+        }
+    }
+    LaunchedEffect(currentOverlay.pdfDefaultPreparedBy) {
+        if (pdfPreparedByInput != currentOverlay.pdfDefaultPreparedBy) {
+            pdfPreparedByInput = currentOverlay.pdfDefaultPreparedBy
+        }
+    }
+    LaunchedEffect(currentCameraSettings.customFilenamePrefix) {
+        if (customFilenamePrefixInput != currentCameraSettings.customFilenamePrefix) {
+            customFilenamePrefixInput = currentCameraSettings.customFilenamePrefix
+        }
+    }
+    LaunchedEffect(currentCameraSettings.customStoragePath) {
+        if (customStoragePathInput != currentCameraSettings.customStoragePath) {
+            customStoragePathInput = currentCameraSettings.customStoragePath
+        }
+    }
 
     // Dialog states for Photo & Video Resolution selection and File Name Format
     var showPhotoResolutionDialog by remember { mutableStateOf(false) }
@@ -361,6 +407,8 @@ fun SettingsScreen(
                         put("highwayId", currentProject.highwayId)
                         put("stretch", currentProject.packageSection)
                         put("packageSection", currentProject.packageSection)
+                        put("startChainage", currentProject.startChainage)
+                        put("endChainage", currentProject.endChainage)
                         put("workType", currentProject.workType)
                         put("activity", currentProject.activity)
                         put("roadSide", currentProject.roadSide.label)
@@ -375,6 +423,8 @@ fun SettingsScreen(
                             pObj.put("name", dp.name)
                             pObj.put("stretch", dp.stretch)
                             pObj.put("workType", dp.workType)
+                            pObj.put("startChainage", dp.startChainage)
+                            pObj.put("endChainage", dp.endChainage)
                             projectsArray.put(pObj)
                         }
                         put("definedProjects", projectsArray)
@@ -432,6 +482,8 @@ fun SettingsScreen(
                 val json = org.json.JSONObject(content)
                 val projectName = json.optString("project", json.optString("highwayId", "")).trim()
                 val stretchName = json.optString("stretch", json.optString("packageSection", "")).trim()
+                val startChainage = json.optString("startChainage", currentProject.startChainage).trim()
+                val endChainage = json.optString("endChainage", currentProject.endChainage).trim()
                 val workType = json.optString("workType", "").trim()
                 val activityStr = json.optString("activity", currentProject.activity).trim()
                 val roadSideStr = json.optString("roadSide", currentProject.roadSide.label)
@@ -446,6 +498,8 @@ fun SettingsScreen(
                 val updated = currentProject.copy(
                     highwayId = projectName.ifBlank { currentProject.highwayId },
                     packageSection = stretchName.ifBlank { currentProject.packageSection },
+                    startChainage = startChainage.ifBlank { currentProject.startChainage },
+                    endChainage = endChainage.ifBlank { currentProject.endChainage },
                     workType = workType.ifBlank { currentProject.workType },
                     activity = activityStr.ifBlank { currentProject.activity },
                     roadSide = RoadSide.fromString(roadSideStr),
@@ -459,7 +513,9 @@ fun SettingsScreen(
                         DefinedProject(
                             name = projectName,
                             stretch = stretchName,
-                            workType = workType.ifBlank { currentProject.workType }
+                            workType = workType.ifBlank { currentProject.workType },
+                            startChainage = startChainage.ifBlank { currentProject.startChainage },
+                            endChainage = endChainage.ifBlank { currentProject.endChainage }
                         )
                     )
                 }
@@ -476,7 +532,9 @@ fun SettingsScreen(
                                     DefinedProject(
                                         name = pName,
                                         stretch = pObj.optString("stretch", "").trim(),
-                                        workType = pObj.optString("workType", "MM").trim()
+                                        workType = pObj.optString("workType", "MM").trim(),
+                                        startChainage = pObj.optString("startChainage", "0+000").trim(),
+                                        endChainage = pObj.optString("endChainage", "50+000").trim()
                                     )
                                 )
                             }
@@ -708,7 +766,7 @@ fun SettingsScreen(
 
                 SmartDropdownSection(
                     title = "Project Settings",
-                    subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
+                    subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} (${currentProject.startChainage} - ${currentProject.endChainage}) • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
                     icon = Icons.Default.Engineering,
                     accentColor = Color(0xFF38BDF8),
                     isExpanded = expandedSections["project"] ?: false,
@@ -721,8 +779,9 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     ) {
                         OutlinedTextField(
-                            value = currentProject.highwayId,
+                            value = projectNameInput,
                             onValueChange = { newName ->
+                                projectNameInput = newName
                                 viewModel.saveProjectProfileSilent(currentProject.copy(highwayId = newName))
                             },
                             label = { Text("Project") },
@@ -787,12 +846,14 @@ fun SettingsScreen(
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                     color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface
                                                 )
-                                                if (proj.stretch.isNotBlank() || proj.workType.isNotBlank()) {
+                                                val details = listOfNotNull(
+                                                    proj.stretch.takeIf { it.isNotBlank() },
+                                                    if (proj.startChainage.isNotBlank() && proj.endChainage.isNotBlank()) "${proj.startChainage} - ${proj.endChainage}" else null,
+                                                    proj.workType.takeIf { it.isNotBlank() }
+                                                ).joinToString(" • ")
+                                                if (details.isNotBlank()) {
                                                     Text(
-                                                        text = listOfNotNull(
-                                                            proj.stretch.takeIf { it.isNotBlank() },
-                                                            proj.workType.takeIf { it.isNotBlank() }
-                                                        ).joinToString(" • "),
+                                                        text = details,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
@@ -823,11 +884,17 @@ fun SettingsScreen(
                                             }
                                         },
                                         onClick = {
+                                            projectNameInput = proj.name
+                                            projectStretchInput = if (proj.stretch.isNotBlank()) proj.stretch else currentProject.packageSection
+                                            projectStartChainageInput = if (proj.startChainage.isNotBlank()) proj.startChainage else currentProject.startChainage
+                                            projectEndChainageInput = if (proj.endChainage.isNotBlank()) proj.endChainage else currentProject.endChainage
                                             viewModel.saveProjectProfileSilent(
                                                 currentProject.copy(
                                                     highwayId = proj.name,
                                                     packageSection = if (proj.stretch.isNotBlank()) proj.stretch else currentProject.packageSection,
-                                                    workType = if (proj.workType.isNotBlank()) proj.workType else currentProject.workType
+                                                    workType = if (proj.workType.isNotBlank()) proj.workType else currentProject.workType,
+                                                    startChainage = if (proj.startChainage.isNotBlank()) proj.startChainage else currentProject.startChainage,
+                                                    endChainage = if (proj.endChainage.isNotBlank()) proj.endChainage else currentProject.endChainage
                                                 )
                                             )
                                             projectDropdownExpanded = false
@@ -853,7 +920,9 @@ fun SettingsScreen(
                                             DefinedProject(
                                                 name = currentProject.highwayId,
                                                 stretch = currentProject.packageSection,
-                                                workType = currentProject.workType
+                                                workType = currentProject.workType,
+                                                startChainage = currentProject.startChainage,
+                                                endChainage = currentProject.endChainage
                                             )
                                         )
                                         viewModel.showSuccess("Saved \"${currentProject.highwayId}\" to projects")
@@ -866,8 +935,11 @@ fun SettingsScreen(
 
                     // 2. Strech Input
                     OutlinedTextField(
-                        value = currentProject.packageSection,
-                        onValueChange = { viewModel.saveProjectProfileSilent(currentProject.copy(packageSection = it)) },
+                        value = projectStretchInput,
+                        onValueChange = { newStretch ->
+                            projectStretchInput = newStretch
+                            viewModel.saveProjectProfileSilent(currentProject.copy(packageSection = newStretch))
+                        },
                         label = { Text("Strech") },
                         placeholder = { Text("Enter Strech / Section", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("settings_stretch_input"),
@@ -882,15 +954,75 @@ fun SettingsScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Words,
-                            imeAction = ImeAction.Done
+                            imeAction = ImeAction.Next
                         ),
                         keyboardActions = KeyboardActions(
-                            onDone = {
-                                keyboardController?.hide()
-                                focusManager.clearFocus()
-                            }
+                            onNext = { focusManager.moveFocus(FocusDirection.Down) }
                         )
                     )
+
+                    // 3. Project Start & End Chainage Manual Inputs
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = projectStartChainageInput,
+                            onValueChange = { newStart ->
+                                projectStartChainageInput = newStart
+                                viewModel.saveProjectProfileSilent(currentProject.copy(startChainage = newStart))
+                            },
+                            label = { Text("Start Chainage") },
+                            placeholder = { Text("0+000", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                            modifier = Modifier.weight(1f).testTag("settings_start_chainage_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF38BDF8),
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                            ),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Next
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onNext = { focusManager.moveFocus(FocusDirection.Right) }
+                            )
+                        )
+
+                        OutlinedTextField(
+                            value = projectEndChainageInput,
+                            onValueChange = { newEnd ->
+                                projectEndChainageInput = newEnd
+                                viewModel.saveProjectProfileSilent(currentProject.copy(endChainage = newEnd))
+                            },
+                            label = { Text("End Chainage") },
+                            placeholder = { Text("50+000", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                            modifier = Modifier.weight(1f).testTag("settings_end_chainage_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF38BDF8),
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                            ),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                }
+                            )
+                        )
+                    }
 
                     // 3. Work Type Dropdown (MM - RM - LIE)
                     ExposedDropdownMenuBox(
@@ -2943,8 +3075,11 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         OutlinedTextField(
-                            value = currentOverlay.pdfDefaultPreparedBy,
-                            onValueChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(pdfDefaultPreparedBy = it)) },
+                            value = pdfPreparedByInput,
+                            onValueChange = { newPreparedBy ->
+                                pdfPreparedByInput = newPreparedBy
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(pdfDefaultPreparedBy = newPreparedBy))
+                            },
                             label = { Text("Default Prepared By (Engineer Name)") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
@@ -3159,8 +3294,11 @@ fun SettingsScreen(
                     }
 
                     OutlinedTextField(
-                        value = currentCameraSettings.customFilenamePrefix,
-                        onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customFilenamePrefix = it)) },
+                        value = customFilenamePrefixInput,
+                        onValueChange = { newPrefix ->
+                            customFilenamePrefixInput = newPrefix
+                            viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customFilenamePrefix = newPrefix))
+                        },
                         label = { Text("Custom Filename Prefix (Optional e.g. NH58_)") },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -3182,8 +3320,11 @@ fun SettingsScreen(
                     )
 
                     OutlinedTextField(
-                        value = currentCameraSettings.customStoragePath,
-                        onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customStoragePath = it)) },
+                        value = customStoragePathInput,
+                        onValueChange = { newPath ->
+                            customStoragePathInput = newPath
+                            viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(customStoragePath = newPath))
+                        },
                         label = { Text("Storage Directory Path") },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = OutlinedTextFieldDefaults.colors(

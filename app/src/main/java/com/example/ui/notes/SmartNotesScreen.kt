@@ -656,16 +656,19 @@ fun SmartNotesScreen(
     var selectedProjectId by remember { mutableStateOf(projectProfile.highwayId.ifBlank { "NH-48" }) }
 
     val currentProject = remember(selectedProjectId, appProjects, projectProfile) {
-        appProjects.find { it.id.equals(selectedProjectId, true) || it.name.equals(selectedProjectId, true) }
-            ?: HighwayProjectEntity(
-                id = selectedProjectId,
-                name = if (projectProfile.highwayId.isNotBlank()) projectProfile.highwayId else "Highway Project $selectedProjectId",
-                clientName = "National Highways Authority",
-                contractorName = projectProfile.packageSection.ifBlank { "Highway Infra" },
-                startChainage = "0+000",
-                endChainage = "50+000",
-                totalLengthKm = 50.0
-            )
+        val found = appProjects.find { it.id.equals(selectedProjectId, true) || it.name.equals(selectedProjectId, true) }
+        found?.copy(
+            startChainage = if (projectProfile.startChainage.isNotBlank()) projectProfile.startChainage else found.startChainage,
+            endChainage = if (projectProfile.endChainage.isNotBlank()) projectProfile.endChainage else found.endChainage
+        ) ?: HighwayProjectEntity(
+            id = selectedProjectId,
+            name = if (projectProfile.highwayId.isNotBlank()) projectProfile.highwayId else "Highway Project $selectedProjectId",
+            clientName = "National Highways Authority",
+            contractorName = projectProfile.packageSection.ifBlank { "Highway Infra" },
+            startChainage = projectProfile.startChainage.ifBlank { "0+000" },
+            endChainage = projectProfile.endChainage.ifBlank { "50+000" },
+            totalLengthKm = 50.0
+        )
     }
 
     // 2. Active Date State

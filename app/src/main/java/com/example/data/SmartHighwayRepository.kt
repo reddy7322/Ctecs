@@ -79,6 +79,12 @@ class SmartHighwayRepository(
         }
     }
 
+    suspend fun getProjectById(id: String): HighwayProjectEntity? {
+        return withContext(Dispatchers.IO) {
+            projectDao.getProjectById(id)
+        }
+    }
+
     suspend fun saveProject(project: HighwayProjectEntity) {
         withContext(Dispatchers.IO) {
             projectDao.insertProject(project)

@@ -270,46 +270,96 @@ object DprPdfGenerator {
             canvas.drawText(pageStr, rightMargin - pageW - 4f, footerLineY + 12f, paint)
         }
 
+        val prjName = if (project.name.isNotBlank()) project.name else project.id
+        val stretch = if (project.startChainage.isNotBlank() && project.endChainage.isNotBlank()) {
+            "Ch. ${project.startChainage} to ${project.endChainage}"
+        } else "Full Project Section"
+        val scopeText = when (exportScope) {
+            "MAIN_ONLY" -> "Main Activities"
+            "SUB_ONLY" -> "Sub Activities"
+            else -> "Main & Sub Activities"
+        }
+
         fun drawTopBanner(isFirstPage: Boolean, activeDateLabel: String = "") {
-            y = 20f
+            if (isFirstPage) {
+                y = 18f
 
-            // Top decorative bar
-            paint.color = primaryColor
-            canvas.drawRect(leftMargin, y, rightMargin, y + 3.5f, paint)
-            y += 12f
+                // Top decorative accent bar
+                paint.color = primaryColor
+                canvas.drawRect(leftMargin, y, rightMargin, y + 3.5f, paint)
+                y += 10f
 
-            // Custom Logo at Top Right
-            if (customLogoBitmap != null) {
-                try {
-                    val maxW = 80f
-                    val maxH = 28f
-                    val aspect = customLogoBitmap.width.toFloat() / customLogoBitmap.height.toFloat()
-                    val targetW = if (aspect >= (maxW / maxH)) maxW else maxH * aspect
-                    val targetH = if (aspect >= (maxW / maxH)) maxW / aspect else maxH
-                    val destRect = RectF(rightMargin - targetW, y - 2f, rightMargin, y - 2f + targetH)
-                    canvas.drawBitmap(customLogoBitmap, null, destRect, paint)
-                } catch (e: Exception) {
-                    // Ignore logo drawing error
+                // Custom Logo at Top Right
+                if (customLogoBitmap != null) {
+                    try {
+                        val maxW = 75f
+                        val maxH = 26f
+                        val aspect = customLogoBitmap.width.toFloat() / customLogoBitmap.height.toFloat()
+                        val targetW = if (aspect >= (maxW / maxH)) maxW else maxH * aspect
+                        val targetH = if (aspect >= (maxW / maxH)) maxW / aspect else maxH
+                        val destRect = RectF(rightMargin - targetW, y - 2f, rightMargin, y - 2f + targetH)
+                        canvas.drawBitmap(customLogoBitmap, null, destRect, paint)
+                    } catch (e: Exception) {
+                        // Ignore logo drawing error
+                    }
                 }
-            }
 
-            // Report Title
-            paint.color = primaryColor
-            paint.textSize = 13.5f
-            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            canvas.drawText("HIGHWAY SITE ACTIVITY REPORT", leftMargin, y + 2f, paint)
-            y += 13f
+                // Main Report Title
+                paint.color = primaryColor
+                paint.textSize = 13.5f
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                canvas.drawText(reportTitle, leftMargin, y + 10f, paint)
+                y += 18f
 
-            paint.color = subTextColor
-            paint.textSize = 8.5f
-            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            val subText = if (activeDateLabel.isNotBlank()) {
-                "$reportTitle • $periodSubTitle • Active Date: $activeDateLabel • Page $pageNumber"
+                // Unified Executive Metadata Card (Page 1 Only - Zero Redundancy)
+                val cardH = 30f
+                paint.color = Color.rgb(248, 250, 252)
+                canvas.drawRoundRect(leftMargin, y, rightMargin, y + cardH, 4f, 4f, paint)
+                paint.color = tableBorderColor
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.8f
+                canvas.drawRoundRect(leftMargin, y, rightMargin, y + cardH, 4f, 4f, paint)
+                paint.style = Paint.Style.FILL
+
+                // Line 1: Project, Section, and Period/Date
+                paint.color = textColor
+                paint.textSize = 8f
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+                val metaLine1 = "Project: $prjName   |   Section: $stretch   |   $periodSubTitle"
+                canvas.drawText(metaLine1, leftMargin + 8f, y + 12f, paint)
+
+                // Line 2: Client, Contractor, Total Records, Scope
+                paint.color = subTextColor
+                paint.textSize = 7.5f
+                val metaLine2 = "Client: ${project.clientName}   |   Contractor: ${project.contractorName}   |   Total Activities: ${activities.size}   |   Scope: $scopeText"
+                canvas.drawText(metaLine2, leftMargin + 8f, y + 24f, paint)
+
+                y += cardH + 12f
             } else {
-                "$reportTitle • $periodSubTitle • Page $pageNumber"
+                // Subsequent pages (Page 2+) - Minimal, normal running header
+                y = 16f
+                paint.color = subTextColor
+                paint.textSize = 7.5f
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+
+                val runningTitle = if (activeDateLabel.isNotBlank()) {
+                    "$reportTitle • $prjName • $activeDateLabel"
+                } else {
+                    "$reportTitle • $prjName • $periodSubTitle"
+                }
+                canvas.drawText(runningTitle, leftMargin, y + 8f, paint)
+
+                val pageStr = "Page $pageNumber"
+                val pageW = paint.measureText(pageStr)
+                canvas.drawText(pageStr, rightMargin - pageW, y + 8f, paint)
+
+                // Hairline rule below running header
+                paint.color = tableBorderColor
+                paint.strokeWidth = 0.5f
+                canvas.drawLine(leftMargin, y + 13f, rightMargin, y + 13f, paint)
+
+                y += 20f
             }
-            canvas.drawText(subText, leftMargin, y + 1f, paint)
-            y += 14f
         }
 
         fun drawMainTableHeader() {
@@ -396,47 +446,41 @@ object DprPdfGenerator {
                 dayIndex++
                 val displayDayDate = formatDisplayDate(dateKey)
 
-                // Page break check before starting a new daily section
-                if (dayIndex > 1 && y + 160f > maxPageY) {
-                    drawFooter(pageNumber)
-                    pdfDocument.finishPage(page)
-                    pageNumber++
-                    pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
-                    page = pdfDocument.startPage(pageInfo)
-                    canvas = page.canvas
-                    drawTopBanner(isFirstPage = false, activeDateLabel = displayDayDate)
+                // For multi-day reports, render a clean date section banner
+                if (isRangeReport) {
+                    val dateBannerH = 20f
+                    if (y + dateBannerH + 40f > maxPageY) {
+                        drawFooter(pageNumber)
+                        pdfDocument.finishPage(page)
+                        pageNumber++
+                        pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                        page = pdfDocument.startPage(pageInfo)
+                        canvas = page.canvas
+                        drawTopBanner(isFirstPage = false, activeDateLabel = displayDayDate)
+                    }
+
+                    paint.color = Color.rgb(241, 245, 249)
+                    canvas.drawRoundRect(leftMargin, y, rightMargin, y + dateBannerH, 4f, 4f, paint)
+                    paint.color = tableBorderColor
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = 0.8f
+                    canvas.drawRoundRect(leftMargin, y, rightMargin, y + dateBannerH, 4f, 4f, paint)
+                    paint.style = Paint.Style.FILL
+
+                    paint.color = primaryColor
+                    paint.textSize = 8.5f
+                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    canvas.drawText("DAILY SITE ACTIVITIES – ${displayDayDate.uppercase(Locale.US)}", leftMargin + 8f, y + 13f, paint)
+
+                    paint.color = subTextColor
+                    paint.textSize = 7.5f
+                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+                    val cntText = "${dayActivities.size} Activities Logged"
+                    val cntW = paint.measureText(cntText)
+                    canvas.drawText(cntText, rightMargin - cntW - 8f, y + 13f, paint)
+
+                    y += dateBannerH + 8f
                 }
-
-                // -------------------------------------------------------------
-                // DAILY SECTION HEADER & PROJECT INFO
-                // -------------------------------------------------------------
-                val infoBoxH = 34f
-                paint.color = Color.rgb(241, 245, 249)
-                canvas.drawRoundRect(leftMargin, y, rightMargin, y + infoBoxH, 4f, 4f, paint)
-                paint.color = tableBorderColor
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = 1f
-                canvas.drawRoundRect(leftMargin, y, rightMargin, y + infoBoxH, 4f, 4f, paint)
-                paint.style = Paint.Style.FILL
-
-                // Day Title & Info line
-                paint.color = primaryColor
-                paint.textSize = 9.5f
-                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                val dayTitle = "DAILY SITE ACTIVITY REPORT – ${displayDayDate.uppercase(Locale.US)}"
-                canvas.drawText(dayTitle, leftMargin + 8f, y + 13f, paint)
-
-                paint.color = textColor
-                paint.textSize = 8f
-                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-                val prjName = if (project.name.isNotBlank()) project.name else project.id
-                val stretch = if (project.startChainage.isNotBlank() && project.endChainage.isNotBlank()) {
-                    "${project.startChainage} to ${project.endChainage}"
-                } else "Full Project Section"
-                val infoText = "Project: $prjName   |   Stretch: $stretch   |   Total Recorded Main Activities: ${dayActivities.size}"
-                canvas.drawText(infoText, leftMargin + 8f, y + 26f, paint)
-
-                y += infoBoxH + 10f
 
                 // Accumulators for this specific day
                 var dailyMainLen = 0.0
@@ -775,10 +819,26 @@ object DprPdfGenerator {
                     it.siteObservations.ifBlank { it.remarks }.trim().takeIf { s -> s.isNotBlank() && !s.equals("None", true) }
                 }.distinct()
 
-                val hasObs = dailyObsList.isNotEmpty() || (remarks.isNotBlank() && !isRangeReport)
-                val summaryBoxH = if (hasObs) 48f else 32f
+                val allDailyRemarks = mutableListOf<String>()
+                if (remarks.isNotBlank() && !isRangeReport) {
+                    allDailyRemarks.add(remarks.trim())
+                }
+                dailyObsList.forEach { obs ->
+                    if (!allDailyRemarks.contains(obs)) {
+                        allDailyRemarks.add(obs)
+                    }
+                }
 
-                if (y + summaryBoxH > maxPageY) {
+                paint.textSize = 7.5f
+                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+                val remarkWrappedLines = if (allDailyRemarks.isNotEmpty()) {
+                    val combined = allDailyRemarks.joinToString(" • ")
+                    wrapText("• Daily Remarks: $combined", paint, tableWidth - 18f)
+                } else emptyList()
+
+                val summaryContentH = 36f + (if (remarkWrappedLines.isNotEmpty()) (remarkWrappedLines.size * 9.5f) + 6f else 0f)
+
+                if (y + summaryContentH > maxPageY) {
                     drawFooter(pageNumber)
                     pdfDocument.finishPage(page)
                     pageNumber++
@@ -789,11 +849,11 @@ object DprPdfGenerator {
                 }
 
                 paint.color = Color.rgb(248, 250, 252)
-                canvas.drawRoundRect(leftMargin, y, rightMargin, y + summaryBoxH, 4f, 4f, paint)
+                canvas.drawRoundRect(leftMargin, y, rightMargin, y + summaryContentH, 4f, 4f, paint)
                 paint.color = tableBorderColor
                 paint.style = Paint.Style.STROKE
                 paint.strokeWidth = 0.8f
-                canvas.drawRoundRect(leftMargin, y, rightMargin, y + summaryBoxH, 4f, 4f, paint)
+                canvas.drawRoundRect(leftMargin, y, rightMargin, y + summaryContentH, 4f, 4f, paint)
                 paint.style = Paint.Style.FILL
 
                 paint.color = primaryColor
@@ -815,13 +875,15 @@ object DprPdfGenerator {
                 val line2 = "• Total Sub Activity Length: ${dailySubLen.toInt()} m (${"%.2f".format(Locale.US, subTotKm)} km)   |   Total Sub Activity Quantity: $subVolDesc"
                 canvas.drawText(line2, leftMargin + 8f, y + 33f, paint)
 
-                if (hasObs) {
-                    val obsText = if (remarks.isNotBlank() && !isRangeReport) remarks else dailyObsList.first()
-                    val obsLine = "• Daily Remarks: " + obsText.take(130)
-                    canvas.drawText(obsLine, leftMargin + 8f, y + 43f, paint)
+                if (remarkWrappedLines.isNotEmpty()) {
+                    var rY = y + 43f
+                    remarkWrappedLines.forEach { rLine ->
+                        canvas.drawText(rLine, leftMargin + 8f, rY, paint)
+                        rY += 9.5f
+                    }
                 }
 
-                y += summaryBoxH + 14f
+                y += summaryContentH + 12f
 
                 // Accumulate overall period totals
                 overallPeriodMainLen += dailyMainLen

@@ -33,27 +33,53 @@ data class Chainage(val metres: Long) : Comparable<Chainage> {
 
         /**
          * Parses a raw string into a [Chainage] object.
-         * Accepts formats like: "196+040", "130+000", "209+883", "CH: 196+040", "CH. 196+040", "196+40".
+         * Accepts formats like:
+         * - "198+880", "200+000", "CH: 196+040", "CH. 196+040", "196+40", "-5+200"
+         * - "198880", "200000" (raw metre integer)
+         * - "198.880", "200.0" (kilometres)
          */
         fun parse(raw: String?): Chainage? {
             if (raw.isNullOrBlank()) return null
-            val match = CHAINAGE_REGEX.find(raw.trim()) ?: return null
-            val (kmStr, mStr) = match.destructured
+            val cleaned = raw.trim()
 
-            val km = kmStr.toLongOrNull() ?: return null
-            val m = mStr.toLongOrNull() ?: return null
+            // 1. Standard "km+m" pattern e.g. "198+880" or "CH: 198+880"
+            val match = CHAINAGE_REGEX.find(cleaned)
+            if (match != null) {
+                val (kmStr, mStr) = match.destructured
+                val km = kmStr.toLongOrNull() ?: return null
+                val m = mStr.toLongOrNull() ?: return null
 
-            if (m < 0 || m >= 1000 && mStr.length != 4) {
-                // Reject invalid metre components unless valid 3-digit or standard interval
-                if (m >= 10000) return null
+                val totalMetres = if (km < 0) {
+                    km * 1000 - m
+                } else {
+                    km * 1000 + m
+                }
+                return Chainage(totalMetres)
             }
 
-            val totalMetres = if (km < 0) {
-                km * 1000 - m
-            } else {
-                km * 1000 + m
+            // 2. Pure digits or signed integer e.g. "198880", "200000", "198"
+            val prefixStripped = cleaned
+                .replace(Regex("""^(?i)(?:CH|CHAINAGE|KM)[\s:\.]*"""), "")
+                .trim()
+
+            val asLong = prefixStripped.toLongOrNull()
+            if (asLong != null) {
+                val totalMetres = if (Math.abs(asLong) < 1000 && !prefixStripped.startsWith("0")) {
+                    asLong * 1000
+                } else {
+                    asLong
+                }
+                return Chainage(totalMetres)
             }
-            return Chainage(totalMetres)
+
+            // 3. Decimal kilometre representation e.g. "198.880", "200.5"
+            val asDouble = prefixStripped.toDoubleOrNull()
+            if (asDouble != null && !asDouble.isNaN() && !asDouble.isInfinite()) {
+                val totalMetres = Math.round(asDouble * 1000.0)
+                return Chainage(totalMetres)
+            }
+
+            return null
         }
 
         fun fromMetres(metres: Long): Chainage = Chainage(metres)

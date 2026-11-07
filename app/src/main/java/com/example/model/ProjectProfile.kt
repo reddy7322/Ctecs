@@ -18,6 +18,8 @@ enum class RoadSide(val label: String) {
 data class ProjectProfile(
     val highwayId: String = "",              // e.g. "NH-44" (Project Name)
     val packageSection: String = "",         // e.g. "Pkg-02" (Stretch)
+    val startChainage: String = "0+000",      // Project Start Chainage e.g. "0+000"
+    val endChainage: String = "50+000",        // Project End Chainage e.g. "50+000"
     val workType: String = "",               // Work Type: MM, RM, LIE, or "None"/""
     val roadSide: RoadSide = RoadSide.RHS,      // RHS / LHS / MEDIAN
     val lane: String = "I/L",                  // I/L (Inner), M/L (Middle), O/L (Outer), Shoulder
@@ -135,7 +137,9 @@ data class ProjectProfile(
 data class DefinedProject(
     val name: String,
     val stretch: String = "",
-    val workType: String = "MM"
+    val workType: String = "MM",
+    val startChainage: String = "0+000",
+    val endChainage: String = "50+000"
 ) {
     companion object {
         val DEFAULT_PROJECTS: List<DefinedProject> = emptyList()
