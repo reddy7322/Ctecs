@@ -8,19 +8,19 @@ import com.example.model.MatchConfidence
  *
  * Requirements:
  * - KML/KMZ route direction is the first and authoritative reference.
- * - Position to the left of the ordered route direction = LHS.
- * - Position to the right of the ordered route direction = RHS.
- * - Chainage increasing or decreasing has ZERO influence on LHS/RHS classification.
+ * - Perpendicular offset to the left/right of ordered route direction determines LHS/RHS.
  * - Reduces incorrect switching caused by GPS fluctuations or low accuracy.
  * - Applies centerline deadband (within 1.8m of centerline, retains previous side).
  * - Applies hysteresis (requires consecutive reliable samples or large offset with good GPS to switch sides).
- * - Avoids rapid switching when stationary.
+ * - Avoids rapid switching when stationary or during signal loss.
+ * - Manual LHS/RHS override takes precedence until cleared or set back to Auto.
  */
 class ChainageProgressionTracker {
     private var currentSide: String = "RHS" // Initial default
     private var pendingSide: String? = null
     private var pendingSideCount: Int = 0
     private var lastActiveRouteId: String? = null
+    private var isManualSideOverride: Boolean = false
 
     // Deadband near centerline where vehicle could be straddling lanes
     private val CENTERLINE_DEADBAND_METRES = 1.8
@@ -33,18 +33,23 @@ class ChainageProgressionTracker {
 
     @Synchronized
     fun processResult(result: ChainageMatchResult, routeId: String? = null): ChainageMatchResult {
+        // If user explicitly set manual side override, respect it until cleared/reset
+        if (isManualSideOverride) {
+            return result.copy(detectedSide = currentSide)
+        }
+
         // 1. Reset state if route has changed
         if (routeId != null && routeId != lastActiveRouteId) {
             lastActiveRouteId = routeId
             pendingSide = null
             pendingSideCount = 0
-            if (result.detectedSide == "LHS" || result.detectedSide == "RHS") {
+            if (result.detectedSide == "LHS" || result.detectedSide == "RHS" || result.detectedSide == "MEDIAN" || result.detectedSide == "BHS") {
                 currentSide = result.detectedSide
             }
             return result.copy(detectedSide = currentSide)
         }
 
-        // 2. Ignore invalid readings, signal loss, or NO_MATCH
+        // 2. Ignore invalid readings, signal loss, or NO_MATCH (retain last reliable side)
         if (result.confidence == MatchConfidence.NO_MATCH || result.chainage == null) {
             return result.copy(detectedSide = currentSide)
         }
@@ -54,7 +59,7 @@ class ChainageProgressionTracker {
         val offset = result.offsetMetres
 
         // If raw side is Unknown or unclassified, retain current side
-        if (rawSide != "LHS" && rawSide != "RHS") {
+        if (rawSide != "LHS" && rawSide != "RHS" && rawSide != "MEDIAN" && rawSide != "BHS") {
             return result.copy(detectedSide = currentSide)
         }
 
@@ -76,12 +81,12 @@ class ChainageProgressionTracker {
         if (rawSide == currentSide) {
             pendingSide = null
             pendingSideCount = 0
-            return result
+            return result.copy(detectedSide = currentSide)
         }
 
         // 6. rawSide != currentSide (attempting side switch across centerline)
-        // Immediate switch permitted ONLY if offset is large (>= 4.0m) AND GPS accuracy is sharp (<= 8.0m)
-        if (offset >= 4.0 && accuracy <= 8.0f) {
+        // Immediate switch permitted ONLY if offset is large (>= 3.5m) AND GPS accuracy is sharp (<= 8.0m)
+        if (offset >= 3.5 && accuracy <= 8.0f) {
             currentSide = rawSide
             pendingSide = null
             pendingSideCount = 0
@@ -113,16 +118,32 @@ class ChainageProgressionTracker {
         pendingSide = null
         pendingSideCount = 0
         lastActiveRouteId = null
+        isManualSideOverride = false
     }
 
     @Synchronized
     fun setManualSide(side: String) {
-        if (side == "LHS" || side == "RHS") {
+        if (side == "LHS" || side == "RHS" || side == "MEDIAN" || side == "BHS") {
             currentSide = side
+            isManualSideOverride = true
+            pendingSide = null
+            pendingSideCount = 0
+        } else if (side.equals("AUTO", ignoreCase = true)) {
+            isManualSideOverride = false
             pendingSide = null
             pendingSideCount = 0
         }
     }
+
+    @Synchronized
+    fun clearManualSide() {
+        isManualSideOverride = false
+        pendingSide = null
+        pendingSideCount = 0
+    }
+
+    @Synchronized
+    fun isManualOverride(): Boolean = isManualSideOverride
 
     @Synchronized
     fun getCurrentSide(): String = currentSide

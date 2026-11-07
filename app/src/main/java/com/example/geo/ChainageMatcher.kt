@@ -172,9 +172,7 @@ object ChainageMatcher {
             }
         }
 
-        // 4. Carriageway LHS / RHS detection based strictly on KML/KMZ route direction
-        // Imported KML/KMZ route direction is the authoritative reference.
-        // Chainage direction and vehicle travel direction NEVER reverse LHS/RHS!
+        // 4. Carriageway LHS / RHS detection based strictly on KML/KMZ route direction & geometry
         var detectedSide = "Unknown"
         if (confidence != MatchConfidence.NO_MATCH) {
             val lowerAlign = matchedAlignmentName.lowercase(Locale.ROOT)
@@ -185,24 +183,42 @@ object ChainageMatcher {
             } else if (lowerAlign.contains("rhs") || lowerAlign.contains("right") || lowerRouteName.contains("rhs")) {
                 detectedSide = "RHS"
             } else {
-                // Determine geometric side relative to nearest ordered route segment
-                val segment = if (bestProjection != null && bestProjection.p1 != null && bestProjection.p2 != null) {
-                    Pair(bestProjection.p1!!, bestProjection.p2!!)
+                // Determine geometric side relative to nearest ordered route segment (p1 -> p2)
+                val segmentWithDeltaC = if (bestProjection != null && bestProjection.p1 != null && bestProjection.p2 != null) {
+                    val p1 = bestProjection.p1!!
+                    val p2 = bestProjection.p2!!
+                    val c1 = estimateChainageForPoint(p1, sortedMarkers)
+                    val c2 = estimateChainageForPoint(p2, sortedMarkers)
+                    Triple(p1, p2, c2 - c1)
                 } else if (sortedMarkers.size >= 2) {
                     val p1 = if (nearestIndex < sortedMarkers.size - 1) sortedMarkers[nearestIndex].point else sortedMarkers[nearestIndex - 1].point
                     val p2 = if (nearestIndex < sortedMarkers.size - 1) sortedMarkers[nearestIndex + 1].point else sortedMarkers[nearestIndex].point
-                    Pair(p1, p2)
+                    val c1 = if (nearestIndex < sortedMarkers.size - 1) sortedMarkers[nearestIndex].chainage.metres else sortedMarkers[nearestIndex - 1].chainage.metres
+                    val c2 = if (nearestIndex < sortedMarkers.size - 1) sortedMarkers[nearestIndex + 1].chainage.metres else sortedMarkers[nearestIndex].chainage.metres
+                    Triple(p1, p2, c2 - c1)
                 } else {
                     null
                 }
 
-                if (segment != null) {
-                    val lateralOffset = calculateSignedLateralOffsetMetres(gpsPoint, segment.first, segment.second)
+                if (segmentWithDeltaC != null) {
+                    val (p1, p2, deltaC) = segmentWithDeltaC
+                    val lateralOffset = calculateSignedLateralOffsetMetres(gpsPoint, p1, p2)
+
+                    // Smart Direction-Aware Rule:
+                    // When chainage is increasing (deltaC >= 0 along p1 -> p2):
+                    //   lateralOffset > 0 (left of p1 -> p2) => LHS
+                    //   lateralOffset < 0 (right of p1 -> p2) => RHS
+                    // When chainage is decreasing (deltaC < 0 along p1 -> p2):
+                    //   lateralOffset > 0 (left of p1 -> p2) => RHS
+                    //   lateralOffset < 0 (right of p1 -> p2) => LHS
                     detectedSide = when {
-                        lateralOffset > 0.0 -> "LHS"
-                        lateralOffset < 0.0 -> "RHS"
+                        abs(lateralOffset) < 0.2 -> previousResult?.detectedSide ?: "RHS"
+                        lateralOffset > 0.0 -> if (deltaC >= 0) "LHS" else "RHS"
+                        lateralOffset < 0.0 -> if (deltaC >= 0) "RHS" else "LHS"
                         else -> previousResult?.detectedSide ?: "RHS"
                     }
+                } else {
+                    detectedSide = previousResult?.detectedSide ?: "RHS"
                 }
             }
         }
@@ -218,6 +234,31 @@ object ChainageMatcher {
             matchedAlignmentName = matchedAlignmentName,
             detectedSide = detectedSide
         )
+    }
+
+    private fun estimateChainageForPoint(point: GeoPoint, markers: List<RouteMarker>): Long {
+        if (markers.isEmpty()) return 0L
+        if (markers.size == 1) return markers[0].chainage.metres
+        val nearest = markers.minByOrNull { GeoUtils.distanceMetres(point, it.point) } ?: markers[0]
+        val idx = markers.indexOfFirst { it.id == nearest.id }
+        val prev = if (idx > 0) markers[idx - 1] else null
+        val next = if (idx < markers.size - 1) markers[idx + 1] else null
+
+        val dPrev = prev?.let { GeoUtils.distanceMetres(it.point, point) } ?: Double.MAX_VALUE
+        val dNext = next?.let { GeoUtils.distanceMetres(it.point, point) } ?: Double.MAX_VALUE
+
+        return if (prev != null && dPrev <= dNext && prev.chainage.metres != nearest.chainage.metres) {
+            val span = GeoUtils.distanceMetres(prev.point, nearest.point)
+            val frac = if (span > 0.1) (dPrev / span).coerceIn(0.0, 1.0) else 0.0
+            (prev.chainage.metres + frac * (nearest.chainage.metres - prev.chainage.metres)).roundToLong()
+        } else if (next != null && next.chainage.metres != nearest.chainage.metres) {
+            val span = GeoUtils.distanceMetres(nearest.point, next.point)
+            val dFromNearest = GeoUtils.distanceMetres(nearest.point, point)
+            val frac = if (span > 0.1) (dFromNearest / span).coerceIn(0.0, 1.0) else 0.0
+            (nearest.chainage.metres + frac * (next.chainage.metres - nearest.chainage.metres)).roundToLong()
+        } else {
+            nearest.chainage.metres
+        }
     }
 
     /**

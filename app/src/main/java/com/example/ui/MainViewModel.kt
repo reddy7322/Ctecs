@@ -467,7 +467,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        progressionTracker.processResult(finalResult, route.id)
+        val stabilized = progressionTracker.processResult(finalResult, route.id)
+        if (!progressionTracker.isManualOverride() && stabilized.detectedSide.isNotBlank() && stabilized.detectedSide != "Unknown") {
+            val detectedEnum = com.example.model.RoadSide.fromString(stabilized.detectedSide)
+            if (projectProfile.value.roadSide != detectedEnum) {
+                viewModelScope.launch {
+                    preferencesManager.updateProjectProfile(projectProfile.value.copy(roadSide = detectedEnum))
+                }
+            }
+        }
+        stabilized
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -790,7 +799,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSide(side: RoadSide) {
         viewModelScope.launch {
+            progressionTracker.setManualSide(side.name)
             preferencesManager.updateProjectProfile(projectProfile.value.copy(roadSide = side))
+        }
+    }
+
+    fun resetSideToAuto() {
+        viewModelScope.launch {
+            progressionTracker.clearManualSide()
+            _uiMessages.emit(UiMessage.Info("Side set to Auto-Detection"))
         }
     }
 
