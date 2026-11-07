@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -193,10 +194,11 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .padding(
                     start = 12.dp,
                     end = 12.dp,
-                    top = if (isCompactHeight) 3.dp else 6.dp,
+                    top = if (isCompactHeight) 6.dp else 10.dp,
                     bottom = if (isCompactHeight) 2.dp else 4.dp
                 )
                 .then(if (isScrollableLayout) Modifier.verticalScroll(rememberScrollState()) else Modifier),
