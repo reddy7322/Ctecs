@@ -30,6 +30,25 @@ data class CameraResolution(
         }
 }
 
+data class AspectRatioOption(
+    val id: String,                 // "4:3", "16:9", "1:1", "Full"
+    val title: String,              // "Standard (4:3)", "Widescreen (16:9)", "Square (1:1)", "Full Screen"
+    val shortLabel: String,         // "4:3", "16:9", "1:1", "Full"
+    val description: String,        // "Native 4:3 sensor full capture", etc.
+    val isRecommendedForPhoto: Boolean = false,
+    val isRecommendedForVideo: Boolean = false
+)
+
+data class CroppedOutputInfo(
+    val outputWidth: Int,
+    val outputHeight: Int,
+    val outputMegapixelsText: String,
+    val isCropped: Boolean,
+    val cropPercent: Int,
+    val cropDescription: String,
+    val estimatedFileSize: String
+)
+
 object CameraResolutionHelper {
 
     private const val TAG = "CameraResolutionHelper"
@@ -188,4 +207,109 @@ object CameraResolutionHelper {
             CameraResolution(640, 480, "640 × 480", "", isMax = false, category = "Video", tag = "VGA • 30fps")
         )
     }
+
+    val AVAILABLE_ASPECT_RATIOS: List<AspectRatioOption> = listOf(
+        AspectRatioOption("4:3", "Standard (4:3)", "4:3", "Standard sensor frame • Max output resolution", isRecommendedForPhoto = true),
+        AspectRatioOption("16:9", "Widescreen (16:9)", "16:9", "High-definition widescreen format", isRecommendedForVideo = true),
+        AspectRatioOption("1:1", "Square (1:1)", "1:1", "Symmetrical square crop • Ideal for engineering reports"),
+        AspectRatioOption("Full", "Full Screen", "Full", "Device full display aspect ratio")
+    )
+
+    fun calculateCropDetails(
+        rawWidth: Int,
+        rawHeight: Int,
+        aspectRatioId: String,
+        isLandscape: Boolean = false
+    ): CroppedOutputInfo {
+        val maxDim = Math.max(rawWidth, rawHeight)
+        val minDim = Math.min(rawWidth, rawHeight)
+        val w = if (isLandscape) maxDim else minDim
+        val h = if (isLandscape) minDim else maxDim
+
+        val targetRatio = when (aspectRatioId.lowercase(Locale.US)) {
+            "1:1", "square" -> 1.0f
+            "4:3", "standard" -> if (isLandscape) 4f / 3f else 3f / 4f
+            "16:9", "widescreen" -> if (isLandscape) 16f / 9f else 9f / 16f
+            "full", "full screen" -> if (isLandscape) 19.5f / 9f else 9f / 19.5f
+            else -> if (isLandscape) 4f / 3f else 3f / 4f
+        }
+
+        val currentRatio = w.toFloat() / h.toFloat()
+        val outW: Int
+        val outH: Int
+        if (Math.abs(currentRatio - targetRatio) < 0.02f || aspectRatioId.equals("Full", ignoreCase = true)) {
+            outW = w
+            outH = h
+        } else if (currentRatio > targetRatio) {
+            outH = h
+            outW = (h * targetRatio).toInt().coerceIn(1, w)
+        } else {
+            outW = w
+            outH = (w / targetRatio).toInt().coerceIn(1, h)
+        }
+
+        val rawPixels = w.toLong() * h
+        val outPixels = outW.toLong() * outH
+        val isCropped = rawPixels > 0 && outPixels < (rawPixels * 0.98)
+        val cropPercent = if (rawPixels > 0) (((rawPixels - outPixels).toDouble() / rawPixels) * 100).toInt().coerceIn(0, 99) else 0
+
+        val mp = outPixels / 1_000_000.0
+        val mpText = String.format(Locale.US, "%.1f MP", mp)
+
+        val cropDesc = if (isCropped) {
+            "Center crop: $outW × $outH ($cropPercent% trimmed)"
+        } else {
+            "Full sensor: $w × $h (No crop)"
+        }
+
+        val estMb = (outPixels * 0.32) / (1024 * 1024)
+        val estFileSize = String.format(Locale.US, "~%.1f MB", estMb.coerceAtLeast(0.3))
+
+        return CroppedOutputInfo(
+            outputWidth = outW,
+            outputHeight = outH,
+            outputMegapixelsText = mpText,
+            isCropped = isCropped,
+            cropPercent = cropPercent,
+            cropDescription = cropDesc,
+            estimatedFileSize = estFileSize
+        )
+    }
+
+    fun getPhotoBadgeText(resolutionStr: String, aspectRatioStr: String): String {
+        val parts = resolutionStr.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
+        val mpText = if (parts.size == 2) {
+            val mp = (parts[0].toLong() * parts[1]) / 1_000_000.0
+            if (mp >= 1.0) String.format(Locale.US, "%.0fMP", mp) else String.format(Locale.US, "%.1fMP", mp)
+        } else "12MP"
+        val ratioLabel = when (aspectRatioStr.lowercase(Locale.US)) {
+            "1:1", "square" -> "1:1"
+            "4:3", "standard" -> "4:3"
+            "16:9", "widescreen" -> "16:9"
+            "full", "full screen" -> "Full"
+            else -> aspectRatioStr
+        }
+        return "$ratioLabel • $mpText"
+    }
+
+    fun getVideoBadgeText(videoResolutionStr: String, aspectRatioStr: String): String {
+        val parts = videoResolutionStr.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
+        val maxDim = if (parts.size == 2) Math.max(parts[0], parts[1]) else 1920
+        val qualityTag = when {
+            maxDim >= 3840 -> "4K"
+            maxDim >= 2560 -> "2K"
+            maxDim >= 1920 -> "1080p"
+            maxDim >= 1280 -> "720p"
+            else -> "SD"
+        }
+        val ratioLabel = when (aspectRatioStr.lowercase(Locale.US)) {
+            "1:1", "square" -> "1:1"
+            "4:3", "standard" -> "4:3"
+            "16:9", "widescreen" -> "16:9"
+            "full", "full screen" -> "Full"
+            else -> aspectRatioStr
+        }
+        return "$ratioLabel • $qualityTag"
+    }
 }
+

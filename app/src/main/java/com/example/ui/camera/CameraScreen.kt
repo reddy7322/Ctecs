@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -53,11 +54,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import com.example.camera.CameraResolutionHelper
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Exposure
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -96,6 +100,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -103,6 +109,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -335,6 +343,7 @@ fun CameraScreen(
     var isTopToolbarExpanded by remember { mutableStateOf(true) }
     var showLaneMenu by remember { mutableStateOf(false) }
     var isHdrEnabled by remember { mutableStateOf(false) }
+    var activeOutputSettingsType by remember { mutableStateOf<String?>(null) }
 
     // Countdown Timer State
     var countdownRemaining by remember { mutableIntStateOf(0) }
@@ -419,13 +428,15 @@ fun CameraScreen(
                     context = context,
                     deviceRotationDegrees = rotationDegrees.toInt(),
                     isLandscape = isLandscape,
+                    photoAspectRatio = cameraSettings.photoAspectRatio,
                     onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                     onError = {
                         val fallback = createSimulatedCameraFrame(
                             context = context,
                             rotationDegrees = rotationDegrees.toInt(),
                             isLandscapeMode = isLandscape,
-                            resolutionStr = cameraSettings.photoResolution
+                            resolutionStr = cameraSettings.photoResolution,
+                            aspectRatioStr = cameraSettings.photoAspectRatio
                         )
                         viewModel.processCapture(fallback)
                     }
@@ -437,13 +448,15 @@ fun CameraScreen(
                 context = context,
                 deviceRotationDegrees = rotationDegrees.toInt(),
                 isLandscape = isLandscape,
+                photoAspectRatio = cameraSettings.photoAspectRatio,
                 onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                 onError = {
                     val fallback = createSimulatedCameraFrame(
                         context = context,
                         rotationDegrees = rotationDegrees.toInt(),
                         isLandscapeMode = isLandscape,
-                        resolutionStr = cameraSettings.photoResolution
+                        resolutionStr = cameraSettings.photoResolution,
+                        aspectRatioStr = cameraSettings.photoAspectRatio
                     )
                     viewModel.processCapture(fallback)
                 }
@@ -482,6 +495,8 @@ fun CameraScreen(
             isLandscape = isLandscape,
             photoResolution = cameraSettings.photoResolution,
             videoResolution = cameraSettings.videoResolution,
+            photoAspectRatio = cameraSettings.photoAspectRatio,
+            videoAspectRatio = cameraSettings.videoAspectRatio,
             controller = controller,
             currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
             overlayManager = overlayManager,
@@ -705,30 +720,86 @@ fun CameraScreen(
                                 )
                             }
 
-                            // 4. Aspect Ratio Button (16:9 badge)
-                            Box(
+                            // 4. Smart Photo Output Button
+                            val photoBadgeLandscape = CameraResolutionHelper.getPhotoBadgeText(
+                                cameraSettings.photoResolution,
+                                cameraSettings.photoAspectRatio
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (activeOutputSettingsType == "PHOTO") HighlightYellow.copy(alpha = 0.25f) else Color(0x751A1A1A),
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White.copy(alpha = 0.25f)),
                                 modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0x751A1A1A))
-                                    .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+                                    .heightIn(min = 40.dp)
                                     .clickable {
-                                        viewModel.showInfo("Aspect ratio: 16:9 Full Screen Viewfinder")
+                                        activeOutputSettingsType = if (activeOutputSettingsType == "PHOTO") null else "PHOTO"
                                     }
-                                    .testTag("landscape_aspect_ratio_button"),
-                                contentAlignment = Alignment.Center
+                                    .testTag("landscape_photo_settings_button")
                             ) {
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = Color.Transparent,
-                                    border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.8f))
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CameraAlt,
+                                        contentDescription = "Photo Output",
+                                        tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else PrimaryText,
+                                        modifier = Modifier.size(14.dp)
+                                    )
                                     Text(
-                                        text = "16:9",
-                                        color = PrimaryText,
-                                        fontSize = 8.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 3.dp, vertical = 2.dp)
+                                        text = photoBadgeLandscape,
+                                        color = if (activeOutputSettingsType == "PHOTO") HighlightYellow else PrimaryText,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else SecondaryText,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+
+                            // 5. Smart Video Output Button
+                            val videoBadgeLandscape = CameraResolutionHelper.getVideoBadgeText(
+                                cameraSettings.videoResolution,
+                                cameraSettings.videoAspectRatio
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (activeOutputSettingsType == "VIDEO") AccentRed.copy(alpha = 0.25f) else Color(0x751A1A1A),
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White.copy(alpha = 0.25f)),
+                                modifier = Modifier
+                                    .heightIn(min = 40.dp)
+                                    .clickable {
+                                        activeOutputSettingsType = if (activeOutputSettingsType == "VIDEO") null else "VIDEO"
+                                    }
+                                    .testTag("landscape_video_settings_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Videocam,
+                                        contentDescription = "Video Output",
+                                        tint = if (activeOutputSettingsType == "VIDEO") AccentRed else PrimaryText,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = videoBadgeLandscape,
+                                        color = if (activeOutputSettingsType == "VIDEO") AccentRed else PrimaryText,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        tint = if (activeOutputSettingsType == "VIDEO") AccentRed else SecondaryText,
+                                        modifier = Modifier.size(12.dp)
                                     )
                                 }
                             }
@@ -1382,6 +1453,7 @@ fun CameraScreen(
                                             context = context,
                                             deviceRotationDegrees = rotationDegrees.toInt(),
                                             isLandscape = isLandscape,
+                                            photoAspectRatio = cameraSettings.photoAspectRatio,
                                             onSuccess = { bitmap ->
                                                 viewModel.processCapture(bitmap)
                                                 viewModel.showSuccess("Quick photo saved to Gallery!")
@@ -1391,7 +1463,8 @@ fun CameraScreen(
                                                     context = context,
                                                     rotationDegrees = rotationDegrees.toInt(),
                                                     isLandscapeMode = isLandscape,
-                                                    resolutionStr = cameraSettings.photoResolution
+                                                    resolutionStr = cameraSettings.photoResolution,
+                                                    aspectRatioStr = cameraSettings.photoAspectRatio
                                                 )
                                                 viewModel.processCapture(fallback)
                                                 viewModel.showSuccess("Quick photo saved to Gallery!")
@@ -1530,222 +1603,241 @@ fun CameraScreen(
                     }
                 }
         } else {
-            // 6. Top Bar: Fully Transparent Single-Icon Controls & Status (PORTRAIT)
+            // 6. Modern Glassmorphism Top Bar & HUD (PORTRAIT)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(top = 8.dp, bottom = 6.dp, start = 8.dp, end = 8.dp)
+                    .padding(top = 8.dp, bottom = 4.dp)
             ) {
-            androidx.compose.foundation.lazy.LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                item {
-                    // Flash cycle button
-                    IconButton(
-                        onClick = { viewModel.toggleFlash() },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("flash_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                            contentDescription = "Flash",
-                            tint = if (isFlashOn) HighlightYellow else PrimaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                item {
-                    // Video Audio Mic On/Off Toggle Button
-                    IconButton(
-                        onClick = { viewModel.toggleRecordAudio() },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (cameraSettings.recordAudio) DarkYellowSurface else ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("audio_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = if (cameraSettings.recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
-                            contentDescription = if (cameraSettings.recordAudio) "Audio Enabled" else "Audio Disabled",
-                            tint = if (cameraSettings.recordAudio) HighlightYellow else SecondaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                item {
-                    // Timer cycle button (single compact icon)
-
-                    IconButton(
-                        onClick = { viewModel.cycleTimer() },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (cameraSettings.captureTimer != CaptureTimer.OFF) DarkYellowSurface else ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("timer_cycle_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Timer,
-                            contentDescription = "Timer",
-                            tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                item {
-                    // Grid cycle button
-                    IconButton(
-                        onClick = { viewModel.cycleGrid() },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (cameraSettings.gridMode != CameraGridMode.OFF) DarkYellowSurface else ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("grid_cycle_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.GridOn,
-                            contentDescription = "Grid",
-                            tint = if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else SecondaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                item {
-                    // Exposure Compensation Button
-                    IconButton(
-                        onClick = { showExposureSlider = !showExposureSlider },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (showExposureSlider) DarkYellowSurface else ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("exposure_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Exposure,
-                            contentDescription = "Exposure",
-                            tint = if (exposureCompensation != 0) HighlightYellow else PrimaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                item {
-                    // Flip Camera
-                    IconButton(
-                        onClick = { viewModel.toggleCameraFacing() },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("camera_flip_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FlipCameraAndroid,
-                            contentDescription = "Flip Camera",
-                            tint = PrimaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                item {
-                    // Tiny single-icon Route button
-                    IconButton(
-                        onClick = { onNavigateToRoutes() },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (activeRoute != null) DarkYellowSurface else ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("routes_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AltRoute,
-                            contentDescription = "Routes",
-                            tint = if (activeRoute != null) HighlightYellow else PrimaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                item {
-                    // Tiny single-icon Settings gear button
-                    IconButton(
-                        onClick = { showQuickSettingsPopup = true },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (showQuickSettingsPopup) DarkYellowSurface else ElevatedSurface)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("settings_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Camera Settings",
-                            tint = if (showQuickSettingsPopup) HighlightYellow else PrimaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
-
-            // Compact Status Row: GPS Status & Live Compass Heading
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp, start = 4.dp, end = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val isAcquiring = locationState.status == LocationStatus.ACQUIRING || locationState.point == null
-                val accuracy = if (locationState.point != null) locationState.accuracy else 999f
-
-                val gpsColor = when {
-                    isAcquiring -> Color(0xFF38BDF8) // Acquiring blue/cyan
-                    accuracy <= 5f -> Color(0xFF22C55E) // Green: Excellent (<= 5 m)
-                    accuracy <= 15f -> HighlightYellow // Yellow: Moderate (> 5 m to 15 m)
-                    accuracy <= 30f -> Color(0xFFF97316) // Orange: Low (> 15 m to 30 m)
-                    else -> AccentRed // Red: Poor (> 30 m) or unavailable
-                }
-
-                val infiniteTransition = rememberInfiniteTransition(label = "gps_pulse")
-                val pulseAlpha by infiniteTransition.animateFloat(
-                    initialValue = 0.3f,
-                    targetValue = 1.0f,
-                    animationSpec = infiniteRepeatable(tween(700), repeatMode = RepeatMode.Reverse),
-                    label = "gps_pulse"
-                )
-                val indicatorAlpha = if (isAcquiring) pulseAlpha else 1.0f
-
-                if (overlayConfig.showCoordinates && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                // Top Controls Toolbar: 3 Floating Glass Pills
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Pill 1: Flash, Audio Mic, Timer
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = SurfaceDark.copy(alpha = 0.85f),
-                        border = androidx.compose.foundation.BorderStroke(0.5.dp, gpsColor.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(22.dp),
+                        color = Color(0x75101726),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            // Flash cycle button
+                            IconButton(
+                                onClick = { viewModel.toggleFlash() },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("flash_toggle_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                                    contentDescription = "Flash",
+                                    tint = if (isFlashOn) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            // Audio mic toggle
+                            IconButton(
+                                onClick = { viewModel.toggleRecordAudio() },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("audio_toggle_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (cameraSettings.recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
+                                    contentDescription = if (cameraSettings.recordAudio) "Audio Enabled" else "Audio Disabled",
+                                    tint = if (cameraSettings.recordAudio) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            // Timer cycle button
+                            IconButton(
+                                onClick = { viewModel.cycleTimer() },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("timer_cycle_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Timer,
+                                    contentDescription = "Timer",
+                                    tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Pill 2: Grid, Exposure, Flip Camera
+                    Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = Color(0x75101726),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            // Grid cycle button
+                            IconButton(
+                                onClick = { viewModel.cycleGrid() },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("grid_cycle_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.GridOn,
+                                    contentDescription = "Grid",
+                                    tint = if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            // Exposure Compensation
+                            IconButton(
+                                onClick = { showExposureSlider = !showExposureSlider },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("exposure_toggle_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Exposure,
+                                    contentDescription = "Exposure",
+                                    tint = if (showExposureSlider || exposureCompensation != 0) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            // Flip Camera
+                            IconButton(
+                                onClick = { viewModel.toggleCameraFacing() },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("camera_flip_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FlipCameraAndroid,
+                                    contentDescription = "Flip Camera",
+                                    tint = PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Pill 3: Routes & Settings
+                    Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = Color(0x75101726),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            // Route button with highlight
+                            IconButton(
+                                onClick = { onNavigateToRoutes() },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(if (activeRoute != null) HighlightYellow.copy(alpha = 0.25f) else Color.Transparent)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("routes_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AltRoute,
+                                    contentDescription = "Routes",
+                                    tint = HighlightYellow,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            // Settings gear button
+                            IconButton(
+                                onClick = { showQuickSettingsPopup = true },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("settings_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Camera Settings",
+                                    tint = if (showQuickSettingsPopup) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Status Row: GPS Status Capsule (Left) & Telemetry Status (Right)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, start = 14.dp, end = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isAcquiring = locationState.status == LocationStatus.ACQUIRING || locationState.point == null
+                    val accuracy = if (locationState.point != null) locationState.accuracy else 999f
+
+                    val gpsColor = when {
+                        isAcquiring -> Color(0xFF38BDF8)
+                        accuracy <= 5f -> Color(0xFF22C55E)
+                        accuracy <= 15f -> HighlightYellow
+                        accuracy <= 30f -> Color(0xFFF97316)
+                        else -> AccentRed
+                    }
+
+                    val infiniteTransition = rememberInfiniteTransition(label = "gps_pulse")
+                    val pulseAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.3f,
+                        targetValue = 1.0f,
+                        animationSpec = infiniteRepeatable(tween(700), repeatMode = RepeatMode.Reverse),
+                        label = "gps_pulse"
+                    )
+                    val indicatorAlpha = if (isAcquiring) pulseAlpha else 1.0f
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0x75101726),
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
                         modifier = Modifier
                             .clickable { showSimDialog = true }
                             .testTag("gps_status_pill")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(7.dp)
+                                    .size(8.dp)
                                     .clip(CircleShape)
-                                    .background(gpsColor)
+                                    .background(HighlightYellow)
                                     .alpha(indicatorAlpha)
                             )
                             Text(
@@ -1755,119 +1847,582 @@ fun CameraScreen(
                                     "GPS Acquiring..."
                                 },
                                 color = PrimaryText,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
-                } else {
-                    Spacer(modifier = Modifier.width(1.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "CUBET",
+                            color = PrimaryText.copy(alpha = 0.85f),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "CH",
+                            color = Color(0xFF22C55E),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
                 }
 
-                if (overlayConfig.showCompass) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = SurfaceDark.copy(alpha = 0.85f),
-                        border = androidx.compose.foundation.BorderStroke(0.5.dp, BorderColor)
+                // Expandable Exposure EV Slider
+                if (showExposureSlider) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp, start = 14.dp, end = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        Text(
+                            text = "EV: ${if (exposureCompensation > 0) "+$exposureCompensation" else "$exposureCompensation"}",
+                            color = HighlightYellow,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(54.dp)
+                        )
+                        Slider(
+                            value = exposureCompensation.toFloat(),
+                            onValueChange = { viewModel.setExposureCompensation(it.toInt()) },
+                            valueRange = -4f..4f,
+                            steps = 7,
+                            colors = SliderDefaults.colors(
+                                thumbColor = HighlightYellow,
+                                activeTrackColor = HighlightYellow,
+                                inactiveTrackColor = SecondaryText.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = { viewModel.setExposureCompensation(0) },
+                            modifier = Modifier.height(32.dp)
                         ) {
-                            Text(
-                                text = "🧭 ${compassState.displayHeading}",
-                                color = HighlightYellow,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("Reset", color = PrimaryText, fontSize = 11.sp)
                         }
                     }
                 }
-            }
 
-            // Expandable Exposure EV Slider
-            if (showExposureSlider) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, start = 8.dp, end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "EV: ${if (exposureCompensation > 0) "+$exposureCompensation" else "$exposureCompensation"}",
-                        color = HighlightYellow,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.width(54.dp)
+                // Video Recording Banner
+                if (isRecording) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                    val alpha by infiniteTransition.animateFloat(
+                        initialValue = 0.3f,
+                        targetValue = 1.0f,
+                        animationSpec = infiniteRepeatable(tween(500), repeatMode = RepeatMode.Reverse),
+                        label = "recording_pulse"
                     )
-                    Slider(
-                        value = exposureCompensation.toFloat(),
-                        onValueChange = { viewModel.setExposureCompensation(it.toInt()) },
-                        valueRange = -4f..4f,
-                        steps = 7,
-                        colors = SliderDefaults.colors(
-                            thumbColor = HighlightYellow,
-                            activeTrackColor = HighlightYellow,
-                            inactiveTrackColor = SecondaryText.copy(alpha = 0.3f)
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = { viewModel.setExposureCompensation(0) },
-                        modifier = Modifier.height(32.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Reset", color = PrimaryText, fontSize = 11.sp)
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0x95101726),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AccentRed)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(AccentRed.copy(alpha = alpha))
+                                )
+                                val mins = recordingDurationSec / 60
+                                val secs = recordingDurationSec % 60
+                                Text(
+                                    text = String.format("REC %02d:%02d", mins, secs),
+                                    color = PrimaryText,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (isRecordingPaused) {
+                                    Text(
+                                        text = "[PAUSED]",
+                                        color = HighlightYellow,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-            }
 
-            // Video Recording Banner with Pulsing Red Dot and Time Counter
-            if (isRecording) {
-                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                val alpha by infiniteTransition.animateFloat(
-                    initialValue = 0.3f,
-                    targetValue = 1.0f,
-                    animationSpec = infiniteRepeatable(tween(500), repeatMode = RepeatMode.Reverse),
-                    label = "recording_pulse"
-                )
-
+                // Top Viewfinder HUD: Mini Map (Top-Left) & Timestamp / Project Info Card (Top-Right)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(top = 10.dp, start = 14.dp, end = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = SurfaceDark.copy(alpha = 0.95f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentRed)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    // Top-Left: Live Mini Map Preview
+                    if (overlayConfig.showMapInset && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                        Box(
+                            modifier = Modifier
+                                .size(104.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .border(1.5.dp, Color(0x35FFFFFF), RoundedCornerShape(18.dp))
+                                .clickable { showSimDialog = true }
+                                .testTag("portrait_minimap_preview")
                         ) {
+                            MiniMapPreview(
+                                location = locationState.point,
+                                bearing = locationState.bearing,
+                                routeData = activeRoute,
+                                highwayTag = projectProfile.highwayId,
+                                gpsAccuracy = locationState.accuracy,
+                                modifier = Modifier.fillMaxSize(),
+                                mapType = "satellite"
+                            )
+                            // North indicator badge
                             Box(
                                 modifier = Modifier
-                                    .size(10.dp)
+                                    .align(Alignment.TopEnd)
+                                    .padding(6.dp)
+                                    .size(18.dp)
                                     .clip(CircleShape)
-                                    .background(AccentRed.copy(alpha = alpha))
-                            )
-                            val mins = recordingDurationSec / 60
-                            val secs = recordingDurationSec % 60
-                            Text(
-                                text = String.format("REC %02d:%02d", mins, secs),
-                                color = PrimaryText,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (isRecordingPaused) {
+                                    .background(Color(0xD9000000)),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    text = "[PAUSED]",
+                                    text = "N",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
+
+                    // Top-Right: Timestamp & Project Info Glass Card
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color(0x80101726),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF)),
+                        modifier = Modifier
+                            .widthIn(min = 150.dp, max = 220.dp)
+                            .clickable { viewModel.openManualChainageDialog() }
+                            .testTag("portrait_timestamp_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalAlignment = Alignment.End
+                        ) {
+                            // Date
+                            val dateStr = SimpleDateFormat("dd MMMM yyyy", Locale.US).format(Date(currentTimeMillis))
+                            Text(
+                                text = dateStr,
+                                color = PrimaryText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            // Digital Time
+                            val timeFormatPattern = if (cameraSettings.is24HourFormat) "HH:mm" else "hh:mm a"
+                            val timeStr = SimpleDateFormat(timeFormatPattern, Locale.US).format(Date(currentTimeMillis))
+                            Text(
+                                text = timeStr,
+                                color = PrimaryText,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier
+                                    .padding(vertical = 4.dp)
+                                    .fillMaxWidth(0.9f),
+                                thickness = 0.8.dp,
+                                color = Color(0x35FFFFFF)
+                            )
+                            // GPS Coordinates
+                            if (locationState.point != null && overlayConfig.showCoordinates && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                                val lat = String.format(Locale.US, "%.4f°N", kotlin.math.abs(locationState.point!!.latitude))
+                                val lon = String.format(Locale.US, "%.4f°E", kotlin.math.abs(locationState.point!!.longitude))
+                                Text(
+                                    text = "$lat $lon",
+                                    color = PrimaryText.copy(alpha = 0.9f),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            // Project / Stretch / Chainage info
+                            val projTokens = mutableListOf<String>()
+                            if (projectProfile.highwayId.isNotBlank() && !projectProfile.highwayId.equals("None", ignoreCase = true)) {
+                                projTokens.add(projectProfile.highwayId)
+                            }
+                            if (projectProfile.packageSection.isNotBlank() && !projectProfile.packageSection.equals("None", ignoreCase = true)) {
+                                projTokens.add(projectProfile.packageSection)
+                            }
+                            if (projectProfile.workType.isNotBlank() && !projectProfile.workType.equals("None", ignoreCase = true)) {
+                                projTokens.add(projectProfile.workType)
+                            }
+                            val chDisplay = matchResult.displayChainage
+                            if (chDisplay.isNotBlank() && !chDisplay.equals("None", ignoreCase = true)) {
+                                projTokens.add(chDisplay)
+                            }
+                            if (projTokens.isNotEmpty() && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                                Text(
+                                    text = projTokens.joinToString(" | "),
+                                    color = PrimaryText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            // Highlight Line: Side + Activity in Yellow
+                            val highlightTokens = mutableListOf<String>()
+                            highlightTokens.add(projectProfile.roadSide.name)
+                            if (projectProfile.activity.isNotBlank() && !projectProfile.activity.equals("None", ignoreCase = true)) {
+                                highlightTokens.add(projectProfile.activity)
+                            }
+                            if (highlightTokens.isNotEmpty() && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                                Text(
+                                    text = highlightTokens.joinToString(" "),
                                     color = HighlightYellow,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 7. Ergonomic Bottom Half Controls Container (PORTRAIT)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(bottom = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Quick Controls Bar (Horizontal scrolling glass pills)
+                androidx.compose.foundation.lazy.LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Side chip (LHS / RHS / MEDIAN / BOTH)
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0x75101726),
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .clickable {
+                                    val nextSide = when (projectProfile.roadSide) {
+                                        RoadSide.RHS -> RoadSide.LHS
+                                        RoadSide.LHS -> RoadSide.MEDIAN
+                                        RoadSide.MEDIAN -> RoadSide.BOTH
+                                        RoadSide.BOTH -> RoadSide.RHS
+                                        else -> RoadSide.LHS
+                                    }
+                                    viewModel.updateSide(nextSide)
+                                }
+                                .testTag("side_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(HighlightYellow)
+                                )
+                                Text(
+                                    text = projectProfile.roadSide.name,
+                                    color = HighlightYellow,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // Lane / Type chip
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0x75101726),
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .clickable {
+                                    val lanes = ProjectProfile.LANE_PRESETS
+                                    val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
+                                    viewModel.updateLane(lanes[nextIndex])
+                                }
+                                .testTag("lane_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = null,
+                                    tint = PrimaryText,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = projectProfile.lane,
+                                    color = PrimaryText,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // Activity chip
+                    item {
+                        Box {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color(0x75101726),
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
+                                modifier = Modifier
+                                    .height(34.dp)
+                                    .clickable { showActivityMenu = true }
+                                    .testTag("activity_chip")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = null,
+                                        tint = HighlightYellow,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Text(
+                                        text = projectProfile.activity.ifBlank { "Activity" },
+                                        color = PrimaryText,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = showActivityMenu,
+                                onDismissRequest = { showActivityMenu = false }
+                            ) {
+                                ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
+                                    DropdownMenuItem(
+                                        text = { Text(act) },
+                                        onClick = {
+                                            viewModel.updateActivity(act)
+                                            showActivityMenu = false
+                                        }
+                                    )
+                                }
+                                HorizontalDivider(color = BorderColor)
+                                DropdownMenuItem(
+                                    text = { Text("Custom / Manual...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                                    onClick = {
+                                        showActivityMenu = false
+                                        showManualActivityDialog = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Chainage quick edit button
+                    item {
+                        val chipBg = when (matchResult.source) {
+                            ChainageSource.MANUAL -> Color(0x99DC2626)
+                            ChainageSource.CUSTOM_CORRECTION -> Color(0x997C3AED)
+                            else -> Color(0x75101726)
+                        }
+                        val chipBorder = when (matchResult.source) {
+                            ChainageSource.MANUAL -> AccentRed
+                            ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                            else -> Color(0x25FFFFFF)
+                        }
+                        val chipText = when (matchResult.source) {
+                            ChainageSource.MANUAL -> "Manual: ${matchResult.displayChainage}"
+                            ChainageSource.CUSTOM_CORRECTION -> "Cal: ${matchResult.displayChainage}"
+                            else -> "CH: ${matchResult.displayChainage}"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = chipBg,
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, chipBorder),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .clickable { viewModel.openManualChainageDialog() }
+                                .testTag("chainage_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Chainage",
+                                    tint = PrimaryText,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = chipText,
+                                    color = PrimaryText,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // Custom Comments chip
+                    item {
+                        val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (hasComment) Color(0x990284C7) else Color(0x75101726),
+                            border = androidx.compose.foundation.BorderStroke(
+                                0.8.dp,
+                                if (hasComment) Color(0xFF38BDF8) else Color(0x25FFFFFF)
+                            ),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .clickable {
+                                    commentInput = projectProfile.customDescription
+                                    showCustomCommentDialog = true
+                                }
+                                .testTag("custom_comment_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ChatBubbleOutline,
+                                    contentDescription = "Custom Comment",
+                                    tint = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = if (hasComment) projectProfile.customDescription else "+ Comments",
+                                    color = PrimaryText,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 160.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Zoom Controller Bar
+                CameraZoomControlBar(
+                    currentZoomRatio = currentZoomRatio,
+                    minZoomRatio = minZoomRatio,
+                    maxZoomRatio = maxZoomRatio,
+                    onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
+                    onResetZoom = { viewModel.setZoomRatio(1.0f) },
+                    isLandscape = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                )
+
+                // Segmented Mode Switcher Pill: PHOTO | VIDEO
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = Color(0x75101726),
+                    border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
+                    modifier = Modifier.padding(vertical = 3.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(if (captureMode == CaptureMode.PHOTO) Color(0x35FACC15) else Color.Transparent)
+                                .border(
+                                    width = if (captureMode == CaptureMode.PHOTO) 1.dp else 0.dp,
+                                    color = if (captureMode == CaptureMode.PHOTO) HighlightYellow.copy(alpha = 0.6f) else Color.Transparent,
+                                    shape = RoundedCornerShape(18.dp)
+                                )
+                                .clickable { viewModel.setCaptureMode(CaptureMode.PHOTO) }
+                                .padding(horizontal = 18.dp, vertical = 7.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = null,
+                                    tint = if (captureMode == CaptureMode.PHOTO) HighlightYellow else SecondaryText,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "PHOTO",
+                                    color = if (captureMode == CaptureMode.PHOTO) HighlightYellow else SecondaryText,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(if (captureMode == CaptureMode.VIDEO) Color(0x35EF4444) else Color.Transparent)
+                                .border(
+                                    width = if (captureMode == CaptureMode.VIDEO) 1.dp else 0.dp,
+                                    color = if (captureMode == CaptureMode.VIDEO) AccentRed.copy(alpha = 0.6f) else Color.Transparent,
+                                    shape = RoundedCornerShape(18.dp)
+                                )
+                                .clickable { viewModel.setCaptureMode(CaptureMode.VIDEO) }
+                                .padding(horizontal = 18.dp, vertical = 7.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = null,
+                                    tint = if (captureMode == CaptureMode.VIDEO) AccentRed else SecondaryText,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "VIDEO",
+                                    color = if (captureMode == CaptureMode.VIDEO) AccentRed else SecondaryText,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1875,583 +2430,341 @@ fun CameraScreen(
                         }
                     }
                 }
-            }
-        }
 
-        // 7. Unified Bottom Controls & Overlay HUD Container (Guarantees zero overlapping between HUD, field chips, mode selector, and shutter bar)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 10.dp)
-        ) {
-            // Live Preview Overlay (Mini-Map on lower-left, Metadata Text on lower-right)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                // Lower-Left: Live Mini Map
-                if (overlayConfig.showMapInset && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
-                    MiniMapPreview(
-                        location = locationState.point,
-                        bearing = locationState.bearing,
-                        routeData = activeRoute,
-                        highwayTag = projectProfile.highwayId,
-                        gpsAccuracy = locationState.accuracy,
-                        modifier = Modifier
-                            .size(width = 110.dp, height = 80.dp)
-                            .clickable { showSimDialog = true }
-                            .testTag("portrait_minimap_preview")
-                    )
-                } else {
-                    Spacer(modifier = Modifier.width(1.dp))
-                }
-
-                // Lower-Right: Information Block (Right-aligned text)
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp)
+                // Shutter Bar (Gallery Thumbnail, Center Shutter, GPS Location Preset)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Logo when ABOVE_TEXT position is selected
-                    if (overlayConfig.showLogo && overlayConfig.logoPosition == LogoPosition.ABOVE_TEXT) {
-                        LiveLogoOverlay(
-                            config = overlayConfig,
-                            modifier = Modifier.padding(bottom = 6.dp)
-                        )
-                    }
-
-                    val liveLines = com.example.overlay.OverlayTextGenerator.generateLines(
-                        config = overlayConfig,
-                        project = projectProfile,
-                        location = locationState.point,
-                        accuracy = locationState.accuracy,
-                        compassHeading = compassState.displayHeading,
-                        speedMps = locationState.speed,
-                        bearing = locationState.bearing,
-                        chainageStr = matchResult.displayChainage,
-                        cameraMode = cameraSettings.cameraMode,
-                        coordinateFormat = cameraSettings.coordinateFormat,
-                        is24HourFormat = cameraSettings.is24HourFormat,
-                        timestamp = currentTimeMillis
-                    )
-
-                    LiveViewfinderWatermarkBlock(
-                        liveLines = liveLines,
-                        overlayConfig = overlayConfig,
-                        isLandscape = false
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Minimalist Glass Field Selectors (Side, Lane, Activity, Chainage)
-            androidx.compose.foundation.lazy.LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Side chip (RHS / LHS / BOTH / MEDIAN)
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0x701A1A1A), // Translucent dark glass
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .height(36.dp)
-                            .clickable {
-                                val nextSide = when (projectProfile.roadSide) {
-                                    RoadSide.RHS -> RoadSide.LHS
-                                    RoadSide.LHS -> RoadSide.MEDIAN
-                                    RoadSide.MEDIAN -> RoadSide.BOTH
-                                    RoadSide.BOTH -> RoadSide.RHS
+                    if (isRecording) {
+                        // Quick Photo Capture Button during video recording
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x75101726))
+                                .border(1.dp, HighlightYellow, CircleShape)
+                                .graphicsLayer { rotationZ = -animatedRotation }
+                                .clickable {
+                                    try {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    } catch (ignored: Exception) {}
+                                    showQuickCaptureFlash = true
+                                    capturePhoto(
+                                        controller = controller,
+                                        context = context,
+                                        deviceRotationDegrees = rotationDegrees.toInt(),
+                                        isLandscape = isLandscape,
+                                        photoAspectRatio = cameraSettings.photoAspectRatio,
+                                        onSuccess = { bitmap ->
+                                            viewModel.processCapture(bitmap)
+                                            viewModel.showSuccess("Quick photo captured & saved to Gallery!")
+                                        },
+                                        onError = {
+                                            val fallback = createSimulatedCameraFrame(
+                                                context = context,
+                                                rotationDegrees = rotationDegrees.toInt(),
+                                                isLandscapeMode = isLandscape,
+                                                resolutionStr = cameraSettings.photoResolution,
+                                                aspectRatioStr = cameraSettings.photoAspectRatio
+                                            )
+                                            viewModel.processCapture(fallback)
+                                            viewModel.showSuccess("Quick photo captured & saved to Gallery!")
+                                        }
+                                    )
                                 }
-                                viewModel.updateSide(nextSide)
-                            }
-                            .testTag("side_chip")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                .testTag("quick_photo_capture_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Camera,
+                                contentDescription = "Quick Photo Capture",
+                                tint = HighlightYellow,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        // Stop Video Recording Button
+                        Box(
+                            modifier = Modifier
+                                .size(78.dp)
+                                .clip(CircleShape)
+                                .border(2.5.dp, Color.White, CircleShape)
+                                .padding(5.dp)
+                                .clip(CircleShape)
+                                .background(AccentRed)
+                                .clickable { toggleVideoRecording() }
+                                .testTag("stop_video_button"),
+                            contentAlignment = Alignment.Center
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(HighlightYellow)
-                            )
-                            Text(
-                                text = projectProfile.roadSide.name,
-                                color = HighlightYellow,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(PrimaryText)
                             )
                         }
-                    }
-                }
 
-                // Lane chip
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0x701A1A1A),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .height(36.dp)
-                            .clickable {
-                                val lanes = ProjectProfile.LANE_PRESETS
-                                val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
-                                viewModel.updateLane(lanes[nextIndex])
-                            }
-                            .testTag("lane_chip")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        // Pause / Resume Video Recording Button
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x75101726))
+                                .border(1.dp, if (isRecordingPaused) HighlightYellow else Color.White.copy(alpha = 0.5f), CircleShape)
+                                .graphicsLayer { rotationZ = -animatedRotation }
+                                .clickable {
+                                    if (isRecordingPaused) {
+                                        videoManager.resume()
+                                        viewModel.onVideoRecordingPaused(false)
+                                        viewModel.showInfo("Video recording resumed")
+                                    } else {
+                                        videoManager.pause()
+                                        viewModel.onVideoRecordingPaused(true)
+                                        viewModel.showInfo("Video recording paused")
+                                    }
+                                }
+                                .testTag("pause_resume_video_button"),
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = null,
-                                tint = PrimaryText,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Text(
-                                text = projectProfile.lane,
-                                color = PrimaryText,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                contentDescription = if (isRecordingPaused) "Resume Recording" else "Pause Recording",
+                                tint = if (isRecordingPaused) HighlightYellow else PrimaryText,
+                                modifier = Modifier.size(26.dp)
                             )
                         }
-                    }
-                }
-
-                // Activity chip
-                item {
-                    Box {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0x701A1A1A),
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, BorderColor.copy(alpha = 0.5f)),
+                    } else {
+                        // Normal Shutter Bar
+                        // Recent Thumbnail / Gallery Button
+                        Box(
                             modifier = Modifier
-                                .height(36.dp)
-                                .clickable { showActivityMenu = true }
-                                .testTag("activity_chip")
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                                .background(Color(0x75101726))
+                                .graphicsLayer { rotationZ = -animatedRotation }
+                                .clickable { onNavigateToPhotos() }
+                                .testTag("recent_thumbnail_button"),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
+                            if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
+                                AsyncImage(
+                                    model = File(lastPhoto!!.filePath),
+                                    contentDescription = "Recent Photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
                                 Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = null,
-                                    tint = HighlightYellow,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Text(
-                                    text = projectProfile.activity.ifBlank { "Activity" },
-                                    color = PrimaryText,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
+                                    imageVector = Icons.Default.PhotoLibrary,
+                                    contentDescription = "Gallery",
+                                    tint = PrimaryText,
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                         }
 
-                        DropdownMenu(
-                            expanded = showActivityMenu,
-                            onDismissRequest = { showActivityMenu = false }
-                        ) {
-                            ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
-                                DropdownMenuItem(
-                                    text = { Text(act) },
-                                    onClick = {
-                                        viewModel.updateActivity(act)
-                                        showActivityMenu = false
+                        // Triple-Ring Aperture Shutter Button
+                        Box(
+                            modifier = Modifier
+                                .size(78.dp)
+                                .clip(CircleShape)
+                                .border(2.5.dp, Color.White, CircleShape)
+                                .padding(5.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (captureMode == CaptureMode.PHOTO) {
+                                        if (isCapturing) AccentRed else PrimaryText
+                                    } else {
+                                        AccentRed
                                     }
                                 )
-                            }
-                            HorizontalDivider(color = BorderColor)
-                            DropdownMenuItem(
-                                text = { Text("Custom / Manual...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
-                                onClick = {
-                                    showActivityMenu = false
-                                    showManualActivityDialog = true
+                                .clickable(enabled = (!isCapturing && !isCountingDown) || captureMode == CaptureMode.VIDEO) {
+                                    if (captureMode == CaptureMode.PHOTO) {
+                                        triggerPhotoCapture()
+                                    } else {
+                                        toggleVideoRecording()
+                                    }
                                 }
-                            )
-                        }
-                    }
-                }
-
-                // Chainage quick edit button
-                item {
-                    val chipBg = when (matchResult.source) {
-                        ChainageSource.MANUAL -> Color(0x99DC2626)
-                        ChainageSource.CUSTOM_CORRECTION -> Color(0x997C3AED)
-                        else -> Color(0x701A1A1A)
-                    }
-                    val chipBorder = when (matchResult.source) {
-                        ChainageSource.MANUAL -> AccentRed
-                        ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
-                        else -> BorderColor.copy(alpha = 0.5f)
-                    }
-                    val chipText = when (matchResult.source) {
-                        ChainageSource.MANUAL -> "Manual: ${matchResult.displayChainage}"
-                        ChainageSource.CUSTOM_CORRECTION -> "Cal: ${matchResult.displayChainage}"
-                        else -> "CH: ${matchResult.displayChainage}"
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = chipBg,
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, chipBorder),
-                        modifier = Modifier
-                            .height(36.dp)
-                            .clickable { viewModel.openManualChainageDialog() }
-                            .testTag("chainage_chip")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                .testTag("shutter_button"),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit Chainage",
-                                tint = PrimaryText,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Text(
-                                text = chipText,
-                                color = PrimaryText,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-
-                // Custom Comment chip
-                item {
-                    val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (hasComment) Color(0x990284C7) else Color(0x701A1A1A),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, if (hasComment) Color(0xFF38BDF8) else BorderColor.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .height(36.dp)
-                            .clickable {
-                                commentInput = projectProfile.customDescription
-                                showCustomCommentDialog = true
-                            }
-                            .testTag("custom_comment_chip")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ChatBubbleOutline,
-                                contentDescription = "Custom Comment",
-                                tint = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Text(
-                                text = if (hasComment) "Comment: ${projectProfile.customDescription}" else "+ Comment",
-                                color = PrimaryText,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 160.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // On-Screen Zoom Controls (Portrait)
-            CameraZoomControlBar(
-                currentZoomRatio = currentZoomRatio,
-                minZoomRatio = minZoomRatio,
-                maxZoomRatio = maxZoomRatio,
-                onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
-                onResetZoom = { viewModel.setZoomRatio(1.0f) },
-                isLandscape = false,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Mode Selector Pill: PHOTO | VIDEO
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0x701A1A1A),
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.White.copy(alpha = 0.3f))
-                ) {
-                    Row(modifier = Modifier.padding(2.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (captureMode == CaptureMode.PHOTO) HighlightYellow else Color.Transparent)
-                                .clickable { viewModel.setCaptureMode(CaptureMode.PHOTO) }
-                                .padding(horizontal = 18.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = "PHOTO",
-                                color = if (captureMode == CaptureMode.PHOTO) PrimaryBackground else SecondaryText,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (captureMode == CaptureMode.VIDEO) AccentRed else Color.Transparent)
-                                .clickable { viewModel.setCaptureMode(CaptureMode.VIDEO) }
-                                .padding(horizontal = 18.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = "VIDEO",
-                                color = if (captureMode == CaptureMode.VIDEO) PrimaryText else SecondaryText,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Bottom Shutter Bar (Gallery Thumbnail, Fixed Shutter, Quick Location Simulator)
-            // Bottom Shutter Bar (Normal Mode vs Active Video Recording Mode)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isRecording) {
-                    // 1. Quick Photo Capture Button during video recording
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x701A1A1A))
-                            .border(1.dp, HighlightYellow, CircleShape)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .clickable {
-                                try {
-                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                } catch (ignored: Exception) {}
-                                showQuickCaptureFlash = true
-                                capturePhoto(
-                                    controller = controller,
-                                    context = context,
-                                    deviceRotationDegrees = rotationDegrees.toInt(),
-                                    isLandscape = isLandscape,
-                                    onSuccess = { bitmap ->
-                                        viewModel.processCapture(bitmap)
-                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
-                                    },
-                                    onError = {
-                                        val fallback = createSimulatedCameraFrame(
-                                            context = context,
-                                            rotationDegrees = rotationDegrees.toInt(),
-                                            isLandscapeMode = isLandscape,
-                                            resolutionStr = cameraSettings.photoResolution
-                                        )
-                                        viewModel.processCapture(fallback)
-                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
-                                    }
-                                )
-                            }
-                            .testTag("quick_photo_capture_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Camera,
-                            contentDescription = "Quick Photo Capture",
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    // 2. Fixed Stop Video Recording Button
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                            .padding(5.dp)
-                            .clip(CircleShape)
-                            .background(AccentRed)
-                            .clickable { toggleVideoRecording() }
-                            .testTag("stop_video_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(PrimaryText)
-                        )
-                    }
-
-                    // 3. Pause / Resume Video Recording Button
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x701A1A1A))
-                            .border(1.dp, if (isRecordingPaused) HighlightYellow else Color.White.copy(alpha = 0.5f), CircleShape)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .clickable {
-                                if (isRecordingPaused) {
-                                    videoManager.resume()
-                                    viewModel.onVideoRecordingPaused(false)
-                                    viewModel.showInfo("Video recording resumed")
+                            if (captureMode == CaptureMode.PHOTO) {
+                                if (isCapturing) {
+                                    CircularProgressIndicator(
+                                        color = PrimaryBackground,
+                                        modifier = Modifier.size(28.dp),
+                                        strokeWidth = 3.dp
+                                    )
                                 } else {
-                                    videoManager.pause()
-                                    viewModel.onVideoRecordingPaused(true)
-                                    viewModel.showInfo("Video recording paused")
+                                    CameraApertureIcon(
+                                        tint = Color(0xFF101726),
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .graphicsLayer { rotationZ = -animatedRotation }
+                                    )
                                 }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(DeepRed)
+                                )
                             }
-                            .testTag("pause_resume_video_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                            contentDescription = if (isRecordingPaused) "Resume Recording" else "Pause Recording",
-                            tint = if (isRecordingPaused) HighlightYellow else PrimaryText,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                } else {
-                    // Normal Shutter Bar (When NOT recording video)
-                    // Recent Thumbnail / Gallery Button
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(0.5.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                            .background(Color(0x501A1A1A))
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .clickable { onNavigateToPhotos() }
-                            .testTag("recent_thumbnail_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
-                            AsyncImage(
-                                model = File(lastPhoto!!.filePath),
-                                contentDescription = "Recent Photo",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
+                        }
+
+                        // GPS Location Simulator / Target Preset Button
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x75101726))
+                                .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                                .graphicsLayer { rotationZ = -animatedRotation }
+                                .clickable { showSimDialog = true }
+                                .testTag("gps_sim_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Icon(
-                                imageVector = Icons.Default.PhotoLibrary,
-                                contentDescription = "Gallery",
-                                tint = PrimaryText,
+                                imageVector = Icons.Default.GpsFixed,
+                                contentDescription = "Simulate Location",
+                                tint = HighlightYellow,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
                     }
+                }
 
-                    // Fixed Capture Shutter Button
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                            .padding(5.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (captureMode == CaptureMode.PHOTO) {
-                                    if (isCapturing) AccentRed else PrimaryText
-                                } else {
-                                    AccentRed
-                                }
-                            )
-                            .clickable(enabled = (!isCapturing && !isCountingDown) || captureMode == CaptureMode.VIDEO) {
-                                if (captureMode == CaptureMode.PHOTO) {
-                                    triggerPhotoCapture()
-                                } else {
-                                    toggleVideoRecording()
-                                }
-                            }
-                            .testTag("shutter_button"),
-                        contentAlignment = Alignment.Center
+                // Bottom Output Selection Capsule: Photo & Video Output settings
+                val photoBadgePortrait = CameraResolutionHelper.getPhotoBadgeText(
+                    cameraSettings.photoResolution,
+                    cameraSettings.photoAspectRatio
+                )
+                val videoBadgePortrait = CameraResolutionHelper.getVideoBadgeText(
+                    cameraSettings.videoResolution,
+                    cameraSettings.videoAspectRatio
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = Color(0x85101726),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                        .testTag("portrait_bottom_output_bar")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (captureMode == CaptureMode.PHOTO) {
-                            if (isCapturing) {
-                                CircularProgressIndicator(
-                                    color = PrimaryText,
-                                    modifier = Modifier.size(28.dp),
-                                    strokeWidth = 3.dp
-                                )
-                            } else {
+                        // Photo Output Segment
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable {
+                                    activeOutputSettingsType = if (activeOutputSettingsType == "PHOTO") null else "PHOTO"
+                                }
+                                .padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 Icon(
-                                    imageVector = Icons.Default.Camera,
-                                    contentDescription = "Take Photo",
-                                    tint = PrimaryBackground,
-                                    modifier = Modifier
-                                        .size(28.dp)
-                                        .graphicsLayer { rotationZ = -animatedRotation }
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = "Photo Output Settings",
+                                    tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(18.dp)
                                 )
+                                Column {
+                                    Text(
+                                        text = "Photo",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (activeOutputSettingsType == "PHOTO") HighlightYellow else SecondaryText
+                                    )
+                                    Text(
+                                        text = photoBadgePortrait,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PrimaryText
+                                    )
+                                }
                             }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(DeepRed)
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else SecondaryText,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-                    }
 
-                    // GPS Simulator / Preset Button
-                    IconButton(
-                        onClick = { showSimDialog = true },
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x501A1A1A))
-                            .border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-                            .graphicsLayer { rotationZ = -animatedRotation }
-                            .testTag("gps_sim_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.GpsFixed,
-                            contentDescription = "Simulate Location",
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(22.dp)
+                        // Subtle Divider
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(26.dp)
+                                .background(Color(0x35FFFFFF))
                         )
+
+                        // Video Output Segment
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable {
+                                    activeOutputSettingsType = if (activeOutputSettingsType == "VIDEO") null else "VIDEO"
+                                }
+                                .padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = "Video Output Settings",
+                                    tint = if (activeOutputSettingsType == "VIDEO") AccentRed else PrimaryText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "Video",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (activeOutputSettingsType == "VIDEO") AccentRed else SecondaryText
+                                    )
+                                    Text(
+                                        text = videoBadgePortrait,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PrimaryText
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = if (activeOutputSettingsType == "VIDEO") AccentRed else SecondaryText,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
         }
-    }
 
         // Smart Chainage Management & Manual Dialog
         if (showManualDialog) {
@@ -2731,6 +3044,417 @@ fun CameraScreen(
                 onNavigateToFullSettings = { onNavigateToSettings() },
                 onDismiss = { showQuickSettingsPopup = false }
             )
+        }
+
+        // Smart Photo / Video Output Settings Popup Dialog
+        if (activeOutputSettingsType != null) {
+            CameraOutputSettingsPopup(
+                category = activeOutputSettingsType!!,
+                cameraSettings = cameraSettings,
+                isFrontCamera = isFrontCamera,
+                isLandscape = isLandscape,
+                onUpdateCameraSettings = { updated ->
+                    viewModel.saveCameraSettingsSilent(updated)
+                    if (activeOutputSettingsType == "PHOTO") {
+                        viewModel.saveOverlayConfigSilent(overlayConfig.copy(resolutionOption = updated.photoResolution))
+                    }
+                },
+                onShowToast = { msg -> viewModel.showToast(msg) },
+                onDismiss = { activeOutputSettingsType = null }
+            )
+        }
+    }
+}
+
+/**
+ * Smart Photo & Video Output Settings Popup Dialog.
+ * Compact Material 3 popup matching the existing Camera UI.
+ * Organizes options cleanly into Aspect Ratio and Resolution sections with active selection highlights,
+ * sensor vs cropped output indicators, and direct hardware support detection.
+ */
+@Composable
+fun CameraOutputSettingsPopup(
+    category: String, // "PHOTO" or "VIDEO"
+    cameraSettings: com.example.model.CameraSettings,
+    isFrontCamera: Boolean,
+    isLandscape: Boolean,
+    onUpdateCameraSettings: (com.example.model.CameraSettings) -> Unit,
+    onShowToast: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val isPhoto = category.equals("PHOTO", ignoreCase = true)
+
+    val supportedResolutions = remember(isPhoto, isFrontCamera) {
+        if (isPhoto) {
+            CameraResolutionHelper.getSupportedPhotoResolutions(context, isFrontCamera)
+        } else {
+            CameraResolutionHelper.getSupportedVideoResolutions(context, isFrontCamera)
+        }
+    }
+
+    var selectedRatio by remember(isPhoto, cameraSettings.photoAspectRatio, cameraSettings.videoAspectRatio) {
+        mutableStateOf(if (isPhoto) cameraSettings.photoAspectRatio else cameraSettings.videoAspectRatio)
+    }
+
+    var selectedResolution by remember(isPhoto, cameraSettings.photoResolution, cameraSettings.videoResolution) {
+        mutableStateOf(if (isPhoto) cameraSettings.photoResolution else cameraSettings.videoResolution)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xF2121722),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+            shadowElevation = 16.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .widthIn(max = 480.dp)
+                .padding(vertical = 16.dp)
+                .testTag(if (isPhoto) "photo_output_settings_popup" else "video_output_settings_popup")
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                // 1. Header with category icon, title, active lens badge, and close button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(if (isPhoto) HighlightYellow.copy(alpha = 0.2f) else AccentRed.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPhoto) Icons.Default.CameraAlt else Icons.Default.Videocam,
+                                contentDescription = null,
+                                tint = if (isPhoto) HighlightYellow else AccentRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = if (isPhoto) "Photo Output Settings" else "Video Output Settings",
+                                color = PrimaryText,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isFrontCamera) "Front Camera Lens" else "Rear Main Camera Lens",
+                                color = SecondaryText,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .testTag("output_settings_close_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = PrimaryText,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Scrollable content area containing Aspect Ratio and Resolution sections
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // SECTION A: ASPECT RATIO
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AspectRatio,
+                            contentDescription = null,
+                            tint = HighlightYellow,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "ASPECT RATIO",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = HighlightYellow,
+                            letterSpacing = 0.8.sp
+                        )
+                    }
+
+                    // Aspect ratio chips / cards
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CameraResolutionHelper.AVAILABLE_ASPECT_RATIOS.forEach { opt ->
+                            val isSelected = selectedRatio.equals(opt.id, ignoreCase = true) ||
+                                (opt.id == "Full" && selectedRatio.equals("Full Screen", ignoreCase = true))
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) HighlightYellow.copy(alpha = 0.22f) else Color(0x601A202C),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) HighlightYellow else Color.White.copy(alpha = 0.2f)
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        selectedRatio = opt.id
+                                        val updated = if (isPhoto) {
+                                            cameraSettings.copy(photoAspectRatio = opt.id)
+                                        } else {
+                                            cameraSettings.copy(videoAspectRatio = opt.id)
+                                        }
+                                        onUpdateCameraSettings(updated)
+                                        onShowToast("${if (isPhoto) "Photo" else "Video"} aspect ratio: ${opt.title}")
+                                    }
+                                    .testTag("aspect_ratio_${opt.id.lowercase(java.util.Locale.US)}")
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = opt.shortLabel,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = if (isSelected) HighlightYellow else PrimaryText
+                                    )
+                                    Text(
+                                        text = when (opt.id) {
+                                            "4:3" -> "Standard"
+                                            "16:9" -> "Wide"
+                                            "1:1" -> "Square"
+                                            else -> "Full"
+                                        },
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) HighlightYellow else SecondaryText
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    // SECTION B: RESOLUTION & SENSOR OUTPUT
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = HighlightYellow,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = if (isPhoto) "HARDWARE RESOLUTION (PHOTO)" else "VIDEO RECORDING RESOLUTION",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = HighlightYellow,
+                                letterSpacing = 0.8.sp
+                            )
+                        }
+                        Text(
+                            text = "${supportedResolutions.size} detected",
+                            fontSize = 11.sp,
+                            color = SecondaryText
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    supportedResolutions.forEach { res ->
+                        val isSelected = selectedResolution.equals(res.label, ignoreCase = true) ||
+                            selectedResolution.contains(res.key)
+
+                        // Calculate aspect ratio crop details for still photos
+                        val cropDetails = if (isPhoto) {
+                            CameraResolutionHelper.calculateCropDetails(
+                                rawWidth = res.width,
+                                rawHeight = res.height,
+                                aspectRatioId = selectedRatio,
+                                isLandscape = isLandscape
+                            )
+                        } else null
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) Color(0x35EAB308) else Color(0x50181F2E),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) HighlightYellow else Color.White.copy(alpha = 0.12f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable {
+                                    selectedResolution = res.label
+                                    val updated = if (isPhoto) {
+                                        cameraSettings.copy(
+                                            photoResolution = res.label,
+                                            photoAspectRatio = selectedRatio
+                                        )
+                                    } else {
+                                        cameraSettings.copy(
+                                            videoResolution = res.label,
+                                            videoAspectRatio = selectedRatio
+                                        )
+                                    }
+                                    onUpdateCameraSettings(updated)
+                                    onShowToast("${if (isPhoto) "Photo" else "Video"} resolution: ${res.label}")
+                                }
+                                .testTag("resolution_option_${res.width}x${res.height}")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = res.label,
+                                            fontSize = 14.sp,
+                                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold,
+                                            color = if (isSelected) HighlightYellow else PrimaryText
+                                        )
+                                        if (res.megapixelsText.isNotBlank()) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = if (isSelected) HighlightYellow.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f)
+                                            ) {
+                                                Text(
+                                                    text = res.megapixelsText,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isSelected) HighlightYellow else SecondaryText,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                        }
+                                        if (res.isMax) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color(0x4010B981)
+                                            ) {
+                                                Text(
+                                                    text = "MAX",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = Color(0xFF34D399),
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (cropDetails != null) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "${cropDetails.cropDescription} • ${cropDetails.estimatedFileSize}",
+                                            fontSize = 11.sp,
+                                            color = if (isSelected) HighlightYellow.copy(alpha = 0.85f) else SecondaryText
+                                        )
+                                    } else if (res.tag.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = res.tag,
+                                            fontSize = 11.sp,
+                                            color = if (isSelected) HighlightYellow.copy(alpha = 0.85f) else SecondaryText
+                                        )
+                                    }
+                                }
+
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedResolution = res.label
+                                        val updated = if (isPhoto) {
+                                            cameraSettings.copy(
+                                                photoResolution = res.label,
+                                                photoAspectRatio = selectedRatio
+                                            )
+                                        } else {
+                                            cameraSettings.copy(
+                                                videoResolution = res.label,
+                                                videoAspectRatio = selectedRatio
+                                            )
+                                        }
+                                        onUpdateCameraSettings(updated)
+                                        onShowToast("${if (isPhoto) "Photo" else "Video"} resolution: ${res.label}")
+                                    },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = HighlightYellow,
+                                        unselectedColor = Color.White.copy(alpha = 0.4f)
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Bottom Done Action Button
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HighlightYellow,
+                        contentColor = PrimaryBackground
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("output_settings_done_button")
+                ) {
+                    Text(
+                        text = "Done",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     }
 }
@@ -3048,7 +3772,8 @@ fun createSimulatedCameraFrame(
     context: Context,
     rotationDegrees: Int = 0,
     isLandscapeMode: Boolean = false,
-    resolutionStr: String = "1920 x 1080"
+    resolutionStr: String = "1920 x 1080",
+    aspectRatioStr: String = "4:3"
 ): Bitmap {
     val shouldBeLandscape = isLandscapeMode || rotationDegrees == 90 || rotationDegrees == 270
     val photoParts = resolutionStr.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
@@ -3147,7 +3872,12 @@ fun createSimulatedCameraFrame(
         canvas.drawLine(roadCenterX, y1, roadCenterX, y2, centerLinePaint)
     }
 
-    return bmp
+    val rawSimulated = bmp
+    return applyPhotoAspectRatio(
+        bitmap = rawSimulated,
+        aspectRatioStr = aspectRatioStr,
+        isLandscape = shouldBeLandscape
+    )
 }
 
 @Composable

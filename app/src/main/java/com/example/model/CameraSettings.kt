@@ -138,5 +138,7 @@ data class CameraSettings(
     val customStoragePath: String = "/storage/emulated/0/DCIM/Camera",
     val autoRotateUI: Boolean = true,
     val photoResolution: String = "1920 x 1080",
-    val videoResolution: String = "1920 x 1080"
+    val videoResolution: String = "1920 x 1080",
+    val photoAspectRatio: String = "4:3",
+    val videoAspectRatio: String = "16:9"
 )

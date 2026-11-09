@@ -132,6 +132,8 @@ fun CameraPreview(
     isLandscape: Boolean = false,
     photoResolution: String = "1920 x 1080",
     videoResolution: String = "1920 x 1080",
+    photoAspectRatio: String = "4:3",
+    videoAspectRatio: String = "16:9",
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
@@ -606,6 +608,17 @@ fun CameraPreview(
                         .align(Alignment.CenterEnd)
                         .padding(end = if (isLandscape) 104.dp else 16.dp)
                 )
+
+                // 5. Active Aspect Ratio Viewfinder Framing Overlay
+                val activeRatioStr = if (isVideoMode) videoAspectRatio else photoAspectRatio
+                if (!activeRatioStr.equals("Full", ignoreCase = true) && constraints.maxWidth > 0 && constraints.maxHeight > 0) {
+                    CameraFramingGuideOverlay(
+                        aspectRatioStr = activeRatioStr,
+                        isLandscape = isLandscape,
+                        containerWidth = constraints.maxWidth.toFloat(),
+                        containerHeight = constraints.maxHeight.toFloat()
+                    )
+                }
             }
         } else {
             // Elegant fallback UI when camera permission is requested or pending
@@ -953,14 +966,70 @@ fun normalizeBitmapOrientation(
 }
 
 /**
+ * Accurately center-crops bitmap to match target aspect ratio (1:1, 4:3, 16:9, Full)
+ * without stretching, distortion, or quality degradation.
+ */
+fun applyPhotoAspectRatio(
+    bitmap: Bitmap,
+    aspectRatioStr: String,
+    isLandscape: Boolean = false,
+    screenAspectRatio: Float = 0f
+): Bitmap {
+    val w = bitmap.width
+    val h = bitmap.height
+    if (w <= 0 || h <= 0) return bitmap
+
+    val targetRatio = when (aspectRatioStr.lowercase(java.util.Locale.US)) {
+        "1:1", "square", "square 1:1", "1:1 square" -> 1.0f
+        "4:3", "standard", "standard 4:3", "4:3 standard" -> if (isLandscape) 4f / 3f else 3f / 4f
+        "16:9", "widescreen", "widescreen 16:9", "16:9 widescreen" -> if (isLandscape) 16f / 9f else 9f / 16f
+        "full", "full screen", "device" -> {
+            if (screenAspectRatio > 0f) {
+                if (isLandscape) Math.max(screenAspectRatio, 1f / screenAspectRatio)
+                else Math.min(screenAspectRatio, 1f / screenAspectRatio)
+            } else {
+                return bitmap
+            }
+        }
+        else -> return bitmap
+    }
+
+    val currentRatio = w.toFloat() / h.toFloat()
+    if (Math.abs(currentRatio - targetRatio) < 0.015f) {
+        return bitmap
+    }
+
+    val targetW: Int
+    val targetH: Int
+    if (currentRatio > targetRatio) {
+        targetH = h
+        targetW = (h * targetRatio).toInt().coerceIn(1, w)
+    } else {
+        targetW = w
+        targetH = (w / targetRatio).toInt().coerceIn(1, h)
+    }
+
+    val startX = ((w - targetW) / 2).coerceAtLeast(0)
+    val startY = ((h - targetH) / 2).coerceAtLeast(0)
+
+    return try {
+        Bitmap.createBitmap(bitmap, startX, startY, targetW, targetH)
+    } catch (e: Exception) {
+        Log.e("CameraPreview", "Failed to crop bitmap to aspect ratio: $aspectRatioStr", e)
+        bitmap
+    }
+}
+
+/**
  * Captures image from LifecycleCameraController and returns a correctly rotated Bitmap
- * that strictly adheres to the physical device orientation and original aspect ratio.
+ * that strictly adheres to the physical device orientation and selected aspect ratio.
  */
 fun capturePhoto(
     controller: LifecycleCameraController,
     context: Context,
     deviceRotationDegrees: Int = 0,
     isLandscape: Boolean = false,
+    photoAspectRatio: String = "4:3",
     onSuccess: (Bitmap) -> Unit,
     onError: (Throwable) -> Unit
 ) {
@@ -993,8 +1062,14 @@ fun capturePhoto(
                         deviceRotationDegrees = deviceRotationDegrees
                     )
 
+                    val finalBitmap = applyPhotoAspectRatio(
+                        bitmap = normalizedBitmap,
+                        aspectRatioStr = photoAspectRatio,
+                        isLandscape = isLandscape
+                    )
+
                     image.close()
-                    onSuccess(normalizedBitmap)
+                    onSuccess(finalBitmap)
                 } catch (e: Exception) {
                     image.close()
                     onError(e)
@@ -1191,3 +1266,86 @@ class VideoRecordingManager(private val context: Context) {
         overlayManager?.notifyRecordingStopped()
     }
 }
+
+/**
+ * Subtle framing guide overlay displaying corner brackets and gentle cropping mask
+ * matching the selected aspect ratio (1:1, 4:3, 16:9).
+ */
+@Composable
+fun CameraFramingGuideOverlay(
+    aspectRatioStr: String,
+    isLandscape: Boolean,
+    containerWidth: Float,
+    containerHeight: Float,
+    modifier: Modifier = Modifier
+) {
+    val targetRatio = when (aspectRatioStr.lowercase(java.util.Locale.US)) {
+        "1:1", "square", "square 1:1", "1:1 square" -> 1.0f
+        "4:3", "standard", "standard 4:3", "4:3 standard" -> if (isLandscape) 4f / 3f else 3f / 4f
+        "16:9", "widescreen", "widescreen 16:9", "16:9 widescreen" -> if (isLandscape) 16f / 9f else 9f / 16f
+        else -> return
+    }
+
+    val currentRatio = containerWidth / containerHeight
+    val frameW: Float
+    val frameH: Float
+    if (currentRatio > targetRatio) {
+        frameH = containerHeight
+        frameW = (containerHeight * targetRatio).coerceAtMost(containerWidth)
+    } else {
+        frameW = containerWidth
+        frameH = (containerWidth / targetRatio).coerceAtMost(containerHeight)
+    }
+
+    val left = (containerWidth - frameW) / 2f
+    val top = (containerHeight - frameH) / 2f
+    val right = left + frameW
+    val bottom = top + frameH
+
+    ComposeCanvas(modifier = modifier.fillMaxSize()) {
+        val maskColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.28f)
+        if (left > 0.5f) {
+            drawRect(
+                color = maskColor,
+                topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
+                size = androidx.compose.ui.geometry.Size(left, containerHeight)
+            )
+            drawRect(
+                color = maskColor,
+                topLeft = androidx.compose.ui.geometry.Offset(right, 0f),
+                size = androidx.compose.ui.geometry.Size(containerWidth - right, containerHeight)
+            )
+        }
+        if (top > 0.5f) {
+            drawRect(
+                color = maskColor,
+                topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
+                size = androidx.compose.ui.geometry.Size(containerWidth, top)
+            )
+            drawRect(
+                color = maskColor,
+                topLeft = androidx.compose.ui.geometry.Offset(0f, bottom),
+                size = androidx.compose.ui.geometry.Size(containerWidth, containerHeight - bottom)
+            )
+        }
+
+        // Crisp corner brackets around the framed active region
+        val bracketLen = 22.dp.toPx()
+        val bracketStroke = 1.8.dp.toPx()
+        val bracketColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.70f)
+
+        // Top-left
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Offset(left + bracketLen, top), bracketStroke)
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Offset(left, top + bracketLen), bracketStroke)
+        // Top-right
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, top), androidx.compose.ui.geometry.Offset(right - bracketLen, top), bracketStroke)
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, top), androidx.compose.ui.geometry.Offset(right, top + bracketLen), bracketStroke)
+        // Bottom-left
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, bottom), androidx.compose.ui.geometry.Offset(left + bracketLen, bottom), bracketStroke)
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, bottom), androidx.compose.ui.geometry.Offset(left, bottom + bracketLen), bracketStroke)
+        // Bottom-right
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, bottom), androidx.compose.ui.geometry.Offset(right - bracketLen, bottom), bracketStroke)
+        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, bottom), androidx.compose.ui.geometry.Offset(right, bottom - bracketLen), bracketStroke)
+    }
+}
+

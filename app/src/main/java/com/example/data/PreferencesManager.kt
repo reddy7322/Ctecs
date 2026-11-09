@@ -141,6 +141,8 @@ class PreferencesManager(private val context: Context) {
         val KEY_MAP_TYPE = stringPreferencesKey("map_type_preference")
         val KEY_PHOTO_RESOLUTION = stringPreferencesKey("photo_resolution")
         val KEY_VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
+        val KEY_PHOTO_ASPECT_RATIO = stringPreferencesKey("photo_aspect_ratio")
+        val KEY_VIDEO_ASPECT_RATIO = stringPreferencesKey("video_aspect_ratio")
         val KEY_GALLERY_VIEW_MODE = stringPreferencesKey("gallery_view_mode")
         val KEY_GALLERY_SORT_OPTION = stringPreferencesKey("gallery_sort_option")
         val KEY_GALLERY_GROUP_OPTION = stringPreferencesKey("gallery_group_option")
@@ -237,7 +239,9 @@ class PreferencesManager(private val context: Context) {
             customStoragePath = prefs[KEY_CUSTOM_STORAGE_PATH] ?: "/storage/emulated/0/DCIM/Camera",
             autoRotateUI = prefs[KEY_AUTO_ROTATE_UI] ?: true,
             photoResolution = prefs[KEY_PHOTO_RESOLUTION] ?: "1920 x 1080",
-            videoResolution = prefs[KEY_VIDEO_RESOLUTION] ?: "1920 x 1080"
+            videoResolution = prefs[KEY_VIDEO_RESOLUTION] ?: "1920 x 1080",
+            photoAspectRatio = prefs[KEY_PHOTO_ASPECT_RATIO] ?: "4:3",
+            videoAspectRatio = prefs[KEY_VIDEO_ASPECT_RATIO] ?: "16:9"
         )
     }
 
@@ -503,6 +507,8 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_AUTO_ROTATE_UI] = settings.autoRotateUI
             prefs[KEY_PHOTO_RESOLUTION] = settings.photoResolution
             prefs[KEY_VIDEO_RESOLUTION] = settings.videoResolution
+            prefs[KEY_PHOTO_ASPECT_RATIO] = settings.photoAspectRatio
+            prefs[KEY_VIDEO_ASPECT_RATIO] = settings.videoAspectRatio
         }
     }
 
