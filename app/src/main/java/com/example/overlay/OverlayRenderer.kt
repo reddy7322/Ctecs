@@ -82,9 +82,9 @@ object OverlayRenderer {
         val showMiniMap = config.showMapInset && config.template != OverlayTemplate.MINIMAL_TIMESTAMP
         val mapSize = if (showMiniMap) {
             if (isLandscape) {
-                (height * 0.26f).coerceIn(120f * scale, 240f * scale)
+                (height * 0.13f).coerceIn(60f * scale, 120f * scale)
             } else {
-                (min(width, height) * 0.21f).coerceIn(140f * scale, 300f * scale)
+                (min(width, height) * 0.12f).coerceIn(65f * scale, 130f * scale)
             }
         } else 0f
 
@@ -481,7 +481,7 @@ object OverlayRenderer {
         roadName: String,
         isDark: Boolean = true
     ) {
-        val cornerRadius = 16f * scale
+        val cornerRadius = 8f * scale
         val mapColors = com.example.ui.map.MapThemeConfig.getColors(isDark)
 
         // Background
@@ -495,7 +495,7 @@ object OverlayRenderer {
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = if (isDark) Color.parseColor("#475569") else Color.parseColor("#CBD5E1")
             style = Paint.Style.STROKE
-            strokeWidth = 2f * scale
+            strokeWidth = 1f * scale
         }
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
 
@@ -654,31 +654,6 @@ object OverlayRenderer {
                 canvas.restore()
             }
         }
-
-        // OpenStreetMap Attribution (Top-Right)
-        val osmAttrPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = mapColors.attributionTextArgb
-            textSize = 8.5f * scale
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-            textAlign = Paint.Align.RIGHT
-        }
-        canvas.drawText("© OSM", rect.right - 8f * scale, rect.top + 13f * scale, osmAttrPaint)
-
-        // Road / Map tag at bottom of inset
-        val tagBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = mapColors.badgeBgArgb
-            style = Paint.Style.FILL
-        }
-        val tagRect = RectF(rect.left, rect.bottom - 22f * scale, rect.right, rect.bottom)
-        canvas.drawRect(tagRect, tagBgPaint)
-
-        val tagTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = mapColors.badgeTextArgb
-            textSize = 10f * scale
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText(roadName, rect.centerX(), rect.bottom - 6f * scale, tagTextPaint)
 
         canvas.restore()
     }

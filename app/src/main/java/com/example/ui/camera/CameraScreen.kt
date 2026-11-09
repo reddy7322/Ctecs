@@ -43,6 +43,9 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -125,6 +128,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -942,11 +946,14 @@ fun CameraScreen(
                     location = locationState.point,
                     bearing = locationState.bearing,
                     routeData = activeRoute,
-                    highwayTag = projectProfile.highwayId,
-                    gpsAccuracy = locationState.accuracy,
+                    highwayTag = "",
+                    gpsAccuracy = null,
+                    showGpsBadge = false,
+                    showProjectTag = false,
+                    showAttribution = false,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(106.dp)
+                        .height(68.dp)
                         .clickable { showSimDialog = true }
                         .testTag("landscape_minimap_preview")
                 )
@@ -1612,22 +1619,22 @@ fun CameraScreen(
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .padding(top = 8.dp, bottom = 4.dp)
             ) {
-                // Top Controls Toolbar: 3 Floating Glass Pills
+                // Top Controls Toolbar: 3 Tiny Floating Glass Pills (8dp margin, 20dp icons, 4dp blur, 10% opacity)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Pill 1: Flash, Audio Mic, Timer
-                    Surface(
-                        shape = RoundedCornerShape(22.dp),
-                        color = Color(0x75101726),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF))
+                    FloatingGlassCard(
+                        shape = RoundedCornerShape(16.dp),
+                        backgroundColor = Color(0x1A101726),
+                        borderColor = Color(0x35FFFFFF)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
@@ -1635,7 +1642,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { viewModel.toggleFlash() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .graphicsLayer { rotationZ = -animatedRotation }
                                     .testTag("flash_toggle_button")
@@ -1643,7 +1650,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
                                     contentDescription = "Flash",
-                                    tint = if (isFlashOn) HighlightYellow else PrimaryText,
+                                    tint = if (isFlashOn) HighlightYellow else Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1651,7 +1658,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { viewModel.toggleRecordAudio() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .graphicsLayer { rotationZ = -animatedRotation }
                                     .testTag("audio_toggle_button")
@@ -1659,7 +1666,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = if (cameraSettings.recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
                                     contentDescription = if (cameraSettings.recordAudio) "Audio Enabled" else "Audio Disabled",
-                                    tint = if (cameraSettings.recordAudio) HighlightYellow else PrimaryText,
+                                    tint = if (cameraSettings.recordAudio) HighlightYellow else Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1667,7 +1674,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { viewModel.cycleTimer() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .graphicsLayer { rotationZ = -animatedRotation }
                                     .testTag("timer_cycle_button")
@@ -1675,7 +1682,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = Icons.Default.Timer,
                                     contentDescription = "Timer",
-                                    tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
+                                    tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1683,13 +1690,13 @@ fun CameraScreen(
                     }
 
                     // Pill 2: Grid, Exposure, Flip Camera
-                    Surface(
-                        shape = RoundedCornerShape(22.dp),
-                        color = Color(0x75101726),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF))
+                    FloatingGlassCard(
+                        shape = RoundedCornerShape(16.dp),
+                        backgroundColor = Color(0x1A101726),
+                        borderColor = Color(0x35FFFFFF)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
@@ -1697,7 +1704,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { viewModel.cycleGrid() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .graphicsLayer { rotationZ = -animatedRotation }
                                     .testTag("grid_cycle_button")
@@ -1705,7 +1712,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = Icons.Default.GridOn,
                                     contentDescription = "Grid",
-                                    tint = if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else PrimaryText,
+                                    tint = if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1713,7 +1720,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { showExposureSlider = !showExposureSlider },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .graphicsLayer { rotationZ = -animatedRotation }
                                     .testTag("exposure_toggle_button")
@@ -1721,7 +1728,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = Icons.Default.Exposure,
                                     contentDescription = "Exposure",
-                                    tint = if (showExposureSlider || exposureCompensation != 0) HighlightYellow else PrimaryText,
+                                    tint = if (showExposureSlider || exposureCompensation != 0) HighlightYellow else Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1729,7 +1736,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { viewModel.toggleCameraFacing() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .graphicsLayer { rotationZ = -animatedRotation }
                                     .testTag("camera_flip_button")
@@ -1737,7 +1744,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = Icons.Default.FlipCameraAndroid,
                                     contentDescription = "Flip Camera",
-                                    tint = PrimaryText,
+                                    tint = Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1745,13 +1752,13 @@ fun CameraScreen(
                     }
 
                     // Pill 3: Routes & Settings
-                    Surface(
-                        shape = RoundedCornerShape(22.dp),
-                        color = Color(0x75101726),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF))
+                    FloatingGlassCard(
+                        shape = RoundedCornerShape(16.dp),
+                        backgroundColor = Color(0x1A101726),
+                        borderColor = Color(0x35FFFFFF)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
@@ -1759,7 +1766,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { onNavigateToRoutes() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .background(if (activeRoute != null) HighlightYellow.copy(alpha = 0.25f) else Color.Transparent)
                                     .graphicsLayer { rotationZ = -animatedRotation }
@@ -1776,7 +1783,7 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { showQuickSettingsPopup = true },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .graphicsLayer { rotationZ = -animatedRotation }
                                     .testTag("settings_button")
@@ -1784,7 +1791,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = Icons.Default.Settings,
                                     contentDescription = "Camera Settings",
-                                    tint = if (showQuickSettingsPopup) HighlightYellow else PrimaryText,
+                                    tint = if (showQuickSettingsPopup) HighlightYellow else Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1792,24 +1799,17 @@ fun CameraScreen(
                     }
                 }
 
-                // Status Row: GPS Status Capsule (Left) & Telemetry Status (Right)
+                // Status Row: Minimal Tiny GPS Status Capsule (Left) — "CUBET CH" colored text totally removed
+                // Status Row: Minimal Tiny GPS Status Capsule (Left) — 8dp consistent margin, 4dp blur, 10% opacity
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp, start = 14.dp, end = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .padding(top = 8.dp, start = 8.dp, end = 8.dp),
+                    horizontalArrangement = Arrangement.Start,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val isAcquiring = locationState.status == LocationStatus.ACQUIRING || locationState.point == null
                     val accuracy = if (locationState.point != null) locationState.accuracy else 999f
-
-                    val gpsColor = when {
-                        isAcquiring -> Color(0xFF38BDF8)
-                        accuracy <= 5f -> Color(0xFF22C55E)
-                        accuracy <= 15f -> HighlightYellow
-                        accuracy <= 30f -> Color(0xFFF97316)
-                        else -> AccentRed
-                    }
 
                     val infiniteTransition = rememberInfiniteTransition(label = "gps_pulse")
                     val pulseAlpha by infiniteTransition.animateFloat(
@@ -1820,22 +1820,24 @@ fun CameraScreen(
                     )
                     val indicatorAlpha = if (isAcquiring) pulseAlpha else 1.0f
 
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0x75101726),
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
+                    FloatingGlassCard(
+                        shape = RoundedCornerShape(10.dp),
+                        backgroundColor = Color(0x1A101726),
+                        borderColor = Color(0x35FFFFFF),
+                        onClick = { showSimDialog = true },
                         modifier = Modifier
-                            .clickable { showSimDialog = true }
+                            .wrapContentWidth()
+                            .wrapContentHeight()
                             .testTag("gps_status_pill")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
+                                    .size(5.dp)
                                     .clip(CircleShape)
                                     .background(HighlightYellow)
                                     .alpha(indicatorAlpha)
@@ -1846,29 +1848,11 @@ fun CameraScreen(
                                 } else {
                                     "GPS Acquiring..."
                                 },
-                                color = PrimaryText,
-                                fontSize = 11.5.sp,
+                                color = Color.White,
+                                fontSize = 9.5.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "CUBET",
-                            color = PrimaryText.copy(alpha = 0.85f),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "CH",
-                            color = Color(0xFF22C55E),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Black
-                        )
                     }
                 }
 
@@ -1877,16 +1861,16 @@ fun CameraScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 6.dp, start = 14.dp, end = 14.dp),
+                            .padding(top = 4.dp, start = 12.dp, end = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             text = "EV: ${if (exposureCompensation > 0) "+$exposureCompensation" else "$exposureCompensation"}",
                             color = HighlightYellow,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.width(54.dp)
+                            modifier = Modifier.width(46.dp)
                         )
                         Slider(
                             value = exposureCompensation.toFloat(),
@@ -1902,9 +1886,9 @@ fun CameraScreen(
                         )
                         TextButton(
                             onClick = { viewModel.setExposureCompensation(0) },
-                            modifier = Modifier.height(32.dp)
+                            modifier = Modifier.height(28.dp)
                         ) {
-                            Text("Reset", color = PrimaryText, fontSize = 11.sp)
+                            Text("Reset", color = PrimaryText, fontSize = 10.sp)
                         }
                     }
                 }
@@ -1922,23 +1906,23 @@ fun CameraScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp),
+                            .padding(top = 6.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(14.dp),
                             color = Color(0x95101726),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, AccentRed)
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, AccentRed)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(10.dp)
+                                        .size(8.dp)
                                         .clip(CircleShape)
                                         .background(AccentRed.copy(alpha = alpha))
                                 )
@@ -1947,14 +1931,14 @@ fun CameraScreen(
                                 Text(
                                     text = String.format("REC %02d:%02d", mins, secs),
                                     color = PrimaryText,
-                                    fontSize = 13.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 if (isRecordingPaused) {
                                     Text(
                                         text = "[PAUSED]",
                                         color = HighlightYellow,
-                                        fontSize = 12.sp,
+                                        fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -1963,75 +1947,70 @@ fun CameraScreen(
                     }
                 }
 
-                // Top Viewfinder HUD: Mini Map (Top-Left) & Timestamp / Project Info Card (Top-Right)
+                // Top Viewfinder HUD: Tiny Standard Photo Mini Map (Top-Left) & Minimalist Timestamp Card (Top-Right)
+                // 8dp consistent margin from screen edges and each other, dynamic in height, strictly compact in width
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 10.dp, start = 14.dp, end = 14.dp),
+                        .padding(top = 8.dp, start = 8.dp, end = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Top
                 ) {
-                    // Top-Left: Live Mini Map Preview
+                    // Top-Left: Tiny Standard Photo Mini Map Preview (8dp margin, 4dp blur & 10% opacity glass container)
                     if (overlayConfig.showMapInset && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
-                        Box(
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(10.dp),
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x38FFFFFF),
+                            borderWidth = 0.6.dp,
+                            onClick = { showSimDialog = true },
                             modifier = Modifier
-                                .size(104.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .border(1.5.dp, Color(0x35FFFFFF), RoundedCornerShape(18.dp))
-                                .clickable { showSimDialog = true }
+                                .size(64.dp)
                                 .testTag("portrait_minimap_preview")
                         ) {
                             MiniMapPreview(
                                 location = locationState.point,
                                 bearing = locationState.bearing,
                                 routeData = activeRoute,
-                                highwayTag = projectProfile.highwayId,
-                                gpsAccuracy = locationState.accuracy,
+                                highwayTag = "",
+                                gpsAccuracy = null,
+                                showGpsBadge = false,
+                                showProjectTag = false,
+                                showAttribution = false,
                                 modifier = Modifier.fillMaxSize(),
                                 mapType = "satellite"
                             )
-                            // North indicator badge
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(6.dp)
-                                    .size(18.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xD9000000)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "N",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
                         }
                     } else {
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    // Top-Right: Timestamp & Project Info Glass Card
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = Color(0x80101726),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF)),
+                    // Top-Right: Minimal & Tiny Size Glass Timestamp & Project Info Card
+                    // Dynamic in height, strictly compact in width, 4dp blur and 10% opacity
+                    FloatingGlassCard(
+                        shape = RoundedCornerShape(12.dp),
+                        backgroundColor = Color(0x1A101726),
+                        borderColor = Color(0x38FFFFFF),
+                        borderWidth = 0.6.dp,
+                        onClick = { viewModel.openManualChainageDialog() },
                         modifier = Modifier
-                            .widthIn(min = 150.dp, max = 220.dp)
-                            .clickable { viewModel.openManualChainageDialog() }
+                            .widthIn(min = 125.dp, max = 175.dp)
+                            .wrapContentHeight()
                             .testTag("portrait_timestamp_card")
                     ) {
                         Column(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .wrapContentHeight()
+                                .padding(horizontal = 9.dp, vertical = 6.dp),
                             horizontalAlignment = Alignment.End
                         ) {
                             // Date
                             val dateStr = SimpleDateFormat("dd MMMM yyyy", Locale.US).format(Date(currentTimeMillis))
                             Text(
                                 text = dateStr,
-                                color = PrimaryText,
-                                fontSize = 12.sp,
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Medium
                             )
                             // Digital Time
@@ -2039,16 +2018,16 @@ fun CameraScreen(
                             val timeStr = SimpleDateFormat(timeFormatPattern, Locale.US).format(Date(currentTimeMillis))
                             Text(
                                 text = timeStr,
-                                color = PrimaryText,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Black
+                                color = Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold
                             )
                             HorizontalDivider(
                                 modifier = Modifier
-                                    .padding(vertical = 4.dp)
+                                    .padding(vertical = 2.dp)
                                     .fillMaxWidth(0.9f),
-                                thickness = 0.8.dp,
-                                color = Color(0x35FFFFFF)
+                                thickness = 0.5.dp,
+                                color = Color(0x30FFFFFF)
                             )
                             // GPS Coordinates
                             if (locationState.point != null && overlayConfig.showCoordinates && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
@@ -2056,8 +2035,8 @@ fun CameraScreen(
                                 val lon = String.format(Locale.US, "%.4f°E", kotlin.math.abs(locationState.point!!.longitude))
                                 Text(
                                     text = "$lat $lon",
-                                    color = PrimaryText.copy(alpha = 0.9f),
-                                    fontSize = 11.sp,
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 9.5.sp,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -2079,8 +2058,8 @@ fun CameraScreen(
                             if (projTokens.isNotEmpty() && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
                                 Text(
                                     text = projTokens.joinToString(" | "),
-                                    color = PrimaryText,
-                                    fontSize = 11.sp,
+                                    color = Color.White,
+                                    fontSize = 9.5.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -2094,8 +2073,8 @@ fun CameraScreen(
                                 Text(
                                     text = highlightTokens.joinToString(" "),
                                     color = HighlightYellow,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Black
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -2103,58 +2082,58 @@ fun CameraScreen(
                 }
             }
 
-            // 7. Ergonomic Bottom Half Controls Container (PORTRAIT)
+            // 7. Sleek Tiny-Size Bottom Half Controls Container (PORTRAIT)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(bottom = 6.dp),
+                    .padding(bottom = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Quick Controls Bar (Horizontal scrolling glass pills)
+                // Quick Controls Bar (8dp margin, dynamic height, compact width, 4dp blur, 10% opacity)
                 androidx.compose.foundation.lazy.LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 3.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Side chip (LHS / RHS / MEDIAN / BOTH)
                     item {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = Color(0x75101726),
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
-                            modifier = Modifier
-                                .height(34.dp)
-                                .clickable {
-                                    val nextSide = when (projectProfile.roadSide) {
-                                        RoadSide.RHS -> RoadSide.LHS
-                                        RoadSide.LHS -> RoadSide.MEDIAN
-                                        RoadSide.MEDIAN -> RoadSide.BOTH
-                                        RoadSide.BOTH -> RoadSide.RHS
-                                        else -> RoadSide.LHS
-                                    }
-                                    viewModel.updateSide(nextSide)
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x35FFFFFF),
+                            onClick = {
+                                val nextSide = when (projectProfile.roadSide) {
+                                    RoadSide.RHS -> RoadSide.LHS
+                                    RoadSide.LHS -> RoadSide.MEDIAN
+                                    RoadSide.MEDIAN -> RoadSide.BOTH
+                                    RoadSide.BOTH -> RoadSide.RHS
                                 }
+                                viewModel.updateSide(nextSide)
+                            },
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .wrapContentHeight()
                                 .testTag("side_chip")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(7.dp)
+                                        .size(5.dp)
                                         .clip(CircleShape)
                                         .background(HighlightYellow)
                                 )
                                 Text(
                                     text = projectProfile.roadSide.name,
                                     color = HighlightYellow,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -2163,34 +2142,35 @@ fun CameraScreen(
 
                     // Lane / Type chip
                     item {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = Color(0x75101726),
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x35FFFFFF),
+                            onClick = {
+                                val lanes = ProjectProfile.LANE_PRESETS
+                                val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
+                                viewModel.updateLane(lanes[nextIndex])
+                            },
                             modifier = Modifier
-                                .height(34.dp)
-                                .clickable {
-                                    val lanes = ProjectProfile.LANE_PRESETS
-                                    val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
-                                    viewModel.updateLane(lanes[nextIndex])
-                                }
+                                .wrapContentWidth()
+                                .wrapContentHeight()
                                 .testTag("lane_chip")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Tune,
                                     contentDescription = null,
-                                    tint = PrimaryText,
-                                    modifier = Modifier.size(13.dp)
+                                    tint = Color.White,
+                                    modifier = Modifier.size(12.dp)
                                 )
                                 Text(
                                     text = projectProfile.lane,
-                                    color = PrimaryText,
-                                    fontSize = 11.5.sp,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -2200,30 +2180,31 @@ fun CameraScreen(
                     // Activity chip
                     item {
                         Box {
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = Color(0x75101726),
-                                border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
+                            FloatingGlassCard(
+                                shape = RoundedCornerShape(14.dp),
+                                backgroundColor = Color(0x1A101726),
+                                borderColor = Color(0x35FFFFFF),
+                                onClick = { showActivityMenu = true },
                                 modifier = Modifier
-                                    .height(34.dp)
-                                    .clickable { showActivityMenu = true }
+                                    .wrapContentWidth()
+                                    .wrapContentHeight()
                                     .testTag("activity_chip")
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Edit,
                                         contentDescription = null,
                                         tint = HighlightYellow,
-                                        modifier = Modifier.size(13.dp)
+                                        modifier = Modifier.size(12.dp)
                                     )
                                     Text(
                                         text = projectProfile.activity.ifBlank { "Activity" },
-                                        color = PrimaryText,
-                                        fontSize = 11.5.sp,
+                                        color = Color.White,
+                                        fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -2257,44 +2238,45 @@ fun CameraScreen(
                     // Chainage quick edit button
                     item {
                         val chipBg = when (matchResult.source) {
-                            ChainageSource.MANUAL -> Color(0x99DC2626)
-                            ChainageSource.CUSTOM_CORRECTION -> Color(0x997C3AED)
-                            else -> Color(0x75101726)
+                            ChainageSource.MANUAL -> Color(0x25DC2626)
+                            ChainageSource.CUSTOM_CORRECTION -> Color(0x257C3AED)
+                            else -> Color(0x1A101726)
                         }
                         val chipBorder = when (matchResult.source) {
                             ChainageSource.MANUAL -> AccentRed
                             ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
-                            else -> Color(0x25FFFFFF)
+                            else -> Color(0x35FFFFFF)
                         }
                         val chipText = when (matchResult.source) {
                             ChainageSource.MANUAL -> "Manual: ${matchResult.displayChainage}"
                             ChainageSource.CUSTOM_CORRECTION -> "Cal: ${matchResult.displayChainage}"
                             else -> "CH: ${matchResult.displayChainage}"
                         }
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = chipBg,
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, chipBorder),
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = chipBg,
+                            borderColor = chipBorder,
+                            onClick = { viewModel.openManualChainageDialog() },
                             modifier = Modifier
-                                .height(34.dp)
-                                .clickable { viewModel.openManualChainageDialog() }
+                                .wrapContentWidth()
+                                .wrapContentHeight()
                                 .testTag("chainage_chip")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
                                     contentDescription = "Edit Chainage",
-                                    tint = PrimaryText,
-                                    modifier = Modifier.size(13.dp)
+                                    tint = Color.White,
+                                    modifier = Modifier.size(12.dp)
                                 )
                                 Text(
                                     text = chipText,
-                                    color = PrimaryText,
-                                    fontSize = 11.5.sp,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -2304,47 +2286,45 @@ fun CameraScreen(
                     // Custom Comments chip
                     item {
                         val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (hasComment) Color(0x990284C7) else Color(0x75101726),
-                            border = androidx.compose.foundation.BorderStroke(
-                                0.8.dp,
-                                if (hasComment) Color(0xFF38BDF8) else Color(0x25FFFFFF)
-                            ),
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = if (hasComment) Color(0x250284C7) else Color(0x1A101726),
+                            borderColor = if (hasComment) Color(0xFF38BDF8) else Color(0x35FFFFFF),
+                            onClick = {
+                                commentInput = projectProfile.customDescription
+                                showCustomCommentDialog = true
+                            },
                             modifier = Modifier
-                                .height(34.dp)
-                                .clickable {
-                                    commentInput = projectProfile.customDescription
-                                    showCustomCommentDialog = true
-                                }
+                                .wrapContentWidth()
+                                .wrapContentHeight()
                                 .testTag("custom_comment_chip")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ChatBubbleOutline,
                                     contentDescription = "Custom Comment",
-                                    tint = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
-                                    modifier = Modifier.size(13.dp)
+                                    tint = if (hasComment) Color(0xFF38BDF8) else Color.White,
+                                    modifier = Modifier.size(12.dp)
                                 )
                                 Text(
                                     text = if (hasComment) projectProfile.customDescription else "+ Comments",
-                                    color = PrimaryText,
-                                    fontSize = 11.5.sp,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 160.dp)
+                                    modifier = Modifier.widthIn(max = 140.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // Zoom Controller Bar
+                // Tiny Sleek Zoom Controller Bar
                 CameraZoomControlBar(
                     currentZoomRatio = currentZoomRatio,
                     minZoomRatio = minZoomRatio,
@@ -2354,76 +2334,76 @@ fun CameraScreen(
                     isLandscape = false,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                        .padding(horizontal = 12.dp, vertical = 1.dp)
                 )
 
-                // Segmented Mode Switcher Pill: PHOTO | VIDEO
-                Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = Color(0x75101726),
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0x25FFFFFF)),
-                    modifier = Modifier.padding(vertical = 3.dp)
+                // Tiny Sleek Segmented Mode Switcher Pill: PHOTO | VIDEO (4dp blur, 10% opacity)
+                FloatingGlassCard(
+                    shape = RoundedCornerShape(16.dp),
+                    backgroundColor = Color(0x1A101726),
+                    borderColor = Color(0x35FFFFFF),
+                    modifier = Modifier.padding(vertical = 4.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(3.dp),
+                        modifier = Modifier.padding(2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(18.dp))
+                                .clip(RoundedCornerShape(13.dp))
                                 .background(if (captureMode == CaptureMode.PHOTO) Color(0x35FACC15) else Color.Transparent)
                                 .border(
-                                    width = if (captureMode == CaptureMode.PHOTO) 1.dp else 0.dp,
+                                    width = if (captureMode == CaptureMode.PHOTO) 0.8.dp else 0.dp,
                                     color = if (captureMode == CaptureMode.PHOTO) HighlightYellow.copy(alpha = 0.6f) else Color.Transparent,
-                                    shape = RoundedCornerShape(18.dp)
+                                    shape = RoundedCornerShape(13.dp)
                                 )
                                 .clickable { viewModel.setCaptureMode(CaptureMode.PHOTO) }
-                                .padding(horizontal = 18.dp, vertical = 7.dp)
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.CameraAlt,
                                     contentDescription = null,
-                                    tint = if (captureMode == CaptureMode.PHOTO) HighlightYellow else SecondaryText,
-                                    modifier = Modifier.size(16.dp)
+                                    tint = if (captureMode == CaptureMode.PHOTO) HighlightYellow else Color.White.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = "PHOTO",
-                                    color = if (captureMode == CaptureMode.PHOTO) HighlightYellow else SecondaryText,
-                                    fontSize = 12.sp,
+                                    color = if (captureMode == CaptureMode.PHOTO) HighlightYellow else Color.White.copy(alpha = 0.8f),
+                                    fontSize = 10.5.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(18.dp))
+                                .clip(RoundedCornerShape(13.dp))
                                 .background(if (captureMode == CaptureMode.VIDEO) Color(0x35EF4444) else Color.Transparent)
                                 .border(
-                                    width = if (captureMode == CaptureMode.VIDEO) 1.dp else 0.dp,
+                                    width = if (captureMode == CaptureMode.VIDEO) 0.8.dp else 0.dp,
                                     color = if (captureMode == CaptureMode.VIDEO) AccentRed.copy(alpha = 0.6f) else Color.Transparent,
-                                    shape = RoundedCornerShape(18.dp)
+                                    shape = RoundedCornerShape(13.dp)
                                 )
                                 .clickable { viewModel.setCaptureMode(CaptureMode.VIDEO) }
-                                .padding(horizontal = 18.dp, vertical = 7.dp)
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Videocam,
                                     contentDescription = null,
-                                    tint = if (captureMode == CaptureMode.VIDEO) AccentRed else SecondaryText,
-                                    modifier = Modifier.size(16.dp)
+                                    tint = if (captureMode == CaptureMode.VIDEO) AccentRed else Color.White.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = "VIDEO",
-                                    color = if (captureMode == CaptureMode.VIDEO) AccentRed else SecondaryText,
-                                    fontSize = 12.sp,
+                                    color = if (captureMode == CaptureMode.VIDEO) AccentRed else Color.White.copy(alpha = 0.8f),
+                                    fontSize = 10.5.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -2431,7 +2411,7 @@ fun CameraScreen(
                     }
                 }
 
-                // Shutter Bar (Gallery Thumbnail, Center Shutter, GPS Location Preset)
+                // Tiny Sleek Shutter Bar (Gallery Thumbnail, Center Shutter, GPS Location Preset)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2441,59 +2421,61 @@ fun CameraScreen(
                 ) {
                     if (isRecording) {
                         // Quick Photo Capture Button during video recording
-                        Box(
+                        FloatingGlassCard(
+                            shape = CircleShape,
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = HighlightYellow,
+                            borderWidth = 0.8.dp,
+                            onClick = {
+                                try {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                } catch (ignored: Exception) {}
+                                showQuickCaptureFlash = true
+                                capturePhoto(
+                                    controller = controller,
+                                    context = context,
+                                    deviceRotationDegrees = rotationDegrees.toInt(),
+                                    isLandscape = isLandscape,
+                                    photoAspectRatio = cameraSettings.photoAspectRatio,
+                                    onSuccess = { bitmap ->
+                                        viewModel.processCapture(bitmap)
+                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
+                                    },
+                                    onError = {
+                                        val fallback = createSimulatedCameraFrame(
+                                            context = context,
+                                            rotationDegrees = rotationDegrees.toInt(),
+                                            isLandscapeMode = isLandscape,
+                                            resolutionStr = cameraSettings.photoResolution,
+                                            aspectRatioStr = cameraSettings.photoAspectRatio
+                                        )
+                                        viewModel.processCapture(fallback)
+                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
+                                    }
+                                )
+                            },
                             modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x75101726))
-                                .border(1.dp, HighlightYellow, CircleShape)
+                                .size(44.dp)
                                 .graphicsLayer { rotationZ = -animatedRotation }
-                                .clickable {
-                                    try {
-                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    } catch (ignored: Exception) {}
-                                    showQuickCaptureFlash = true
-                                    capturePhoto(
-                                        controller = controller,
-                                        context = context,
-                                        deviceRotationDegrees = rotationDegrees.toInt(),
-                                        isLandscape = isLandscape,
-                                        photoAspectRatio = cameraSettings.photoAspectRatio,
-                                        onSuccess = { bitmap ->
-                                            viewModel.processCapture(bitmap)
-                                            viewModel.showSuccess("Quick photo captured & saved to Gallery!")
-                                        },
-                                        onError = {
-                                            val fallback = createSimulatedCameraFrame(
-                                                context = context,
-                                                rotationDegrees = rotationDegrees.toInt(),
-                                                isLandscapeMode = isLandscape,
-                                                resolutionStr = cameraSettings.photoResolution,
-                                                aspectRatioStr = cameraSettings.photoAspectRatio
-                                            )
-                                            viewModel.processCapture(fallback)
-                                            viewModel.showSuccess("Quick photo captured & saved to Gallery!")
-                                        }
-                                    )
-                                }
-                                .testTag("quick_photo_capture_button"),
-                            contentAlignment = Alignment.Center
+                                .testTag("quick_photo_capture_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Camera,
-                                contentDescription = "Quick Photo Capture",
-                                tint = HighlightYellow,
-                                modifier = Modifier.size(24.dp)
-                            )
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Camera,
+                                    contentDescription = "Quick Photo Capture",
+                                    tint = HighlightYellow,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
 
                         // Stop Video Recording Button
                         Box(
                             modifier = Modifier
-                                .size(78.dp)
+                                .size(64.dp)
                                 .clip(CircleShape)
-                                .border(2.5.dp, Color.White, CircleShape)
-                                .padding(5.dp)
+                                .border(2.dp, Color.White, CircleShape)
+                                .padding(4.dp)
                                 .clip(CircleShape)
                                 .background(AccentRed)
                                 .clickable { toggleVideoRecording() }
@@ -2502,83 +2484,87 @@ fun CameraScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(26.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(PrimaryText)
+                                    .size(20.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(Color.White)
                             )
                         }
 
                         // Pause / Resume Video Recording Button
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x75101726))
-                                .border(1.dp, if (isRecordingPaused) HighlightYellow else Color.White.copy(alpha = 0.5f), CircleShape)
-                                .graphicsLayer { rotationZ = -animatedRotation }
-                                .clickable {
-                                    if (isRecordingPaused) {
-                                        videoManager.resume()
-                                        viewModel.onVideoRecordingPaused(false)
-                                        viewModel.showInfo("Video recording resumed")
-                                    } else {
-                                        videoManager.pause()
-                                        viewModel.onVideoRecordingPaused(true)
-                                        viewModel.showInfo("Video recording paused")
-                                    }
+                        FloatingGlassCard(
+                            shape = CircleShape,
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = if (isRecordingPaused) HighlightYellow else Color(0x35FFFFFF),
+                            borderWidth = 0.8.dp,
+                            onClick = {
+                                if (isRecordingPaused) {
+                                    videoManager.resume()
+                                    viewModel.onVideoRecordingPaused(false)
+                                    viewModel.showInfo("Video recording resumed")
+                                } else {
+                                    videoManager.pause()
+                                    viewModel.onVideoRecordingPaused(true)
+                                    viewModel.showInfo("Video recording paused")
                                 }
-                                .testTag("pause_resume_video_button"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                contentDescription = if (isRecordingPaused) "Resume Recording" else "Pause Recording",
-                                tint = if (isRecordingPaused) HighlightYellow else PrimaryText,
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
-                    } else {
-                        // Normal Shutter Bar
-                        // Recent Thumbnail / Gallery Button
-                        Box(
+                            },
                             modifier = Modifier
-                                .size(56.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
-                                .background(Color(0x75101726))
+                                .size(44.dp)
                                 .graphicsLayer { rotationZ = -animatedRotation }
-                                .clickable { onNavigateToPhotos() }
-                                .testTag("recent_thumbnail_button"),
-                            contentAlignment = Alignment.Center
+                                .testTag("pause_resume_video_button")
                         ) {
-                            if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
-                                AsyncImage(
-                                    model = File(lastPhoto!!.filePath),
-                                    contentDescription = "Recent Photo",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Default.PhotoLibrary,
-                                    contentDescription = "Gallery",
-                                    tint = PrimaryText,
-                                    modifier = Modifier.size(24.dp)
+                                    imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                    contentDescription = if (isRecordingPaused) "Resume Recording" else "Pause Recording",
+                                    tint = if (isRecordingPaused) HighlightYellow else Color.White,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
+                    } else {
+                        // Normal Shutter Bar
+                        // Recent Thumbnail / Gallery Button (20dp icon, 4dp blur, 10% opacity)
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(12.dp),
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x35FFFFFF),
+                            borderWidth = 0.6.dp,
+                            onClick = { onNavigateToPhotos() },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .graphicsLayer { rotationZ = -animatedRotation }
+                                .testTag("recent_thumbnail_button")
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
+                                    AsyncImage(
+                                        model = File(lastPhoto!!.filePath),
+                                        contentDescription = "Recent Photo",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.PhotoLibrary,
+                                        contentDescription = "Gallery",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
 
-                        // Triple-Ring Aperture Shutter Button
+                        // Triple-Ring Aperture Shutter Button (20dp icon inside 64dp button)
                         Box(
                             modifier = Modifier
-                                .size(78.dp)
+                                .size(64.dp)
                                 .clip(CircleShape)
-                                .border(2.5.dp, Color.White, CircleShape)
-                                .padding(5.dp)
+                                .border(2.dp, Color.White, CircleShape)
+                                .padding(4.dp)
                                 .clip(CircleShape)
                                 .background(
                                     if (captureMode == CaptureMode.PHOTO) {
-                                        if (isCapturing) AccentRed else PrimaryText
+                                        if (isCapturing) AccentRed else Color.White
                                     } else {
                                         AccentRed
                                     }
@@ -2597,50 +2583,52 @@ fun CameraScreen(
                                 if (isCapturing) {
                                     CircularProgressIndicator(
                                         color = PrimaryBackground,
-                                        modifier = Modifier.size(28.dp),
-                                        strokeWidth = 3.dp
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.5.dp
                                     )
                                 } else {
                                     CameraApertureIcon(
                                         tint = Color(0xFF101726),
                                         modifier = Modifier
-                                            .size(34.dp)
+                                            .size(20.dp)
                                             .graphicsLayer { rotationZ = -animatedRotation }
                                     )
                                 }
                             } else {
                                 Box(
                                     modifier = Modifier
-                                        .size(28.dp)
+                                        .size(20.dp)
                                         .clip(CircleShape)
                                         .background(DeepRed)
                                 )
                             }
                         }
 
-                        // GPS Location Simulator / Target Preset Button
-                        Box(
+                        // GPS Location Simulator / Target Preset Button (20dp icon, 4dp blur, 10% opacity)
+                        FloatingGlassCard(
+                            shape = CircleShape,
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x35FFFFFF),
+                            borderWidth = 0.6.dp,
+                            onClick = { showSimDialog = true },
                             modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x75101726))
-                                .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                                .size(44.dp)
                                 .graphicsLayer { rotationZ = -animatedRotation }
-                                .clickable { showSimDialog = true }
-                                .testTag("gps_sim_button"),
-                            contentAlignment = Alignment.Center
+                                .testTag("gps_sim_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.GpsFixed,
-                                contentDescription = "Simulate Location",
-                                tint = HighlightYellow,
-                                modifier = Modifier.size(24.dp)
-                            )
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.GpsFixed,
+                                    contentDescription = "Simulate Location",
+                                    tint = HighlightYellow,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
 
-                // Bottom Output Selection Capsule: Photo & Video Output settings
+                // Tiny Sleek Bottom Output Selection Capsule: Photo & Video Output settings
                 val photoBadgePortrait = CameraResolutionHelper.getPhotoBadgeText(
                     cameraSettings.photoResolution,
                     cameraSettings.photoAspectRatio
@@ -2650,115 +2638,126 @@ fun CameraScreen(
                     cameraSettings.videoAspectRatio
                 )
 
-                Surface(
-                    shape = RoundedCornerShape(26.dp),
-                    color = Color(0x85101726),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF)),
+                // Tiny Sleek Bottom Output Selection Cards: Photo & Video (8dp margin, dynamic height, compact width, 4dp blur, 10% opacity)
+                Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .padding(horizontal = 14.dp, vertical = 2.dp)
-                        .testTag("portrait_bottom_output_bar")
+                        .wrapContentWidth()
+                        .wrapContentHeight()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag("portrait_bottom_output_bar"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Camera / Photo Output Card: Tiny width, Dynamic height, 20dp icons, High-contrast readability
+                    FloatingGlassCard(
+                        shape = RoundedCornerShape(14.dp),
+                        backgroundColor = if (activeOutputSettingsType == "PHOTO") Color(0x25FACC15) else Color(0x1A101726),
+                        borderColor = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color(0x35FFFFFF),
+                        borderWidth = 0.5.dp,
+                        onClick = {
+                            activeOutputSettingsType = if (activeOutputSettingsType == "PHOTO") null else "PHOTO"
+                        },
+                        modifier = Modifier
+                            .wrapContentWidth()
+                            .wrapContentHeight()
+                            .testTag("portrait_photo_settings_card")
                     ) {
-                        // Photo Output Segment
                         Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .clickable {
-                                    activeOutputSettingsType = if (activeOutputSettingsType == "PHOTO") null else "PHOTO"
-                                }
-                                .padding(horizontal = 10.dp),
+                                .wrapContentWidth()
+                                .wrapContentHeight()
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Photo Output Settings",
+                                tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(
+                                modifier = Modifier.wrapContentSize(),
+                                verticalArrangement = Arrangement.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.CameraAlt,
-                                    contentDescription = "Photo Output Settings",
-                                    tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else PrimaryText,
-                                    modifier = Modifier.size(18.dp)
+                                Text(
+                                    text = "Photo",
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White.copy(alpha = 0.9f),
+                                    lineHeight = 10.sp
                                 )
-                                Column {
-                                    Text(
-                                        text = "Photo",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (activeOutputSettingsType == "PHOTO") HighlightYellow else SecondaryText
-                                    )
-                                    Text(
-                                        text = photoBadgePortrait,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = PrimaryText
-                                    )
-                                }
+                                Text(
+                                    text = photoBadgePortrait,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    lineHeight = 12.sp,
+                                    maxLines = 1
+                                )
                             }
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
                                 contentDescription = null,
-                                tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else SecondaryText,
-                                modifier = Modifier.size(18.dp)
+                                tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
                             )
                         }
+                    }
 
-                        // Subtle Divider
-                        Box(
-                            modifier = Modifier
-                                .width(1.dp)
-                                .height(26.dp)
-                                .background(Color(0x35FFFFFF))
-                        )
-
-                        // Video Output Segment
+                    // Video Output Card: Tiny width, Dynamic height, 20dp icons, High-contrast readability
+                    FloatingGlassCard(
+                        shape = RoundedCornerShape(14.dp),
+                        backgroundColor = if (activeOutputSettingsType == "VIDEO") Color(0x25EF4444) else Color(0x1A101726),
+                        borderColor = if (activeOutputSettingsType == "VIDEO") AccentRed else Color(0x35FFFFFF),
+                        borderWidth = 0.5.dp,
+                        onClick = {
+                            activeOutputSettingsType = if (activeOutputSettingsType == "VIDEO") null else "VIDEO"
+                        },
+                        modifier = Modifier
+                            .wrapContentWidth()
+                            .wrapContentHeight()
+                            .testTag("portrait_video_settings_card")
+                    ) {
                         Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .clickable {
-                                    activeOutputSettingsType = if (activeOutputSettingsType == "VIDEO") null else "VIDEO"
-                                }
-                                .padding(horizontal = 10.dp),
+                                .wrapContentWidth()
+                                .wrapContentHeight()
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Icon(
+                                imageVector = Icons.Default.Videocam,
+                                contentDescription = "Video Output Settings",
+                                tint = if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(
+                                modifier = Modifier.wrapContentSize(),
+                                verticalArrangement = Arrangement.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Videocam,
-                                    contentDescription = "Video Output Settings",
-                                    tint = if (activeOutputSettingsType == "VIDEO") AccentRed else PrimaryText,
-                                    modifier = Modifier.size(18.dp)
+                                Text(
+                                    text = "Video",
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White.copy(alpha = 0.9f),
+                                    lineHeight = 10.sp
                                 )
-                                Column {
-                                    Text(
-                                        text = "Video",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (activeOutputSettingsType == "VIDEO") AccentRed else SecondaryText
-                                    )
-                                    Text(
-                                        text = videoBadgePortrait,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = PrimaryText
-                                    )
-                                }
+                                Text(
+                                    text = videoBadgePortrait,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    lineHeight = 12.sp,
+                                    maxLines = 1
+                                )
                             }
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
                                 contentDescription = null,
-                                tint = if (activeOutputSettingsType == "VIDEO") AccentRed else SecondaryText,
-                                modifier = Modifier.size(18.dp)
+                                tint = if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -3106,20 +3105,21 @@ fun CameraOutputSettingsPopup(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(20.dp),
             color = Color(0xF2121722),
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
             shadowElevation = 16.dp,
             modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 480.dp)
-                .padding(vertical = 16.dp)
+                .widthIn(min = 280.dp, max = 330.dp)
+                .wrapContentHeight()
+                .padding(vertical = 12.dp, horizontal = 12.dp)
                 .testTag(if (isPhoto) "photo_output_settings_popup" else "video_output_settings_popup")
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .wrapContentHeight()
+                    .padding(16.dp)
             ) {
                 // 1. Header with category icon, title, active lens badge, and close button
                 Row(
@@ -3183,7 +3183,8 @@ fun CameraOutputSettingsPopup(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
+                        .wrapContentHeight()
+                        .heightIn(max = 440.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
                     // SECTION A: ASPECT RATIO
@@ -3979,6 +3980,38 @@ fun LiveViewfinderWatermarkBlock(
                     shadow = textShadow
                 )
             )
+        }
+    }
+}
+
+/**
+ * Modern minimalist floating glass card with uniform 4dp blur and 10% opacity.
+ * Provides high-contrast readability against translucent background while staying compact and dynamic in height.
+ */
+@Composable
+fun FloatingGlassCard(
+    modifier: Modifier = Modifier,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(14.dp),
+    backgroundColor: Color = Color(0x1A101726), // 10% opacity dark glass
+    borderColor: Color = Color(0x35FFFFFF), // Translucent frosted border
+    borderWidth: androidx.compose.ui.unit.Dp = 0.5.dp,
+    onClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        shape = shape,
+        color = Color.Transparent,
+        border = androidx.compose.foundation.BorderStroke(borderWidth, borderColor),
+        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier
+    ) {
+        Box {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .blur(4.dp)
+                    .background(backgroundColor)
+            )
+            content()
         }
     }
 }

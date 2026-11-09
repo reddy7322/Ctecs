@@ -54,7 +54,8 @@ fun MiniMapPreview(
     showProjectTag: Boolean = false,
     overrideIsDark: Boolean? = null,
     mapType: String = "standard",
-    mapThemePreference: String = "system"
+    mapThemePreference: String = "system",
+    showAttribution: Boolean = false
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -64,16 +65,16 @@ fun MiniMapPreview(
     val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
     val appliedModifier = if (modifier == Modifier) {
-        Modifier.size(width = 110.dp, height = 80.dp)
+        Modifier.size(width = 68.dp, height = 68.dp)
     } else {
         modifier
     }
 
     Box(
         modifier = appliedModifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(mapTheme.containerBackground)
-            .border(1.2.dp, mapTheme.containerBorder, RoundedCornerShape(14.dp))
+            .border(0.8.dp, mapTheme.containerBorder, RoundedCornerShape(10.dp))
     ) {
         val centerGeo = location ?: routeData?.bounds?.center
 
@@ -266,16 +267,18 @@ fun MiniMapPreview(
             }
         }
 
-        // Top-right Attribution
-        Text(
-            text = if (mapType.equals("satellite", ignoreCase = true)) "© Esri" else "© OSM",
-            color = mapTheme.attributionTextColor,
-            fontSize = 7.sp,
-            fontWeight = FontWeight.Normal,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 4.dp, end = 5.dp)
-        )
+        // Top-right Attribution (omitted when showAttribution is false for clean standard photo view)
+        if (showAttribution) {
+            Text(
+                text = if (mapType.equals("satellite", ignoreCase = true)) "© Esri" else "© OSM",
+                color = mapTheme.attributionTextColor,
+                fontSize = 7.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 4.dp, end = 5.dp)
+            )
+        }
 
         // Bottom Center Highway / Project tag pill (only shown when showProjectTag is explicitly true)
         if (showProjectTag && highwayTag.isNotBlank()) {

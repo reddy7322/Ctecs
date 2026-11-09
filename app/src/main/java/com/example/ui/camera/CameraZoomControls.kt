@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -161,23 +162,29 @@ fun CameraZoomControlBar(
             }
         }
 
-        // Main Compact Glass Zoom Controller Bar
+        // Main Compact Glass Zoom Controller Bar (4dp blur, 10% opacity)
         Surface(
-            shape = RoundedCornerShape(26.dp),
-            color = Color(0x75101726),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
-            shadowElevation = 8.dp,
+            shape = RoundedCornerShape(18.dp),
+            color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(0.5.dp, Color(0x35FFFFFF)),
             modifier = Modifier.testTag("camera_zoom_control_bar")
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
+            Box {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .blur(4.dp)
+                        .background(Color(0x1A101726))
+                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
                 // Zoom-Out Button (−)
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(26.dp)
                         .clip(CircleShape)
                         .background(Color(0x35101726))
                         .clickable {
@@ -194,7 +201,7 @@ fun CameraZoomControlBar(
                         imageVector = Icons.Default.Remove,
                         contentDescription = "Zoom Out",
                         tint = if (currentZoomRatio > minZoomRatio) PrimaryText else SecondaryText.copy(alpha = 0.5f),
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                 }
 
@@ -211,13 +218,13 @@ fun CameraZoomControlBar(
 
                     Box(
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(26.dp)
                             .clip(CircleShape)
                             .background(
                                 if (isSelected) HighlightYellow else Color(0x35101726)
                             )
                             .border(
-                                width = if (isSelected) 1.dp else 0.5.dp,
+                                width = if (isSelected) 0.8.dp else 0.4.dp,
                                 color = if (isSelected) HighlightYellow else Color.White.copy(alpha = 0.2f),
                                 shape = CircleShape
                             )
@@ -233,7 +240,7 @@ fun CameraZoomControlBar(
                         Text(
                             text = label,
                             color = if (isSelected) Color.Black else PrimaryText,
-                            fontSize = 11.sp,
+                            fontSize = 9.5.sp,
                             fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold
                         )
                     }
@@ -242,11 +249,11 @@ fun CameraZoomControlBar(
                 // Current Zoom Ratio Display & Slider Toggle Badge (e.g. 1x circular badge)
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(26.dp)
                         .clip(CircleShape)
                         .background(if (isNonDefaultZoom) HighlightYellow.copy(alpha = 0.22f) else Color(0x35101726))
                         .border(
-                            width = 1.2.dp,
+                            width = 0.8.dp,
                             color = if (isNonDefaultZoom) HighlightYellow else Color.White,
                             shape = CircleShape
                         )
@@ -259,7 +266,7 @@ fun CameraZoomControlBar(
                     Text(
                         text = formattedZoom,
                         color = if (isNonDefaultZoom) HighlightYellow else PrimaryText,
-                        fontSize = 10.sp,
+                        fontSize = 8.5.sp,
                         fontWeight = FontWeight.Black
                     )
                 }
@@ -267,9 +274,9 @@ fun CameraZoomControlBar(
                 // Zoom-In Button (+)
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(26.dp)
                         .clip(CircleShape)
-                        .background(Color(0x501F2937))
+                        .background(Color(0x35101726))
                         .clickable {
                             try {
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
@@ -284,10 +291,11 @@ fun CameraZoomControlBar(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Zoom In",
                         tint = if (currentZoomRatio < maxZoomRatio) PrimaryText else SecondaryText.copy(alpha = 0.5f),
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                 }
             }
         }
     }
+}
 }
