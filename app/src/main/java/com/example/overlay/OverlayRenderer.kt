@@ -39,11 +39,12 @@ object OverlayRenderer {
     fun renderOverlay(
         context: Context,
         sourceBitmap: Bitmap,
-        snapshot: CaptureSnapshot
+        snapshot: CaptureSnapshot,
+        isVideoFrame: Boolean = false
     ): Bitmap {
         val resultBitmap = sourceBitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(resultBitmap)
-        drawOverlayOnCanvas(context, canvas, sourceBitmap.width, sourceBitmap.height, snapshot)
+        drawOverlayOnCanvas(context, canvas, sourceBitmap.width, sourceBitmap.height, snapshot, isVideoFrame)
         return resultBitmap
     }
 
@@ -56,7 +57,8 @@ object OverlayRenderer {
         canvas: Canvas,
         width: Int,
         height: Int,
-        snapshot: CaptureSnapshot
+        snapshot: CaptureSnapshot,
+        isVideoFrame: Boolean = false
     ) {
         val config = snapshot.overlayConfig
         val project = snapshot.projectProfile
@@ -65,18 +67,14 @@ object OverlayRenderer {
         // Safe scale factor relative to standard 1080p frame
         val isLandscape = width > height
         val scale = max(width, height) / 1920f
+        val pxPerDp = min(width, height) / 390f
 
-        // Generous safe margins to protect against player UI overscan, corner radiuses, and letterboxing
-        val marginX = if (isLandscape) {
-            (width * 0.052f).coerceIn(42f * scale, 92f * scale)
-        } else {
-            (width * 0.055f).coerceIn(38f * scale, 80f * scale)
-        }
-        val marginY = if (isLandscape) {
-            (height * 0.082f).coerceIn(42f * scale, 88f * scale)
-        } else {
-            (height * 0.068f).coerceIn(46f * scale, 96f * scale)
-        }
+        // Apply user-configured manual 4-side padding controls (independent for photo vs video)
+        val padding = config.getEffectivePadding(isVideo = isVideoFrame)
+        val padLeftPx = (padding.left * pxPerDp).coerceAtLeast(6f * scale)
+        val padRightPx = (padding.right * pxPerDp).coerceAtLeast(6f * scale)
+        val padTopPx = (padding.top * pxPerDp).coerceAtLeast(6f * scale)
+        val padBottomPx = (padding.bottom * pxPerDp).coerceAtLeast(6f * scale)
 
         // 1. Calculate and Render Lower-Left Mini-Map Inset (if enabled)
         val showMiniMap = config.showMapInset && config.template != OverlayTemplate.MINIMAL_TIMESTAMP
@@ -90,10 +88,10 @@ object OverlayRenderer {
 
         val mapRect: RectF? = if (showMiniMap) {
             RectF(
-                marginX,
-                height - marginY - mapSize,
-                marginX + mapSize,
-                height - marginY
+                padLeftPx,
+                height - padBottomPx - mapSize,
+                padLeftPx + mapSize,
+                height - padBottomPx
             )
         } else null
 
@@ -111,19 +109,21 @@ object OverlayRenderer {
             )
         }
 
-        // 2. Render Information Block (passing mapRect so it never overlaps the map and wraps cleanly)
+        // 2. Render Information Block (passing 4-side padding and mapRect)
         val infoBlockTopY = renderInformationBlock(
             canvas = canvas,
             width = width,
             height = height,
             scale = scale,
-            marginX = marginX,
-            marginY = marginY,
+            padLeftPx = padLeftPx,
+            padRightPx = padRightPx,
+            padTopPx = padTopPx,
+            padBottomPx = padBottomPx,
             snapshot = snapshot,
             mapInsetRect = mapRect
         )
 
-        // 3. Render Custom Logo / Image Overlay with full manual settings
+        // 3. Render Custom Logo / Image Overlay with 4-side padding boundaries
         if (config.showLogo) {
             renderLogo(
                 context = context,
@@ -132,6 +132,10 @@ object OverlayRenderer {
                 height = height,
                 scale = scale,
                 config = config,
+                padLeftPx = padLeftPx,
+                padRightPx = padRightPx,
+                padTopPx = padTopPx,
+                padBottomPx = padBottomPx,
                 infoBlockTopY = infoBlockTopY,
                 mapInsetRect = mapRect
             )
@@ -185,8 +189,10 @@ object OverlayRenderer {
         width: Int,
         height: Int,
         scale: Float,
-        marginX: Float,
-        marginY: Float,
+        padLeftPx: Float,
+        padRightPx: Float,
+        padTopPx: Float,
+        padBottomPx: Float,
         snapshot: CaptureSnapshot,
         mapInsetRect: RectF? = null
     ): Float {
@@ -249,11 +255,13 @@ object OverlayRenderer {
 
         // Calculate available width for text to guarantee no clipping and no map overlap
         val minLeftBound = if (mapInsetRect != null && isBottom && !isLeft) {
-            mapInsetRect.right + 24f * scale
+            mapInsetRect.right + 20f * scale
         } else {
-            marginX
+            padLeftPx
         }
-        val maxAvailableWidth = (width - marginX - minLeftBound - strokePaint.strokeWidth * 2f - 6f * scale).coerceAtLeast(width * 0.35f)
+        val maxAvailableWidth = (width - padRightPx - minLeftBound - strokePaint.strokeWidth * 2f - 4f * scale).coerceAtLeast(width * 0.35f)
+
+        val locNameToDisplay = snapshot.locationName.ifBlank { config.lastDetectedLocationName }
 
         val rawLines = OverlayTextGenerator.generateLines(
             config = config,
@@ -268,10 +276,11 @@ object OverlayRenderer {
             coordinateFormat = CoordinateFormat.DECIMAL,
             is24HourFormat = false,
             timestamp = snapshot.timestamp,
-            isForCapture = true
+            isForCapture = true,
+            locationName = locNameToDisplay
         )
 
-        if (rawLines.isEmpty()) return height - marginY
+        if (rawLines.isEmpty()) return height - padBottomPx
 
         // Auto-scale font size if lines are overly wide
         var maxMeasuredWidth = 0f
@@ -303,7 +312,7 @@ object OverlayRenderer {
         var totalBlockHeight = lines.size * currentFontSize + (lines.size - 1) * lineSpacing
 
         // Dynamic vertical fit: ensure all lines fit comfortably without pushing lines off-screen
-        val maxBlockHeight = (height - marginY * 2f) * if (isLandscape) 0.44f else 0.50f
+        val maxBlockHeight = (height - (padTopPx + padBottomPx)) * if (isLandscape) 0.44f else 0.50f
         if (totalBlockHeight > maxBlockHeight && lines.isNotEmpty()) {
             val heightRatio = (maxBlockHeight / totalBlockHeight).coerceIn(0.55f, 1.0f)
             currentFontSize = (currentFontSize * heightRatio).coerceAtLeast(10f * scale)
@@ -323,19 +332,19 @@ object OverlayRenderer {
         val currentStrokeWidth = strokePaint.strokeWidth
         val targetX = when (align) {
             Paint.Align.LEFT -> {
-                if (isLeft) marginX + currentStrokeWidth + 4f * scale
-                else if (isCenterHoriz) (width - actualMaxLineWidth) / 2f
-                else width - marginX - actualMaxLineWidth
+                if (isLeft) padLeftPx + currentStrokeWidth + 4f * scale
+                else if (isCenterHoriz) padLeftPx + (width - padLeftPx - padRightPx - actualMaxLineWidth) / 2f
+                else width - padRightPx - actualMaxLineWidth
             }
             Paint.Align.CENTER -> {
-                if (isLeft) marginX + actualMaxLineWidth / 2f
-                else if (isCenterHoriz) (minLeftBound + (width - marginX)) / 2f
-                else width - marginX - actualMaxLineWidth / 2f
+                if (isLeft) padLeftPx + actualMaxLineWidth / 2f
+                else if (isCenterHoriz) (minLeftBound + (width - padRightPx)) / 2f
+                else width - padRightPx - actualMaxLineWidth / 2f
             }
             Paint.Align.RIGHT -> {
-                if (isLeft) marginX + actualMaxLineWidth
-                else if (isCenterHoriz) (width + actualMaxLineWidth) / 2f
-                else width - marginX - currentStrokeWidth - 6f * scale
+                if (isLeft) padLeftPx + actualMaxLineWidth
+                else if (isCenterHoriz) padLeftPx + (width - padLeftPx - padRightPx + actualMaxLineWidth) / 2f
+                else width - padRightPx - currentStrokeWidth - 4f * scale
             }
         }
 
@@ -345,9 +354,9 @@ object OverlayRenderer {
         val padY = 10f * scale
 
         val blockTopY = when {
-            isTop -> marginY
-            isCenterVert -> (height - totalBlockHeight) / 2f
-            else -> height - marginY - totalBlockHeight
+            isTop -> padTopPx
+            isCenterVert -> padTopPx + (height - padTopPx - padBottomPx - totalBlockHeight) / 2f
+            else -> height - padBottomPx - totalBlockHeight
         }
 
         if (showBgPanel) {
@@ -359,14 +368,14 @@ object OverlayRenderer {
             }
 
             val bgLeft = when {
-                isLeft -> marginX - padX
-                isCenterHoriz -> (width - actualMaxLineWidth) / 2f - padX
-                else -> width - marginX - actualMaxLineWidth - padX
+                isLeft -> padLeftPx - padX
+                isCenterHoriz -> padLeftPx + (width - padLeftPx - padRightPx - actualMaxLineWidth) / 2f - padX
+                else -> width - padRightPx - actualMaxLineWidth - padX
             }
             val bgRight = when {
-                isLeft -> marginX + actualMaxLineWidth + padX
-                isCenterHoriz -> (width + actualMaxLineWidth) / 2f + padX
-                else -> width - marginX + padX
+                isLeft -> padLeftPx + actualMaxLineWidth + padX
+                isCenterHoriz -> padLeftPx + (width - padLeftPx - padRightPx + actualMaxLineWidth) / 2f + padX
+                else -> width - padRightPx + padX
             }
 
             val bgRect = RectF(bgLeft, blockTopY - padY, bgRight, blockTopY + totalBlockHeight + padY)
@@ -377,7 +386,7 @@ object OverlayRenderer {
         val textDescent = fontMetrics.descent
 
         var currentY = if (isBottom) {
-            height - marginY - textDescent - currentStrokeWidth
+            height - padBottomPx - textDescent - currentStrokeWidth
         } else {
             blockTopY + currentFontSize
         }
@@ -665,6 +674,10 @@ object OverlayRenderer {
         height: Int,
         scale: Float,
         config: OverlayConfig,
+        padLeftPx: Float,
+        padRightPx: Float,
+        padTopPx: Float,
+        padBottomPx: Float,
         infoBlockTopY: Float,
         mapInsetRect: RectF?
     ) {
@@ -675,35 +688,35 @@ object OverlayRenderer {
             val logoWidth = processedLogo.width.toFloat()
             val logoHeight = processedLogo.height.toFloat()
 
-            val customMarginX = (config.logoMarginXDp * scale).coerceAtLeast(8f * scale)
-            val customMarginY = (config.logoMarginYDp * scale).coerceAtLeast(8f * scale)
+            val customMarginX = (config.logoMarginXDp * scale).coerceAtLeast(4f * scale)
+            val customMarginY = (config.logoMarginYDp * scale).coerceAtLeast(4f * scale)
 
             val (posX, posY) = when (config.logoPosition) {
                 LogoPosition.TOP_RIGHT -> {
-                    Pair(width - customMarginX - logoWidth, customMarginY)
+                    Pair(width - padRightPx - customMarginX - logoWidth, padTopPx + customMarginY)
                 }
                 LogoPosition.TOP_LEFT -> {
-                    Pair(customMarginX, customMarginY)
+                    Pair(padLeftPx + customMarginX, padTopPx + customMarginY)
                 }
                 LogoPosition.BOTTOM_LEFT -> {
                     val bottomY = if (mapInsetRect != null) {
                         mapInsetRect.top - customMarginY - logoHeight
                     } else {
-                        height - customMarginY - logoHeight
+                        height - padBottomPx - customMarginY - logoHeight
                     }
-                    Pair(customMarginX, bottomY.coerceAtLeast(customMarginY))
+                    Pair(padLeftPx + customMarginX, bottomY.coerceAtLeast(padTopPx + customMarginY))
                 }
                 LogoPosition.BOTTOM_RIGHT -> {
-                    Pair(width - customMarginX - logoWidth, height - customMarginY - logoHeight)
+                    Pair(width - padRightPx - customMarginX - logoWidth, height - padBottomPx - customMarginY - logoHeight)
                 }
                 LogoPosition.ABOVE_TEXT -> {
-                    Pair(width - customMarginX - logoWidth, (infoBlockTopY - customMarginY - logoHeight).coerceAtLeast(customMarginY))
+                    Pair(width - padRightPx - customMarginX - logoWidth, (infoBlockTopY - customMarginY - logoHeight).coerceAtLeast(padTopPx + customMarginY))
                 }
                 LogoPosition.TOP_CENTER -> {
-                    Pair((width - logoWidth) / 2f, customMarginY)
+                    Pair((width - logoWidth) / 2f, padTopPx + customMarginY)
                 }
                 LogoPosition.BOTTOM_CENTER -> {
-                    Pair((width - logoWidth) / 2f, height - customMarginY - logoHeight)
+                    Pair((width - logoWidth) / 2f, height - padBottomPx - customMarginY - logoHeight)
                 }
                 LogoPosition.CENTER -> {
                     Pair((width - logoWidth) / 2f, (height - logoHeight) / 2f)
@@ -774,7 +787,20 @@ object OverlayRenderer {
                     exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "M")
                 }
 
-                val userComment = "${snapshot.projectProfile.highwayId} ${snapshot.projectProfile.packageSection} ${snapshot.displayChainage} ${snapshot.projectProfile.roadSide.name} ${snapshot.projectProfile.lane} ${snapshot.projectProfile.activity}"
+                val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
+                if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
+                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "Location: $locName | Chainage: ${snapshot.displayChainage} | Project: ${snapshot.projectProfile.highwayId}")
+                }
+
+                val userComment = listOfNotNull(
+                    snapshot.projectProfile.highwayId.takeIf { it.isNotBlank() },
+                    snapshot.projectProfile.packageSection.takeIf { it.isNotBlank() },
+                    snapshot.displayChainage.takeIf { it.isNotBlank() },
+                    snapshot.projectProfile.roadSide.name.takeIf { it.isNotBlank() },
+                    snapshot.projectProfile.lane.takeIf { it.isNotBlank() },
+                    snapshot.projectProfile.activity.takeIf { it.isNotBlank() },
+                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) "Location: $locName" else null
+                ).joinToString(" ")
                 exif.setAttribute(ExifInterface.TAG_USER_COMMENT, userComment)
 
                 exif.saveAttributes()

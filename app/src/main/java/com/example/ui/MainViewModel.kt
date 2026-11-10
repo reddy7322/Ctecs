@@ -278,6 +278,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Dynamic Location Name Detection & Resolution
+    private val _currentLocationName = MutableStateFlow("")
+    val currentLocationName: StateFlow<String> = _currentLocationName.asStateFlow()
+
+    fun refreshLocationName() {
+        viewModelScope.launch {
+            val pt = locationTracker.locationState.value.point
+            if (pt != null) {
+                com.example.location.LocationNameResolver.invalidateCache()
+                val name = com.example.location.LocationNameResolver.resolveLocationName(
+                    context = getApplication(),
+                    latitude = pt.latitude,
+                    longitude = pt.longitude
+                )
+                if (name.isNotBlank()) {
+                    _currentLocationName.value = name
+                    saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
+                    showToast("Location updated: $name", ToastType.SUCCESS)
+                } else {
+                    showToast("Unable to resolve area name. Check network.", ToastType.WARNING)
+                }
+            } else {
+                showToast("Acquiring GPS fix for location...", ToastType.INFO)
+            }
+        }
+    }
+
     val mapThemePreference: StateFlow<String> = preferencesManager.mapThemeFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -524,6 +551,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             preferencesManager.manualChainageOverrideFlow.collect { savedManual ->
                 _manualChainage.value = savedManual
+            }
+        }
+
+        // Initialize and resolve dynamic current location name
+        viewModelScope.launch {
+            overlayConfig.collect { cfg ->
+                if (_currentLocationName.value.isBlank() && cfg.lastDetectedLocationName.isNotBlank()) {
+                    _currentLocationName.value = cfg.lastDetectedLocationName
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            locationTracker.locationState.collect { state ->
+                val pt = state.point
+                if (pt != null && overlayConfig.value.showLocationName) {
+                    val name = com.example.location.LocationNameResolver.resolveLocationName(
+                        context = getApplication(),
+                        latitude = pt.latitude,
+                        longitude = pt.longitude
+                    )
+                    if (name.isNotBlank() && name != _currentLocationName.value) {
+                        _currentLocationName.value = name
+                        saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
+                    }
+                }
             }
         }
 
@@ -1046,9 +1099,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createCurrentSnapshot(forcedRotation: Int? = null): CaptureSnapshot {
         val rot = forcedRotation ?: rotationDegrees.value.toInt()
+        val locName = if (overlayConfig.value.showLocationName) {
+            currentLocationName.value.ifBlank { overlayConfig.value.lastDetectedLocationName }.trim()
+        } else ""
         return CaptureSnapshot(
             timestamp = System.currentTimeMillis(),
             location = locationState.value.point,
+            locationName = locName,
             gpsAccuracy = locationState.value.accuracy,
             bearing = locationState.value.bearing,
             matchResult = liveMatchResult.value,
@@ -1106,7 +1163,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
             val defaultSnapshot = createCurrentSnapshot(forcedRotation)
 
-            val addrText = if (defaultSnapshot.overlayConfig.locationAddressOption != "None") {
+            val addrText = if (defaultSnapshot.locationName.isNotBlank() && !defaultSnapshot.locationName.equals("None", ignoreCase = true)) {
+                defaultSnapshot.locationName
+            } else if (defaultSnapshot.overlayConfig.locationAddressOption != "None") {
                 defaultSnapshot.overlayConfig.customAddressText.ifBlank { defaultSnapshot.overlayConfig.locationAddressOption }
             } else {
                 defaultSnapshot.projectProfile.highwayId

@@ -208,7 +208,8 @@ object VideoOverlayProcessor {
                     canvas = reusableCanvas,
                     width = videoWidth,
                     height = videoHeight,
-                    snapshot = snapshotForFrame
+                    snapshot = snapshotForFrame,
+                    isVideoFrame = true
                 )
 
                 // 4. Convert ARGB to YUV buffer and feed encoder
@@ -725,7 +726,8 @@ object VideoOverlayProcessor {
                     canvas = reusableCanvas,
                     width = videoWidth,
                     height = videoHeight,
-                    snapshot = snapshotForFrame
+                    snapshot = snapshotForFrame,
+                    isVideoFrame = true
                 )
 
                 reusableBitmap.getPixels(argbBuffer, 0, videoWidth, 0, 0, videoWidth, videoHeight)

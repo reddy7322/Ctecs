@@ -231,7 +231,8 @@ class RealtimeVideoOverlayManager(
                     canvas = canvas,
                     width = width,
                     height = height,
-                    snapshot = snapshot
+                    snapshot = snapshot,
+                    isVideoFrame = true
                 )
             }
             90 -> {
@@ -243,7 +244,8 @@ class RealtimeVideoOverlayManager(
                     canvas = canvas,
                     width = height,
                     height = width,
-                    snapshot = snapshot
+                    snapshot = snapshot,
+                    isVideoFrame = true
                 )
             }
             180 -> {
@@ -255,7 +257,8 @@ class RealtimeVideoOverlayManager(
                     canvas = canvas,
                     width = width,
                     height = height,
-                    snapshot = snapshot
+                    snapshot = snapshot,
+                    isVideoFrame = true
                 )
             }
             270 -> {
@@ -267,7 +270,8 @@ class RealtimeVideoOverlayManager(
                     canvas = canvas,
                     width = height,
                     height = width,
-                    snapshot = snapshot
+                    snapshot = snapshot,
+                    isVideoFrame = true
                 )
             }
             else -> {
@@ -276,7 +280,8 @@ class RealtimeVideoOverlayManager(
                     canvas = canvas,
                     width = width,
                     height = height,
-                    snapshot = snapshot
+                    snapshot = snapshot,
+                    isVideoFrame = true
                 )
             }
         }

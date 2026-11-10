@@ -99,6 +99,21 @@ class PreferencesManager(private val context: Context) {
         val KEY_LINE_SPACING_FACTOR = floatPreferencesKey("line_spacing_factor")
         val KEY_TEXT_STROKE_WIDTH_DP = floatPreferencesKey("text_stroke_width_dp")
 
+        // Dynamic Location Name Keys
+        val KEY_SHOW_LOCATION_NAME = booleanPreferencesKey("show_location_name")
+        val KEY_LAST_DETECTED_LOCATION_NAME = stringPreferencesKey("last_detected_location_name")
+
+        // 4-Side Overlay Padding Adjustment Keys
+        val KEY_USE_SAME_PADDING_PHOTO_VIDEO = booleanPreferencesKey("use_same_padding_photo_video")
+        val KEY_PHOTO_PADDING_TOP_DP = intPreferencesKey("photo_padding_top_dp")
+        val KEY_PHOTO_PADDING_BOTTOM_DP = intPreferencesKey("photo_padding_bottom_dp")
+        val KEY_PHOTO_PADDING_LEFT_DP = intPreferencesKey("photo_padding_left_dp")
+        val KEY_PHOTO_PADDING_RIGHT_DP = intPreferencesKey("photo_padding_right_dp")
+        val KEY_VIDEO_PADDING_TOP_DP = intPreferencesKey("video_padding_top_dp")
+        val KEY_VIDEO_PADDING_BOTTOM_DP = intPreferencesKey("video_padding_bottom_dp")
+        val KEY_VIDEO_PADDING_LEFT_DP = intPreferencesKey("video_padding_left_dp")
+        val KEY_VIDEO_PADDING_RIGHT_DP = intPreferencesKey("video_padding_right_dp")
+
         val KEY_ACTIVE_ROUTE_ID = stringPreferencesKey("active_route_id")
 
         // Camera settings keys
@@ -322,7 +337,18 @@ class PreferencesManager(private val context: Context) {
             customFontName = prefs[KEY_CUSTOM_FONT_NAME],
             textAlignment = prefs[KEY_TEXT_ALIGNMENT] ?: "Right",
             lineSpacingFactor = prefs[KEY_LINE_SPACING_FACTOR] ?: 0.32f,
-            textStrokeWidthDp = prefs[KEY_TEXT_STROKE_WIDTH_DP] ?: 1.5f
+            textStrokeWidthDp = prefs[KEY_TEXT_STROKE_WIDTH_DP] ?: 1.5f,
+            showLocationName = prefs[KEY_SHOW_LOCATION_NAME] ?: true,
+            lastDetectedLocationName = prefs[KEY_LAST_DETECTED_LOCATION_NAME] ?: "",
+            useSamePaddingForPhotoAndVideo = prefs[KEY_USE_SAME_PADDING_PHOTO_VIDEO] ?: true,
+            photoPaddingTopDp = prefs[KEY_PHOTO_PADDING_TOP_DP] ?: 16,
+            photoPaddingBottomDp = prefs[KEY_PHOTO_PADDING_BOTTOM_DP] ?: 20,
+            photoPaddingLeftDp = prefs[KEY_PHOTO_PADDING_LEFT_DP] ?: 16,
+            photoPaddingRightDp = prefs[KEY_PHOTO_PADDING_RIGHT_DP] ?: 16,
+            videoPaddingTopDp = prefs[KEY_VIDEO_PADDING_TOP_DP] ?: 16,
+            videoPaddingBottomDp = prefs[KEY_VIDEO_PADDING_BOTTOM_DP] ?: 20,
+            videoPaddingLeftDp = prefs[KEY_VIDEO_PADDING_LEFT_DP] ?: 16,
+            videoPaddingRightDp = prefs[KEY_VIDEO_PADDING_RIGHT_DP] ?: 16
         )
     }
 
@@ -467,6 +493,17 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_TEXT_ALIGNMENT] = config.textAlignment
             prefs[KEY_LINE_SPACING_FACTOR] = config.lineSpacingFactor
             prefs[KEY_TEXT_STROKE_WIDTH_DP] = config.textStrokeWidthDp
+            prefs[KEY_SHOW_LOCATION_NAME] = config.showLocationName
+            prefs[KEY_LAST_DETECTED_LOCATION_NAME] = config.lastDetectedLocationName
+            prefs[KEY_USE_SAME_PADDING_PHOTO_VIDEO] = config.useSamePaddingForPhotoAndVideo
+            prefs[KEY_PHOTO_PADDING_TOP_DP] = config.photoPaddingTopDp
+            prefs[KEY_PHOTO_PADDING_BOTTOM_DP] = config.photoPaddingBottomDp
+            prefs[KEY_PHOTO_PADDING_LEFT_DP] = config.photoPaddingLeftDp
+            prefs[KEY_PHOTO_PADDING_RIGHT_DP] = config.photoPaddingRightDp
+            prefs[KEY_VIDEO_PADDING_TOP_DP] = config.videoPaddingTopDp
+            prefs[KEY_VIDEO_PADDING_BOTTOM_DP] = config.videoPaddingBottomDp
+            prefs[KEY_VIDEO_PADDING_LEFT_DP] = config.videoPaddingLeftDp
+            prefs[KEY_VIDEO_PADDING_RIGHT_DP] = config.videoPaddingRightDp
         }
     }
 

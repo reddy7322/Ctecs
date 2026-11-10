@@ -175,6 +175,7 @@ fun SettingsScreen(
     val currentProject by viewModel.projectProfile.collectAsStateWithLifecycle()
     val definedProjects by viewModel.definedProjects.collectAsStateWithLifecycle()
     val currentOverlay by viewModel.overlayConfig.collectAsStateWithLifecycle()
+    val currentLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
     val currentCameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val isFrontCamera by viewModel.isFrontCamera.collectAsStateWithLifecycle()
     val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
@@ -190,6 +191,8 @@ fun SettingsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showRestoreDialog by remember { mutableStateOf(false) }
     var isPreviewLandscape by remember { mutableStateOf(false) }
+    var paddingTargetMode by remember { mutableStateOf("photo") }
+    var previewMediaMode by remember { mutableStateOf("photo") }
 
     // Responsive local input states for zero-lag typing across all sections
     var projectNameInput by remember { mutableStateOf(currentProject.highwayId) }
@@ -744,7 +747,8 @@ fun SettingsScreen(
                 project = currentProject,
                 cameraSettings = currentCameraSettings,
                 isLandscape = isPreviewLandscape,
-                onToggleOrientation = { isPreviewLandscape = !isPreviewLandscape }
+                onToggleOrientation = { isPreviewLandscape = !isPreviewLandscape },
+                locationName = currentLocationName
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -1508,6 +1512,67 @@ fun SettingsScreen(
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(burnInTimestamp = it)) },
                         tag = "switch_burn_in_timestamp"
                     )
+
+                    CompactSwitchRow(
+                        title = "Current Location Name",
+                        subtitle = "Automatically detect & stamp locality/city/state via GPS reverse geocoding",
+                        checked = currentOverlay.showLocationName,
+                        onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showLocationName = it)) },
+                        tag = "switch_show_location_name"
+                    )
+
+                    if (currentOverlay.showLocationName) {
+                        Card(
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.35f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "DETECTED LOCATION",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFFFFD700),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    val displayLoc = currentLocationName.ifBlank {
+                                        currentOverlay.lastDetectedLocationName.ifBlank { "Detecting nearby area via GPS..." }
+                                    }
+                                    Text(
+                                        text = displayLoc,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (displayLoc.startsWith("Detecting")) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        viewModel.refreshLocationName()
+                                        viewModel.showToast("Refreshing location name...", ToastType.INFO)
+                                    },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Refresh Location Name",
+                                        tint = Color(0xFFFFD700),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     CompactSwitchRow(
                         title = "24-Hour Time Format",
@@ -2376,15 +2441,245 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
 
                     // ----------------------------------------------------
-                    // SUBSECTION 8: LIVE INTERACTIVE PREVIEW
+                    // SUBSECTION 8: MANUAL OVERLAY PADDING CONTROLS
                     // ----------------------------------------------------
                     Text(
-                        text = "LIVE INTERACTIVE PREVIEW",
+                        text = "MANUAL OVERLAY PADDING CONTROLS",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFFFFD700),
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    Text(
+                        text = "Adjust 4-side safe margins (Top, Bottom, Left, Right in dp) to position the stamp overlay perfectly and avoid clipping near camera controls, cutouts, or device edges.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
+
+                    CompactSwitchRow(
+                        title = "Use Same Padding for Photo and Video",
+                        subtitle = "Apply identical 4-side safe margins across photo stamps and video overlays",
+                        checked = currentOverlay.useSamePaddingForPhotoAndVideo,
+                        onCheckedChange = { isSame ->
+                            viewModel.saveOverlayConfigSilent(
+                                currentOverlay.copy(
+                                    useSamePaddingForPhotoAndVideo = isSame,
+                                    videoPaddingTopDp = if (isSame) currentOverlay.photoPaddingTopDp else currentOverlay.videoPaddingTopDp,
+                                    videoPaddingBottomDp = if (isSame) currentOverlay.photoPaddingBottomDp else currentOverlay.videoPaddingBottomDp,
+                                    videoPaddingLeftDp = if (isSame) currentOverlay.photoPaddingLeftDp else currentOverlay.videoPaddingLeftDp,
+                                    videoPaddingRightDp = if (isSame) currentOverlay.photoPaddingRightDp else currentOverlay.videoPaddingRightDp
+                                )
+                            )
+                        },
+                        tag = "switch_same_padding_photo_video"
+                    )
+
+                    if (!currentOverlay.useSamePaddingForPhotoAndVideo) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = paddingTargetMode == "photo",
+                                onClick = { paddingTargetMode = "photo" },
+                                label = { Text("📷 Photo Padding", fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = paddingTargetMode == "video",
+                                onClick = { paddingTargetMode = "video" },
+                                label = { Text("🎥 Video Padding", fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    val isTargetVideo = !currentOverlay.useSamePaddingForPhotoAndVideo && paddingTargetMode == "video"
+                    val currentTopPad = if (isTargetVideo) currentOverlay.videoPaddingTopDp else currentOverlay.photoPaddingTopDp
+                    val currentBottomPad = if (isTargetVideo) currentOverlay.videoPaddingBottomDp else currentOverlay.photoPaddingBottomDp
+                    val currentLeftPad = if (isTargetVideo) currentOverlay.videoPaddingLeftDp else currentOverlay.photoPaddingLeftDp
+                    val currentRightPad = if (isTargetVideo) currentOverlay.videoPaddingRightDp else currentOverlay.photoPaddingRightDp
+
+                    PaddingSliderWithDirectInput(
+                        title = "Top Padding (0 - 120 dp)",
+                        valueDp = currentTopPad,
+                        onValueChange = { newVal ->
+                            val v = newVal.coerceIn(0, 120)
+                            if (currentOverlay.useSamePaddingForPhotoAndVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingTopDp = v, videoPaddingTopDp = v))
+                            } else if (isTargetVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(videoPaddingTopDp = v))
+                            } else {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingTopDp = v))
+                            }
+                        }
+                    )
+
+                    PaddingSliderWithDirectInput(
+                        title = "Bottom Padding (0 - 120 dp)",
+                        valueDp = currentBottomPad,
+                        onValueChange = { newVal ->
+                            val v = newVal.coerceIn(0, 120)
+                            if (currentOverlay.useSamePaddingForPhotoAndVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingBottomDp = v, videoPaddingBottomDp = v))
+                            } else if (isTargetVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(videoPaddingBottomDp = v))
+                            } else {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingBottomDp = v))
+                            }
+                        }
+                    )
+
+                    PaddingSliderWithDirectInput(
+                        title = "Left Padding (0 - 120 dp)",
+                        valueDp = currentLeftPad,
+                        onValueChange = { newVal ->
+                            val v = newVal.coerceIn(0, 120)
+                            if (currentOverlay.useSamePaddingForPhotoAndVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingLeftDp = v, videoPaddingLeftDp = v))
+                            } else if (isTargetVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(videoPaddingLeftDp = v))
+                            } else {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingLeftDp = v))
+                            }
+                        }
+                    )
+
+                    PaddingSliderWithDirectInput(
+                        title = "Right Padding (0 - 120 dp)",
+                        valueDp = currentRightPad,
+                        onValueChange = { newVal ->
+                            val v = newVal.coerceIn(0, 120)
+                            if (currentOverlay.useSamePaddingForPhotoAndVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingRightDp = v, videoPaddingRightDp = v))
+                            } else if (isTargetVideo) {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(videoPaddingRightDp = v))
+                            } else {
+                                viewModel.saveOverlayConfigSilent(currentOverlay.copy(photoPaddingRightDp = v))
+                            }
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                if (currentOverlay.useSamePaddingForPhotoAndVideo) {
+                                    viewModel.saveOverlayConfigSilent(
+                                        currentOverlay.copy(
+                                            photoPaddingTopDp = 16,
+                                            photoPaddingBottomDp = 20,
+                                            photoPaddingLeftDp = 16,
+                                            photoPaddingRightDp = 16,
+                                            videoPaddingTopDp = 16,
+                                            videoPaddingBottomDp = 20,
+                                            videoPaddingLeftDp = 16,
+                                            videoPaddingRightDp = 16
+                                        )
+                                    )
+                                } else if (isTargetVideo) {
+                                    viewModel.saveOverlayConfigSilent(
+                                        currentOverlay.copy(
+                                            videoPaddingTopDp = 16,
+                                            videoPaddingBottomDp = 20,
+                                            videoPaddingLeftDp = 16,
+                                            videoPaddingRightDp = 16
+                                        )
+                                    )
+                                } else {
+                                    viewModel.saveOverlayConfigSilent(
+                                        currentOverlay.copy(
+                                            photoPaddingTopDp = 16,
+                                            photoPaddingBottomDp = 20,
+                                            photoPaddingLeftDp = 16,
+                                            photoPaddingRightDp = 16
+                                        )
+                                    )
+                                }
+                                viewModel.showToast("Padding reset to default (Top 16, Bottom 20, Left 16, Right 16 dp)", ToastType.INFO)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFD700)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Reset Padding", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.saveOverlayConfigSilent(
+                                    currentOverlay.copy(watermarkPosition = "Bottom Right")
+                                )
+                                viewModel.showToast("Position reset to Bottom Right", ToastType.INFO)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Reset Position", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // SUBSECTION 9: LIVE INTERACTIVE PREVIEW
+                    // ----------------------------------------------------
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "LIVE INTERACTIVE PREVIEW",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFFD700)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            FilterChip(
+                                selected = previewMediaMode == "photo",
+                                onClick = { previewMediaMode = "photo" },
+                                label = { Text("📷 Photo (4:3)", fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                            FilterChip(
+                                selected = previewMediaMode == "video",
+                                onClick = { previewMediaMode = "video" },
+                                label = { Text("🎥 Video (16:9)", fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFD700),
+                                    selectedLabelColor = Color.Black
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     val previewParsedColor = try {
                         Color(android.graphics.Color.parseColor(currentOverlay.textColorHex)).copy(alpha = currentOverlay.textOpacity.coerceIn(0.2f, 1.0f))
@@ -2423,6 +2718,12 @@ fun SettingsScreen(
                         else -> TextAlign.End
                     }
 
+                    val activePreviewPadding = currentOverlay.getEffectivePadding(isVideo = previewMediaMode == "video")
+                    val scaledPadLeft = (activePreviewPadding.left * 0.45f).coerceIn(4f, 40f).dp
+                    val scaledPadRight = (activePreviewPadding.right * 0.45f).coerceIn(4f, 40f).dp
+                    val scaledPadTop = (activePreviewPadding.top * 0.45f).coerceIn(4f, 40f).dp
+                    val scaledPadBottom = (activePreviewPadding.bottom * 0.45f).coerceIn(4f, 40f).dp
+
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
@@ -2432,9 +2733,14 @@ fun SettingsScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(160.dp)
+                                .height(if (previewMediaMode == "video") 155.dp else 190.dp)
                                 .background(Color(0xFF0F172A))
-                                .padding(12.dp),
+                                .padding(
+                                    start = scaledPadLeft,
+                                    end = scaledPadRight,
+                                    top = scaledPadTop,
+                                    bottom = scaledPadBottom
+                                ),
                             contentAlignment = when (currentOverlay.watermarkPosition.lowercase()) {
                                 "top left" -> Alignment.TopStart
                                 "top center" -> Alignment.TopCenter
@@ -2460,7 +2766,21 @@ fun SettingsScreen(
                             ) {
                                 if (currentOverlay.showProjectInfo) {
                                     Text(
-                                        text = "MH | MM | 189+320 LHS",
+                                        text = "NH-44 Expansion | 198+450 RHS • DBM",
+                                        color = previewParsedColor,
+                                        fontSize = 11.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
+                                }
+                                if (currentOverlay.showLocationName) {
+                                    val locNameDisplay = currentLocationName.ifBlank {
+                                        currentOverlay.lastDetectedLocationName.ifBlank { "Dehradun, Uttarakhand" }
+                                    }
+                                    Text(
+                                        text = "Location: $locNameDisplay",
                                         color = previewParsedColor,
                                         fontSize = 11.sp,
                                         fontFamily = previewFontFamily,
@@ -2478,9 +2798,16 @@ fun SettingsScreen(
                                     fontStyle = previewFontStyle,
                                     textAlign = previewTextAlign
                                 )
-                                if (currentOverlay.showAccuracy) {
+                                if (currentOverlay.showCoordinates || currentOverlay.showAccuracy) {
+                                    val coordText = if (currentOverlay.showCoordinates && currentOverlay.showAccuracy) {
+                                        "30.3165°N 78.0322°E • ±4m"
+                                    } else if (currentOverlay.showCoordinates) {
+                                        "30.3165°N 78.0322°E"
+                                    } else {
+                                        "GPS ±4m"
+                                    }
                                     Text(
-                                        text = "29.8339°N 77.8893°E • ±4m",
+                                        text = coordText,
                                         color = previewParsedColor,
                                         fontSize = 10.sp,
                                         fontFamily = previewFontFamily,
@@ -4160,12 +4487,83 @@ private fun SliderRow(
 }
 
 @Composable
+private fun PaddingSliderWithDirectInput(
+    title: String,
+    valueDp: Int,
+    range: ClosedFloatingPointRange<Float> = 0f..120f,
+    onValueChange: (Int) -> Unit
+) {
+    var textValue by remember(valueDp) { mutableStateOf(valueDp.toString()) }
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Medium
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = textValue,
+                    onValueChange = { input ->
+                        val digits = input.filter { it.isDigit() }.take(3)
+                        textValue = digits
+                        val parsed = digits.toIntOrNull()
+                        if (parsed != null) {
+                            onValueChange(parsed.coerceIn(0, 120))
+                        } else if (digits.isEmpty()) {
+                            onValueChange(0)
+                        }
+                    },
+                    textStyle = MaterialTheme.typography.labelMedium.copy(
+                        textAlign = TextAlign.Center,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700)
+                    ),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .width(68.dp)
+                        .height(44.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFFFFD700),
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    )
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "dp",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Slider(
+            value = valueDp.toFloat(),
+            onValueChange = { onValueChange(it.toInt()) },
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFFFFD700),
+                activeTrackColor = Color(0xFFFFD700),
+                inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+            )
+        )
+    }
+}
+
+@Composable
 private fun WatermarkLivePreviewCard(
     overlay: OverlayConfig,
     project: ProjectProfile,
     cameraSettings: CameraSettings,
     isLandscape: Boolean,
-    onToggleOrientation: () -> Unit
+    onToggleOrientation: () -> Unit,
+    locationName: String = ""
 ) {
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -4224,6 +4622,15 @@ private fun WatermarkLivePreviewCard(
                             color = Color(0xFF38BDF8),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                    if (overlay.showLocationName && locationName.isNotBlank()) {
+                        Text(
+                            text = "Location: $locationName",
+                            color = Color(0xFFFFD700),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.End
                         )
                     }

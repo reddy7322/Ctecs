@@ -112,7 +112,47 @@ data class OverlayConfig(
     val includePdfLogoDefault: Boolean = true,
     val pdfSignatureUri: String? = null,
     val includePdfSignatureDefault: Boolean = true,
-    val pdfDefaultPreparedBy: String = "Site Engineer"
+    val pdfDefaultPreparedBy: String = "Site Engineer",
+
+    // Dynamic Current Location Name
+    val showLocationName: Boolean = true,
+    val lastDetectedLocationName: String = "",
+
+    // Manual Overlay Padding Adjustment (4-side controls in dp)
+    val useSamePaddingForPhotoAndVideo: Boolean = true,
+    val photoPaddingTopDp: Int = 16,
+    val photoPaddingBottomDp: Int = 20,
+    val photoPaddingLeftDp: Int = 16,
+    val photoPaddingRightDp: Int = 16,
+    val videoPaddingTopDp: Int = 16,
+    val videoPaddingBottomDp: Int = 20,
+    val videoPaddingLeftDp: Int = 16,
+    val videoPaddingRightDp: Int = 16
+) {
+    fun getEffectivePadding(isVideo: Boolean): OverlayPadding {
+        return if (isVideo && !useSamePaddingForPhotoAndVideo) {
+            OverlayPadding(
+                top = videoPaddingTopDp,
+                bottom = videoPaddingBottomDp,
+                left = videoPaddingLeftDp,
+                right = videoPaddingRightDp
+            )
+        } else {
+            OverlayPadding(
+                top = photoPaddingTopDp,
+                bottom = photoPaddingBottomDp,
+                left = photoPaddingLeftDp,
+                right = photoPaddingRightDp
+            )
+        }
+    }
+}
+
+data class OverlayPadding(
+    val top: Int = 16,
+    val bottom: Int = 20,
+    val left: Int = 16,
+    val right: Int = 16
 )
 
 /**
@@ -121,6 +161,7 @@ data class OverlayConfig(
 data class CaptureSnapshot(
     val timestamp: Long,
     val location: GeoPoint? = null,
+    val locationName: String = "",
     val gpsAccuracy: Float = 0f,
     val bearing: Float? = null,
     val matchResult: ChainageMatchResult = ChainageMatchResult(),

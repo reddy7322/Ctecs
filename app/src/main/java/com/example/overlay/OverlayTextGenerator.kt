@@ -26,7 +26,8 @@ object OverlayTextGenerator {
         coordinateFormat: CoordinateFormat,
         is24HourFormat: Boolean,
         timestamp: Long = System.currentTimeMillis(),
-        isForCapture: Boolean = false
+        isForCapture: Boolean = false,
+        locationName: String = ""
     ): List<String> {
         val lines = mutableListOf<String>()
 
@@ -39,6 +40,12 @@ object OverlayTextGenerator {
                 }
                 if (config.showCoordinates && location != null) {
                     lines.add(location.formatReference(config.coordinatePrecision))
+                }
+                if (config.showLocationName) {
+                    val locStr = locationName.ifBlank { config.lastDetectedLocationName }.trim()
+                    if (locStr.isNotBlank() && !locStr.equals("None", ignoreCase = true)) {
+                        lines.add("Location: $locStr")
+                    }
                 }
             }
             OverlayTemplate.MINIMAL_TIMESTAMP -> {
@@ -85,17 +92,25 @@ object OverlayTextGenerator {
                     lines.add(coordLine)
                 }
 
-                // 3. Location / Address breakdown
+                // 3. Dynamic Location Name (Independently toggled & rendered)
+                if (config.showLocationName) {
+                    val locStr = locationName.ifBlank { config.lastDetectedLocationName }.trim()
+                    if (locStr.isNotBlank() && !locStr.equals("None", ignoreCase = true)) {
+                        lines.add("Location: $locStr")
+                    }
+                }
+
+                // 4. Custom Address breakdown (if configured)
                 val displayAddr = if (config.customAddressText.isNotBlank()) {
                     config.customAddressText
                 } else {
                     config.locationAddressOption
                 }
-                if (displayAddr.isNotBlank() && !displayAddr.equals("None", ignoreCase = true) && !displayAddr.equals("Null", ignoreCase = true)) {
+                if (displayAddr.isNotBlank() && !displayAddr.equals("None", ignoreCase = true) && !displayAddr.equals("Null", ignoreCase = true) && (!config.showLocationName || !displayAddr.equals(locationName, ignoreCase = true))) {
                     lines.add(displayAddr.trim())
                 }
 
-                // 4. Compass
+                // 5. Compass
                 if (config.showCompass && compassHeading.isNotBlank() && compassHeading != "---") {
                     lines.add("Compass: $compassHeading")
                 }

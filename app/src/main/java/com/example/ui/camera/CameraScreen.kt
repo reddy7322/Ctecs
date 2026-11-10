@@ -324,6 +324,7 @@ fun CameraScreen(
     val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
     val overlayConfig by viewModel.overlayConfig.collectAsStateWithLifecycle()
+    val currentLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
     val lastPhoto by viewModel.lastCapturedPhoto.collectAsStateWithLifecycle()
     val showManualDialog by viewModel.showManualChainageDialog.collectAsStateWithLifecycle()
 
@@ -2036,6 +2037,16 @@ fun CameraScreen(
                                 Text(
                                     text = "$lat $lon",
                                     color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            // Dynamic Location Name (Area / Town / City)
+                            val displayLoc = currentLocationName.ifBlank { overlayConfig.lastDetectedLocationName }.trim()
+                            if (overlayConfig.showLocationName && displayLoc.isNotBlank() && !displayLoc.equals("None", ignoreCase = true) && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                                Text(
+                                    text = "Location: $displayLoc",
+                                    color = Color.White.copy(alpha = 0.9f),
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.Medium
                                 )

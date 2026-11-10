@@ -268,10 +268,26 @@ class PhotoRepository(
                 packageSection = snapshot.projectProfile.packageSection,
                 roadSide = snapshot.projectProfile.roadSide.label,
                 lane = snapshot.projectProfile.lane,
-                activity = snapshot.projectProfile.activity,
-                customDescription = snapshot.projectProfile.customDescription,
+                customDescription = run {
+                    val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
+                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
+                        if (snapshot.projectProfile.customDescription.isNotBlank()) {
+                            "${snapshot.projectProfile.customDescription} | Location: $locName"
+                        } else {
+                            "Location: $locName"
+                        }
+                    } else {
+                        snapshot.projectProfile.customDescription
+                    }
+                },
                 inspectorName = snapshot.projectProfile.inspectorName,
-                formattedOverlayText = snapshot.projectProfile.buildHighwayText(snapshot.displayChainage)
+                formattedOverlayText = run {
+                    val baseText = snapshot.projectProfile.buildHighwayText(snapshot.displayChainage)
+                    val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
+                    if (snapshot.overlayConfig.showLocationName && locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
+                        if (baseText.isNotBlank()) "$baseText | Location: $locName" else "Location: $locName"
+                    } else baseText
+                }
             )
 
             val newId = photoRecordDao.insertPhoto(entity)
