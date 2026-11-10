@@ -89,6 +89,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val surveyRepository = com.example.survey.data.SurveyRepository(db.surveyDao(), viewModelScope)
     val surveyManager = com.example.survey.engine.SurveyManager(application, surveyRepository, viewModelScope)
+
+    // Interrupted Survey Launch Check
+    private val _interruptedSurveySession = MutableStateFlow<com.example.survey.model.SurveySession?>(null)
+    val interruptedSurveySession: StateFlow<com.example.survey.model.SurveySession?> = _interruptedSurveySession.asStateFlow()
+
+    fun dismissInterruptedSurveyPrompt() {
+        _interruptedSurveySession.value = null
+    }
+
+    fun resumeInterruptedSurvey(session: com.example.survey.model.SurveySession) {
+        viewModelScope.launch {
+            surveyManager.resumeExistingSession(session)
+            setTab(AppTab.SURVEY)
+            _interruptedSurveySession.value = null
+            showToast("Survey resumed at ${session.displayCurrentChainage}", ToastType.SUCCESS)
+        }
+    }
+
+    fun discardInterruptedSurvey(session: com.example.survey.model.SurveySession) {
+        viewModelScope.launch {
+            surveyRepository.updateSession(session.copy(status = com.example.survey.model.SurveyStatus.COMPLETED))
+            _interruptedSurveySession.value = null
+            showToast("Interrupted survey discarded", ToastType.INFO)
+        }
+    }
+
     val locationTracker = LocationTracker(application)
     val compassTracker = com.example.sensor.CompassAndOrientationTracker(application)
     val appUpdateManager = com.example.update.AppUpdateManager(application)
@@ -596,6 +622,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Silent background check for updates
         viewModelScope.launch {
             checkForAppUpdate(isManual = false)
+        }
+
+        // Launch-time check: detect if a survey was interrupted and prompt user to resume
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(450)
+            val interrupted = surveyRepository.getInterruptedSessionOnStartup()
+            if (interrupted != null) {
+                _interruptedSurveySession.value = interrupted
+            }
         }
 
         // Auto-sync storage videos and photos into Room

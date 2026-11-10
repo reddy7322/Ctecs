@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -384,10 +385,15 @@ fun SurveyScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onNavigateBack, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
+                        SurveyGlassIconButton(
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            onClick = onNavigateBack,
+                            variant = GlassButtonVariant.NEUTRAL,
+                            size = 36.dp,
+                            iconSize = 18.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             val title = activeSession?.highwayName?.ifBlank { activeSession?.name } ?: "Highway Survey"
                             Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -414,22 +420,27 @@ fun SurveyScreen(
                         }
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         // Toggle Map Style (Satellite / Street)
-                        IconButton(
+                        SurveyGlassIconButton(
+                            icon = Icons.Default.Map,
+                            contentDescription = "Map Style",
                             onClick = { mapType = if (mapType == "standard") "satellite" else "standard" },
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(Icons.Default.Map, contentDescription = "Map Style", tint = if (mapType == "satellite") Color(0xFFFFD700) else Color.White, modifier = Modifier.size(18.dp))
-                        }
+                            variant = if (mapType == "satellite") GlassButtonVariant.GOLD else GlassButtonVariant.NEUTRAL,
+                            active = mapType == "satellite",
+                            size = 36.dp,
+                            iconSize = 18.dp
+                        )
 
                         // Saved Surveys Folder Button
-                        IconButton(
+                        SurveyGlassIconButton(
+                            icon = Icons.Default.Folder,
+                            contentDescription = "Saved Surveys",
                             onClick = { showSavedSurveysDialog = true },
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(Icons.Default.Folder, contentDescription = "Saved Surveys", tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
-                        }
+                            variant = GlassButtonVariant.SKY,
+                            size = 36.dp,
+                            iconSize = 18.dp
+                        )
                     }
                 }
             }
@@ -441,11 +452,7 @@ fun SurveyScreen(
                     shape = RoundedCornerShape(10.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF78350F).copy(alpha = 0.95f)),
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            // Opens full relocation resolution dialog
-                        }
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
@@ -454,17 +461,25 @@ fun SurveyScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text("Relocation: ${String.format(Locale.US, "%.0f m", relocationPrompt!!.distanceM)} from last point", fontWeight = FontWeight.Bold, color = Color(0xFFFFD700), fontSize = 12.sp)
                             Text("Resume as new segment to avoid false straight-line jump?", fontSize = 10.sp, color = Color.White)
                         }
-                        Row {
-                            TextButton(onClick = { surveyManager.resolveRelocation(startNewSegment = true) }) {
-                                Text("New Seg", color = Color(0xFFFFD700), fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                            }
-                            TextButton(onClick = { surveyManager.resolveRelocation(startNewSegment = false) }) {
-                                Text("Connect", color = Color(0xFF38BDF8), fontSize = 11.sp)
-                            }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SurveyGlassButton(
+                                text = "New Seg",
+                                onClick = { surveyManager.resolveRelocation(startNewSegment = true) },
+                                variant = GlassButtonVariant.GOLD,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                height = 32.dp
+                            )
+                            SurveyGlassButton(
+                                text = "Connect",
+                                onClick = { surveyManager.resolveRelocation(startNewSegment = false) },
+                                variant = GlassButtonVariant.SKY,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                height = 32.dp
+                            )
                         }
                     }
                 }
@@ -478,55 +493,52 @@ fun SurveyScreen(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Surface(
-                shape = CircleShape,
-                color = if (isFollowingLocation) Color(0xFF2563EB) else Color(0xFF131B2E).copy(alpha = 0.85f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                modifier = Modifier.size(40.dp).clickable { isFollowingLocation = true }
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.MyLocation, contentDescription = "Center Location", tint = Color.White, modifier = Modifier.size(20.dp))
-                }
-            }
+            // Re-centre Location
+            SurveyGlassIconButton(
+                icon = Icons.Default.MyLocation,
+                contentDescription = "Center Location",
+                onClick = { isFollowingLocation = true },
+                variant = if (isFollowingLocation) GlassButtonVariant.SKY else GlassButtonVariant.NEUTRAL,
+                active = isFollowingLocation,
+                size = 38.dp,
+                iconSize = 18.dp
+            )
 
-            Surface(
-                shape = CircleShape,
-                color = Color(0xFF131B2E).copy(alpha = 0.85f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                modifier = Modifier.size(40.dp).clickable { viewRangeMetres = (viewRangeMetres * 0.65).coerceAtLeast(80.0) }
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.ZoomIn, contentDescription = "Zoom In", tint = Color.White, modifier = Modifier.size(20.dp))
-                }
-            }
+            // Zoom In
+            SurveyGlassIconButton(
+                icon = Icons.Default.ZoomIn,
+                contentDescription = "Zoom In",
+                onClick = { viewRangeMetres = (viewRangeMetres * 0.65).coerceAtLeast(80.0) },
+                variant = GlassButtonVariant.NEUTRAL,
+                size = 38.dp,
+                iconSize = 18.dp
+            )
 
-            Surface(
-                shape = CircleShape,
-                color = Color(0xFF131B2E).copy(alpha = 0.85f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                modifier = Modifier.size(40.dp).clickable { viewRangeMetres = (viewRangeMetres * 1.5).coerceAtMost(10000.0) }
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.ZoomOut, contentDescription = "Zoom Out", tint = Color.White, modifier = Modifier.size(20.dp))
-                }
-            }
+            // Zoom Out
+            SurveyGlassIconButton(
+                icon = Icons.Default.ZoomOut,
+                contentDescription = "Zoom Out",
+                onClick = { viewRangeMetres = (viewRangeMetres * 1.5).coerceAtMost(10000.0) },
+                variant = GlassButtonVariant.NEUTRAL,
+                size = 38.dp,
+                iconSize = 18.dp
+            )
 
             // Layer toggle (Centreline / Lane / Track)
-            Surface(
-                shape = CircleShape,
-                color = Color(0xFF131B2E).copy(alpha = 0.85f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                modifier = Modifier.size(40.dp).clickable {
+            SurveyGlassIconButton(
+                icon = Icons.Default.Layers,
+                contentDescription = "Toggle Layers",
+                onClick = {
                     showCentreline = !showCentreline
                     showLaneTrack = !showLaneTrack
-                }
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Layers, contentDescription = "Toggle Layers", tint = if (showCentreline) Color(0xFFFFD700) else Color.White.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
-                }
-            }
+                },
+                variant = if (showCentreline) GlassButtonVariant.GOLD else GlassButtonVariant.NEUTRAL,
+                active = showCentreline,
+                size = 38.dp,
+                iconSize = 18.dp
+            )
         }
 
         // ----------------------------------------------------
@@ -637,113 +649,104 @@ fun SurveyScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             // ----------------------------------------------------
-            // 5. ERGONOMIC SURVEY ACTION CONTROLS
+            // 5. ERGONOMIC SURVEY ACTION CONTROLS (Dynamic Minimalist Glass UI)
             // ----------------------------------------------------
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Quick Offset Adjust Button
-                OutlinedButton(
-                    onClick = { showChangeOffsetDialog = true },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f)),
-                    modifier = Modifier.weight(0.9f)
-                ) {
-                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Offset", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
-
-                // Primary Action Button (Start / Pause / Resume)
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val isCompact = maxWidth < 370.dp
                 val status = activeSession?.status ?: SurveyStatus.NOT_STARTED
-                when (status) {
-                    SurveyStatus.RECORDING -> {
-                        Button(
-                            onClick = {
-                                coroutineScope.launch {
-                                    surveyManager.pauseSurvey()
-                                    viewModel.showToast("Survey paused", ToastType.INFO)
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black),
-                            modifier = Modifier.weight(1.3f)
-                        ) {
-                            Icon(Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pause", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                    }
-                    SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
-                        Button(
-                            onClick = {
-                                surveyManager.requestResumeSurvey(currentGps)
-                                viewModel.showToast("Resuming survey...", ToastType.INFO)
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF22C55E), contentColor = Color.Black),
-                            modifier = Modifier.weight(1.3f)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Resume", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                    }
-                    else -> {
-                        Button(
-                            onClick = { showNewConfigDialog = true },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black),
-                            modifier = Modifier.weight(1.3f)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Start Survey", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                    }
-                }
+                val isRecordingOrPaused = status == SurveyStatus.RECORDING || status == SurveyStatus.PAUSED || status == SurveyStatus.READY_TO_RESUME
 
-                // Prominent + KM Stone Marker Button
-                Button(
-                    onClick = {
-                        if (activeSession != null) {
-                            showAddKmStoneDialog = true
-                        } else {
-                            viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black),
-                    modifier = Modifier.weight(1.4f)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.AddLocationAlt, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("+ KM Stone", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                }
+                    // Quick Offset Adjust Button
+                    SurveyGlassButton(
+                        text = if (isCompact) "CL" else "Offset",
+                        icon = Icons.Default.Tune,
+                        onClick = { showChangeOffsetDialog = true },
+                        variant = GlassButtonVariant.SKY,
+                        modifier = Modifier.weight(if (isCompact) 0.85f else 0.95f),
+                        height = 42.dp
+                    )
 
-                // Stop / Review Button
-                if (status == SurveyStatus.RECORDING || status == SurveyStatus.PAUSED || status == SurveyStatus.READY_TO_RESUME) {
-                    OutlinedButton(
+                    // Primary Action Button (Start / Pause / Resume)
+                    when (status) {
+                        SurveyStatus.RECORDING -> {
+                            SurveyGlassButton(
+                                text = "Pause",
+                                icon = Icons.Default.Pause,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        surveyManager.pauseSurvey()
+                                        viewModel.showToast("Survey paused", ToastType.INFO)
+                                    }
+                                },
+                                variant = GlassButtonVariant.GOLD,
+                                modifier = Modifier.weight(1.15f),
+                                height = 42.dp
+                            )
+                        }
+                        SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
+                            SurveyGlassButton(
+                                text = "Resume",
+                                icon = Icons.Default.PlayArrow,
+                                onClick = {
+                                    surveyManager.requestResumeSurvey(currentGps)
+                                    viewModel.showToast("Resuming survey...", ToastType.INFO)
+                                },
+                                variant = GlassButtonVariant.SUCCESS,
+                                modifier = Modifier.weight(1.15f),
+                                height = 42.dp
+                            )
+                        }
+                        else -> {
+                            SurveyGlassButton(
+                                text = if (isCompact) "Start" else "Start Survey",
+                                icon = Icons.Default.PlayArrow,
+                                onClick = { showNewConfigDialog = true },
+                                variant = GlassButtonVariant.GOLD,
+                                modifier = Modifier.weight(1.25f),
+                                height = 42.dp
+                            )
+                        }
+                    }
+
+                    // Prominent + KM Stone Marker Button
+                    SurveyGlassButton(
+                        text = if (isCompact) "+ KM" else "+ KM Stone",
+                        icon = Icons.Default.AddLocationAlt,
                         onClick = {
-                            coroutineScope.launch {
-                                val finalized = surveyManager.stopSurvey()
-                                if (finalized != null) {
-                                    reviewSessionTarget = finalized
-                                    viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
-                                }
+                            if (activeSession != null) {
+                                showAddKmStoneDialog = true
+                            } else {
+                                viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
                             }
                         },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f)),
-                        modifier = Modifier.weight(0.9f)
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Stop", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        variant = GlassButtonVariant.GOLD,
+                        modifier = Modifier.weight(if (isCompact) 1.05f else 1.25f),
+                        height = 42.dp
+                    )
+
+                    // Stop / Review Button
+                    if (isRecordingOrPaused) {
+                        SurveyGlassButton(
+                            text = "Stop",
+                            icon = Icons.Default.Stop,
+                            onClick = {
+                                coroutineScope.launch {
+                                    val finalized = surveyManager.stopSurvey()
+                                    if (finalized != null) {
+                                        reviewSessionTarget = finalized
+                                        viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
+                                    }
+                                }
+                            },
+                            variant = GlassButtonVariant.DESTRUCTIVE,
+                            modifier = Modifier.weight(0.85f),
+                            height = 42.dp
+                        )
                     }
                 }
             }
@@ -797,11 +800,13 @@ fun SurveyScreen(
         ChangeOffsetDialog(
             currentOffsetM = activeSession!!.centrelineOffsetMetres,
             currentSide = activeSession!!.offsetSide,
+            defaultLaneOffsetM = activeSession!!.lane.defaultOffsetMetres,
+            isAutoMode = activeSession!!.isOffsetAuto,
             onDismiss = { showChangeOffsetDialog = false },
-            onSaveOffset = { newOffset, newSide ->
+            onSaveOffset = { newOffset, newSide, isAuto ->
                 showChangeOffsetDialog = false
                 coroutineScope.launch {
-                    surveyManager.updateCentrelineOffset(newOffset, newSide)
+                    surveyManager.updateCentrelineOffset(newOffset, newSide, isAuto)
                     viewModel.showToast("Centreline offset updated: ${newOffset}m ${newSide.name}", ToastType.SUCCESS)
                 }
             }

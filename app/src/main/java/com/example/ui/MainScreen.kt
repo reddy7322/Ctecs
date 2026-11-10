@@ -324,6 +324,17 @@ fun MainScreen(
         )
     }
 
+    // Launch-time Interrupted Survey Resume Dialog
+    val interruptedSession by viewModel.interruptedSurveySession.collectAsStateWithLifecycle()
+    interruptedSession?.let { session ->
+        com.example.ui.survey.ResumeSessionDialog(
+            session = session,
+            onResume = { viewModel.resumeInterruptedSurvey(session) },
+            onDiscard = { viewModel.discardInterruptedSurvey(session) },
+            onDismiss = { viewModel.dismissInterruptedSurveyPrompt() }
+        )
+    }
+
     // Smart Minimalist Glass Page Loader UI with percentage animations
     val isPageLoading by viewModel.isPageLoading.collectAsStateWithLifecycle()
     val pageLoadingProgress by viewModel.pageLoadingProgress.collectAsStateWithLifecycle()

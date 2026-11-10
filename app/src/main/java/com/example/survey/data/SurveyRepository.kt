@@ -83,6 +83,25 @@ class SurveyRepository(
         _activeSession.value = session
     }
 
+    suspend fun getInterruptedSessionOnStartup(): SurveySession? = withContext(Dispatchers.IO) {
+        val unfinished = surveyDao.getActiveOrUnfinishedSession() ?: return@withContext null
+        val domain = unfinished.toDomain()
+        if (domain.status == SurveyStatus.RECORDING ||
+            domain.status == SurveyStatus.PAUSED ||
+            domain.status == SurveyStatus.INTERRUPTED ||
+            domain.status == SurveyStatus.READY_TO_RESUME
+        ) {
+            val ready = if (domain.status == SurveyStatus.RECORDING) {
+                domain.copy(status = SurveyStatus.READY_TO_RESUME)
+            } else domain
+            surveyDao.updateSession(SurveySessionEntity.fromDomain(ready))
+            _activeSession.value = ready
+            ready
+        } else {
+            null
+        }
+    }
+
     suspend fun getSessionById(id: String): SurveySession? = withContext(Dispatchers.IO) {
         surveyDao.getSessionById(id)?.toDomain()
     }

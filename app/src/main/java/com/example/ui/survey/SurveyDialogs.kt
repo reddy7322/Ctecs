@@ -36,6 +36,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -300,35 +301,69 @@ fun NewSurveyConfigDialog(
                         // Direction Selection
                         Spacer(modifier = Modifier.height(2.dp))
                         Text("4. DIRECTION OF TRAVEL", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = selectedDirection == SurveyDirection.INCREASING,
-                                onClick = { selectedDirection = SurveyDirection.INCREASING },
-                                label = { Text("Increasing Chainage (+)", fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                ),
-                                modifier = Modifier.weight(1f)
-                            )
-                            FilterChip(
-                                selected = selectedDirection == SurveyDirection.DECREASING,
-                                onClick = { selectedDirection = SurveyDirection.DECREASING },
-                                label = { Text("Decreasing Chainage (-)", fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                ),
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                        SurveyGlassSegmentedToggle(
+                            options = listOf(
+                                SurveyDirection.INCREASING to "Increasing (+)",
+                                SurveyDirection.DECREASING to "Decreasing (-)"
+                            ),
+                            selected = selectedDirection,
+                            onSelect = { selectedDirection = it },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
 
                     item {
-                        // Centreline Offset
+                        // 5. Unified Centreline Offset Control (Auto vs Manual)
                         Spacer(modifier = Modifier.height(2.dp))
                         Text("5. CENTRELINE OFFSET & SIDE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+
+                        // Mode toggle: Auto (from Lane) vs Manual
+                        SurveyGlassSegmentedToggle(
+                            options = listOf(
+                                true to "Auto (${selectedLane.defaultOffsetMetres}m from Lane)",
+                                false to "Manual Custom"
+                            ),
+                            selected = isOffsetAuto,
+                            onSelect = { auto ->
+                                isOffsetAuto = auto
+                                if (auto) {
+                                    offsetM = selectedLane.defaultOffsetMetres
+                                    offsetInputText = String.format(Locale.US, "%.2f", selectedLane.defaultOffsetMetres)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        if (isOffsetAuto) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0x330F172A),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x40FFD700)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Derived Offset: ${selectedLane.defaultOffsetMetres}m",
+                                        color = Color(0xFFFFD700),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = selectedLane.label,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        } else {
                             OutlinedTextField(
                                 value = offsetInputText,
                                 onValueChange = { input ->
@@ -338,77 +373,60 @@ fun NewSurveyConfigDialog(
                                         offsetM = parsed
                                     }
                                 },
-                                label = { Text("Offset (metres)") },
+                                label = { Text("Custom Centreline Offset (metres)") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.fillMaxWidth(),
                                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFFFD700), fontWeight = FontWeight.Bold),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Color(0xFFFFD700),
                                     unfocusedBorderColor = Color.White.copy(alpha = 0.25f)
                                 )
                             )
-
-                            // Quick preset chips
-                            listOf(0.0 to "0m", 3.5 to "3.5m", 5.25 to "5.25m", 7.0 to "7m").forEach { (preset, label) ->
-                                FilterChip(
-                                    selected = offsetM == preset,
-                                    onClick = {
-                                        offsetM = preset
-                                        offsetInputText = String.format(Locale.US, "%.2f", preset)
-                                        if (preset == 0.0) offsetSide = OffsetSide.CENTRE
-                                    },
-                                    label = { Text(label, fontSize = 10.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Color(0xFFFFD700),
-                                        selectedLabelColor = Color.Black
-                                    )
-                                )
-                            }
                         }
+
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         // Offset Side Selector
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OffsetSide.entries.forEach { side ->
-                                FilterChip(
-                                    selected = offsetSide == side,
-                                    onClick = { offsetSide = side },
-                                    label = { Text(side.label, fontSize = 11.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Color(0xFFFFD700),
-                                        selectedLabelColor = Color.Black
-                                    ),
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
+                        SurveyGlassSegmentedToggle(
+                            options = listOf(
+                                OffsetSide.LEFT to "LHS (Left of CL)",
+                                OffsetSide.RIGHT to "RHS (Right of CL)",
+                                OffsetSide.CENTRE to "Centreline (0m)"
+                            ),
+                            selected = offsetSide,
+                            onSelect = { side ->
+                                offsetSide = side
+                                if (side == OffsetSide.CENTRE) {
+                                    offsetM = 0.0
+                                    offsetInputText = "0.00"
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Bottom Action Buttons
+                // Bottom Minimalist Glass Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(
+                    SurveyGlassButton(
+                        text = "Cancel",
                         onClick = onDismiss,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White.copy(alpha = 0.8f))
-                    ) {
-                        Text("Cancel")
-                    }
+                        variant = GlassButtonVariant.NEUTRAL,
+                        modifier = Modifier.weight(1f)
+                    )
 
-                    Button(
+                    SurveyGlassButton(
+                        text = "Start Live Survey",
+                        icon = Icons.Default.PlayArrow,
                         onClick = {
                             if (isChainageValid) {
+                                val finalOffset = if (isOffsetAuto) selectedLane.defaultOffsetMetres else offsetM
                                 val session = SurveySession(
                                     name = surveyName,
                                     projectName = projectName.trim(),
@@ -421,7 +439,7 @@ fun NewSurveyConfigDialog(
                                     direction = selectedDirection,
                                     lane = selectedLane,
                                     customLaneName = customLaneName.trim(),
-                                    centrelineOffsetMetres = offsetM,
+                                    centrelineOffsetMetres = finalOffset,
                                     offsetSide = offsetSide,
                                     isOffsetAuto = isOffsetAuto
                                 )
@@ -429,18 +447,9 @@ fun NewSurveyConfigDialog(
                             }
                         },
                         enabled = isChainageValid && highwayName.isNotBlank(),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1.5f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFFFD700),
-                            contentColor = Color.Black,
-                            disabledContainerColor = Color.Gray.copy(alpha = 0.4f)
-                        )
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Start Live Survey", fontWeight = FontWeight.Bold)
-                    }
+                        variant = GlassButtonVariant.GOLD,
+                        modifier = Modifier.weight(1.5f)
+                    )
                 }
             }
         }
@@ -586,30 +595,25 @@ fun AddKmStoneDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(
+                    SurveyGlassButton(
+                        text = "Cancel",
                         onClick = onDismiss,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White.copy(alpha = 0.7f))
-                    ) {
-                        Text("Cancel")
-                    }
+                        variant = GlassButtonVariant.NEUTRAL,
+                        modifier = Modifier.weight(1f)
+                    )
 
-                    Button(
+                    SurveyGlassButton(
+                        text = "Save Marker",
+                        icon = Icons.Default.Check,
                         onClick = {
                             if (isChainageValid) {
                                 onConfirmMarker(selectedMarkerType, parsed!!.metres, notesText.trim())
                             }
                         },
                         enabled = isChainageValid,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.weight(1.5f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black)
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Save Marker", fontWeight = FontWeight.Bold)
-                    }
+                        variant = GlassButtonVariant.GOLD,
+                        modifier = Modifier.weight(1.5f)
+                    )
                 }
             }
         }
@@ -623,125 +627,224 @@ fun RelocationDialog(
     onConfirmConnect: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFFFD700))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Movement Detected While Paused", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF131B2E)),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFFFD700), modifier = Modifier.size(24.dp))
+                    Text("Movement While Paused", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
                 Text(
-                    text = "The vehicle has moved ${String.format(Locale.US, "%.0f m", relocation.distanceM)} away from the last recorded survey point.",
-                    fontSize = 13.sp
+                    text = "The vehicle has moved ${String.format(Locale.US, "%.0f m", relocation.distanceM)} away from the last recorded point.",
+                    fontSize = 13.sp,
+                    color = Color.White.copy(alpha = 0.9f)
                 )
                 Text(
                     text = "To maintain route integrity and avoid creating false straight connections across junctions or parallel roads, select how to proceed:",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    fontSize = 11.5.sp,
+                    color = Color.White.copy(alpha = 0.65f),
+                    lineHeight = 16.sp
                 )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirmNewSegment,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black)
-            ) {
-                Text("Resume as New Segment (Recommended)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onConfirmConnect) {
-                    Text("Connect Line", color = Color(0xFF38BDF8), fontSize = 12.sp)
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    SurveyGlassButton(
+                        text = "Resume as New Segment (Recommended)",
+                        icon = Icons.Default.PlayArrow,
+                        onClick = onConfirmNewSegment,
+                        variant = GlassButtonVariant.GOLD,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SurveyGlassButton(
+                            text = "Connect Line",
+                            icon = Icons.Default.AltRoute,
+                            onClick = onConfirmConnect,
+                            variant = GlassButtonVariant.SKY,
+                            modifier = Modifier.weight(1f)
+                        )
+                        SurveyGlassButton(
+                            text = "Cancel",
+                            onClick = onDismiss,
+                            variant = GlassButtonVariant.NEUTRAL,
+                            modifier = Modifier.weight(0.8f)
+                        )
+                    }
                 }
             }
         }
-    )
+    }
 }
 
 @Composable
 fun ChangeOffsetDialog(
     currentOffsetM: Double,
     currentSide: OffsetSide,
+    defaultLaneOffsetM: Double = 7.0,
+    isAutoMode: Boolean = false,
     onDismiss: () -> Unit,
-    onSaveOffset: (Double, OffsetSide) -> Unit
+    onSaveOffset: (Double, OffsetSide, Boolean) -> Unit
 ) {
+    var isAuto by remember { mutableStateOf(isAutoMode) }
     var offsetInput by remember { mutableStateOf(String.format(Locale.US, "%.2f", currentOffsetM)) }
     var selectedSide by remember { mutableStateOf(currentSide) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF131B2E)),
             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.5f)),
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(12.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Tune, contentDescription = null, tint = Color(0xFFFFD700))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("CHANGE CENTRELINE OFFSET", fontWeight = FontWeight.Bold, color = Color(0xFFFFD700), fontSize = 14.sp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Tune, contentDescription = null, tint = Color(0xFFFFD700), modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("CENTRELINE OFFSET", fontWeight = FontWeight.Bold, color = Color(0xFFFFD700), fontSize = 14.sp)
+                    }
+                    SurveyGlassIconButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = "Close",
+                        onClick = onDismiss,
+                        variant = GlassButtonVariant.NEUTRAL,
+                        size = 30.dp,
+                        iconSize = 16.dp
+                    )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
 
-                OutlinedTextField(
-                    value = offsetInput,
-                    onValueChange = { offsetInput = it },
-                    label = { Text("Offset Distance (metres)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFFFFD700),
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
-                    )
+                // Unified Mode Toggle: Auto (Lane Default) vs Manual Custom
+                Text("MODE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                SurveyGlassSegmentedToggle(
+                    options = listOf(
+                        true to "Auto (${defaultLaneOffsetM}m)",
+                        false to "Manual Custom"
+                    ),
+                    selected = isAuto,
+                    onSelect = { auto ->
+                        isAuto = auto
+                        if (auto) {
+                            offsetInput = String.format(Locale.US, "%.2f", defaultLaneOffsetM)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
-                Text("OFFSET SIDE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    OffsetSide.entries.forEach { side ->
-                        FilterChip(
-                            selected = selectedSide == side,
-                            onClick = { selectedSide = side },
-                            label = { Text(side.label, fontSize = 10.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Color(0xFFFFD700),
-                                selectedLabelColor = Color.Black
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
+                if (isAuto) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0x330F172A),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x40FFD700)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Lane Default: ${defaultLaneOffsetM}m",
+                                color = Color(0xFFFFD700),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                text = "Automatic",
+                                color = Color(0xFF22C55E),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
+                } else {
+                    OutlinedTextField(
+                        value = offsetInput,
+                        onValueChange = { offsetInput = it },
+                        label = { Text("Offset Distance (metres)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFFFD700), fontWeight = FontWeight.Bold),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFFFFD700),
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
+                        )
+                    )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                        Text("Cancel", color = Color.White.copy(alpha = 0.8f))
-                    }
-                    Button(
-                        onClick = {
-                            val v = offsetInput.toDoubleOrNull() ?: currentOffsetM
-                            onSaveOffset(v.coerceAtLeast(0.0), selectedSide)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black),
+                Text("OFFSET SIDE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                SurveyGlassSegmentedToggle(
+                    options = listOf(
+                        OffsetSide.LEFT to "LHS",
+                        OffsetSide.RIGHT to "RHS",
+                        OffsetSide.CENTRE to "Centre (0m)"
+                    ),
+                    selected = selectedSide,
+                    onSelect = { side ->
+                        selectedSide = side
+                        if (side == OffsetSide.CENTRE) {
+                            offsetInput = "0.00"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SurveyGlassButton(
+                        text = "Cancel",
+                        onClick = onDismiss,
+                        variant = GlassButtonVariant.NEUTRAL,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Apply Offset", fontWeight = FontWeight.Bold)
-                    }
+                    )
+                    SurveyGlassButton(
+                        text = "Apply Offset",
+                        icon = Icons.Default.Check,
+                        onClick = {
+                            val v = if (isAuto) defaultLaneOffsetM else (offsetInput.toDoubleOrNull() ?: currentOffsetM)
+                            val finalSide = if (v == 0.0) OffsetSide.CENTRE else selectedSide
+                            onSaveOffset(v.coerceAtLeast(0.0), finalSide, isAuto)
+                        },
+                        variant = GlassButtonVariant.GOLD,
+                        modifier = Modifier.weight(1.3f)
+                    )
                 }
             }
         }
@@ -771,9 +874,14 @@ fun SavedSurveysDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("SAVED HIGHWAY SURVEYS", fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8), fontSize = 14.sp)
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-                    }
+                    SurveyGlassIconButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = "Close",
+                        onClick = onDismiss,
+                        variant = GlassButtonVariant.NEUTRAL,
+                        size = 30.dp,
+                        iconSize = 16.dp
+                    )
                 }
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.15f), modifier = Modifier.padding(vertical = 8.dp))
@@ -805,9 +913,14 @@ fun SavedSurveysDialog(
                                         Text("${s.displayStartChainage} → ${s.displayCurrentChainage} • ${String.format(Locale.US, "%.1f km", s.totalDistanceTravelledMetres / 1000.0)}", color = Color(0xFFFFD700), fontSize = 11.sp)
                                         Text("${s.displayLaneName} • ${s.status.label} • ${s.surveyDate}", color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp)
                                     }
-                                    IconButton(onClick = { onDeleteSession(s.id) }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFEF4444).copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
-                                    }
+                                    SurveyGlassIconButton(
+                                        icon = Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        onClick = { onDeleteSession(s.id) },
+                                        variant = GlassButtonVariant.DESTRUCTIVE,
+                                        size = 32.dp,
+                                        iconSize = 16.dp
+                                    )
                                 }
                             }
                         }
@@ -817,3 +930,199 @@ fun SavedSurveysDialog(
         }
     }
 }
+
+/**
+ * Launch-time dialog that alerts the user when an interrupted or unfinished survey is detected on app startup,
+ * displaying key session metrics and offering a clear 1-tap option to resume live tracking.
+ */
+@Composable
+fun ResumeSessionDialog(
+    session: com.example.survey.model.SurveySession,
+    onResume: () -> Unit,
+    onDiscard: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val totalDistKm = session.totalDistanceTravelledMetres / 1000.0
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF131B2E)),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFFFD700).copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Interrupted Survey",
+                            tint = Color(0xFFFFD700),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Resume Survey Session?",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Interrupted survey detected from previous run",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.65f)
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+
+                // Survey Details Card
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = session.name.ifBlank { "Highway Survey" },
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.5.sp
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFFFFD700).copy(alpha = 0.15f),
+                                border = androidx.compose.foundation.BorderStroke(0.5.dp, Color(0xFFFFD700).copy(alpha = 0.5f))
+                            ) {
+                                Text(
+                                    text = session.status.label,
+                                    color = Color(0xFFFFD700),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+
+                        if (session.highwayName.isNotBlank() || session.stretchName.isNotBlank()) {
+                            Text(
+                                text = "${session.highwayName} ${if (session.stretchName.isNotBlank()) "• " + session.stretchName else ""}",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.1f), modifier = Modifier.padding(vertical = 4.dp))
+
+                        // Chainage & Distance
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Chainage Span", fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
+                                Text(
+                                    text = "${session.displayStartChainage} ➔ ${session.displayCurrentChainage}",
+                                    color = Color(0xFFFFD700),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("Distance", fontSize = 10.sp, color = Color.White.copy(alpha = 0.6f))
+                                Text(
+                                    text = String.format(java.util.Locale.US, "%.2f km", totalDistKm),
+                                    color = Color(0xFF22C55E),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // Lane & Offset
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Lane: ${session.displayLaneName}",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                text = "Offset: ${session.centrelineOffsetMetres}m ${session.offsetSide.name}",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Would you like to resume live GPS tracking and chainage calculation from the last recorded point?",
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                SurveyGlassButton(
+                    text = "Resume Session",
+                    icon = Icons.Default.PlayArrow,
+                    onClick = onResume,
+                    variant = GlassButtonVariant.GOLD,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    SurveyGlassButton(
+                        text = "Discard",
+                        icon = Icons.Default.Delete,
+                        onClick = onDiscard,
+                        variant = GlassButtonVariant.DESTRUCTIVE,
+                        modifier = Modifier.weight(1f)
+                    )
+                    SurveyGlassButton(
+                        text = "Later",
+                        onClick = onDismiss,
+                        variant = GlassButtonVariant.NEUTRAL,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
