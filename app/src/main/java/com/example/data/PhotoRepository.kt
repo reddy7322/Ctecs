@@ -272,9 +272,9 @@ class PhotoRepository(
                     val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
                     if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
                         if (snapshot.projectProfile.customDescription.isNotBlank()) {
-                            "${snapshot.projectProfile.customDescription} | Location: $locName"
+                            "${snapshot.projectProfile.customDescription} | $locName"
                         } else {
-                            "Location: $locName"
+                            locName
                         }
                     } else {
                         snapshot.projectProfile.customDescription
@@ -285,7 +285,7 @@ class PhotoRepository(
                     val baseText = snapshot.projectProfile.buildHighwayText(snapshot.displayChainage)
                     val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
                     if (snapshot.overlayConfig.showLocationName && locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
-                        if (baseText.isNotBlank()) "$baseText | Location: $locName" else "Location: $locName"
+                        if (baseText.isNotBlank()) "$baseText | $locName" else locName
                     } else baseText
                 }
             )

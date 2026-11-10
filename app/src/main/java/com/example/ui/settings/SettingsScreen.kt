@@ -2780,7 +2780,7 @@ fun SettingsScreen(
                                         currentOverlay.lastDetectedLocationName.ifBlank { "Dehradun, Uttarakhand" }
                                     }
                                     Text(
-                                        text = "Location: $locNameDisplay",
+                                        text = locNameDisplay,
                                         color = previewParsedColor,
                                         fontSize = 11.sp,
                                         fontFamily = previewFontFamily,
@@ -4627,7 +4627,7 @@ private fun WatermarkLivePreviewCard(
                     }
                     if (overlay.showLocationName && locationName.isNotBlank()) {
                         Text(
-                            text = "Location: $locationName",
+                            text = locationName,
                             color = Color(0xFFFFD700),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,

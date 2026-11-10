@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -74,6 +75,7 @@ import java.util.Locale
 fun RoutesScreen(
     viewModel: MainViewModel,
     onNavigateBack: () -> Unit = {},
+    onNavigateToSurvey: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
@@ -146,21 +148,39 @@ fun RoutesScreen(
                 )
             }
 
-            // 2. Import Action Button
+            // 2. Action Buttons: Import & Live Highway Survey
             item {
-                Button(
-                    onClick = { filePickerLauncher.launch("*/*") },
-                    enabled = !isImporting,
-                    modifier = Modifier.fillMaxWidth().testTag("import_kmz_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (isImporting) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.size(6.dp))
-                    } else {
-                        Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.size(6.dp))
+                    Button(
+                        onClick = { filePickerLauncher.launch("*/*") },
+                        enabled = !isImporting,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("import_kmz_button")
+                    ) {
+                        if (isImporting) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.size(6.dp))
+                        } else {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.size(6.dp))
+                        }
+                        Text("Import KMZ", maxLines = 1)
                     }
-                    Text("Import KMZ/KML")
+
+                    OutlinedButton(
+                        onClick = onNavigateToSurvey,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("survey_alignment_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.Engineering, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text("Live Survey", maxLines = 1)
+                    }
                 }
             }
 

@@ -51,6 +51,7 @@ enum class AppTab(val label: String) {
     CAMERA("Camera"),
     PHOTOS("Photos"),
     ROUTES("Routes"),
+    SURVEY("Survey"),
     HIGHWAY_TOOLS("Tools"),
     SMART_NOTES("Notes"),
     SETTINGS("Settings")
@@ -86,6 +87,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         reportDao = db.dailyReportRecordDao(),
         scope = viewModelScope
     )
+    val surveyRepository = com.example.survey.data.SurveyRepository(db.surveyDao(), viewModelScope)
+    val surveyManager = com.example.survey.engine.SurveyManager(application, surveyRepository, viewModelScope)
     val locationTracker = LocationTracker(application)
     val compassTracker = com.example.sensor.CompassAndOrientationTracker(application)
     val appUpdateManager = com.example.update.AppUpdateManager(application)
@@ -566,15 +569,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             locationTracker.locationState.collect { state ->
                 val pt = state.point
-                if (pt != null && overlayConfig.value.showLocationName) {
-                    val name = com.example.location.LocationNameResolver.resolveLocationName(
-                        context = getApplication(),
-                        latitude = pt.latitude,
-                        longitude = pt.longitude
-                    )
-                    if (name.isNotBlank() && name != _currentLocationName.value) {
-                        _currentLocationName.value = name
-                        saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
+                if (pt != null) {
+                    surveyManager.processLocationUpdate(pt, state.accuracy, state.speed ?: 0f, state.bearing ?: 0f)
+                    if (overlayConfig.value.showLocationName) {
+                        val name = com.example.location.LocationNameResolver.resolveLocationName(
+                            context = getApplication(),
+                            latitude = pt.latitude,
+                            longitude = pt.longitude
+                        )
+                        if (name.isNotBlank() && name != _currentLocationName.value) {
+                            _currentLocationName.value = name
+                            saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
+                        }
                     }
                 }
             }

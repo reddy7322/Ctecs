@@ -44,7 +44,7 @@ object OverlayTextGenerator {
                 if (config.showLocationName) {
                     val locStr = locationName.ifBlank { config.lastDetectedLocationName }.trim()
                     if (locStr.isNotBlank() && !locStr.equals("None", ignoreCase = true)) {
-                        lines.add("Location: $locStr")
+                        lines.add(locStr)
                     }
                 }
             }
@@ -96,7 +96,7 @@ object OverlayTextGenerator {
                 if (config.showLocationName) {
                     val locStr = locationName.ifBlank { config.lastDetectedLocationName }.trim()
                     if (locStr.isNotBlank() && !locStr.equals("None", ignoreCase = true)) {
-                        lines.add("Location: $locStr")
+                        lines.add(locStr)
                     }
                 }
 

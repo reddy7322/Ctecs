@@ -8,6 +8,12 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+import com.example.survey.data.SurveyCalibrationEntity
+import com.example.survey.data.SurveyDao
+import com.example.survey.data.SurveyMarkerEntity
+import com.example.survey.data.SurveyPointEntity
+import com.example.survey.data.SurveySessionEntity
+
 @Database(
     entities = [
         PhotoRecordEntity::class,
@@ -15,9 +21,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         HighwayProjectEntity::class,
         SmartActivityEntity::class,
         QcRecordEntity::class,
-        DailyProjectReportEntity::class
+        DailyProjectReportEntity::class,
+        SurveySessionEntity::class,
+        SurveyPointEntity::class,
+        SurveyMarkerEntity::class,
+        SurveyCalibrationEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -27,6 +37,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun smartActivityDao(): SmartActivityDao
     abstract fun qcRecordDao(): QcRecordDao
     abstract fun dailyReportRecordDao(): DailyReportRecordDao
+    abstract fun surveyDao(): SurveyDao
 
     companion object {
         @Volatile
@@ -52,6 +63,98 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `survey_sessions` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `name` TEXT NOT NULL,
+                        `projectName` TEXT NOT NULL,
+                        `highwayName` TEXT NOT NULL,
+                        `roadNumber` TEXT NOT NULL,
+                        `stretchName` TEXT NOT NULL,
+                        `surveyDate` TEXT NOT NULL,
+                        `startChainageMetres` INTEGER NOT NULL,
+                        `currentChainageMetres` INTEGER NOT NULL,
+                        `direction` TEXT NOT NULL,
+                        `lane` TEXT NOT NULL,
+                        `customLaneName` TEXT NOT NULL,
+                        `centrelineOffsetMetres` REAL NOT NULL,
+                        `offsetSide` TEXT NOT NULL,
+                        `isOffsetAuto` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `totalDistanceTravelledMetres` REAL NOT NULL,
+                        `currentSegmentIndex` INTEGER NOT NULL,
+                        `lastLatitude` REAL,
+                        `lastLongitude` REAL,
+                        `lastAltitude` REAL,
+                        `lastSpeedMps` REAL,
+                        `lastBearing` REAL,
+                        `lastAccuracy` REAL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `lastSavedAt` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `survey_points` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `sessionId` TEXT NOT NULL,
+                        `segmentIndex` INTEGER NOT NULL,
+                        `latitude` REAL NOT NULL,
+                        `longitude` REAL NOT NULL,
+                        `altitude` REAL NOT NULL,
+                        `accuracy` REAL NOT NULL,
+                        `speedMps` REAL NOT NULL,
+                        `bearing` REAL NOT NULL,
+                        `calculatedChainageMetres` INTEGER NOT NULL,
+                        `offsetMetres` REAL NOT NULL,
+                        `offsetSide` TEXT NOT NULL,
+                        `lane` TEXT NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        `isRelocationBoundary` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_survey_points_sessionId_timestamp` ON `survey_points` (`sessionId`, `timestamp`)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `survey_markers` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `sessionId` TEXT NOT NULL,
+                        `chainageMetres` INTEGER NOT NULL,
+                        `displayChainage` TEXT NOT NULL,
+                        `latitude` REAL NOT NULL,
+                        `longitude` REAL NOT NULL,
+                        `altitude` REAL NOT NULL,
+                        `accuracy` REAL NOT NULL,
+                        `markerType` TEXT NOT NULL,
+                        `lane` TEXT NOT NULL,
+                        `direction` TEXT NOT NULL,
+                        `offsetMetres` REAL NOT NULL,
+                        `offsetSide` TEXT NOT NULL,
+                        `isManuallyCalibrated` INTEGER NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        `notes` TEXT NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_survey_markers_sessionId_chainageMetres` ON `survey_markers` (`sessionId`, `chainageMetres`)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `survey_calibrations` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `sessionId` TEXT NOT NULL,
+                        `markerId` TEXT NOT NULL,
+                        `measuredDistanceMetres` REAL NOT NULL,
+                        `knownChainageMetres` INTEGER NOT NULL,
+                        `driftMetres` REAL NOT NULL,
+                        `timestamp` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_survey_calibrations_sessionId` ON `survey_calibrations` (`sessionId`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -59,7 +162,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ctecs_highway_camera.db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

@@ -158,7 +158,7 @@ fun MainScreen(
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentTab != AppTab.CAMERA) {
+            if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY) {
                 val isDarkNav = com.example.ui.theme.isAppDarkTheme()
                 val navBarBg = if (isDarkNav) Color(0xFF131B2E).copy(alpha = 0.96f) else Color.White.copy(alpha = 0.98f)
                 val navBarBorder = if (isDarkNav) Color(0xFF263554) else Color(0xFFE2E8F0)
@@ -249,7 +249,8 @@ fun MainScreen(
                         previousTabBeforeTools = AppTab.HOME
                         viewModel.setTab(AppTab.HIGHWAY_TOOLS)
                     },
-                    onNavigateToNotes = { viewModel.setTab(AppTab.SMART_NOTES) }
+                    onNavigateToNotes = { viewModel.setTab(AppTab.SMART_NOTES) },
+                    onNavigateToSurvey = { viewModel.setTab(AppTab.SURVEY) }
                 )
                 AppTab.CAMERA -> CameraScreen(
                     viewModel = viewModel,
@@ -264,13 +265,18 @@ fun MainScreen(
                 )
                 AppTab.ROUTES -> RoutesScreen(
                     viewModel = viewModel,
-                    onNavigateBack = { viewModel.setTab(AppTab.HOME) }
+                    onNavigateBack = { viewModel.setTab(AppTab.HOME) },
+                    onNavigateToSurvey = { viewModel.setTab(AppTab.SURVEY) }
                 )
                 AppTab.HIGHWAY_TOOLS -> SmartHighwayToolsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { viewModel.setTab(previousTabBeforeTools ?: AppTab.HOME) }
                 )
                 AppTab.SMART_NOTES -> SmartNotesScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { viewModel.setTab(AppTab.HOME) }
+                )
+                AppTab.SURVEY -> com.example.ui.survey.SurveyScreen(
                     viewModel = viewModel,
                     onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )

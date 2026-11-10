@@ -143,6 +143,7 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToTools: () -> Unit = {},
     onNavigateToNotes: () -> Unit = {},
+    onNavigateToSurvey: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -407,6 +408,7 @@ fun HomeScreen(
             HomeQuickActionButtons(
                 onNavigateToTools = onNavigateToTools,
                 onNavigateToNotes = onNavigateToNotes,
+                onNavigateToSurvey = onNavigateToSurvey,
                 onNavigateToCamera = onNavigateToCamera,
                 onNavigateToPhotos = onNavigateToPhotos,
                 onNavigateToRoutes = onNavigateToRoutes,
@@ -1925,6 +1927,7 @@ fun NextChainageCard(
 fun HomeQuickActionButtons(
     onNavigateToTools: () -> Unit,
     onNavigateToNotes: () -> Unit,
+    onNavigateToSurvey: () -> Unit = {},
     onNavigateToCamera: () -> Unit,
     onNavigateToPhotos: () -> Unit,
     onNavigateToRoutes: () -> Unit,
@@ -1934,6 +1937,7 @@ fun HomeQuickActionButtons(
     isDark: Boolean = false,
     isCompact: Boolean = false
 ) {
+    val surveyAccent = if (isDark) Color(0xFFF59E0B) else Color(0xFFD97706)
     val toolsAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
     val notesAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
     val titleColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
@@ -1944,6 +1948,57 @@ fun HomeQuickActionButtons(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Survey Card Button
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = cardBgColor,
+            border = BorderStroke(1.dp, cardBorderColor),
+            shadowElevation = if (isDark) 0.dp else 1.dp,
+            modifier = Modifier
+                .weight(1f)
+                .height(btnHeight)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { onNavigateToSurvey() }
+                .testTag("home_btn_survey")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(surveyAccent.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Engineering,
+                            contentDescription = "Survey",
+                            tint = surveyAccent,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Survey",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = titleColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
         // Tools Card Button
         Surface(
             shape = RoundedCornerShape(12.dp),
@@ -1960,7 +2015,7 @@ fun HomeQuickActionButtons(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -1982,22 +2037,16 @@ fun HomeQuickActionButtons(
                             modifier = Modifier.size(15.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Tools",
-                        fontSize = 13.sp,
+                        fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = titleColor,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = chevronColor,
-                    modifier = Modifier.size(16.dp)
-                )
             }
         }
 
@@ -2017,7 +2066,7 @@ fun HomeQuickActionButtons(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -2034,27 +2083,21 @@ fun HomeQuickActionButtons(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Description,
-                            contentDescription = "DPR Notes",
+                            contentDescription = "Notes",
                             tint = notesAccent,
                             modifier = Modifier.size(15.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "DPR Notes",
-                        fontSize = 13.sp,
+                        text = "Notes",
+                        fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = titleColor,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = chevronColor,
-                    modifier = Modifier.size(16.dp)
-                )
             }
         }
     }

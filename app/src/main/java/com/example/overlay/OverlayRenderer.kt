@@ -789,7 +789,7 @@ object OverlayRenderer {
 
                 val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
                 if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
-                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "Location: $locName | Chainage: ${snapshot.displayChainage} | Project: ${snapshot.projectProfile.highwayId}")
+                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "$locName | Chainage: ${snapshot.displayChainage} | Project: ${snapshot.projectProfile.highwayId}")
                 }
 
                 val userComment = listOfNotNull(
@@ -799,7 +799,7 @@ object OverlayRenderer {
                     snapshot.projectProfile.roadSide.name.takeIf { it.isNotBlank() },
                     snapshot.projectProfile.lane.takeIf { it.isNotBlank() },
                     snapshot.projectProfile.activity.takeIf { it.isNotBlank() },
-                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) "Location: $locName" else null
+                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) locName else null
                 ).joinToString(" ")
                 exif.setAttribute(ExifInterface.TAG_USER_COMMENT, userComment)
 

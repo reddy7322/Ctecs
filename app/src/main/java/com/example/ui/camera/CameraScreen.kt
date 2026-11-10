@@ -2045,7 +2045,7 @@ fun CameraScreen(
                             val displayLoc = currentLocationName.ifBlank { overlayConfig.lastDetectedLocationName }.trim()
                             if (overlayConfig.showLocationName && displayLoc.isNotBlank() && !displayLoc.equals("None", ignoreCase = true) && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
                                 Text(
-                                    text = "Location: $displayLoc",
+                                    text = displayLoc,
                                     color = Color.White.copy(alpha = 0.9f),
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.Medium
