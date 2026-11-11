@@ -146,14 +146,7 @@ fun HomeScreen(
     onNavigateToSurvey: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    DisposableEffect(Unit) {
-        val activity = context as? Activity
-        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose {
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-    }
+    com.example.util.KeepScreenOn(enabled = true, requesterId = "HomeScreen")
 
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()

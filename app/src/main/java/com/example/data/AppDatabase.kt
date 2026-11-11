@@ -27,7 +27,7 @@ import com.example.survey.data.SurveySessionEntity
         SurveyMarkerEntity::class,
         SurveyCalibrationEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -155,6 +155,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE survey_sessions ADD COLUMN plannedEndChainageMetres INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE survey_sessions ADD COLUMN roadSide TEXT NOT NULL DEFAULT 'RHS'")
+                db.execSQL("ALTER TABLE survey_sessions ADD COLUMN confirmationIntervalMetres INTEGER DEFAULT 2000")
+                db.execSQL("ALTER TABLE survey_sessions ADD COLUMN lastConfirmedDistanceM REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE survey_points ADD COLUMN roadSide TEXT NOT NULL DEFAULT 'RHS'")
+                db.execSQL("ALTER TABLE survey_markers ADD COLUMN roadSide TEXT NOT NULL DEFAULT 'RHS'")
+                db.execSQL("ALTER TABLE survey_calibrations ADD COLUMN checkpointName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE survey_calibrations ADD COLUMN latitude REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE survey_calibrations ADD COLUMN longitude REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE survey_calibrations ADD COLUMN originalChainageMetres INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -162,7 +177,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ctecs_highway_camera.db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -20,26 +21,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Place
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.ui.draw.rotate
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -62,13 +57,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.Chainage
-import com.example.survey.engine.SurveyGeometryEngine
 import com.example.survey.export.KmzSurveyExporter
 import com.example.survey.model.OffsetSide
 import com.example.survey.model.SurveyCalibrationPoint
-import com.example.survey.model.SurveyDirection
-import com.example.survey.model.SurveyLane
 import com.example.survey.model.SurveyMarker
 import com.example.survey.model.SurveyPoint
 import com.example.survey.model.SurveySession
@@ -86,6 +79,7 @@ fun SurveyReviewScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val colors = rememberSurveyThemeColors()
 
     var points by remember { mutableStateOf<List<SurveyPoint>>(emptyList()) }
     var markers by remember { mutableStateOf<List<SurveyMarker>>(emptyList()) }
@@ -101,6 +95,7 @@ fun SurveyReviewScreen(
     var currentSide by remember(session.offsetSide) { mutableStateOf(session.offsetSide) }
     var isAutoMode by remember(session.isOffsetAuto) { mutableStateOf(session.isOffsetAuto) }
     var isExporting by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(session.id) {
         isLoadingData = true
@@ -119,12 +114,12 @@ fun SurveyReviewScreen(
                             text = "SURVEY REVIEW & KMZ EXPORT",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFFD700)
+                            color = colors.gold
                         )
                         Text(
                             text = "${session.highwayName} • ${session.surveyDate}",
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.7f)
+                            color = colors.textSecondary
                         )
                     }
                 },
@@ -140,13 +135,25 @@ fun SurveyReviewScreen(
                         )
                     }
                 },
+                actions = {
+                    Box(modifier = Modifier.padding(end = 8.dp)) {
+                        SurveyGlassIconButton(
+                            icon = if (colors.isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                            contentDescription = "Theme Mode",
+                            onClick = { showThemeDialog = true },
+                            variant = GlassButtonVariant.GOLD,
+                            size = 36.dp,
+                            iconSize = 18.dp
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF0F172A),
-                    titleContentColor = Color.White
+                    containerColor = colors.headerBackground,
+                    titleContentColor = colors.textPrimary
                 )
             )
         },
-        containerColor = Color(0xFF0A0F1D)
+        containerColor = colors.background
     ) { innerPadding ->
         if (isLoadingData) {
             Box(
@@ -155,23 +162,30 @@ fun SurveyReviewScreen(
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(color = Color(0xFFFFD700))
+                CircularProgressIndicator(color = colors.gold)
             }
         } else {
-            LazyColumn(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(innerPadding),
+                contentAlignment = Alignment.TopCenter
             ) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .widthIn(max = 760.dp)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                 // 1. Summary Dashboard View Card
                 item {
                     SurveySummaryDashboardCard(
                         session = session,
                         points = points,
                         markers = markers,
-                        calibrations = calibrations
+                        calibrations = calibrations,
+                        colors = colors
                     )
                 }
 
@@ -179,16 +193,19 @@ fun SurveyReviewScreen(
                 item {
                     Card(
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF131B2E)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                        colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.sky.copy(alpha = 0.5f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("EXPORT & CTECS INTEGRATION", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "EXPORT & CTECS INTEGRATION",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.sky,
+                                fontWeight = FontWeight.Bold
+                            )
 
                             // Direct 1-tap route integration
-
-                            // Import to CTECS Routes Button
                             SurveyGlassButton(
                                 text = "Import Directly into CTECS Routes",
                                 icon = Icons.Default.AltRoute,
@@ -270,12 +287,17 @@ fun SurveyReviewScreen(
                 item {
                     Card(
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF131B2E)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                        colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("EDIT SURVEY ATTRIBUTES", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFFD700), fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "EDIT SURVEY ATTRIBUTES",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.gold,
+                                fontWeight = FontWeight.Bold
+                            )
 
                             OutlinedTextField(
                                 value = surveyName,
@@ -283,10 +305,16 @@ fun SurveyReviewScreen(
                                 label = { Text("Survey Name") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                textStyle = MaterialTheme.typography.bodySmall.copy(color = Color.White),
+                                textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.textPrimary),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color(0xFFFFD700),
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.25f)
+                                    focusedBorderColor = colors.inputFocusedBorder,
+                                    unfocusedBorderColor = colors.inputBorder,
+                                    focusedTextColor = colors.textPrimary,
+                                    unfocusedTextColor = colors.textPrimary,
+                                    focusedLabelColor = colors.inputFocusedBorder,
+                                    unfocusedLabelColor = colors.textSecondary,
+                                    focusedContainerColor = colors.inputBackground,
+                                    unfocusedContainerColor = colors.inputBackground
                                 )
                             )
 
@@ -297,10 +325,16 @@ fun SurveyReviewScreen(
                                     label = { Text("Highway Name") },
                                     singleLine = true,
                                     modifier = Modifier.weight(1f),
-                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = Color.White),
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.textPrimary),
                                     colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = Color(0xFFFFD700),
-                                        unfocusedBorderColor = Color.White.copy(alpha = 0.25f)
+                                        focusedBorderColor = colors.inputFocusedBorder,
+                                        unfocusedBorderColor = colors.inputBorder,
+                                        focusedTextColor = colors.textPrimary,
+                                        unfocusedTextColor = colors.textPrimary,
+                                        focusedLabelColor = colors.inputFocusedBorder,
+                                        unfocusedLabelColor = colors.textSecondary,
+                                        focusedContainerColor = colors.inputBackground,
+                                        unfocusedContainerColor = colors.inputBackground
                                     )
                                 )
                                 OutlinedTextField(
@@ -309,10 +343,16 @@ fun SurveyReviewScreen(
                                     label = { Text("Stretch") },
                                     singleLine = true,
                                     modifier = Modifier.weight(1f),
-                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = Color.White),
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.textPrimary),
                                     colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = Color(0xFFFFD700),
-                                        unfocusedBorderColor = Color.White.copy(alpha = 0.25f)
+                                        focusedBorderColor = colors.inputFocusedBorder,
+                                        unfocusedBorderColor = colors.inputBorder,
+                                        focusedTextColor = colors.textPrimary,
+                                        unfocusedTextColor = colors.textPrimary,
+                                        focusedLabelColor = colors.inputFocusedBorder,
+                                        unfocusedLabelColor = colors.textSecondary,
+                                        focusedContainerColor = colors.inputBackground,
+                                        unfocusedContainerColor = colors.inputBackground
                                     )
                                 )
                             }
@@ -324,12 +364,12 @@ fun SurveyReviewScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column {
-                                    Text("Centreline Offset", fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
+                                    Text("Centreline Offset", fontSize = 11.sp, color = colors.textSecondary)
                                     Text(
                                         text = "${currentOffsetM}m ${currentSide.name} ${if (isAutoMode) "(Auto)" else "(Manual)"}",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFFD700)
+                                        color = colors.gold
                                     )
                                 }
                                 SurveyGlassButton(
@@ -367,18 +407,28 @@ fun SurveyReviewScreen(
 
                 // 4. KM Stones List
                 item {
-                    Text("KM STONE MARKERS (${markers.size})", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFFD700), fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "KM STONE MARKERS (${markers.size})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.gold,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
 
                 if (markers.isEmpty()) {
                     item {
                         Card(
                             shape = RoundedCornerShape(8.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                Text("No KM stone markers were triggered during this survey.", fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f))
+                                Text(
+                                    text = "No KM stone markers were triggered during this survey.",
+                                    fontSize = 12.sp,
+                                    color = colors.textMuted
+                                )
                             }
                         }
                     }
@@ -386,8 +436,8 @@ fun SurveyReviewScreen(
                     items(markers) { marker ->
                         Card(
                             shape = RoundedCornerShape(8.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                            colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -399,28 +449,40 @@ fun SurveyReviewScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(marker.displayChainage, fontWeight = FontWeight.Bold, color = Color(0xFFFFD700), fontSize = 14.sp)
+                                        Text(marker.displayChainage, fontWeight = FontWeight.Bold, color = colors.gold, fontSize = 14.sp)
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Surface(
                                             shape = RoundedCornerShape(4.dp),
-                                            color = Color(0xFF38BDF8).copy(alpha = 0.2f)
+                                            color = colors.sky.copy(alpha = 0.15f)
                                         ) {
-                                            Text(marker.markerType.shortBadge, fontSize = 9.sp, color = Color(0xFF38BDF8), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = marker.markerType.shortBadge,
+                                                fontSize = 9.sp,
+                                                color = colors.sky,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
                                         if (marker.isManuallyCalibrated) {
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Surface(
                                                 shape = RoundedCornerShape(4.dp),
-                                                color = Color(0xFF22C55E).copy(alpha = 0.2f)
+                                                color = colors.green.copy(alpha = 0.15f)
                                             ) {
-                                                Text("CALIBRATED", fontSize = 8.sp, color = Color(0xFF22C55E), modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
+                                                Text(
+                                                    text = "CALIBRATED",
+                                                    fontSize = 8.sp,
+                                                    color = colors.green,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                    fontWeight = FontWeight.Bold
+                                                )
                                             }
                                         }
                                     }
                                     Text(
                                         text = "${String.format(Locale.US, "%.5f, %.5f", marker.latitude, marker.longitude)} • ±${marker.accuracy.toInt()}m ${if (marker.notes.isNotBlank()) " • " + marker.notes else ""}",
                                         fontSize = 11.sp,
-                                        color = Color.White.copy(alpha = 0.6f)
+                                        color = colors.textSecondary
                                     )
                                 }
                                 SurveyGlassIconButton(
@@ -444,6 +506,7 @@ fun SurveyReviewScreen(
             }
         }
     }
+    }
 
     if (showChangeOffsetDialog) {
         ChangeOffsetDialog(
@@ -464,18 +527,32 @@ fun SurveyReviewScreen(
             }
         )
     }
+
+    if (showThemeDialog) {
+        val currentThemeMode by viewModel.themeMode.collectAsStateWithLifecycle(initialValue = "system")
+        SurveyThemeSelectorDialog(
+            currentTheme = currentThemeMode,
+            onSelectTheme = { newMode ->
+                viewModel.setThemeMode(newMode)
+                showThemeDialog = false
+            },
+            onDismiss = { showThemeDialog = false }
+        )
+    }
 }
 
 /**
  * Summary dashboard view in the Survey Review screen that calculates and displays key metrics:
  * total distance, average speed, max speed, number of KM stone markers captured, duration, and chainage progression.
+ * Fully adapts between Light and Dark themes.
  */
 @Composable
 fun SurveySummaryDashboardCard(
     session: SurveySession,
     points: List<SurveyPoint>,
     markers: List<SurveyMarker>,
-    calibrations: List<SurveyCalibrationPoint>
+    calibrations: List<SurveyCalibrationPoint>,
+    colors: SurveyThemeColors = rememberSurveyThemeColors()
 ) {
     // 1. Total Distance Calculations
     val totalDistanceM = session.totalDistanceTravelledMetres
@@ -522,8 +599,8 @@ fun SurveySummaryDashboardCard(
 
     Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF131B2E)),
-        border = androidx.compose.foundation.BorderStroke(1.2.dp, Color(0xFFFFD700).copy(alpha = 0.45f)),
+        colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
+        border = androidx.compose.foundation.BorderStroke(1.2.dp, colors.gold.copy(alpha = 0.5f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -542,13 +619,13 @@ fun SurveySummaryDashboardCard(
                     Box(
                         modifier = Modifier
                             .size(28.dp)
-                            .background(Color(0xFFFFD700).copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
+                            .background(colors.gold.copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Speed,
                             contentDescription = null,
-                            tint = Color(0xFFFFD700),
+                            tint = colors.gold,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -556,7 +633,7 @@ fun SurveySummaryDashboardCard(
                         Text(
                             text = "SUMMARY DASHBOARD",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFFFD700),
+                            color = colors.gold,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp
                         )
@@ -564,15 +641,15 @@ fun SurveySummaryDashboardCard(
                             text = session.name.ifBlank { "Highway Survey Alignment" },
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = colors.textPrimary
                         )
                     }
                 }
 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF22C55E).copy(alpha = 0.15f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22C55E).copy(alpha = 0.5f))
+                    color = colors.green.copy(alpha = 0.15f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.green.copy(alpha = 0.5f))
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -582,11 +659,11 @@ fun SurveySummaryDashboardCard(
                         Box(
                             modifier = Modifier
                                 .size(6.dp)
-                                .background(Color(0xFF22C55E), CircleShape)
+                                .background(colors.green, CircleShape)
                         )
                         Text(
                             text = session.status.label,
-                            color = Color(0xFF22C55E),
+                            color = colors.green,
                             fontWeight = FontWeight.Bold,
                             fontSize = 10.5.sp
                         )
@@ -594,7 +671,7 @@ fun SurveySummaryDashboardCard(
                 }
             }
 
-            Divider(color = Color.White.copy(alpha = 0.08f))
+            HorizontalDivider(color = colors.divider)
 
             // 4-Card Primary Metric Grid (2 Rows x 2 Columns)
             Row(
@@ -607,7 +684,8 @@ fun SurveySummaryDashboardCard(
                     value = totalDistStr,
                     subtext = totalDistSub,
                     icon = Icons.Default.AltRoute,
-                    accentColor = Color(0xFF22C55E),
+                    accentColor = colors.green,
+                    colors = colors,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -617,7 +695,8 @@ fun SurveySummaryDashboardCard(
                     value = String.format(Locale.US, "%.1f km/h", avgSpeedKmh),
                     subtext = "Max: ${String.format(Locale.US, "%.1f", maxSpeedKmh)} km/h",
                     icon = Icons.Default.Speed,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = colors.sky,
+                    colors = colors,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -632,7 +711,8 @@ fun SurveySummaryDashboardCard(
                     value = "$totalMarkers",
                     subtext = "$fullKmCount Full • $halfKmCount Half",
                     icon = Icons.Default.Place,
-                    accentColor = Color(0xFFFFD700),
+                    accentColor = colors.gold,
+                    colors = colors,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -642,7 +722,8 @@ fun SurveySummaryDashboardCard(
                     value = durationStr,
                     subtext = "${points.size} GPS points",
                     icon = Icons.Default.Timer,
-                    accentColor = Color(0xFFA855F7),
+                    accentColor = if (colors.isDark) Color(0xFFA855F7) else Color(0xFF7E22CE),
+                    colors = colors,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -650,8 +731,8 @@ fun SurveySummaryDashboardCard(
             // Chainage Progression Bar
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = Color(0xFF0F172A),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                color = if (colors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9),
+                border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -663,13 +744,13 @@ fun SurveySummaryDashboardCard(
                         Text(
                             text = "Chainage Progression",
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.6f),
+                            color = colors.textSecondary,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
                             text = "${Chainage(chDiff).format()} span",
                             fontSize = 11.sp,
-                            color = Color(0xFFFFD700),
+                            color = colors.gold,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -679,18 +760,18 @@ fun SurveySummaryDashboardCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Start", fontSize = 9.5.sp, color = Color.White.copy(alpha = 0.5f))
-                            Text(session.displayStartChainage, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Start", fontSize = 9.5.sp, color = colors.textMuted)
+                            Text(session.displayStartChainage, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary)
                         }
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
-                            tint = Color(0xFFFFD700).copy(alpha = 0.7f),
+                            tint = colors.gold.copy(alpha = 0.8f),
                             modifier = Modifier.size(16.dp)
                         )
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("End", fontSize = 9.5.sp, color = Color.White.copy(alpha = 0.5f))
-                            Text(session.displayCurrentChainage, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFD700))
+                            Text("End", fontSize = 9.5.sp, color = colors.textMuted)
+                            Text(session.displayCurrentChainage, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.gold)
                         }
                     }
                 }
@@ -702,20 +783,21 @@ fun SurveySummaryDashboardCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text("Lane Track", fontSize = 10.sp, color = Color.White.copy(alpha = 0.55f))
-                    Text(session.displayLaneName, fontSize = 11.5.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
+                    Text("Road Side", fontSize = 10.sp, color = colors.textMuted)
+                    Text(session.displayRoadSide, fontSize = 11.5.sp, color = colors.sky, fontWeight = FontWeight.SemiBold)
                 }
                 Column {
-                    Text("CL Offset", fontSize = 10.sp, color = Color.White.copy(alpha = 0.55f))
-                    Text("${session.centrelineOffsetMetres}m ${session.offsetSide.name}", fontSize = 11.5.sp, color = Color(0xFFFFD700), fontWeight = FontWeight.SemiBold)
+                    Text("Lane", fontSize = 10.sp, color = colors.textMuted)
+                    Text(session.displayLaneName, fontSize = 11.5.sp, color = colors.gold, fontWeight = FontWeight.SemiBold)
                 }
                 Column {
-                    Text("Direction", fontSize = 10.sp, color = Color.White.copy(alpha = 0.55f))
-                    Text(session.direction.label, fontSize = 11.5.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Planned End", fontSize = 10.sp, color = colors.textMuted)
+                    Text(session.displayPlannedEndChainage, fontSize = 11.5.sp, color = colors.textPrimary, fontWeight = FontWeight.SemiBold)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("Segments", fontSize = 10.sp, color = Color.White.copy(alpha = 0.55f))
-                    Text("${points.map { it.segmentIndex }.distinct().size} seg", fontSize = 11.5.sp, color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold)
+                    Text("Interval", fontSize = 10.sp, color = colors.textMuted)
+                    val intvStr = session.confirmationIntervalMetres?.let { "${it / 1000} KM" } ?: "Off"
+                    Text(intvStr, fontSize = 11.5.sp, color = colors.textSecondary, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -729,12 +811,13 @@ private fun DashboardMetricTile(
     subtext: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     accentColor: Color,
+    colors: SurveyThemeColors,
     modifier: Modifier = Modifier
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF0F172A),
-        border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.25f)),
+        color = if (colors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = if (colors.isDark) 0.35f else 0.5f)),
         modifier = modifier
     ) {
         Column(
@@ -749,7 +832,7 @@ private fun DashboardMetricTile(
                 Text(
                     text = title,
                     fontSize = 9.sp,
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = colors.textSecondary,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.4.sp
                 )
@@ -771,15 +854,14 @@ private fun DashboardMetricTile(
                 text = value,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = colors.textPrimary
             )
             Text(
                 text = subtext,
                 fontSize = 9.5.sp,
-                color = accentColor.copy(alpha = 0.9f),
+                color = accentColor.copy(alpha = if (colors.isDark) 0.9f else 1.0f),
                 fontWeight = FontWeight.Medium
             )
         }
     }
 }
-

@@ -6,10 +6,13 @@ import com.example.model.Chainage
 import com.example.model.GeoPoint
 import com.example.survey.data.SaveStatus
 import com.example.survey.data.SurveyRepository
+import com.example.survey.model.CheckpointPrompt
 import com.example.survey.model.KmMarkerType
 import com.example.survey.model.OffsetSide
+import com.example.survey.model.RoadSide
 import com.example.survey.model.SurveyCalibrationPoint
 import com.example.survey.model.SurveyDirection
+import com.example.survey.model.SurveyLane
 import com.example.survey.model.SurveyMarker
 import com.example.survey.model.SurveyPoint
 import com.example.survey.model.SurveySession
@@ -25,6 +28,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import kotlin.math.abs
 
 data class RelocationState(
     val lastPoint: GeoPoint,
@@ -44,6 +49,12 @@ class SurveyManager(
     private val _relocationPrompt = MutableStateFlow<RelocationState?>(null)
     val relocationPrompt: StateFlow<RelocationState?> = _relocationPrompt.asStateFlow()
 
+    private val _checkpointPrompt = MutableStateFlow<CheckpointPrompt?>(null)
+    val checkpointPrompt: StateFlow<CheckpointPrompt?> = _checkpointPrompt.asStateFlow()
+
+    private val _endingChainageReachedPrompt = MutableStateFlow<Boolean>(false)
+    val endingChainageReachedPrompt: StateFlow<Boolean> = _endingChainageReachedPrompt.asStateFlow()
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val activePoints: StateFlow<List<SurveyPoint>> = repository.activeSession.flatMapLatest { session ->
         if (session != null) repository.getPointsFlow(session.id) else flowOf(emptyList())
@@ -57,6 +68,8 @@ class SurveyManager(
     suspend fun startNewSurvey(session: SurveySession): SurveySession = withContext(Dispatchers.IO) {
         val created = repository.createNewSession(session.copy(status = SurveyStatus.RECORDING))
         _relocationPrompt.value = null
+        _checkpointPrompt.value = null
+        _endingChainageReachedPrompt.value = false
         created
     }
 
@@ -118,6 +131,8 @@ class SurveyManager(
 
     suspend fun stopSurvey(): SurveySession? = withContext(Dispatchers.IO) {
         val current = activeSession.value ?: return@withContext null
+        _checkpointPrompt.value = null
+        _endingChainageReachedPrompt.value = false
         val finalized = current.copy(
             status = SurveyStatus.COMPLETED,
             updatedAt = System.currentTimeMillis()
@@ -163,6 +178,7 @@ class SurveyManager(
                 calculatedChainageMetres = calculatedChainage,
                 offsetMetres = session.centrelineOffsetMetres,
                 offsetSide = session.offsetSide.name,
+                roadSide = session.roadSide.name,
                 lane = session.displayLaneName,
                 timestamp = System.currentTimeMillis(),
                 isRelocationBoundary = (session.currentSegmentIndex > 0 && lastPt == null)
@@ -182,7 +198,139 @@ class SurveyManager(
                 updatedAt = System.currentTimeMillis()
             )
             repository.updateSession(updatedSession)
+
+            // ------------------------------------------------------------------
+            // 1. Configurable Chainage Confirmation Checkpoint Trigger
+            // Triggered based strictly on actual accumulated surveyed distance
+            // ------------------------------------------------------------------
+            val interval = session.confirmationIntervalMetres
+            if (interval != null && interval > 0 && _checkpointPrompt.value == null) {
+                val nextCheckpointDist = (((session.lastConfirmedDistanceM / interval).toLong() + 1) * interval).toDouble()
+                if (newTotalDist >= nextCheckpointDist) {
+                    val checkpointCh = when (session.direction) {
+                        SurveyDirection.INCREASING -> session.startChainageMetres + nextCheckpointDist.toLong()
+                        SurveyDirection.DECREASING -> session.startChainageMetres - nextCheckpointDist.toLong()
+                        SurveyDirection.CUSTOM -> session.startChainageMetres + nextCheckpointDist.toLong()
+                    }
+                    val prompt = CheckpointPrompt(
+                        checkpointIndex = (nextCheckpointDist / interval).toInt(),
+                        targetDistanceM = nextCheckpointDist,
+                        calculatedChainageMetres = calculatedChainage,
+                        checkpointChainageMetres = checkpointCh,
+                        totalSurveyedDistanceM = newTotalDist,
+                        roadSide = session.roadSide.label,
+                        lane = session.displayLaneName,
+                        currentGps = point
+                    )
+                    _checkpointPrompt.value = prompt
+                }
+            }
+
+            // ------------------------------------------------------------------
+            // 2. Planned Ending Chainage Reached Check
+            // Shows non-blocking alert with Finish / Continue. NEVER stops automatically!
+            // ------------------------------------------------------------------
+            val plannedEnd = session.plannedEndChainageMetres
+            if (plannedEnd != null && !_endingChainageReachedPrompt.value) {
+                val reached = when (session.direction) {
+                    SurveyDirection.INCREASING -> calculatedChainage >= plannedEnd
+                    SurveyDirection.DECREASING -> calculatedChainage <= plannedEnd
+                    SurveyDirection.CUSTOM -> abs(calculatedChainage - session.startChainageMetres) >= abs(plannedEnd - session.startChainageMetres)
+                }
+                if (reached) {
+                    _endingChainageReachedPrompt.value = true
+                }
+            }
         }
+    }
+
+    /**
+     * Confirms or edits chainage at a distance checkpoint.
+     * STRICT DATA INTEGRITY:
+     * - Coordinates (lat, lon, altitude) are NEVER changed.
+     * - The actual recorded GPS points and centreline remain 100% untouched.
+     * - Modifies only the calibration / chainage reference value.
+     * - Stores Original Chainage and Corrected Chainage separately in audit log.
+     */
+    suspend fun confirmCheckpoint(
+        prompt: CheckpointPrompt,
+        correctedChainageMetres: Long? = null
+    ) = withContext(Dispatchers.IO) {
+        val session = activeSession.value ?: return@withContext
+        _checkpointPrompt.value = null
+
+        val effectiveTargetDist = prompt.targetDistanceM
+        val effectiveCh = correctedChainageMetres ?: prompt.calculatedChainageMetres
+        val isCorrected = correctedChainageMetres != null && correctedChainageMetres != prompt.calculatedChainageMetres
+
+        if (isCorrected) {
+            val drift = (correctedChainageMetres!! - prompt.calculatedChainageMetres).toDouble()
+            val cal = SurveyCalibrationPoint(
+                sessionId = session.id,
+                markerId = "CP_${prompt.checkpointIndex}",
+                checkpointName = "Checkpoint #${prompt.checkpointIndex} (${String.format(Locale.US, "%.0f km", prompt.targetDistanceM / 1000.0)})",
+                latitude = prompt.currentGps?.latitude ?: session.lastLatitude ?: 0.0,
+                longitude = prompt.currentGps?.longitude ?: session.lastLongitude ?: 0.0,
+                measuredDistanceMetres = session.totalDistanceTravelledMetres,
+                originalChainageMetres = prompt.calculatedChainageMetres,
+                knownChainageMetres = correctedChainageMetres,
+                driftMetres = drift,
+                timestamp = System.currentTimeMillis()
+            )
+            repository.saveCalibration(cal)
+        }
+
+        val updated = session.copy(
+            currentChainageMetres = effectiveCh,
+            lastConfirmedDistanceM = effectiveTargetDist,
+            updatedAt = System.currentTimeMillis()
+        )
+        repository.updateSession(updated)
+    }
+
+    fun dismissEndingChainagePrompt() {
+        _endingChainageReachedPrompt.value = false
+    }
+
+    suspend fun updateRoadSide(newSide: RoadSide) = withContext(Dispatchers.IO) {
+        val session = activeSession.value ?: return@withContext
+        val newOffsetSide = newSide.toOffsetSide()
+        val updated = session.copy(
+            roadSide = newSide,
+            offsetSide = newOffsetSide,
+            updatedAt = System.currentTimeMillis()
+        )
+        repository.updateSession(updated)
+    }
+
+    suspend fun updateLane(newLane: SurveyLane, customLaneName: String = "") = withContext(Dispatchers.IO) {
+        val session = activeSession.value ?: return@withContext
+        val newOffsetM = if (newLane != SurveyLane.CUSTOM && newLane != SurveyLane.AUTO) newLane.defaultOffsetMetres else session.centrelineOffsetMetres
+        val updated = session.copy(
+            lane = newLane,
+            customLaneName = customLaneName,
+            centrelineOffsetMetres = newOffsetM,
+            updatedAt = System.currentTimeMillis()
+        )
+        repository.updateSession(updated)
+    }
+
+    suspend fun updateConfirmationInterval(newIntervalM: Long?) = withContext(Dispatchers.IO) {
+        val session = activeSession.value ?: return@withContext
+        val updated = session.copy(
+            confirmationIntervalMetres = newIntervalM,
+            updatedAt = System.currentTimeMillis()
+        )
+        repository.updateSession(updated)
+    }
+
+    suspend fun updatePlannedEndChainage(plannedEndM: Long?) = withContext(Dispatchers.IO) {
+        val session = activeSession.value ?: return@withContext
+        val updated = session.copy(
+            plannedEndChainageMetres = plannedEndM,
+            updatedAt = System.currentTimeMillis()
+        )
+        repository.updateSession(updated)
     }
 
     suspend fun addKmStoneMarker(
@@ -205,6 +353,7 @@ class SurveyManager(
             altitude = point.altitude,
             accuracy = accuracy,
             markerType = markerType,
+            roadSide = session.roadSide.name,
             lane = session.displayLaneName,
             direction = session.direction.label,
             offsetMetres = session.centrelineOffsetMetres,
@@ -221,13 +370,17 @@ class SurveyManager(
             val cal = SurveyCalibrationPoint(
                 sessionId = session.id,
                 markerId = marker.id,
+                checkpointName = "KM Stone Marker (${Chainage(confirmedChainageMetres).format()})",
+                latitude = point.latitude,
+                longitude = point.longitude,
                 measuredDistanceMetres = session.totalDistanceTravelledMetres,
+                originalChainageMetres = session.currentChainageMetres,
                 knownChainageMetres = confirmedChainageMetres,
-                driftMetres = drift
+                driftMetres = drift,
+                timestamp = System.currentTimeMillis()
             )
             repository.saveCalibration(cal)
 
-            // Immediately adjust current chainage
             val updated = session.copy(currentChainageMetres = confirmedChainageMetres)
             repository.updateSession(updated)
         }
@@ -251,9 +404,12 @@ class SurveyManager(
         highwayName: String,
         stretchName: String,
         startChainageMetres: Long,
-        direction: SurveyDirection,
-        lane: com.example.survey.model.SurveyLane,
-        customLaneName: String
+        plannedEndChainageMetres: Long? = activeSession.value?.plannedEndChainageMetres,
+        direction: SurveyDirection = activeSession.value?.direction ?: SurveyDirection.INCREASING,
+        roadSide: RoadSide = activeSession.value?.roadSide ?: RoadSide.RHS,
+        lane: SurveyLane = activeSession.value?.lane ?: SurveyLane.FAST,
+        customLaneName: String = activeSession.value?.customLaneName ?: "",
+        confirmationIntervalMetres: Long? = activeSession.value?.confirmationIntervalMetres
     ) = withContext(Dispatchers.IO) {
         val session = activeSession.value ?: return@withContext
         val updated = session.copy(
@@ -261,9 +417,13 @@ class SurveyManager(
             highwayName = highwayName,
             stretchName = stretchName,
             startChainageMetres = startChainageMetres,
+            plannedEndChainageMetres = plannedEndChainageMetres,
             direction = direction,
+            roadSide = roadSide,
+            offsetSide = roadSide.toOffsetSide(),
             lane = lane,
             customLaneName = customLaneName,
+            confirmationIntervalMetres = confirmationIntervalMetres,
             updatedAt = System.currentTimeMillis()
         )
         repository.updateSession(updated)

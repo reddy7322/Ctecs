@@ -259,6 +259,8 @@ fun CameraScreen(
     onNavigateToSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    com.example.util.KeepScreenOn(enabled = true, requesterId = "CameraScreen")
+
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE

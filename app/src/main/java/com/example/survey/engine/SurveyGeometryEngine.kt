@@ -1,11 +1,16 @@
 package com.example.survey.engine
 
 import com.example.geo.GeoUtils
+import com.example.model.Chainage
 import com.example.model.GeoPoint
+import com.example.survey.model.CentrelineChainageLabel
 import com.example.survey.model.OffsetSide
+import com.example.survey.model.RoadSide
 import com.example.survey.model.SurveyCalibrationPoint
 import com.example.survey.model.SurveyDirection
+import com.example.survey.model.SurveyLane
 import com.example.survey.model.SurveyPoint
+import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -128,6 +133,119 @@ object SurveyGeometryEngine {
         } else {
             rawChainage
         }
+    }
+
+    /**
+     * Generates precise 200-metre chainage labels along the generated Highway Centreline.
+     * Places each label at its actual interpolated geographical position along the centreline polyline,
+     * maintaining the active chainage calibration and travel direction without modifying original GPS tracks.
+     */
+    fun generate200mChainageLabels(
+        centrelinePts: List<GeoPoint>,
+        startChainageMetres: Long,
+        direction: SurveyDirection,
+        calibrations: List<SurveyCalibrationPoint> = emptyList()
+    ): List<CentrelineChainageLabel> {
+        if (centrelinePts.size < 2) return emptyList()
+
+        val n = centrelinePts.size
+        val segLengths = DoubleArray(n - 1)
+        var totalCentrelineLengthM = 0.0
+
+        for (i in 0 until n - 1) {
+            val d = GeoUtils.distanceMetres(centrelinePts[i], centrelinePts[i + 1])
+            segLengths[i] = d
+            totalCentrelineLengthM += d
+        }
+
+        if (totalCentrelineLengthM < 50.0) return emptyList()
+
+        val driftM = calibrations.maxByOrNull { it.timestamp }?.driftMetres?.toLong() ?: 0L
+        val effectiveStartCh = startChainageMetres + driftM
+
+        val result = mutableListOf<CentrelineChainageLabel>()
+
+        val targetChainages = mutableListOf<Long>()
+        if (direction == SurveyDirection.DECREASING) {
+            val first200 = (effectiveStartCh / 200L) * 200L
+            val last200 = ((effectiveStartCh - totalCentrelineLengthM.toLong() + 199L) / 200L) * 200L
+            var ch = first200
+            while (ch >= last200) {
+                targetChainages.add(ch)
+                ch -= 200L
+            }
+        } else {
+            // INCREASING or CUSTOM
+            val first200 = ((effectiveStartCh + 199L) / 200L) * 200L
+            val last200 = (effectiveStartCh + totalCentrelineLengthM.toLong()) / 200L * 200L
+            var ch = first200
+            while (ch <= last200) {
+                targetChainages.add(ch)
+                ch += 200L
+            }
+        }
+
+        for (ch in targetChainages) {
+            val distFromStart = abs((ch - driftM) - startChainageMetres).toDouble()
+            if (distFromStart in 0.0..totalCentrelineLengthM) {
+                // Find segment
+                var accumulated = 0.0
+                var found = false
+                for (i in 0 until n - 1) {
+                    val segLen = segLengths[i]
+                    if (distFromStart <= accumulated + segLen || (i == n - 2 && !found)) {
+                        val fraction = if (segLen > 0.0) ((distFromStart - accumulated) / segLen).coerceIn(0.0, 1.0) else 0.0
+                        val p1 = centrelinePts[i]
+                        val p2 = centrelinePts[i + 1]
+
+                        val lat = p1.latitude + fraction * (p2.latitude - p1.latitude)
+                        val lon = p1.longitude + fraction * (p2.longitude - p1.longitude)
+                        val alt = p1.altitude + fraction * (p2.altitude - p1.altitude)
+                        val bearing = GeoUtils.bearingDegrees(p1, p2)
+
+                        result.add(
+                            CentrelineChainageLabel(
+                                chainageMetres = ch,
+                                displayChainage = Chainage(ch).format(),
+                                position = GeoPoint(lat, lon, alt),
+                                bearingDeg = bearing
+                            )
+                        )
+                        found = true
+                        break
+                    }
+                    accumulated += segLen
+                }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Automatic detection helper for Road Side (LHS/RHS/BHS) and Lane (Inner/Fast/Outer/Slow/Service)
+     * based on lateral offset distance and side configuration.
+     */
+    fun detectRoadSideAndLane(
+        offsetDistanceM: Double,
+        offsetSide: OffsetSide
+    ): Pair<RoadSide, SurveyLane> {
+        val side = when (offsetSide) {
+            OffsetSide.LEFT -> RoadSide.LHS
+            OffsetSide.RIGHT -> RoadSide.RHS
+            OffsetSide.CENTRE -> RoadSide.BHS
+        }
+
+        val lane = when {
+            offsetDistanceM <= 0.5 -> SurveyLane.CUSTOM
+            offsetDistanceM in 0.5..4.5 -> SurveyLane.INNER
+            offsetDistanceM in 4.5..8.5 -> SurveyLane.FAST
+            offsetDistanceM in 8.5..12.0 -> SurveyLane.OUTER
+            offsetDistanceM > 12.0 -> SurveyLane.SERVICE_ROAD
+            else -> SurveyLane.FAST
+        }
+
+        return Pair(side, lane)
     }
 
     /**

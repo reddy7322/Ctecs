@@ -2,9 +2,9 @@ package com.example.model
 
 enum class MatchConfidence {
     HIGH,     // Perpendicular offset <= 15m and GPS accuracy <= 10m
-    MEDIUM,   // Offset 15m..30m or moderate GPS accuracy
-    LOW,      // Offset > 30m or poor GPS fix
-    NO_MATCH  // No route loaded or GPS too far
+    MEDIUM,   // Offset 15m..35m or moderate GPS accuracy
+    LOW,      // Offset > 35m, poor GPS fix, or sudden jump
+    NO_MATCH  // No route loaded or GPS too far (> 100m)
 }
 
 /**
@@ -19,11 +19,23 @@ data class ChainageMatchResult(
     val statusMessage: String = "No route loaded",
     val isManual: Boolean = false,
     val matchedAlignmentName: String = "",
-    val detectedSide: String = "Unknown", // "LHS", "RHS", or "Unknown"
+    val detectedSide: String = "Unknown", // "LHS", "RHS", "BHS", or "Unknown"
     val timestamp: Long = System.currentTimeMillis(),
     val source: ChainageSource = ChainageSource.GPS,
     val rawUncorrectedChainage: Chainage? = null,
-    val correctionPointInfo: String? = null
+    val correctionPointInfo: String? = null,
+
+    // Precision KMZ Alignment Matching additions
+    val matchedSegmentIndex: Int = -1,
+    val matchedSegmentLengthM: Double = 0.0,
+    val segmentProjectionT: Double = 0.0,
+    val alignmentDirection: String = "INCREASING",
+    val isUncertain: Boolean = false,
+    val lastReliableChainage: Chainage? = null,
+    val distanceAlongAlignmentMetres: Double = 0.0,
+    val nearestReferenceMarkerLabel: String? = null,
+    val bracketingMarkersInfo: String? = null,
+    val sourceKmzReferenceStatus: String = "Valid"
 ) {
     val displayChainage: String
         get() = chainage?.format() ?: if (isManual) "Manual" else "---"

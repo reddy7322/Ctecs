@@ -35,6 +35,7 @@ import com.example.model.RoadSide
 import com.example.model.RouteData
 import com.example.model.SpeedUnit
 import com.example.geo.SmartChainageCorrectionEngine
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -437,14 +438,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // 1. MANUAL override
     // 2. CUSTOM CORRECTION (within valid KMZ correction coverage)
     // 3. KMZ (original imported KMZ chainage)
+    val selectedAlignmentId = MutableStateFlow<String?>(null)
+    private var lastCalculatedMatchResult: ChainageMatchResult? = null
+
+    fun selectAlignment(alignmentId: String?) {
+        selectedAlignmentId.value = alignmentId
+    }
+
+    private val effectiveRouteFlow: Flow<RouteData?> = combine(activeRouteData, selectedAlignmentId) { route, selectedAlignId ->
+        if (selectedAlignId != null && route != null) {
+            route.copy(selectedAlignmentId = selectedAlignId)
+        } else {
+            route
+        }
+    }
+
     // 4. GPS (unmatched fallback)
     val liveMatchResult: StateFlow<ChainageMatchResult> = combine(
         locationState,
-        activeRouteData,
+        effectiveRouteFlow,
         manualChainage,
         routeCorrectionsMap,
         isRouteCorrectionsEnabled
-    ) { loc, route, manual, correctionsMap, isCorrectionsEnabled ->
+    ) { loc: LocationState, route: RouteData?, manual: Chainage?, correctionsMap: Map<String, List<ChainageCorrectionPoint>>, isCorrectionsEnabled: Boolean ->
         // Tier 1: MANUAL OVERRIDE (Highest priority)
         if (manual != null) {
             val side = progressionTracker.getCurrentSide()
@@ -474,18 +490,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        // Calculate original KMZ alignment match
+        // Calculate original KMZ alignment match with precision nearest-segment & continuity
         val kmzMatch = ChainageMatcher.match(
             gpsPoint = loc.point,
             gpsAccuracy = loc.accuracy,
             bearing = loc.bearing,
-            routeData = route
+            routeData = route,
+            previousResult = lastCalculatedMatchResult
         )
 
         val rawKmzChainage = kmzMatch.chainage
 
         if (kmzMatch.confidence == com.example.model.MatchConfidence.NO_MATCH || rawKmzChainage == null) {
             val stabilized = progressionTracker.processResult(kmzMatch, route.id)
+            lastCalculatedMatchResult = stabilized
             return@combine stabilized.copy(
                 source = ChainageSource.GPS,
                 rawUncorrectedChainage = null
@@ -524,6 +542,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val stabilized = progressionTracker.processResult(finalResult, route.id)
+        lastCalculatedMatchResult = stabilized
         if (!progressionTracker.isManualOverride() && stabilized.detectedSide.isNotBlank() && stabilized.detectedSide != "Unknown") {
             val detectedEnum = com.example.model.RoadSide.fromString(stabilized.detectedSide)
             if (projectProfile.value.roadSide != detectedEnum) {

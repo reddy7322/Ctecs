@@ -13,14 +13,35 @@ enum class SurveyStatus(val label: String) {
     COMPLETED("Completed")
 }
 
+enum class RoadSide(val label: String, val shortCode: String) {
+    AUTO("Auto", "AUTO"),
+    LHS("LHS", "LHS"),
+    RHS("RHS", "RHS"),
+    BHS("BHS", "BHS");
+
+    fun toOffsetSide(): OffsetSide = when (this) {
+        LHS -> OffsetSide.LEFT
+        RHS -> OffsetSide.RIGHT
+        BHS -> OffsetSide.CENTRE
+        AUTO -> OffsetSide.RIGHT
+    }
+}
+
 enum class SurveyLane(val label: String, val defaultOffsetMetres: Double) {
-    MCW_FAST("MCW Fast Lane", 7.0),
-    MCW_SLOW("MCW Slow Lane", 3.5),
-    MCW_INNER("MCW Inner Lane", 3.5),
-    MCW_OUTER("MCW Outer Lane", 5.25),
+    AUTO("Auto", 7.0),
+    INNER("Inner Lane", 3.5),
+    OUTER("Outer Lane", 5.25),
+    FAST("Fast Lane", 7.0),
+    SLOW("Slow Lane", 3.5),
     SERVICE_ROAD("Service Road", 14.0),
-    SLIP_ROAD("Slip Road", 10.5),
-    CUSTOM("Other / Custom Lane", 0.0)
+    CUSTOM("Other / Custom", 0.0),
+
+    // Backward compatibility aliases
+    MCW_FAST("Fast Lane", 7.0),
+    MCW_SLOW("Slow Lane", 3.5),
+    MCW_INNER("Inner Lane", 3.5),
+    MCW_OUTER("Outer Lane", 5.25),
+    SLIP_ROAD("Slip Road", 10.5)
 }
 
 enum class SurveyDirection(val label: String) {
@@ -33,6 +54,28 @@ enum class OffsetSide(val label: String) {
     CENTRE("Centreline (0m)"),
     LEFT("LHS (Left of CL)"),
     RIGHT("RHS (Right of CL)")
+}
+
+enum class ConfirmationIntervalOption(val label: String, val intervalMetres: Long?) {
+    EVERY_1_KM("Every 1 KM", 1000L),
+    EVERY_2_KM("Every 2 KM (Default)", 2000L),
+    EVERY_3_KM("Every 3 KM", 3000L),
+    EVERY_5_KM("Every 5 KM", 5000L),
+    CUSTOM("Custom Interval", null),
+    OFF("Off", null);
+
+    companion object {
+        fun fromMetres(m: Long?): ConfirmationIntervalOption {
+            return when (m) {
+                null -> OFF
+                1000L -> EVERY_1_KM
+                2000L -> EVERY_2_KM
+                3000L -> EVERY_3_KM
+                5000L -> EVERY_5_KM
+                else -> CUSTOM
+            }
+        }
+    }
 }
 
 enum class KmMarkerType(val label: String, val shortBadge: String) {
@@ -52,13 +95,17 @@ data class SurveySession(
     val stretchName: String = "",
     val surveyDate: String = "",
     val startChainageMetres: Long = 0L,
+    val plannedEndChainageMetres: Long? = null,
     val currentChainageMetres: Long = 0L,
     val direction: SurveyDirection = SurveyDirection.INCREASING,
-    val lane: SurveyLane = SurveyLane.MCW_FAST,
+    val roadSide: RoadSide = RoadSide.RHS,
+    val lane: SurveyLane = SurveyLane.FAST,
     val customLaneName: String = "",
     val centrelineOffsetMetres: Double = 7.0,
     val offsetSide: OffsetSide = OffsetSide.RIGHT,
     val isOffsetAuto: Boolean = false,
+    val confirmationIntervalMetres: Long? = 2000L,
+    val lastConfirmedDistanceM: Double = 0.0,
     val status: SurveyStatus = SurveyStatus.NOT_STARTED,
     val totalDistanceTravelledMetres: Double = 0.0,
     val currentSegmentIndex: Int = 0,
@@ -75,11 +122,33 @@ data class SurveySession(
     val displayLaneName: String
         get() = if (lane == SurveyLane.CUSTOM && customLaneName.isNotBlank()) customLaneName else lane.label
 
+    val displayRoadSide: String
+        get() = roadSide.label
+
     val displayStartChainage: String
         get() = Chainage(startChainageMetres).format()
 
     val displayCurrentChainage: String
         get() = Chainage(currentChainageMetres).format()
+
+    val displayPlannedEndChainage: String
+        get() = plannedEndChainageMetres?.let { Chainage(it).format() } ?: "None"
+
+    val hasPlannedEndChainage: Boolean
+        get() = plannedEndChainageMetres != null
+
+    val plannedSurveyLengthMetres: Long?
+        get() = plannedEndChainageMetres?.let { kotlin.math.abs(it - startChainageMetres) }
+
+    val remainingDistanceMetres: Long?
+        get() {
+            val end = plannedEndChainageMetres ?: return null
+            return when (direction) {
+                SurveyDirection.INCREASING -> (end - currentChainageMetres).coerceAtLeast(0L)
+                SurveyDirection.DECREASING -> (currentChainageMetres - end).coerceAtLeast(0L)
+                SurveyDirection.CUSTOM -> kotlin.math.abs(end - currentChainageMetres)
+            }
+        }
 }
 
 data class SurveyPoint(
@@ -95,6 +164,7 @@ data class SurveyPoint(
     val calculatedChainageMetres: Long = 0L,
     val offsetMetres: Double = 0.0,
     val offsetSide: String = "RIGHT",
+    val roadSide: String = "RHS",
     val lane: String = "",
     val timestamp: Long = System.currentTimeMillis(),
     val isRelocationBoundary: Boolean = false
@@ -113,6 +183,7 @@ data class SurveyMarker(
     val altitude: Double = 0.0,
     val accuracy: Float = 0f,
     val markerType: KmMarkerType = KmMarkerType.FULL_KM,
+    val roadSide: String = "RHS",
     val lane: String = "",
     val direction: String = "",
     val offsetMetres: Double = 0.0,
@@ -127,9 +198,31 @@ data class SurveyMarker(
 data class SurveyCalibrationPoint(
     val id: String = UUID.randomUUID().toString(),
     val sessionId: String,
-    val markerId: String,
+    val markerId: String = "",
+    val checkpointName: String = "",
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
     val measuredDistanceMetres: Double,
-    val knownChainageMetres: Long,
+    val originalChainageMetres: Long = 0L,
+    val knownChainageMetres: Long, // Corrected Chainage
     val driftMetres: Double,
     val timestamp: Long = System.currentTimeMillis()
+)
+
+data class CentrelineChainageLabel(
+    val chainageMetres: Long,
+    val displayChainage: String,
+    val position: GeoPoint,
+    val bearingDeg: Double
+)
+
+data class CheckpointPrompt(
+    val checkpointIndex: Int,
+    val targetDistanceM: Double,
+    val calculatedChainageMetres: Long,
+    val checkpointChainageMetres: Long,
+    val totalSurveyedDistanceM: Double,
+    val roadSide: String,
+    val lane: String,
+    val currentGps: GeoPoint?
 )

@@ -148,7 +148,7 @@ class HighwaySurveyEngineTest {
         assertTrue(kml.contains("<kml xmlns=\"http://www.opengis.net/kml/2.2\">"))
         assertTrue(kml.contains("<name>Highway Centreline</name>"))
         assertTrue(kml.contains("<name>Lane Alignment</name>"))
-        assertTrue(kml.contains("MCW Fast Lane Alignment"))
+        assertTrue(kml.contains("Fast Lane Alignment"))
         assertTrue(kml.contains("<name>Original GPS Track</name>"))
         assertTrue(kml.contains("<name>KM Stone Markers</name>"))
         assertTrue(kml.contains("NH-44 Expansion"))

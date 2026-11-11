@@ -22,17 +22,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddLocationAlt
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
@@ -41,18 +46,12 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,7 +74,6 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -90,6 +88,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.ToastType
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.hypot
 
 @Composable
 fun SurveyScreen(
@@ -106,8 +105,22 @@ fun SurveyScreen(
     val activeMarkers by surveyManager.activeMarkers.collectAsStateWithLifecycle()
     val saveStatus by surveyManager.saveStatus.collectAsStateWithLifecycle()
     val relocationPrompt by surveyManager.relocationPrompt.collectAsStateWithLifecycle()
+    val checkpointPrompt by surveyManager.checkpointPrompt.collectAsStateWithLifecycle()
+    val endingChainageReached by surveyManager.endingChainageReachedPrompt.collectAsStateWithLifecycle()
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val allSessions by surveyManager.repository.allSessions.collectAsStateWithLifecycle(emptyList())
+
+    // ----------------------------------------------------
+    // SCREEN WAKE LOCK: Keep display awake during active survey recording/paused
+    // ----------------------------------------------------
+    val isSurveyActive = activeSession?.status == SurveyStatus.RECORDING || activeSession?.status == SurveyStatus.PAUSED
+    com.example.util.KeepScreenOn(enabled = isSurveyActive, requesterId = "SurveyScreen")
+
+    // Theme state
+    val colors = rememberSurveyThemeColors()
+    val isDark = colors.isDark
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    var showThemeDialog by remember { mutableStateOf(false) }
 
     val currentGps = locationState.point
     val currentAccuracy = locationState.accuracy
@@ -118,6 +131,7 @@ fun SurveyScreen(
     var showNewConfigDialog by remember { mutableStateOf(false) }
     var showAddKmStoneDialog by remember { mutableStateOf(false) }
     var showChangeOffsetDialog by remember { mutableStateOf(false) }
+    var showQuickSettingsDialog by remember { mutableStateOf(false) }
     var showSavedSurveysDialog by remember { mutableStateOf(false) }
     var reviewSessionTarget by remember { mutableStateOf<SurveySession?>(null) }
 
@@ -126,6 +140,7 @@ fun SurveyScreen(
     var showCentreline by remember { mutableStateOf(true) }
     var showLaneTrack by remember { mutableStateOf(true) }
     var showMarkers by remember { mutableStateOf(true) }
+    var show200mLabels by remember { mutableStateOf(true) }
     var mapType by remember { mutableStateOf("standard") }
 
     // Interactive Map State
@@ -181,7 +196,7 @@ fun SurveyScreen(
         onNavigateBack()
     }
 
-    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0F172A))) {
+    Box(modifier = modifier.fillMaxSize().background(colors.background)) {
         // ----------------------------------------------------
         // 1. LIVE INTERACTIVE OSM MAP CANVAS
         // ----------------------------------------------------
@@ -205,7 +220,7 @@ fun SurveyScreen(
                 ?: activePoints.lastOrNull()?.geoPoint
                 ?: GeoPoint(28.6139, 77.2090)
 
-            // Render OSM Street or Satellite tile background
+            // Render OSM Street or Satellite tile background with active theme
             val osmBitmap = OsmTileManager.renderMapBitmap(
                 context = context,
                 center = anchorPoint,
@@ -214,17 +229,17 @@ fun SurveyScreen(
                 zoom = currentZoom,
                 panOffsetX = panOffsetX,
                 panOffsetY = panOffsetY,
-                darkTheme = true,
+                darkTheme = isDark,
                 mapType = mapType
             )
 
             if (osmBitmap != null) {
                 drawImage(image = osmBitmap.asImageBitmap())
             } else {
-                drawRect(color = Color(0xFF0F172A))
+                drawRect(color = colors.background)
             }
 
-            // 1. Original Travelled GPS Track (Emerald Green)
+            // 1. Original Travelled GPS Track
             if (showGpsTrack && activePoints.size >= 2) {
                 val segments = activePoints.groupBy { it.segmentIndex }
                 segments.forEach { (_, segPoints) ->
@@ -242,21 +257,22 @@ fun SurveyScreen(
                         }
                         drawPath(
                             path = path,
-                            color = Color(0xFF22C55E),
+                            color = colors.green,
                             style = Stroke(width = 6f)
                         )
                     }
                 }
             }
 
-            // 2. Highway Centreline (Generated Gold Dashed Line)
-            if (showCentreline && activeSession != null && activePoints.size >= 2) {
-                val centrelinePts = SurveyGeometryEngine.generateCentrelineTrack(
+            // 2. Highway Centreline (Generated Gold Dashed Line) & 200m Chainage Labels
+            var centrelinePts: List<GeoPoint> = emptyList()
+            if (activeSession != null && activePoints.size >= 2) {
+                centrelinePts = SurveyGeometryEngine.generateCentrelineTrack(
                     points = activePoints,
                     offsetDistanceM = activeSession!!.centrelineOffsetMetres,
                     offsetSide = activeSession!!.offsetSide
                 )
-                if (centrelinePts.size >= 2) {
+                if (showCentreline && centrelinePts.size >= 2) {
                     val clPath = Path()
                     val (clX, clY) = OsmTileManager.geoToScreen(
                         centrelinePts[0], anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
@@ -270,12 +286,99 @@ fun SurveyScreen(
                     }
                     drawPath(
                         path = clPath,
-                        color = Color(0xFFFFD700),
+                        color = colors.gold,
                         style = Stroke(
                             width = 5f,
                             pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 8f), 0f)
                         )
                     )
+                }
+
+                // 2b. Centreline Chainage Labels Every 200 Metres
+                if (show200mLabels && centrelinePts.size >= 2) {
+                    val labels200m = SurveyGeometryEngine.generate200mChainageLabels(
+                        centrelinePts = centrelinePts,
+                        startChainageMetres = activeSession!!.startChainageMetres,
+                        direction = activeSession!!.direction
+                    )
+
+                    val labelPaint = android.graphics.Paint().apply {
+                        color = if (isDark) android.graphics.Color.parseColor("#FFD700") else android.graphics.Color.parseColor("#92400E")
+                        textSize = 22f
+                        isFakeBoldText = true
+                        textAlign = android.graphics.Paint.Align.CENTER
+                    }
+                    val bgLabelPaint = android.graphics.Paint().apply {
+                        color = if (isDark) android.graphics.Color.parseColor("#DD0F172A") else android.graphics.Color.parseColor("#EEFEF3C7")
+                        style = android.graphics.Paint.Style.FILL
+                    }
+                    val strokeLabelPaint = android.graphics.Paint().apply {
+                        color = if (isDark) android.graphics.Color.parseColor("#66FFD700") else android.graphics.Color.parseColor("#99D97706")
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 1.5f
+                    }
+
+                    var lastDrawnX = -9999f
+                    var lastDrawnY = -9999f
+
+                    labels200m.forEach { lbl ->
+                        // Zoom adaptive visibility:
+                        // Zoom >= 16: show all 200m labels
+                        // Zoom 14..15: show 400m / 1000m labels
+                        // Zoom < 14: show only round 1000m (1 KM) labels
+                        val is1Km = lbl.chainageMetres % 1000L == 0L
+                        val is400m = lbl.chainageMetres % 400L == 0L
+                        val shouldRenderAtZoom = when {
+                            currentZoom >= 16 -> true
+                            currentZoom in 14..15 -> is400m || is1Km
+                            else -> is1Km
+                        }
+
+                        if (shouldRenderAtZoom) {
+                            val (lx, ly) = OsmTileManager.geoToScreen(
+                                lbl.position, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
+                            )
+                            if (lx in -40f..(w + 40f) && ly in -40f..(h + 40f)) {
+                                // Prevent screen overlap clutter: ensure at least 45 screen pixels distance
+                                val distFromLast = hypot(lx - lastDrawnX, ly - lastDrawnY)
+                                if (distFromLast >= 45f || is1Km) {
+                                    // Centreline tick marker dot
+                                    drawCircle(
+                                        color = colors.gold,
+                                        radius = if (is1Km) 4.5f else 3f,
+                                        center = Offset(lx, ly)
+                                    )
+
+                                    val textStr = lbl.displayChainage
+                                    val textW = labelPaint.measureText(textStr)
+
+                                    // Draw pill background + chainage label
+                                    drawContext.canvas.nativeCanvas.drawRoundRect(
+                                        lx - textW / 2f - 7f,
+                                        ly - 28f,
+                                        lx + textW / 2f + 7f,
+                                        ly - 4f,
+                                        6f,
+                                        6f,
+                                        bgLabelPaint
+                                    )
+                                    drawContext.canvas.nativeCanvas.drawRoundRect(
+                                        lx - textW / 2f - 7f,
+                                        ly - 28f,
+                                        lx + textW / 2f + 7f,
+                                        ly - 4f,
+                                        6f,
+                                        6f,
+                                        strokeLabelPaint
+                                    )
+                                    drawContext.canvas.nativeCanvas.drawText(textStr, lx, ly - 10f, labelPaint)
+
+                                    lastDrawnX = lx
+                                    lastDrawnY = ly
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -294,21 +397,21 @@ fun SurveyScreen(
                 }
                 drawPath(
                     path = lanePath,
-                    color = Color(0xFF38BDF8),
+                    color = colors.sky,
                     style = Stroke(width = 3.5f)
                 )
             }
 
-            // 4. KM Stone Markers (Red/Gold Pin Circles with Labels)
+            // 4. KM Stone Markers (Pin Circles with Labels)
             if (showMarkers) {
                 val textPaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.WHITE
+                    color = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.parseColor("#0F172A")
                     textSize = 28f
                     isFakeBoldText = true
                     textAlign = android.graphics.Paint.Align.CENTER
                 }
                 val bgPaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.parseColor("#B30F172A")
+                    color = if (isDark) android.graphics.Color.parseColor("#CC0F172A") else android.graphics.Color.parseColor("#E6FFFFFF")
                     style = android.graphics.Paint.Style.FILL
                 }
 
@@ -318,8 +421,8 @@ fun SurveyScreen(
                     )
                     if (mx in -50f..(w + 50f) && my in -50f..(h + 50f)) {
                         // Marker circle pin
-                        drawCircle(color = Color(0xFFEF4444), radius = 14f, center = Offset(mx, my))
-                        drawCircle(color = Color.White, radius = 5f, center = Offset(mx, my))
+                        drawCircle(color = colors.red, radius = 14f, center = Offset(mx, my))
+                        drawCircle(color = if (isDark) Color.White else Color(0xFFF8FAFC), radius = 5f, center = Offset(mx, my))
 
                         // Chainage text pill above marker
                         val label = marker.displayChainage
@@ -346,36 +449,39 @@ fun SurveyScreen(
                 // Accuracy circle
                 val accPx = (currentAccuracy / (viewRangeMetres / (w / 2f))).toFloat().coerceIn(16f, 150f)
                 drawCircle(
-                    color = Color(0xFF38BDF8).copy(alpha = 0.18f),
+                    color = colors.sky.copy(alpha = 0.18f),
                     radius = accPx,
                     center = Offset(vx, vy)
                 )
                 // Vehicle pulse ring
                 drawCircle(
-                    color = Color(0xFF38BDF8).copy(alpha = pulseAlpha),
+                    color = colors.sky.copy(alpha = pulseAlpha),
                     radius = 20f,
                     center = Offset(vx, vy)
                 )
                 // Vehicle center core
-                drawCircle(color = Color(0xFF0284C7), radius = 9f, center = Offset(vx, vy))
-                drawCircle(color = Color.White, radius = 4f, center = Offset(vx, vy))
+                drawCircle(color = colors.sky, radius = 9f, center = Offset(vx, vy))
+                drawCircle(color = if (isDark) Color.White else Color(0xFF0F172A), radius = 4f, center = Offset(vx, vy))
             }
         }
 
         // ----------------------------------------------------
-        // 2. TOP MINIMALIST GLASS TOOLBAR
+        // 2. TOP TOOLBAR (Material Design)
         // ----------------------------------------------------
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            contentAlignment = Alignment.TopCenter
         ) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF131B2E).copy(alpha = 0.92f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(12.dp),
+                color = colors.headerBackground,
+                border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 760.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -396,15 +502,15 @@ fun SurveyScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             val title = activeSession?.highwayName?.ifBlank { activeSession?.name } ?: "Highway Survey"
-                            Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(title, color = colors.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val status = activeSession?.status ?: SurveyStatus.NOT_STARTED
                                 val statusColor = when (status) {
-                                    SurveyStatus.RECORDING -> Color(0xFF22C55E)
-                                    SurveyStatus.PAUSED -> Color(0xFFFFD700)
-                                    SurveyStatus.READY_TO_RESUME -> Color(0xFF38BDF8)
+                                    SurveyStatus.RECORDING -> colors.green
+                                    SurveyStatus.PAUSED -> colors.gold
+                                    SurveyStatus.READY_TO_RESUME -> colors.sky
                                     SurveyStatus.COMPLETED -> Color(0xFFA855F7)
-                                    else -> Color.Gray
+                                    else -> colors.textMuted
                                 }
                                 Box(
                                     modifier = Modifier
@@ -415,12 +521,24 @@ fun SurveyScreen(
                                 Spacer(modifier = Modifier.width(5.dp))
                                 Text(status.label, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("• ±${currentAccuracy.toInt()}m", color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp)
+                                Text("• ±${currentAccuracy.toInt()}m", color = colors.textSecondary, fontSize = 10.sp)
                             }
                         }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Quick Settings Button (Interval, Road Side, Lane, Ending Chainage)
+                        if (activeSession != null) {
+                            SurveyGlassIconButton(
+                                icon = Icons.Default.Tune,
+                                contentDescription = "Survey Settings",
+                                onClick = { showQuickSettingsDialog = true },
+                                variant = GlassButtonVariant.SKY,
+                                size = 36.dp,
+                                iconSize = 18.dp
+                            )
+                        }
+
                         // Toggle Map Style (Satellite / Street)
                         SurveyGlassIconButton(
                             icon = Icons.Default.Map,
@@ -428,6 +546,16 @@ fun SurveyScreen(
                             onClick = { mapType = if (mapType == "standard") "satellite" else "standard" },
                             variant = if (mapType == "satellite") GlassButtonVariant.GOLD else GlassButtonVariant.NEUTRAL,
                             active = mapType == "satellite",
+                            size = 36.dp,
+                            iconSize = 18.dp
+                        )
+
+                        // Theme Mode Switcher Button (Light / Dark / System)
+                        SurveyGlassIconButton(
+                            icon = if (isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                            contentDescription = "Theme: $themeMode",
+                            onClick = { showThemeDialog = true },
+                            variant = GlassButtonVariant.GOLD,
                             size = 36.dp,
                             iconSize = 18.dp
                         )
@@ -450,8 +578,13 @@ fun SurveyScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 Card(
                     shape = RoundedCornerShape(10.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF78350F).copy(alpha = 0.95f)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700)),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isDark) Color(0xFF78350F).copy(alpha = 0.95f) else Color(0xFFFEF3C7)
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isDark) Color(0xFFFFD700) else Color(0xFFD97706)
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -462,8 +595,17 @@ fun SurveyScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text("Relocation: ${String.format(Locale.US, "%.0f m", relocationPrompt!!.distanceM)} from last point", fontWeight = FontWeight.Bold, color = Color(0xFFFFD700), fontSize = 12.sp)
-                            Text("Resume as new segment to avoid false straight-line jump?", fontSize = 10.sp, color = Color.White)
+                            Text(
+                                "Relocation: ${String.format(Locale.US, "%.0f m", relocationPrompt!!.distanceM)} from last point",
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) Color(0xFFFFD700) else Color(0xFF92400E),
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                "Resume as new segment to avoid false straight-line jump?",
+                                fontSize = 10.sp,
+                                color = if (isDark) Color.White else Color(0xFF78350F)
+                            )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             SurveyGlassButton(
@@ -526,16 +668,16 @@ fun SurveyScreen(
                 iconSize = 18.dp
             )
 
-            // Layer toggle (Centreline / Lane / Track)
+            // Layer toggle (Centreline / 200m labels / Lane / Track)
             SurveyGlassIconButton(
                 icon = Icons.Default.Layers,
-                contentDescription = "Toggle Layers",
+                contentDescription = "Toggle 200m Labels & Centreline",
                 onClick = {
+                    show200mLabels = !show200mLabels
                     showCentreline = !showCentreline
-                    showLaneTrack = !showLaneTrack
                 },
-                variant = if (showCentreline) GlassButtonVariant.GOLD else GlassButtonVariant.NEUTRAL,
-                active = showCentreline,
+                variant = if (show200mLabels) GlassButtonVariant.GOLD else GlassButtonVariant.NEUTRAL,
+                active = show200mLabels,
                 size = 38.dp,
                 iconSize = 18.dp
             )
@@ -543,105 +685,150 @@ fun SurveyScreen(
 
         // ----------------------------------------------------
         // 4. FLOATING HUD INFO CARD & BOTTOM CONTROLS
+        // Streamlined & prioritized per user requirement #8:
+        // 1. Current Chainage - large and prominent
+        // 2. Starting & Ending Chainage
+        // 3. Remaining distance (when ending chainage configured)
+        // 4. Road Side - LHS/RHS/BHS
+        // 5. Lane - Inner/Outer/Fast/Slow
+        // 6. GPS accuracy & status
+        // 7. Total surveyed distance
+        // ----------------------------------------------------
+        // ----------------------------------------------------
+        // 4. FLOATING HUD INFO CARD & BOTTOM CONTROLS
+        // Responsive Material UI Design with dynamic button arrangement
         // ----------------------------------------------------
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .widthIn(max = 760.dp)
+                .navigationBarsPadding()
+                .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            // Live Survey Stats HUD Card
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF131B2E).copy(alpha = 0.94f)),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
+                border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    // Row 1: Live Chainage & Direction
+                    // Row 1: Large Prominent Current Chainage + Speed & Distance
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            val chainageDisplay = activeSession?.displayCurrentChainage ?: "0+000"
+                            val chainageDisplay = activeSession?.displayCurrentChainage ?: "190+000"
                             Text(
                                 text = chainageDisplay,
-                                fontSize = 22.sp,
+                                fontSize = 24.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFFFD700)
+                                color = colors.gold,
+                                letterSpacing = 0.5.sp
                             )
-                            val dirLabel = activeSession?.direction?.label ?: "Increasing (+)"
-                            val sideLabel = activeSession?.offsetSide?.name ?: "RHS"
-                            Text(
-                                text = "$sideLabel • $dirLabel",
-                                fontSize = 11.sp,
-                                color = Color(0xFF38BDF8),
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = if (colors.isDark) Color(0xFF0369A1) else Color(0xFFE0F2FE)
+                                ) {
+                                    Text(
+                                        text = "${activeSession?.displayRoadSide ?: "RHS"} • ${activeSession?.displayLaneName ?: "Fast Lane"}",
+                                        fontSize = 10.5.sp,
+                                        color = if (colors.isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1),
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                                val dirText = activeSession?.direction?.label?.substringBefore(" ") ?: "Increasing"
+                                Text(
+                                    text = dirText,
+                                    fontSize = 10.5.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
                         }
 
-                        // Speed & Distance
+                        // Speed & Surveyed Distance
                         Column(horizontalAlignment = Alignment.End) {
                             val speedKmh = (currentSpeedMps * 3.6f).coerceAtLeast(0f)
                             Text(
                                 text = String.format(Locale.US, "%.1f km/h", speedKmh),
-                                fontSize = 17.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = colors.textPrimary
                             )
                             val distKm = ((activeSession?.totalDistanceTravelledMetres ?: 0.0) / 1000.0)
                             Text(
-                                text = String.format(Locale.US, "Dist: %.2f km", distKm),
+                                text = String.format(Locale.US, "%.2f km surveyed", distKm),
                                 fontSize = 11.sp,
-                                color = Color(0xFF22C55E),
+                                color = colors.green,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
 
-                    Divider(color = Color.White.copy(alpha = 0.12f), modifier = Modifier.padding(vertical = 6.dp))
+                    HorizontalDivider(color = colors.divider, modifier = Modifier.padding(vertical = 6.dp))
 
-                    // Row 2: Lane, Offset, Save status
+                    // Row 2: Starting Chainage, Ending Chainage & Remaining Distance
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "Lane: ${activeSession?.displayLaneName ?: "MCW Fast Lane"}",
+                                text = "Start: ${activeSession?.displayStartChainage ?: "0+000"}",
                                 fontSize = 10.5.sp,
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontWeight = FontWeight.Medium
+                                color = colors.textSecondary
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "CL Offset: ${activeSession?.centrelineOffsetMetres ?: 7.0}m",
-                                fontSize = 10.5.sp,
-                                color = Color(0xFFFFD700),
-                                fontWeight = FontWeight.Medium
-                            )
+
+                            if (activeSession?.hasPlannedEndChainage == true) {
+                                Text(
+                                    text = "→ End: ${activeSession!!.displayPlannedEndChainage}",
+                                    fontSize = 10.5.sp,
+                                    color = colors.textPrimary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
 
-                        // Auto-Save Status
-                        val saveText = when (saveStatus) {
-                            is SaveStatus.Saving -> "Saving..."
-                            is SaveStatus.Saved -> "Saved"
-                            is SaveStatus.Failed -> "Save err"
-                            else -> "Idle"
+                        // Remaining distance badge (when planned ending chainage configured)
+                        val remMetres = activeSession?.remainingDistanceMetres
+                        if (remMetres != null) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (remMetres <= 500L) {
+                                    if (colors.isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
+                                } else {
+                                    if (colors.isDark) Color(0xFF0369A1) else Color(0xFFE0F2FE)
+                                },
+                                border = androidx.compose.foundation.BorderStroke(
+                                    0.5.dp,
+                                    if (remMetres <= 500L) colors.gold else colors.sky
+                                )
+                            ) {
+                                Text(
+                                    text = "Remaining: ${String.format(Locale.US, "%.2f km", remMetres / 1000.0)}",
+                                    fontSize = 10.5.sp,
+                                    color = if (remMetres <= 500L) {
+                                        if (colors.isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
+                                    } else {
+                                        if (colors.isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        } else {
+                            val intervalText = activeSession?.confirmationIntervalMetres?.let { "Auto-check: ${it / 1000}km" } ?: "Interval: Off"
+                            Text(
+                                text = intervalText,
+                                fontSize = 10.sp,
+                                color = colors.textMuted
+                            )
                         }
-                        Text(
-                            text = "● $saveText",
-                            fontSize = 10.sp,
-                            color = when (saveStatus) {
-                                is SaveStatus.Saved -> Color(0xFF22C55E)
-                                is SaveStatus.Failed -> Color(0xFFEF4444)
-                                else -> Color.White.copy(alpha = 0.6f)
-                            },
-                            fontWeight = FontWeight.SemiBold
-                        )
                     }
                 }
             }
@@ -649,104 +836,216 @@ fun SurveyScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             // ----------------------------------------------------
-            // 5. ERGONOMIC SURVEY ACTION CONTROLS (Dynamic Minimalist Glass UI)
+            // 5. ERGONOMIC SURVEY ACTION CONTROLS (Material Design Flat Buttons)
+            // Dynamically arranged based on available width (wrapping on narrow displays)
             // ----------------------------------------------------
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val isCompact = maxWidth < 370.dp
+                val isNarrow = maxWidth < 340.dp
+                val isCompact = maxWidth < 400.dp
                 val status = activeSession?.status ?: SurveyStatus.NOT_STARTED
                 val isRecordingOrPaused = status == SurveyStatus.RECORDING || status == SurveyStatus.PAUSED || status == SurveyStatus.READY_TO_RESUME
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Quick Offset Adjust Button
-                    SurveyGlassButton(
-                        text = if (isCompact) "CL" else "Offset",
-                        icon = Icons.Default.Tune,
-                        onClick = { showChangeOffsetDialog = true },
-                        variant = GlassButtonVariant.SKY,
-                        modifier = Modifier.weight(if (isCompact) 0.85f else 0.95f),
-                        height = 42.dp
-                    )
-
-                    // Primary Action Button (Start / Pause / Resume)
-                    when (status) {
-                        SurveyStatus.RECORDING -> {
+                if (isNarrow) {
+                    // Two-row wrapping on compact/split-screen viewports
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             SurveyGlassButton(
-                                text = "Pause",
-                                icon = Icons.Default.Pause,
+                                text = "Settings",
+                                icon = Icons.Default.Tune,
                                 onClick = {
-                                    coroutineScope.launch {
-                                        surveyManager.pauseSurvey()
-                                        viewModel.showToast("Survey paused", ToastType.INFO)
+                                    if (activeSession != null) showQuickSettingsDialog = true else showNewConfigDialog = true
+                                },
+                                variant = GlassButtonVariant.SKY,
+                                modifier = Modifier.weight(1f),
+                                height = 44.dp
+                            )
+                            when (status) {
+                                SurveyStatus.RECORDING -> {
+                                    SurveyGlassButton(
+                                        text = "Pause",
+                                        icon = Icons.Default.Pause,
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                surveyManager.pauseSurvey()
+                                                viewModel.showToast("Survey paused", ToastType.INFO)
+                                            }
+                                        },
+                                        variant = GlassButtonVariant.GOLD,
+                                        modifier = Modifier.weight(1f),
+                                        height = 44.dp
+                                    )
+                                }
+                                SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
+                                    SurveyGlassButton(
+                                        text = "Resume",
+                                        icon = Icons.Default.PlayArrow,
+                                        onClick = {
+                                            surveyManager.requestResumeSurvey(currentGps)
+                                            viewModel.showToast("Resuming survey...", ToastType.INFO)
+                                        },
+                                        variant = GlassButtonVariant.SUCCESS,
+                                        modifier = Modifier.weight(1f),
+                                        height = 44.dp
+                                    )
+                                }
+                                else -> {
+                                    SurveyGlassButton(
+                                        text = "Start",
+                                        icon = Icons.Default.PlayArrow,
+                                        onClick = { showNewConfigDialog = true },
+                                        variant = GlassButtonVariant.GOLD,
+                                        modifier = Modifier.weight(1f),
+                                        height = 44.dp
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            SurveyGlassButton(
+                                text = "+ KM Stone",
+                                icon = Icons.Default.AddLocationAlt,
+                                onClick = {
+                                    if (activeSession != null) {
+                                        showAddKmStoneDialog = true
+                                    } else {
+                                        viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
                                     }
                                 },
                                 variant = GlassButtonVariant.GOLD,
-                                modifier = Modifier.weight(1.15f),
-                                height = 42.dp
+                                modifier = Modifier.weight(1.2f),
+                                height = 44.dp
                             )
-                        }
-                        SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
-                            SurveyGlassButton(
-                                text = "Resume",
-                                icon = Icons.Default.PlayArrow,
-                                onClick = {
-                                    surveyManager.requestResumeSurvey(currentGps)
-                                    viewModel.showToast("Resuming survey...", ToastType.INFO)
-                                },
-                                variant = GlassButtonVariant.SUCCESS,
-                                modifier = Modifier.weight(1.15f),
-                                height = 42.dp
-                            )
-                        }
-                        else -> {
-                            SurveyGlassButton(
-                                text = if (isCompact) "Start" else "Start Survey",
-                                icon = Icons.Default.PlayArrow,
-                                onClick = { showNewConfigDialog = true },
-                                variant = GlassButtonVariant.GOLD,
-                                modifier = Modifier.weight(1.25f),
-                                height = 42.dp
-                            )
+
+                            if (isRecordingOrPaused) {
+                                SurveyGlassButton(
+                                    text = "Stop",
+                                    icon = Icons.Default.Stop,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            val finalized = surveyManager.stopSurvey()
+                                            if (finalized != null) {
+                                                reviewSessionTarget = finalized
+                                                viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
+                                            }
+                                        }
+                                    },
+                                    variant = GlassButtonVariant.DESTRUCTIVE,
+                                    modifier = Modifier.weight(0.8f),
+                                    height = 44.dp
+                                )
+                            }
                         }
                     }
-
-                    // Prominent + KM Stone Marker Button
-                    SurveyGlassButton(
-                        text = if (isCompact) "+ KM" else "+ KM Stone",
-                        icon = Icons.Default.AddLocationAlt,
-                        onClick = {
-                            if (activeSession != null) {
-                                showAddKmStoneDialog = true
-                            } else {
-                                viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
-                            }
-                        },
-                        variant = GlassButtonVariant.GOLD,
-                        modifier = Modifier.weight(if (isCompact) 1.05f else 1.25f),
-                        height = 42.dp
-                    )
-
-                    // Stop / Review Button
-                    if (isRecordingOrPaused) {
+                } else {
+                    // Standard responsive single-row layout
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Settings / Offset Adjust Button
                         SurveyGlassButton(
-                            text = "Stop",
-                            icon = Icons.Default.Stop,
+                            text = if (isCompact) "Settings" else "Survey Settings",
+                            icon = Icons.Default.Tune,
                             onClick = {
-                                coroutineScope.launch {
-                                    val finalized = surveyManager.stopSurvey()
-                                    if (finalized != null) {
-                                        reviewSessionTarget = finalized
-                                        viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
-                                    }
+                                if (activeSession != null) {
+                                    showQuickSettingsDialog = true
+                                } else {
+                                    showNewConfigDialog = true
                                 }
                             },
-                            variant = GlassButtonVariant.DESTRUCTIVE,
-                            modifier = Modifier.weight(0.85f),
-                            height = 42.dp
+                            variant = GlassButtonVariant.SKY,
+                            modifier = Modifier.weight(if (isCompact) 0.95f else 1.05f),
+                            height = 44.dp
                         )
+
+                        // Primary Action Button (Start / Pause / Resume)
+                        when (status) {
+                            SurveyStatus.RECORDING -> {
+                                SurveyGlassButton(
+                                    text = "Pause",
+                                    icon = Icons.Default.Pause,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            surveyManager.pauseSurvey()
+                                            viewModel.showToast("Survey paused", ToastType.INFO)
+                                        }
+                                    },
+                                    variant = GlassButtonVariant.GOLD,
+                                    modifier = Modifier.weight(1.15f),
+                                    height = 44.dp
+                                )
+                            }
+                            SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
+                                SurveyGlassButton(
+                                    text = "Resume",
+                                    icon = Icons.Default.PlayArrow,
+                                    onClick = {
+                                        surveyManager.requestResumeSurvey(currentGps)
+                                        viewModel.showToast("Resuming survey...", ToastType.INFO)
+                                    },
+                                    variant = GlassButtonVariant.SUCCESS,
+                                    modifier = Modifier.weight(1.15f),
+                                    height = 44.dp
+                                )
+                            }
+                            else -> {
+                                SurveyGlassButton(
+                                    text = if (isCompact) "Start" else "Start Survey",
+                                    icon = Icons.Default.PlayArrow,
+                                    onClick = { showNewConfigDialog = true },
+                                    variant = GlassButtonVariant.GOLD,
+                                    modifier = Modifier.weight(1.25f),
+                                    height = 44.dp
+                                )
+                            }
+                        }
+
+                        // Prominent + KM Stone Marker Button
+                        SurveyGlassButton(
+                            text = if (isCompact) "+ KM" else "+ KM Stone",
+                            icon = Icons.Default.AddLocationAlt,
+                            onClick = {
+                                if (activeSession != null) {
+                                    showAddKmStoneDialog = true
+                                } else {
+                                    viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
+                                }
+                            },
+                            variant = GlassButtonVariant.GOLD,
+                            modifier = Modifier.weight(if (isCompact) 1.05f else 1.25f),
+                            height = 44.dp
+                        )
+
+                        // Stop / Review Button
+                        if (isRecordingOrPaused) {
+                            SurveyGlassButton(
+                                text = "Stop",
+                                icon = Icons.Default.Stop,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val finalized = surveyManager.stopSurvey()
+                                        if (finalized != null) {
+                                            reviewSessionTarget = finalized
+                                            viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
+                                        }
+                                    }
+                                },
+                                variant = GlassButtonVariant.DESTRUCTIVE,
+                                modifier = Modifier.weight(0.85f),
+                                height = 44.dp
+                            )
+                        }
                     }
                 }
             }
@@ -754,8 +1053,10 @@ fun SurveyScreen(
     }
 
     // ----------------------------------------------------
-    // DIALOGS
+    // DIALOGS & NOTIFICATION FLOWS
     // ----------------------------------------------------
+
+    // 1. New Survey Configuration Dialog
     if (showNewConfigDialog) {
         NewSurveyConfigDialog(
             initialProjectName = viewModel.projectProfile.value.highwayId,
@@ -772,6 +1073,80 @@ fun SurveyScreen(
         )
     }
 
+    // 2. Smart Chainage Confirmation Popup (10s auto-confirm, strictly confirm / edit chainage)
+    if (checkpointPrompt != null) {
+        val prompt = checkpointPrompt!!
+        SmartChainageConfirmationDialog(
+            prompt = prompt,
+            onConfirm = {
+                coroutineScope.launch {
+                    surveyManager.confirmCheckpoint(prompt)
+                    viewModel.showToast("Checkpoint confirmed: ${Chainage(prompt.checkpointChainageMetres).format()}", ToastType.SUCCESS)
+                }
+            },
+            onConfirmWithCorrection = { correctedCh ->
+                coroutineScope.launch {
+                    surveyManager.confirmCheckpoint(prompt, correctedCh)
+                    viewModel.showToast("Chainage calibrated to ${Chainage(correctedCh).format()} (GPS location untouched)", ToastType.SUCCESS)
+                }
+            }
+        )
+    }
+
+    // 3. Planned Ending Chainage Reached Dialog (Never stops automatically)
+    if (endingChainageReached && activeSession != null) {
+        EndingChainageReachedDialog(
+            session = activeSession!!,
+            onFinishSurvey = {
+                coroutineScope.launch {
+                    surveyManager.dismissEndingChainagePrompt()
+                    val finalized = surveyManager.stopSurvey()
+                    if (finalized != null) {
+                        reviewSessionTarget = finalized
+                        viewModel.showToast("Survey finished!", ToastType.SUCCESS)
+                    }
+                }
+            },
+            onContinueSurvey = {
+                surveyManager.dismissEndingChainagePrompt()
+                viewModel.showToast("Continuing survey beyond planned ending chainage", ToastType.INFO)
+            }
+        )
+    }
+
+    // 4. Quick Survey Settings Dialog (on-the-fly updates without stopping)
+    if (showQuickSettingsDialog && activeSession != null) {
+        SurveyQuickSettingsDialog(
+            session = activeSession!!,
+            onUpdateRoadSide = { side ->
+                coroutineScope.launch {
+                    surveyManager.updateRoadSide(side)
+                    viewModel.showToast("Road Side updated to ${side.label}", ToastType.SUCCESS)
+                }
+            },
+            onUpdateLane = { lane, customName ->
+                coroutineScope.launch {
+                    surveyManager.updateLane(lane, customName)
+                    viewModel.showToast("Lane updated to ${lane.label}", ToastType.SUCCESS)
+                }
+            },
+            onUpdateInterval = { intervalM ->
+                coroutineScope.launch {
+                    surveyManager.updateConfirmationInterval(intervalM)
+                    val text = intervalM?.let { "Every ${it / 1000} KM" } ?: "Off"
+                    viewModel.showToast("Confirmation Interval: $text", ToastType.SUCCESS)
+                }
+            },
+            onUpdatePlannedEnd = { plannedEndM ->
+                coroutineScope.launch {
+                    surveyManager.updatePlannedEndChainage(plannedEndM)
+                }
+            },
+            onDismiss = { showQuickSettingsDialog = false }
+        )
+    }
+
+    // 5. Add KM Stone Dialog
     if (showAddKmStoneDialog && activeSession != null) {
         AddKmStoneDialog(
             currentCalculatedChainageMetres = activeSession!!.currentChainageMetres,
@@ -796,6 +1171,7 @@ fun SurveyScreen(
         )
     }
 
+    // 6. Change Offset Dialog
     if (showChangeOffsetDialog && activeSession != null) {
         ChangeOffsetDialog(
             currentOffsetM = activeSession!!.centrelineOffsetMetres,
@@ -813,6 +1189,7 @@ fun SurveyScreen(
         )
     }
 
+    // 7. Saved Surveys Dialog
     if (showSavedSurveysDialog) {
         SavedSurveysDialog(
             sessions = allSessions,
@@ -835,12 +1212,24 @@ fun SurveyScreen(
         )
     }
 
+    // 8. Relocation Dialog
     if (relocationPrompt != null) {
         RelocationDialog(
             relocation = relocationPrompt!!,
             onConfirmNewSegment = { surveyManager.resolveRelocation(startNewSegment = true) },
             onConfirmConnect = { surveyManager.resolveRelocation(startNewSegment = false) },
             onDismiss = { surveyManager.dismissRelocation() }
+        )
+    }
+
+    // 9. Theme Selector Dialog
+    if (showThemeDialog) {
+        SurveyThemeSelectorDialog(
+            currentTheme = themeMode,
+            onSelectTheme = { selectedMode ->
+                viewModel.setThemeMode(selectedMode)
+            },
+            onDismiss = { showThemeDialog = false }
         )
     }
 }

@@ -84,11 +84,16 @@ object KmzSurveyExporter {
         sb.append("      Road Number: ${escapeXml(session.roadNumber)}\n")
         sb.append("      Stretch: ${escapeXml(session.stretchName)}\n")
         sb.append("      Survey Date: ${escapeXml(session.surveyDate)}\n")
+        sb.append("      Road Side: ${escapeXml(session.roadSide.label)}\n")
         sb.append("      Lane: ${escapeXml(session.displayLaneName)}\n")
         sb.append("      Direction: ${escapeXml(session.direction.label)}\n")
         sb.append("      Centreline Offset: ${session.centrelineOffsetMetres}m (${session.offsetSide.label})\n")
         sb.append("      Start Chainage: ${session.displayStartChainage}\n")
         sb.append("      End Chainage: ${session.displayCurrentChainage}\n")
+        if (session.hasPlannedEndChainage) {
+            sb.append("      Planned End Chainage: ${session.displayPlannedEndChainage}\n")
+        }
+        sb.append("      Confirmation Interval: ${session.confirmationIntervalMetres?.let { "Every ${it / 1000} KM" } ?: "Off"}\n")
         sb.append("      Distance Travelled: ${String.format(Locale.US, "%.1f m", session.totalDistanceTravelledMetres)}\n")
         sb.append("      Total Survey Points: ${points.size}\n")
         sb.append("      Total KM Stones: ${markers.size}\n")
@@ -117,6 +122,28 @@ object KmzSurveyExporter {
             sb.append("      </LineString>\n")
             sb.append("    </Placemark>\n")
             sb.append("  </Folder>\n")
+
+            // 2b. Centreline Chainage Labels Every 200 Metres
+            val labels200m = SurveyGeometryEngine.generate200mChainageLabels(
+                centrelinePts = centrelinePts,
+                startChainageMetres = session.startChainageMetres,
+                direction = session.direction,
+                calibrations = calibrations
+            )
+            if (labels200m.isNotEmpty()) {
+                sb.append("  <Folder>\n")
+                sb.append("    <name>Centreline Chainage (200m)</name>\n")
+                labels200m.forEach { lbl ->
+                    sb.append("    <Placemark>\n")
+                    sb.append("      <name>${escapeXml(lbl.displayChainage)}</name>\n")
+                    sb.append("      <description>${escapeXml("Chainage: ${lbl.displayChainage} (Bearing: ${String.format(Locale.US, "%.1f°", lbl.bearingDeg)})")}</description>\n")
+                    sb.append("      <Point>\n")
+                    sb.append("        <coordinates>${lbl.position.longitude},${lbl.position.latitude},${lbl.position.altitude}</coordinates>\n")
+                    sb.append("      </Point>\n")
+                    sb.append("    </Placemark>\n")
+                }
+                sb.append("  </Folder>\n")
+            }
         }
 
         // 3. Lane Alignment
