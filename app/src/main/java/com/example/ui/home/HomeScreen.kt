@@ -8,6 +8,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -160,12 +161,32 @@ fun HomeScreen(
 
     val isDark = com.example.ui.theme.isAppDarkTheme()
 
-    // Premium Minimalist Light Theme vs Dark Theme Palette
-    val pageBgColor = if (isDark) Color(0xFF0A0E17) else Color(0xFFF3F6FA)
-    val cardBgColor = if (isDark) Color(0xFF131B2E) else Color(0xFFFFFFFF)
-    val cardBorderColor = if (isDark) Color(0xFF263554) else Color(0xFFE2E8F0)
-    val mainTextColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val subTextColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    // Smooth Animated Light Theme vs Dark Theme Palette
+    val pageBgColor by animateColorAsState(
+        targetValue = if (isDark) Color(0xFF090D16) else Color(0xFFF1F5F9),
+        animationSpec = tween(260),
+        label = "home_page_bg"
+    )
+    val cardBgColor by animateColorAsState(
+        targetValue = if (isDark) Color(0xFF111827) else Color(0xFFFFFFFF),
+        animationSpec = tween(260),
+        label = "home_card_bg"
+    )
+    val cardBorderColor by animateColorAsState(
+        targetValue = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0),
+        animationSpec = tween(260),
+        label = "home_card_border"
+    )
+    val mainTextColor by animateColorAsState(
+        targetValue = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A),
+        animationSpec = tween(260),
+        label = "home_main_text"
+    )
+    val subTextColor by animateColorAsState(
+        targetValue = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
+        animationSpec = tween(260),
+        label = "home_sub_text"
+    )
 
     // Pulse transition for live GPS status dot
     val infiniteTransition = rememberInfiniteTransition(label = "gps_dot")
@@ -182,21 +203,25 @@ fun HomeScreen(
             .background(pageBgColor)
     ) {
         val maxH = maxHeight
-        val isCompactHeight = maxH < 690.dp
-        val isScrollableLayout = maxH < 760.dp
+        val isUltraCompact = maxH < 570.dp
+        val isCompactHeight = maxH < 670.dp
+        val verticalGap = when {
+            isUltraCompact -> 4.dp
+            isCompactHeight -> 5.5.dp
+            else -> 7.dp
+        }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .padding(
-                    start = 12.dp,
-                    end = 12.dp,
-                    top = if (isCompactHeight) 6.dp else 10.dp,
-                    bottom = if (isCompactHeight) 2.dp else 4.dp
-                )
-                .then(if (isScrollableLayout) Modifier.verticalScroll(rememberScrollState()) else Modifier),
-            verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 5.dp else 7.dp)
+                    start = 10.dp,
+                    end = 10.dp,
+                    top = if (isUltraCompact) 4.dp else if (isCompactHeight) 6.dp else 8.dp,
+                    bottom = if (isUltraCompact) 2.dp else 4.dp
+                ),
+            verticalArrangement = Arrangement.spacedBy(verticalGap)
         ) {
             // 1. Top Telemetry Header Row (4 Theme-Matched Cards)
             val speedKmh = if (locationState.speed != null && locationState.speed!! >= 0f) {
@@ -327,14 +352,11 @@ fun HomeScreen(
                 )
             }
 
-            // 4. Interactive Smart KMZ Map - Dynamic Height Priority (weight 1f)
+            // 4. Interactive Smart KMZ Map - Smart Dynamic Fit (weight 1f fills all remaining height with 0 vertical scroll/gaps)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(
-                        if (isScrollableLayout) Modifier.height(if (isCompactHeight) 120.dp else 145.dp)
-                        else Modifier.weight(1f)
-                    )
+                    .weight(1f)
                     .clip(RoundedCornerShape(14.dp))
                     .border(1.dp, cardBorderColor, RoundedCornerShape(14.dp))
             ) {
@@ -397,7 +419,7 @@ fun HomeScreen(
                 isCompact = isCompactHeight
             )
 
-            // 6. Tools & DPR Notes Quick Action Buttons
+            // 6. Tools & DPR Notes Quick Action Buttons (Flush above bottom bar with zero gap)
             HomeQuickActionButtons(
                 onNavigateToTools = onNavigateToTools,
                 onNavigateToNotes = onNavigateToNotes,
@@ -411,9 +433,6 @@ fun HomeScreen(
                 isDark = isDark,
                 isCompact = isCompactHeight
             )
-
-            // Bottom Spacing so nothing is hidden behind the Floating Bottom Navigation Bar
-            Spacer(modifier = Modifier.height(if (isCompactHeight) 52.dp else 58.dp))
         }
     }
 }
@@ -440,7 +459,7 @@ fun TopTelemetryHeaderRow(
 ) {
     val cardHeight = if (isCompact) 42.dp else 46.dp
 
-    val (gpsAccentColor, gpsValueText, gpsStatusSub) = when {
+    val (targetGpsColor, gpsValueText, gpsStatusSub) = when {
         !hasFix -> Triple(
             if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
             "--",
@@ -463,18 +482,24 @@ fun TopTelemetryHeaderRow(
         )
     }
 
+    val gpsAccentColor by animateColorAsState(
+        targetValue = targetGpsColor,
+        animationSpec = tween(250),
+        label = "gps_accent_color"
+    )
+
     val satAccent = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
     val speedAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
     val compassAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val isVeryNarrow = maxWidth < 330.dp
+        val isVeryNarrow = maxWidth < 310.dp
 
         if (isVeryNarrow) {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     GpsAccuracyTelemetryCard(
                         gpsAccentColor = gpsAccentColor,
@@ -503,7 +528,7 @@ fun TopTelemetryHeaderRow(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     SpeedTelemetryCard(
                         speedKmh = speedKmh,
@@ -532,7 +557,7 @@ fun TopTelemetryHeaderRow(
         } else {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 GpsAccuracyTelemetryCard(
@@ -546,7 +571,7 @@ fun TopTelemetryHeaderRow(
                     mainTextColor = mainTextColor,
                     subTextColor = subTextColor,
                     isDark = isDark,
-                    modifier = Modifier.weight(1.05f).height(cardHeight)
+                    modifier = Modifier.weight(1.06f).height(cardHeight)
                 )
                 SatelliteTelemetryCard(
                     satellitesCount = satellitesCount,
@@ -557,7 +582,7 @@ fun TopTelemetryHeaderRow(
                     mainTextColor = mainTextColor,
                     subTextColor = subTextColor,
                     isDark = isDark,
-                    modifier = Modifier.weight(0.95f).height(cardHeight)
+                    modifier = Modifier.weight(1.02f).height(cardHeight)
                 )
                 SpeedTelemetryCard(
                     speedKmh = speedKmh,
@@ -567,7 +592,7 @@ fun TopTelemetryHeaderRow(
                     mainTextColor = mainTextColor,
                     subTextColor = subTextColor,
                     isDark = isDark,
-                    modifier = Modifier.weight(0.90f).height(cardHeight)
+                    modifier = Modifier.weight(0.84f).height(cardHeight)
                 )
                 CompassTelemetryCard(
                     compassHeadingStr = compassHeadingStr,
@@ -579,7 +604,7 @@ fun TopTelemetryHeaderRow(
                     mainTextColor = mainTextColor,
                     subTextColor = subTextColor,
                     isDark = isDark,
-                    modifier = Modifier.weight(1.22f).height(cardHeight)
+                    modifier = Modifier.weight(1.18f).height(cardHeight)
                 )
             }
         }
@@ -610,12 +635,12 @@ private fun GpsAccuracyTelemetryCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 7.dp),
+                .padding(horizontal = 5.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(26.dp)
+                    .size(23.dp)
                     .clip(RoundedCornerShape(7.dp))
                     .background(gpsAccentColor.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
@@ -625,11 +650,11 @@ private fun GpsAccuracyTelemetryCard(
                     contentDescription = "GPS Status",
                     tint = gpsAccentColor,
                     modifier = Modifier
-                        .size(14.dp)
+                        .size(13.dp)
                         .alpha(if (!hasFix) gpsPulseAlpha else 1f)
                 )
             }
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(4.5.dp))
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.Center
@@ -640,25 +665,28 @@ private fun GpsAccuracyTelemetryCard(
                             .size(5.dp)
                             .clip(CircleShape)
                             .background(gpsAccentColor)
-                            .alpha(if (!hasFix) gpsPulseAlpha else 1f)
+                            .alpha(if (hasFix) gpsPulseAlpha else 0.5f)
                     )
                     Spacer(modifier = Modifier.width(3.dp))
                     Text(
                         text = gpsValueText,
                         color = mainTextColor,
                         fontSize = 11.5.sp,
+                        lineHeight = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false
                     )
                 }
                 Text(
                     text = gpsStatusSub,
                     color = gpsAccentColor,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 8.8.sp,
+                    lineHeight = 10.sp,
+                    letterSpacing = (-0.15).sp,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    softWrap = false
                 )
             }
         }
@@ -687,12 +715,12 @@ private fun SatelliteTelemetryCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 7.dp),
+                .padding(horizontal = 5.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(26.dp)
+                    .size(23.dp)
                     .clip(RoundedCornerShape(7.dp))
                     .background(satAccent.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
@@ -701,10 +729,10 @@ private fun SatelliteTelemetryCard(
                     imageVector = Icons.Default.SatelliteAlt,
                     contentDescription = "Satellites",
                     tint = satAccent,
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(13.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(4.5.dp))
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.Center
@@ -712,17 +740,21 @@ private fun SatelliteTelemetryCard(
                 Text(
                     text = if (hasFix) "$satellitesCount" else "--",
                     color = mainTextColor,
-                    fontSize = 12.sp,
+                    fontSize = 11.5.sp,
+                    lineHeight = 12.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
                 Text(
                     text = "Satellites",
                     color = subTextColor,
-                    fontSize = 9.sp,
+                    fontSize = 8.8.sp,
+                    lineHeight = 10.sp,
+                    letterSpacing = (-0.15).sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    softWrap = false
                 )
             }
         }
@@ -740,6 +772,12 @@ private fun SpeedTelemetryCard(
     isDark: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val animatedSpeed by animateFloatAsState(
+        targetValue = speedKmh.coerceAtLeast(0f),
+        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        label = "speed_anim"
+    )
+
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = cardBgColor,
@@ -750,12 +788,12 @@ private fun SpeedTelemetryCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 7.dp),
+                .padding(horizontal = 5.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(26.dp)
+                    .size(23.dp)
                     .clip(RoundedCornerShape(7.dp))
                     .background(speedAccent.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
@@ -764,27 +802,31 @@ private fun SpeedTelemetryCard(
                     imageVector = Icons.Default.Speed,
                     contentDescription = "Speed",
                     tint = speedAccent,
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(13.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(4.5.dp))
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = String.format(Locale.US, "%.0f", speedKmh),
+                    text = String.format(Locale.US, "%.0f", animatedSpeed),
                     color = mainTextColor,
-                    fontSize = 12.sp,
+                    fontSize = 11.5.sp,
+                    lineHeight = 12.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
                 Text(
                     text = "km/h",
                     color = subTextColor,
-                    fontSize = 9.sp,
+                    fontSize = 8.8.sp,
+                    lineHeight = 10.sp,
                     fontWeight = FontWeight.Medium,
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -816,7 +858,7 @@ private fun CompassTelemetryCard(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 7.dp),
+                .padding(horizontal = 5.5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -826,7 +868,7 @@ private fun CompassTelemetryCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(26.dp)
+                        .size(23.dp)
                         .clip(RoundedCornerShape(7.dp))
                         .background(compassAccent.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
@@ -835,10 +877,10 @@ private fun CompassTelemetryCard(
                         imageVector = Icons.Default.CompassCalibration,
                         contentDescription = "Compass",
                         tint = compassAccent,
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(5.dp))
+                Spacer(modifier = Modifier.width(4.5.dp))
                 Column(
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier.weight(1f)
@@ -847,17 +889,20 @@ private fun CompassTelemetryCard(
                         text = compassHeadingStr,
                         color = mainTextColor,
                         fontSize = 11.sp,
+                        lineHeight = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false
                     )
                     Text(
                         text = "Compass",
                         color = subTextColor,
-                        fontSize = 9.sp,
+                        fontSize = 8.8.sp,
+                        lineHeight = 10.sp,
+                        letterSpacing = (-0.15).sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false
                     )
                 }
             }
@@ -870,7 +915,7 @@ private fun CompassTelemetryCard(
                 },
                 contentDescription = "Toggle Theme",
                 tint = subTextColor,
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(13.5.dp)
             )
         }
     }
@@ -904,21 +949,33 @@ fun CentralChainageDisplay(
     val isLhs = detectedSide.equals("LHS", ignoreCase = true)
     val isRhs = detectedSide.equals("RHS", ignoreCase = true)
 
-    val sideBadgeBg = when {
-        isLhs -> if (isDark) Color(0xFF064E3B).copy(alpha = 0.5f) else Color(0xFFECFDF5)
-        isRhs -> if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.5f) else Color(0xFFEFF6FF)
-        else -> if (isDark) Color(0xFF4C1D95).copy(alpha = 0.5f) else Color(0xFFF3E8FF)
-    }
-    val sideBadgeBorder = when {
-        isLhs -> if (isDark) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFFA7F3D0)
-        isRhs -> if (isDark) Color(0xFF3B82F6).copy(alpha = 0.45f) else Color(0xFFBFDBFE)
-        else -> if (isDark) Color(0xFF8B5CF6).copy(alpha = 0.45f) else Color(0xFFDDD6FE)
-    }
-    val sideBadgeText = when {
-        isLhs -> if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
-        isRhs -> if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
-        else -> if (isDark) Color(0xFFC084FC) else Color(0xFF7E22CE)
-    }
+    val sideBadgeBg by animateColorAsState(
+        targetValue = when {
+            isLhs -> if (isDark) Color(0xFF064E3B).copy(alpha = 0.55f) else Color(0xFFECFDF5)
+            isRhs -> if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.55f) else Color(0xFFEFF6FF)
+            else -> if (isDark) Color(0xFF4C1D95).copy(alpha = 0.55f) else Color(0xFFF3E8FF)
+        },
+        animationSpec = tween(220),
+        label = "side_badge_bg"
+    )
+    val sideBadgeBorder by animateColorAsState(
+        targetValue = when {
+            isLhs -> if (isDark) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFFA7F3D0)
+            isRhs -> if (isDark) Color(0xFF3B82F6).copy(alpha = 0.45f) else Color(0xFFBFDBFE)
+            else -> if (isDark) Color(0xFF8B5CF6).copy(alpha = 0.45f) else Color(0xFFDDD6FE)
+        },
+        animationSpec = tween(220),
+        label = "side_badge_border"
+    )
+    val sideBadgeText by animateColorAsState(
+        targetValue = when {
+            isLhs -> if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
+            isRhs -> if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
+            else -> if (isDark) Color(0xFFC084FC) else Color(0xFF7E22CE)
+        },
+        animationSpec = tween(220),
+        label = "side_badge_text"
+    )
 
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
 
@@ -944,7 +1001,7 @@ fun CentralChainageDisplay(
                 .fillMaxWidth()
                 .padding(
                     horizontal = if (isCompact) 8.dp else 12.dp,
-                    vertical = if (isCompact) 6.dp else 10.dp
+                    vertical = if (isCompact) 5.dp else 8.dp
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -1797,6 +1854,17 @@ fun NextChainageCard(
     isCompact: Boolean = false
 ) {
     val cleanDistance = distanceText.replace("Exact ", "", ignoreCase = true).trim()
+    val distanceMetres = remember(cleanDistance) {
+        cleanDistance.filter { it.isDigit() }.toIntOrNull()?.coerceIn(0, 1000) ?: 500
+    }
+    val targetProgress = remember(distanceMetres) {
+        ((1000f - distanceMetres.toFloat()) / 1000f).coerceIn(0.04f, 1.0f)
+    }
+    val animatedProgress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(350, easing = FastOutSlowInEasing),
+        label = "km_stone_progress"
+    )
 
     val labelColor = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
     val badgeBgColor = if (isDark) Color(0xFF2563EB) else Color(0xFF2563EB)
@@ -1822,92 +1890,112 @@ fun NextChainageCard(
         shadowElevation = if (isDark) 0.dp else 1.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (isCompact) 52.dp else 56.dp)
+            .height(if (isCompact) 50.dp else 54.dp)
             .testTag("next_chainage_card")
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Surface(
-                    shape = RoundedCornerShape(9.dp),
-                    color = iconBoxBg,
-                    modifier = Modifier.size(38.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        KmStoneIcon(sizeDp = 30.dp, isDark = isDark)
+                    Surface(
+                        shape = RoundedCornerShape(9.dp),
+                        color = iconBoxBg,
+                        modifier = Modifier.size(if (isCompact) 34.dp else 38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            KmStoneIcon(sizeDp = if (isCompact) 26.dp else 30.dp, isDark = isDark)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column(verticalArrangement = Arrangement.Center) {
+                        Text(
+                            text = "NEXT KM STONE",
+                            color = labelColor,
+                            fontSize = 9.sp,
+                            lineHeight = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.7.sp
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (!nextChainage.startsWith("KM") && !nextChainage.contains("-")) "KM $nextChainage" else nextChainage,
+                                color = mainTextColor,
+                                fontSize = if (isCompact) 14.5.sp else 15.5.sp,
+                                lineHeight = 17.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.3.sp,
+                                maxLines = 1
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(5.dp),
+                                color = sideBadgeBg,
+                                border = BorderStroke(0.8.dp, cardBorderColor)
+                            ) {
+                                Text(
+                                    text = detectedSide.uppercase(Locale.ROOT),
+                                    color = sideBadgeText,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
+                                )
+                            }
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.width(10.dp))
-
-                Column(verticalArrangement = Arrangement.Center) {
-                    Text(
-                        text = "NEXT KM STONE",
-                        color = labelColor,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.7.sp
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                // Prominent Distance Remaining Pill
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = badgeBgColor.copy(alpha = badgePulseAlpha),
+                    shadowElevation = 1.dp
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.5.dp)
+                                .clip(CircleShape)
+                                .background(Color.White)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = if (!nextChainage.startsWith("KM") && !nextChainage.contains("-")) "KM $nextChainage" else nextChainage,
-                            color = mainTextColor,
-                            fontSize = 15.5.sp,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = 0.3.sp,
+                            text = cleanDistance,
+                            color = Color.White,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
                             maxLines = 1
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(5.dp),
-                            color = sideBadgeBg,
-                            border = BorderStroke(0.8.dp, cardBorderColor)
-                        ) {
-                            Text(
-                                text = detectedSide.uppercase(Locale.ROOT),
-                                color = sideBadgeText,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
-                            )
-                        }
                     }
                 }
             }
 
-            // Prominent Distance Remaining Pill
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = badgeBgColor.copy(alpha = badgePulseAlpha),
-                shadowElevation = 1.dp
+            // Sleek Bottom Progress Bar toward Next KM Stone
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .height(2.2.dp)
+                    .background(cardBorderColor.copy(alpha = 0.35f))
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.5.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(5.5.dp)
-                            .clip(CircleShape)
-                            .background(Color.White)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = cleanDistance,
-                        color = Color.White,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1
-                    )
-                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(animatedProgress)
+                        .height(2.2.dp)
+                        .background(labelColor.copy(alpha = 0.85f))
+                )
             }
         }
     }
@@ -1934,8 +2022,7 @@ fun HomeQuickActionButtons(
     val toolsAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
     val notesAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
     val titleColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val chevronColor = if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
-    val btnHeight = if (isCompact) 42.dp else 46.dp
+    val btnHeight = if (isCompact) 40.dp else 44.dp
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1967,8 +2054,8 @@ fun HomeQuickActionButtons(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .size(26.dp)
+                            .clip(RoundedCornerShape(7.dp))
                             .background(surveyAccent.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1976,13 +2063,13 @@ fun HomeQuickActionButtons(
                             imageVector = Icons.Default.Engineering,
                             contentDescription = "Survey",
                             tint = surveyAccent,
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(14.5.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Survey",
-                        fontSize = 12.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = titleColor,
                         maxLines = 1,
@@ -2018,8 +2105,8 @@ fun HomeQuickActionButtons(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .size(26.dp)
+                            .clip(RoundedCornerShape(7.dp))
                             .background(toolsAccent.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -2027,13 +2114,13 @@ fun HomeQuickActionButtons(
                             imageVector = Icons.Default.Build,
                             contentDescription = "Tools",
                             tint = toolsAccent,
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(14.5.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Tools",
-                        fontSize = 12.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = titleColor,
                         maxLines = 1,
@@ -2069,8 +2156,8 @@ fun HomeQuickActionButtons(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .size(26.dp)
+                            .clip(RoundedCornerShape(7.dp))
                             .background(notesAccent.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -2078,13 +2165,13 @@ fun HomeQuickActionButtons(
                             imageVector = Icons.Default.Description,
                             contentDescription = "Notes",
                             tint = notesAccent,
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(14.5.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Notes",
-                        fontSize = 12.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = titleColor,
                         maxLines = 1,
@@ -2161,6 +2248,20 @@ fun InteractiveSmartMap(
     val controlBorderColor = if (mapTheme.isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
     val controlIconColor = if (mapTheme.isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
     val activeControlBg = Color(0xFF2563EB)
+
+    // Smooth shortest-path angular unwrap for compass rotation
+    var unwrappedHeading by remember { mutableFloatStateOf(compassHeading) }
+    LaunchedEffect(compassHeading) {
+        var delta = (compassHeading - unwrappedHeading) % 360f
+        if (delta > 180f) delta -= 360f
+        if (delta < -180f) delta += 360f
+        unwrappedHeading += delta
+    }
+    val animatedCompassHeading by animateFloatAsState(
+        targetValue = unwrappedHeading,
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        label = "map_compass_rotation"
+    )
 
     Box(modifier = modifier) {
         Canvas(
@@ -2306,7 +2407,7 @@ fun InteractiveSmartMap(
                 )
 
                 // Directional Heading Pointer Cone
-                val activeHeading = bearing ?: compassHeading
+                val activeHeading = bearing ?: animatedCompassHeading
                 rotate(degrees = activeHeading, pivot = userOff) {
                     val conePath = Path().apply {
                         moveTo(userOff.x, userOff.y - 19.dp.toPx())
@@ -2481,61 +2582,141 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Top-Right Refined Compass Widget
+        // Top-Right Modern Dual-Ring Precision Compass Instrument Over the Map
+        val headingParts = remember(compassHeadingStr) {
+            val tokens = compassHeadingStr.trim().split("\\s+".toRegex())
+            val deg = tokens.firstOrNull().orEmpty().ifBlank { "0°" }
+            val dir = tokens.getOrNull(1).orEmpty().ifBlank { "N" }
+            deg to dir
+        }
+        val innerHubBg = if (mapTheme.isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)
+        val cardinalColor = if (headingParts.second.startsWith("N", ignoreCase = true)) {
+            Color(0xFFEF4444)
+        } else if (mapTheme.isDark) {
+            Color(0xFF38BDF8)
+        } else {
+            Color(0xFF2563EB)
+        }
+
         Surface(
             shape = CircleShape,
             color = controlSurfaceColor,
             border = BorderStroke(1.dp, controlBorderColor),
-            shadowElevation = 3.dp,
+            shadowElevation = 4.dp,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(10.dp)
-                .size(50.dp)
+                .padding(8.dp)
+                .size(54.dp)
+                .clip(CircleShape)
+                .clickable {
+                    isFollowingUser = true
+                    panOffsetX = 0f
+                    panOffsetY = 0f
+                }
                 .testTag("map_compass_widget")
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.size(42.dp)) {
+                // Outer Rotating Compass Bezel & Perimeter North/South Pointers
+                Canvas(modifier = Modifier.fillMaxSize()) {
                     val cx = size.width / 2f
                     val cy = size.height / 2f
-                    // Subtle compass dial ring
+                    val outerRadius = size.minDimension / 2f - 3.dp.toPx()
+                    val innerShieldRadius = 15.dp.toPx()
+
+                    // Subtle outer compass track circle
                     drawCircle(
-                        color = controlBorderColor.copy(alpha = 0.6f),
-                        radius = size.minDimension / 2.2f,
+                        color = controlBorderColor.copy(alpha = 0.55f),
+                        radius = outerRadius - 2.dp.toPx(),
                         center = Offset(cx, cy),
                         style = Stroke(width = 1.dp.toPx())
                     )
-                    rotate(degrees = -compassHeading, pivot = Offset(cx, cy)) {
-                        val northNeedle = Path().apply {
-                            moveTo(cx, cy - 14.dp.toPx())
-                            lineTo(cx - 4.5.dp.toPx(), cy)
-                            lineTo(cx + 4.5.dp.toPx(), cy)
-                            close()
-                        }
-                        drawPath(northNeedle, color = Color(0xFFEF4444))
 
-                        val southNeedle = Path().apply {
-                            moveTo(cx, cy + 14.dp.toPx())
-                            lineTo(cx - 4.5.dp.toPx(), cy)
-                            lineTo(cx + 4.5.dp.toPx(), cy)
+                    // Rotate bezel & perimeter needles smoothly
+                    rotate(degrees = -animatedCompassHeading, pivot = Offset(cx, cy)) {
+                        // 12 precision degree ticks every 30°
+                        for (i in 0 until 12) {
+                            val angleRad = Math.toRadians((i * 30).toDouble())
+                            val isCardinal = i % 3 == 0
+                            val tickInner = if (isCardinal) innerShieldRadius + 1.5.dp.toPx() else innerShieldRadius + 3.dp.toPx()
+                            val tickOuter = outerRadius - 2.2.dp.toPx()
+                            val sinA = kotlin.math.sin(angleRad).toFloat()
+                            val cosA = kotlin.math.cos(angleRad).toFloat()
+
+                            // Skip 0° (North) and 180° (South) ticks because triangles sit there
+                            if (i != 0 && i != 6) {
+                                drawLine(
+                                    color = if (isCardinal) controlIconColor.copy(alpha = 0.65f) else controlBorderColor.copy(alpha = 0.75f),
+                                    start = Offset(cx + sinA * tickInner, cy - cosA * tickInner),
+                                    end = Offset(cx + sinA * tickOuter, cy - cosA * tickOuter),
+                                    strokeWidth = if (isCardinal) 1.5.dp.toPx() else 1.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                            }
+                        }
+
+                        // Vibrant Red North Perimeter Pointer (strictly outside inner shield)
+                        val northTipY = cy - outerRadius + 0.5.dp.toPx()
+                        val northBaseY = cy - innerShieldRadius - 0.8.dp.toPx()
+                        val halfBaseW = 4.2.dp.toPx()
+                        val northPointer = Path().apply {
+                            moveTo(cx, northTipY)
+                            lineTo(cx - halfBaseW, northBaseY)
+                            lineTo(cx + halfBaseW, northBaseY)
                             close()
                         }
-                        drawPath(southNeedle, color = Color(0xFF94A3B8).copy(alpha = 0.45f))
+                        drawPath(northPointer, color = Color(0xFFEF4444))
+
+                        // Subtle Slate South Counter-Pointer (strictly outside inner shield)
+                        val southTipY = cy + outerRadius - 1.dp.toPx()
+                        val southBaseY = cy + innerShieldRadius + 0.8.dp.toPx()
+                        val southPointer = Path().apply {
+                            moveTo(cx, southTipY)
+                            lineTo(cx - 3.4.dp.toPx(), southBaseY)
+                            lineTo(cx + 3.4.dp.toPx(), southBaseY)
+                            close()
+                        }
+                        drawPath(
+                            southPointer,
+                            color = if (mapTheme.isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
+                        )
                     }
+
+                    // Inner Non-Rotating Digital Hub Shield (keeps text 100% separated from needle!)
+                    drawCircle(
+                        color = innerHubBg,
+                        radius = innerShieldRadius,
+                        center = Offset(cx, cy)
+                    )
+                    drawCircle(
+                        color = controlBorderColor.copy(alpha = 0.85f),
+                        radius = innerShieldRadius,
+                        center = Offset(cx, cy),
+                        style = Stroke(width = 1.dp.toPx())
+                    )
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+
+                // Crisp Non-Overlapping Center Digital Heading Readout
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
-                        text = "N",
-                        color = Color(0xFFEF4444),
-                        fontSize = 7.5.sp,
-                        lineHeight = 8.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        text = headingParts.first,
+                        color = controlIconColor,
+                        fontSize = 9.sp,
+                        lineHeight = 9.5.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Text(
-                        text = compassHeadingStr,
-                        color = controlIconColor,
+                        text = headingParts.second,
+                        color = cardinalColor,
                         fontSize = 8.sp,
-                        lineHeight = 9.sp,
-                        fontWeight = FontWeight.Black
+                        lineHeight = 8.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }

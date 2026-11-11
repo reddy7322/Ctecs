@@ -55,8 +55,8 @@ data class CorrectionValidationResult(
  */
 object SmartChainageCorrectionEngine {
 
-    // Maximum distance from a single correction point where fixed shift applies
-    const val SINGLE_POINT_INFLUENCE_METRES = 2000L
+    // Maximum distance from a single correction point where fixed shift applies (100 km corridor coverage)
+    const val SINGLE_POINT_INFLUENCE_METRES = 100_000L
 
     /**
      * Applies custom chainage correction to [rawChainage] if it falls within valid coverage
@@ -121,7 +121,9 @@ object SmartChainageCorrectionEngine {
         for (i in 0 until activePoints.size - 1) {
             val curr = activePoints[i]
             val next = activePoints[i + 1]
-            if (rawMetres in curr.originalKmzMetres..next.originalKmzMetres) {
+            val segMin = minOf(curr.originalKmzMetres, next.originalKmzMetres)
+            val segMax = maxOf(curr.originalKmzMetres, next.originalKmzMetres)
+            if (rawMetres in segMin..segMax) {
                 pA = curr
                 pB = next
                 break
@@ -147,7 +149,7 @@ object SmartChainageCorrectionEngine {
         // Linear interpolation of offset drift between control points
         val spanKmz = pB.originalKmzMetres - pA.originalKmzMetres
         val fraction = if (spanKmz != 0L) {
-            (rawMetres - pA.originalKmzMetres).toDouble() / spanKmz.toDouble()
+            ((rawMetres - pA.originalKmzMetres).toDouble() / spanKmz.toDouble()).coerceIn(0.0, 1.0)
         } else {
             0.0
         }

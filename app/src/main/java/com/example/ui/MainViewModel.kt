@@ -818,7 +818,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Smart KMZ Correction Points Management
     fun addCorrectionPoint(point: ChainageCorrectionPoint) {
+        _manualChainage.value = null
+        progressionTracker.resetChainageFilter()
         viewModelScope.launch {
+            preferencesManager.setManualChainageOverride(null)
+            preferencesManager.setRouteCorrectionsEnabled(true)
             preferencesManager.saveRouteCorrectionPoint(point)
             preferencesManager.addChainageLogEntry(
                 ChainageLogEntry(
@@ -829,12 +833,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     details = "Original KMZ: ${point.originalKmzChainage.format()} (Shift: ${point.displayOffset})"
                 )
             )
-            _uiMessages.emit(UiMessage.Success("Correction point ${point.correctedChainage.format()} saved"))
+            _uiMessages.emit(UiMessage.Success("Calibration point ${point.correctedChainage.format()} applied"))
         }
     }
 
     fun updateCorrectionPoint(point: ChainageCorrectionPoint) {
+        _manualChainage.value = null
+        progressionTracker.resetChainageFilter()
         viewModelScope.launch {
+            preferencesManager.setManualChainageOverride(null)
+            preferencesManager.setRouteCorrectionsEnabled(true)
             preferencesManager.saveRouteCorrectionPoint(point)
             preferencesManager.addChainageLogEntry(
                 ChainageLogEntry(
@@ -845,11 +853,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     details = "Original KMZ: ${point.originalKmzChainage.format()} (Shift: ${point.displayOffset})"
                 )
             )
-            _uiMessages.emit(UiMessage.Success("Correction point updated: ${point.correctedChainage.format()}"))
+            _uiMessages.emit(UiMessage.Success("Calibration point updated: ${point.correctedChainage.format()}"))
         }
     }
 
     fun deleteCorrectionPoint(routeId: String, pointId: String) {
+        progressionTracker.resetChainageFilter()
         viewModelScope.launch {
             preferencesManager.deleteRouteCorrectionPoint(routeId, pointId)
             preferencesManager.addChainageLogEntry(

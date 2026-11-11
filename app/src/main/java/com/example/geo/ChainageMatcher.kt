@@ -100,6 +100,32 @@ object ChainageMatcher {
         }
         mapped.sortBy { it.distanceAlongAlignmentM }
 
+        // If no explicit markers mapped to this alignment path, synthesize baseline chainage
+        // directly from the path coordinates so every point along the path has an accurate baseline chainage
+        if (mapped.isEmpty() && n >= 2 && totalDist > 0.0) {
+            val inferredStartMetres = allMarkers.firstOrNull()?.chainage?.metres
+                ?: Chainage.parse(alignment.name)?.metres
+                ?: 0L
+            val sign = if (alignment.direction == "DECREASING") -1 else 1
+            val endMetres = (inferredStartMetres + sign * totalDist).roundToLong().coerceAtLeast(0L)
+            val startCh = Chainage(inferredStartMetres)
+            val endCh = Chainage(endMetres)
+            mapped.add(
+                MappedMarkerRef(
+                    marker = RouteMarker("path-start-${alignment.id}", startCh.format(), startCh, pts.first()),
+                    distanceAlongAlignmentM = 0.0,
+                    chainageMetres = inferredStartMetres
+                )
+            )
+            mapped.add(
+                MappedMarkerRef(
+                    marker = RouteMarker("path-end-${alignment.id}", endCh.format(), endCh, pts.last()),
+                    distanceAlongAlignmentM = totalDist,
+                    chainageMetres = endMetres
+                )
+            )
+        }
+
         // Determine direction if not specified
         val dir = if (mapped.size >= 2) {
             if (mapped.last().chainageMetres >= mapped.first().chainageMetres) "INCREASING" else "DECREASING"

@@ -17,6 +17,7 @@ import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 class RouteParseException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
@@ -82,15 +83,14 @@ object KmzParser {
             val zis = ZipInputStream(ByteArrayInputStream(bytes))
             var entry: ZipEntry? = zis.nextEntry
             var fallbackKmlBytes: ByteArray? = null
+            val kmlEntries = mutableListOf<Pair<String, ByteArray>>()
 
             while (entry != null) {
                 if (!entry.isDirectory) {
                     val entryBytes = zis.readBytes()
                     if (entry.name.endsWith(".kml", ignoreCase = true)) {
-                        zis.close()
-                        return parseKmlBytes(entryBytes, originalFileName)
-                    }
-                    if (fallbackKmlBytes == null && entryBytes.isNotEmpty()) {
+                        kmlEntries.add(entry.name to entryBytes)
+                    } else if (fallbackKmlBytes == null && entryBytes.isNotEmpty()) {
                         val header = String(entryBytes.take(128).toByteArray(), Charsets.UTF_8).trimStart()
                         if (header.contains("<kml", ignoreCase = true) || header.contains("<?xml", ignoreCase = true)) {
                             fallbackKmlBytes = entryBytes
@@ -100,6 +100,14 @@ object KmzParser {
                 entry = zis.nextEntry
             }
             zis.close()
+
+            if (kmlEntries.isNotEmpty()) {
+                // Prioritize doc.kml or the largest KML entry in the KMZ archive
+                val primaryKml = kmlEntries.firstOrNull { it.first.equals("doc.kml", ignoreCase = true) }
+                    ?: kmlEntries.maxByOrNull { it.second.size }
+                    ?: kmlEntries.first()
+                return parseKmlBytes(primaryKml.second, originalFileName)
+            }
 
             if (fallbackKmlBytes != null) {
                 return parseKmlBytes(fallbackKmlBytes, originalFileName)
@@ -128,11 +136,17 @@ object KmzParser {
 
     @Throws(RouteParseException::class)
     fun parseKmlStream(inputStream: InputStream, originalFileName: String): RouteData {
+        val rawBytes = try {
+            inputStream.readBytes()
+        } catch (e: Exception) {
+            throw RouteParseException("Cannot read KML stream: ${e.message}", e)
+        }
+
         val parser = try {
             val factory = XmlPullParserFactory.newInstance()
             factory.isNamespaceAware = false
             val p = factory.newPullParser()
-            p.setInput(inputStream, "UTF-8")
+            p.setInput(ByteArrayInputStream(rawBytes), "UTF-8")
             p
         } catch (e: Throwable) {
             null
@@ -140,7 +154,7 @@ object KmzParser {
 
         if (parser == null) {
             // JVM fallback via standard javax.xml.parsers.DocumentBuilderFactory
-            return parseKmlWithDom(inputStream, originalFileName)
+            return parseKmlWithDom(ByteArrayInputStream(rawBytes), originalFileName)
         }
 
         try {
@@ -153,63 +167,61 @@ object KmzParser {
 
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 if (eventType == XmlPullParser.START_TAG) {
-                    when (parser.name.lowercase(Locale.ROOT)) {
+                    val tagLower = parser.name.lowercase(Locale.ROOT).substringAfterLast(':')
+                    when (tagLower) {
                         "document" -> {}
                         "folder" -> {}
                         "name" -> {
                             val text = parser.nextText().trim()
                             if (documentName == null) {
                                 documentName = text
+                            } else {
+                                currentFolder = text
                             }
                         }
                         "placemark" -> {
                             parsePlacemark(parser, currentFolder, markers, alignments, alignmentCounter++)
+                        }
+                        "linestring", "linearring" -> {
+                            val coords = parseLineStringTag(parser)
+                            if (coords.size >= 2) {
+                                val alignName = currentFolder.ifBlank { documentName ?: "Alignment #$alignmentCounter" }
+                                alignments.add(
+                                    RouteAlignment(
+                                        id = "align-top-${alignmentCounter++}",
+                                        name = alignName,
+                                        points = deduplicatePathPoints(coords),
+                                        direction = "UNKNOWN",
+                                        carriagewayType = detectCarriagewayType(alignName)
+                                    )
+                                )
+                            }
+                        }
+                        "track" -> {
+                            val coords = parseGxTrackTag(parser)
+                            if (coords.size >= 2) {
+                                val alignName = currentFolder.ifBlank { documentName ?: "Track #$alignmentCounter" }
+                                alignments.add(
+                                    RouteAlignment(
+                                        id = "align-track-${alignmentCounter++}",
+                                        name = alignName,
+                                        points = deduplicatePathPoints(coords),
+                                        direction = "UNKNOWN",
+                                        carriagewayType = detectCarriagewayType(alignName)
+                                    )
+                                )
+                            }
                         }
                     }
                 }
                 eventType = parser.next()
             }
 
-            if (markers.isEmpty() && alignments.isEmpty()) {
-                throw RouteParseException("No valid chainage placemarks or road alignments found in $originalFileName")
-            }
-
-            val sortedMarkers = markers.sortedBy { it.chainage.metres }
-            val rawAlignments = if (alignments.isEmpty() && sortedMarkers.size >= 2) {
-                val polyPoints = sortedMarkers.map { it.point }
-                listOf(RouteAlignment("auto-alignment", "Auto Generated Alignment", polyPoints))
-            } else {
-                alignments
-            }
-
-            // Post-process alignments with direction and carriageway classification
-            val processedAlignments = rawAlignments.map { align ->
-                val dir = determineAlignmentDirection(align.points, sortedMarkers)
-                val cType = detectCarriagewayType(align.name)
-                align.copy(direction = dir, carriagewayType = cType)
-            }
-
-            val allPoints = mutableListOf<GeoPoint>()
-            allPoints.addAll(sortedMarkers.map { it.point })
-            processedAlignments.forEach { allPoints.addAll(it.points) }
-
-            val bounds = GeoBounds.fromPoints(allPoints)
-            val startChainage = sortedMarkers.firstOrNull()?.chainage
-            val endChainage = sortedMarkers.lastOrNull()?.chainage
-            val finalName = documentName ?: originalFileName.substringBeforeLast(".")
-
-            val diagnostics = analyzeAlignmentDiagnostics(sortedMarkers, processedAlignments)
-
-            return RouteData(
-                id = UUID.randomUUID().toString(),
-                name = finalName,
-                fileName = originalFileName,
-                markers = sortedMarkers,
-                alignments = processedAlignments,
-                bounds = bounds,
-                startChainage = startChainage,
-                endChainage = endChainage,
-                diagnostics = diagnostics
+            return buildFinalRouteData(
+                documentName = documentName,
+                originalFileName = originalFileName,
+                markers = markers,
+                alignments = alignments
             )
         } catch (e: RouteParseException) {
             throw e
@@ -272,20 +284,57 @@ object KmzParser {
                         }
                     }
 
-                    // Parse LineStrings (support direct and MultiGeometry)
-                    val lineEls = pElem.getElementsByTagName("LineString")
-                    for (j in 0 until lineEls.length) {
-                        val lineElem = lineEls.item(j) as org.w3c.dom.Element
-                        val coordText = lineElem.getElementsByTagName("coordinates").item(0)?.textContent?.trim()
-                        if (coordText != null) {
-                            val pts = parseMultipleCoordinates(coordText)
-                            if (pts.isNotEmpty()) {
-                                val alignName = name ?: "Alignment #${alignments.size + 1}"
+                    // Parse LineStrings and LinearRings (support direct, Polygon, and MultiGeometry)
+                    val lineTagNames = listOf("LineString", "LinearRing")
+                    for (tagName in lineTagNames) {
+                        val lineEls = pElem.getElementsByTagName(tagName)
+                        for (j in 0 until lineEls.length) {
+                            val lineElem = lineEls.item(j) as org.w3c.dom.Element
+                            val coordText = lineElem.getElementsByTagName("coordinates").item(0)?.textContent?.trim()
+                            if (coordText != null) {
+                                val pts = deduplicatePathPoints(parseMultipleCoordinates(coordText))
+                                if (pts.size >= 2) {
+                                    val alignName = name ?: "Alignment #${alignments.size + 1}"
+                                    alignments.add(
+                                        RouteAlignment(
+                                            id = "align-dom-$i-$tagName-$j",
+                                            name = alignName,
+                                            points = pts,
+                                            direction = "UNKNOWN",
+                                            carriagewayType = detectCarriagewayType(alignName)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Parse gx:Track / Track coordinates
+                    val trackTagNames = listOf("gx:Track", "Track")
+                    for (trackTag in trackTagNames) {
+                        val trackEls = pElem.getElementsByTagName(trackTag)
+                        for (t in 0 until trackEls.length) {
+                            val trackElem = trackEls.item(t) as org.w3c.dom.Element
+                            val trackPts = mutableListOf<GeoPoint>()
+                            val coordNodes = trackElem.childNodes
+                            for (cIdx in 0 until coordNodes.length) {
+                                val cNode = coordNodes.item(cIdx)
+                                if (cNode.nodeType == org.w3c.dom.Node.ELEMENT_NODE) {
+                                    val cName = cNode.nodeName.lowercase(Locale.ROOT).substringAfterLast(':')
+                                    if (cName == "coord") {
+                                        val pt = parseGxCoord(cNode.textContent?.trim().orEmpty())
+                                        if (pt != null) trackPts.add(pt)
+                                    }
+                                }
+                            }
+                            val dedup = deduplicatePathPoints(trackPts)
+                            if (dedup.size >= 2) {
+                                val alignName = name ?: "Track #${alignments.size + 1}"
                                 alignments.add(
                                     RouteAlignment(
-                                        id = "align-dom-$i-$j",
+                                        id = "align-dom-track-$i-$t",
                                         name = alignName,
-                                        points = pts,
+                                        points = dedup,
                                         direction = "UNKNOWN",
                                         carriagewayType = detectCarriagewayType(alignName)
                                     )
@@ -296,51 +345,265 @@ object KmzParser {
                 }
             }
 
-            if (markers.isEmpty() && alignments.isEmpty()) {
-                throw RouteParseException("No valid chainage placemarks or road alignments found in $originalFileName")
-            }
-
-            val sortedMarkers = markers.sortedBy { it.chainage.metres }
-            val rawAlignments = if (alignments.isEmpty() && sortedMarkers.size >= 2) {
-                val polyPoints = sortedMarkers.map { it.point }
-                listOf(RouteAlignment("auto-alignment", "Auto Generated Alignment", polyPoints))
-            } else {
-                alignments
-            }
-
-            val processedAlignments = rawAlignments.map { align ->
-                val dir = determineAlignmentDirection(align.points, sortedMarkers)
-                val cType = detectCarriagewayType(align.name)
-                align.copy(direction = dir, carriagewayType = cType)
-            }
-
-            val allPoints = mutableListOf<GeoPoint>()
-            allPoints.addAll(sortedMarkers.map { it.point })
-            processedAlignments.forEach { allPoints.addAll(it.points) }
-
-            val bounds = GeoBounds.fromPoints(allPoints)
-            val startChainage = sortedMarkers.firstOrNull()?.chainage
-            val endChainage = sortedMarkers.lastOrNull()?.chainage
-            val finalName = documentName ?: originalFileName.substringBeforeLast(".")
-
-            val diagnostics = analyzeAlignmentDiagnostics(sortedMarkers, processedAlignments)
-
-            return RouteData(
-                id = UUID.randomUUID().toString(),
-                name = finalName,
-                fileName = originalFileName,
-                markers = sortedMarkers,
-                alignments = processedAlignments,
-                bounds = bounds,
-                startChainage = startChainage,
-                endChainage = endChainage,
-                diagnostics = diagnostics
+            return buildFinalRouteData(
+                documentName = documentName,
+                originalFileName = originalFileName,
+                markers = markers,
+                alignments = alignments
             )
         } catch (e: RouteParseException) {
             throw e
         } catch (e: Exception) {
             throw RouteParseException("Error parsing KML via DOM: ${e.message}", e)
         }
+    }
+
+    /**
+     * Finalizes parsed KML/KMZ data into a validated [RouteData] object.
+     * If the KMZ contains path coordinates (`alignments`) without explicit point markers,
+     * automatically generates accurate baseline chainage markers along the extracted path coordinates
+     * so the chainage matcher and calibration system have full baseline chainage coverage.
+     */
+    private fun buildFinalRouteData(
+        documentName: String?,
+        originalFileName: String,
+        markers: List<RouteMarker>,
+        alignments: List<RouteAlignment>
+    ): RouteData {
+        if (markers.isEmpty() && alignments.isEmpty()) {
+            throw RouteParseException("No valid chainage placemarks or road alignments found in $originalFileName")
+        }
+
+        // Merge contiguous path segments when multiple small disjointed LineStrings belong to the same carriageway
+        val consolidatedAlignments = consolidatePathAlignments(alignments)
+
+        // If the KMZ file only contains path coordinates (no Point markers),
+        // synthesize baseline chainage markers from the extracted path coordinates!
+        val effectiveMarkers = if (markers.isEmpty() && consolidatedAlignments.isNotEmpty()) {
+            val primaryPath = consolidatedAlignments.maxByOrNull { calculatePathLengthMetres(it.points) }
+                ?: consolidatedAlignments.first()
+            val inferredStartChainage = Chainage.parse(primaryPath.name)?.metres
+                ?: Chainage.parse(documentName)?.metres
+                ?: 0L
+            computeBaselineMarkersFromPath(
+                points = primaryPath.points,
+                startChainageMetres = inferredStartChainage,
+                intervalMetres = 100.0
+            )
+        } else {
+            markers
+        }
+
+        val sortedMarkers = effectiveMarkers.sortedBy { it.chainage.metres }
+
+        val rawAlignments = if (consolidatedAlignments.isEmpty() && sortedMarkers.size >= 2) {
+            val polyPoints = deduplicatePathPoints(sortedMarkers.map { it.point })
+            listOf(RouteAlignment("auto-alignment", "Auto Generated Alignment", polyPoints))
+        } else {
+            consolidatedAlignments
+        }
+
+        // Post-process alignments with direction and carriageway classification
+        val processedAlignments = rawAlignments.map { align ->
+            val dir = determineAlignmentDirection(align.points, sortedMarkers)
+            val cType = detectCarriagewayType(align.name)
+            align.copy(direction = dir, carriagewayType = cType)
+        }
+
+        val allPoints = mutableListOf<GeoPoint>()
+        allPoints.addAll(sortedMarkers.map { it.point })
+        processedAlignments.forEach { allPoints.addAll(it.points) }
+
+        val bounds = GeoBounds.fromPoints(allPoints)
+
+        // Compute startChainage and endChainage accurately even if only 1 marker + path exists
+        val (startChainage, endChainage) = if (sortedMarkers.size >= 2) {
+            sortedMarkers.first().chainage to sortedMarkers.last().chainage
+        } else if (sortedMarkers.size == 1 && processedAlignments.isNotEmpty()) {
+            val single = sortedMarkers.first()
+            val primaryPts = processedAlignments.first().points
+            val totalLen = calculatePathLengthMetres(primaryPts).roundToLong()
+            single.chainage to Chainage(single.chainage.metres + totalLen)
+        } else {
+            sortedMarkers.firstOrNull()?.chainage to sortedMarkers.lastOrNull()?.chainage
+        }
+
+        val finalName = documentName ?: originalFileName.substringBeforeLast(".")
+        val diagnostics = analyzeAlignmentDiagnostics(sortedMarkers, processedAlignments)
+
+        return RouteData(
+            id = UUID.randomUUID().toString(),
+            name = finalName,
+            fileName = originalFileName,
+            markers = sortedMarkers,
+            alignments = processedAlignments,
+            bounds = bounds,
+            startChainage = startChainage,
+            endChainage = endChainage,
+            diagnostics = diagnostics
+        )
+    }
+
+    /**
+     * Generates accurate baseline chainage markers along extracted KMZ path coordinates
+     * at regular geodesic intervals (e.g., every 100m, plus start and end vertices).
+     */
+    fun computeBaselineMarkersFromPath(
+        points: List<GeoPoint>,
+        startChainageMetres: Long = 0L,
+        intervalMetres: Double = 100.0
+    ): List<RouteMarker> {
+        val cleanPts = deduplicatePathPoints(points)
+        if (cleanPts.isEmpty()) return emptyList()
+        if (cleanPts.size == 1) {
+            val ch = Chainage(startChainageMetres)
+            return listOf(
+                RouteMarker(
+                    id = "path-baseline-0",
+                    label = ch.format(),
+                    chainage = ch,
+                    point = cleanPts[0],
+                    description = "Path Start Baseline"
+                )
+            )
+        }
+
+        val result = mutableListOf<RouteMarker>()
+        val safeInterval = intervalMetres.coerceAtLeast(10.0)
+
+        // Always add start station
+        val startCh = Chainage(startChainageMetres)
+        result.add(
+            RouteMarker(
+                id = "path-baseline-start",
+                label = startCh.format(),
+                chainage = startCh,
+                point = cleanPts.first(),
+                description = "Extracted Path Baseline Start"
+            )
+        )
+
+        var cumulativeDist = 0.0
+        var nextTargetDist = safeInterval
+        var stationIdx = 1
+
+        for (i in 0 until cleanPts.size - 1) {
+            val p1 = cleanPts[i]
+            val p2 = cleanPts[i + 1]
+            val segLen = GeoUtils.distanceMetres(p1, p2)
+            if (segLen <= 1e-3) continue
+
+            while (cumulativeDist + segLen >= nextTargetDist) {
+                val distIntoSeg = nextTargetDist - cumulativeDist
+                val fraction = (distIntoSeg / segLen).coerceIn(0.0, 1.0)
+                val interpLat = p1.latitude + fraction * (p2.latitude - p1.latitude)
+                val interpLon = p1.longitude + fraction * (p2.longitude - p1.longitude)
+                val interpAlt = p1.altitude + fraction * (p2.altitude - p1.altitude)
+                val chMetres = startChainageMetres + nextTargetDist.roundToLong()
+                val ch = Chainage(chMetres)
+
+                result.add(
+                    RouteMarker(
+                        id = "path-baseline-$stationIdx",
+                        label = ch.format(),
+                        chainage = ch,
+                        point = GeoPoint(interpLat, interpLon, interpAlt),
+                        description = "Extracted Path Baseline Station"
+                    )
+                )
+                stationIdx++
+                nextTargetDist += safeInterval
+            }
+
+            cumulativeDist += segLen
+        }
+
+        // Always add end station if total length exceeds last added station by >= 1m
+        val totalMetres = cumulativeDist.roundToLong()
+        val endChainageMetres = startChainageMetres + totalMetres
+        val lastAddedMetres = result.last().chainage.metres
+        if (abs(endChainageMetres - lastAddedMetres) >= 1L || result.size == 1) {
+            val endCh = Chainage(endChainageMetres)
+            result.add(
+                RouteMarker(
+                    id = "path-baseline-end",
+                    label = endCh.format(),
+                    chainage = endCh,
+                    point = cleanPts.last(),
+                    description = "Extracted Path Baseline End"
+                )
+            )
+        }
+
+        return result
+    }
+
+    /**
+     * Extracts all path coordinates from a [RouteData] instance in continuous order.
+     */
+    fun extractPathCoordinates(routeData: RouteData): List<GeoPoint> {
+        if (routeData.alignments.isNotEmpty()) {
+            return deduplicatePathPoints(routeData.alignments.flatMap { it.points })
+        }
+        return deduplicatePathPoints(routeData.markers.map { it.point })
+    }
+
+    /**
+     * Calculates total geodesic length in metres along a polyline path.
+     */
+    fun calculatePathLengthMetres(points: List<GeoPoint>): Double {
+        if (points.size < 2) return 0.0
+        var total = 0.0
+        for (i in 0 until points.size - 1) {
+            total += GeoUtils.distanceMetres(points[i], points[i + 1])
+        }
+        return total
+    }
+
+    /**
+     * Removes consecutive duplicate vertices (< 0.05m apart) from path coordinates.
+     */
+    private fun deduplicatePathPoints(points: List<GeoPoint>): List<GeoPoint> {
+        if (points.size <= 1) return points
+        val cleaned = ArrayList<GeoPoint>(points.size)
+        cleaned.add(points[0])
+        for (i in 1 until points.size) {
+            val prev = cleaned.last()
+            val curr = points[i]
+            if (abs(prev.latitude - curr.latitude) > 1e-8 || abs(prev.longitude - curr.longitude) > 1e-8) {
+                cleaned.add(curr)
+            }
+        }
+        return cleaned
+    }
+
+    /**
+     * Consolidates fragmented path segments that share endpoints (within 5m) and belong to the same carriageway.
+     */
+    private fun consolidatePathAlignments(alignments: List<RouteAlignment>): List<RouteAlignment> {
+        if (alignments.size <= 1) return alignments
+        val result = mutableListOf<RouteAlignment>()
+        var current = alignments[0]
+
+        for (i in 1 until alignments.size) {
+            val next = alignments[i]
+            val currEnd = current.points.lastOrNull()
+            val nextStart = next.points.firstOrNull()
+            val sameCarriageway = current.carriagewayType == next.carriagewayType &&
+                    (current.name == next.name || current.name.startsWith("Alignment #"))
+
+            if (currEnd != null && nextStart != null && sameCarriageway &&
+                GeoUtils.distanceMetres(currEnd, nextStart) <= 5.0
+            ) {
+                val mergedPoints = deduplicatePathPoints(current.points + next.points)
+                current = current.copy(points = mergedPoints)
+            } else {
+                result.add(current)
+                current = next
+            }
+        }
+        result.add(current)
+        return result
     }
 
     private fun parsePlacemark(
@@ -361,21 +624,33 @@ object KmzParser {
             when (parser.next()) {
                 XmlPullParser.START_TAG -> {
                     depth++
-                    when (parser.name.lowercase(Locale.ROOT)) {
-                        "name" -> name = parser.nextText().trim()
-                        "description" -> description = parser.nextText().trim()
+                    val tagLower = parser.name.lowercase(Locale.ROOT).substringAfterLast(':')
+                    when (tagLower) {
+                        "name" -> {
+                            name = parser.nextText().trim()
+                            depth--
+                        }
+                        "description" -> {
+                            description = parser.nextText().trim()
+                            depth--
+                        }
                         "point" -> {
                             val pt = parsePointTag(parser)
                             if (pt != null) points.add(pt)
                             depth-- // consumed in helper
                         }
-                        "linestring" -> {
+                        "linestring", "linearring" -> {
                             val coords = parseLineStringTag(parser)
                             if (coords.isNotEmpty()) lineStrings.add(coords)
                             depth-- // consumed in helper
                         }
-                        "multigeometry" -> {
-                            // Container tag, continue parsing child Point / LineString tags
+                        "track" -> {
+                            val coords = parseGxTrackTag(parser)
+                            if (coords.isNotEmpty()) lineStrings.add(coords)
+                            depth-- // consumed in helper
+                        }
+                        "multigeometry", "polygon", "outerboundaryis" -> {
+                            // Container tag, continue parsing child Point / LineString / LinearRing tags
                         }
                         "extendeddata" -> {
                             extendedDataChainage = parseExtendedDataTag(parser)
@@ -408,16 +683,19 @@ object KmzParser {
 
         // If line strings found, save alignment
         lineStrings.forEachIndexed { i, coords ->
-            val alignName = name ?: "Alignment #$alignmentIndex"
-            alignments.add(
-                RouteAlignment(
-                    id = "align-${alignmentIndex}-$i",
-                    name = alignName,
-                    points = coords,
-                    direction = "UNKNOWN",
-                    carriagewayType = detectCarriagewayType(alignName)
+            val dedup = deduplicatePathPoints(coords)
+            if (dedup.size >= 2) {
+                val alignName = name ?: currentFolder.ifBlank { "Alignment #$alignmentIndex" }
+                alignments.add(
+                    RouteAlignment(
+                        id = "align-${alignmentIndex}-$i",
+                        name = alignName,
+                        points = dedup,
+                        direction = "UNKNOWN",
+                        carriagewayType = detectCarriagewayType(alignName)
+                    )
                 )
-            )
+            }
         }
     }
 
@@ -459,6 +737,45 @@ object KmzParser {
         return list
     }
 
+    private fun parseGxTrackTag(parser: XmlPullParser): List<GeoPoint> {
+        val list = mutableListOf<GeoPoint>()
+        var depth = 1
+        while (depth > 0) {
+            when (parser.next()) {
+                XmlPullParser.START_TAG -> {
+                    depth++
+                    val tagLower = parser.name.lowercase(Locale.ROOT).substringAfterLast(':')
+                    if (tagLower == "coord") {
+                        val text = parser.nextText().trim()
+                        val pt = parseGxCoord(text)
+                        if (pt != null) list.add(pt)
+                        depth--
+                    } else if (tagLower == "coordinates") {
+                        val text = parser.nextText().trim()
+                        list.addAll(parseMultipleCoordinates(text))
+                        depth--
+                    }
+                }
+                XmlPullParser.END_TAG -> depth--
+            }
+        }
+        return list
+    }
+
+    private fun parseGxCoord(raw: String): GeoPoint? {
+        if (raw.contains(",")) return parseSingleCoordinate(raw)
+        val parts = raw.trim().split("\\s+".toRegex())
+        if (parts.size >= 2) {
+            val lon = parts[0].toDoubleOrNull() ?: return null
+            val lat = parts[1].toDoubleOrNull() ?: return null
+            val alt = if (parts.size >= 3) parts[2].toDoubleOrNull() ?: 0.0 else 0.0
+            if (lat in -90.0..90.0 && lon in -180.0..180.0) {
+                return GeoPoint(lat, lon, alt)
+            }
+        }
+        return null
+    }
+
     private fun parseExtendedDataTag(parser: XmlPullParser): Chainage? {
         var foundChainage: Chainage? = null
         var depth = 1
@@ -466,7 +783,7 @@ object KmzParser {
             when (parser.next()) {
                 XmlPullParser.START_TAG -> {
                     depth++
-                    val tagName = parser.name.lowercase(Locale.ROOT)
+                    val tagName = parser.name.lowercase(Locale.ROOT).substringAfterLast(':')
                     if (tagName == "simpledata" || tagName == "data" || tagName == "value") {
                         val attrName = parser.getAttributeValue(null, "name")?.lowercase(Locale.ROOT) ?: ""
                         val text = parser.nextText().trim()
@@ -515,7 +832,9 @@ object KmzParser {
             val lon = parts[0].toDoubleOrNull() ?: return null
             val lat = parts[1].toDoubleOrNull() ?: return null
             val alt = if (parts.size >= 3) parts[2].toDoubleOrNull() ?: 0.0 else 0.0
-            return GeoPoint(lat, lon, alt)
+            if (lat in -90.0..90.0 && lon in -180.0..180.0) {
+                return GeoPoint(lat, lon, alt)
+            }
         }
         return null
     }
