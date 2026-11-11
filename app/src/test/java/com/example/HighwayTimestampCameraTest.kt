@@ -226,10 +226,12 @@ class HighwayTimestampCameraTest {
     @Test
     fun testBundledKmzFileParsing() {
         val kmzFile = listOf(
+            java.io.File("src/test/resources/sample_nh58.kmz"),
+            java.io.File("app/src/test/resources/sample_nh58.kmz"),
             java.io.File("src/main/assets/sample_nh58.kmz"),
             java.io.File("app/src/main/assets/sample_nh58.kmz")
         ).firstOrNull { it.exists() }
-        assertNotNull("sample_nh58.kmz must exist in assets", kmzFile)
+        assertNotNull("sample_nh58.kmz must exist in test resources", kmzFile)
 
         val routeData = kmzFile!!.inputStream().use { input ->
             KmzParser.parse(input, "sample_nh58.kmz")
@@ -311,10 +313,12 @@ class HighwayTimestampCameraTest {
     @Test
     fun testKmzParsingWithoutKmzExtension() {
         val kmzFile = listOf(
+            java.io.File("src/test/resources/sample_nh58.kmz"),
+            java.io.File("app/src/test/resources/sample_nh58.kmz"),
             java.io.File("src/main/assets/sample_nh58.kmz"),
             java.io.File("app/src/main/assets/sample_nh58.kmz")
         ).firstOrNull { it.exists() }
-        assertNotNull("sample_nh58.kmz must exist in assets", kmzFile)
+        assertNotNull("sample_nh58.kmz must exist in test resources", kmzFile)
 
         // Pass a name without .kmz (simulating raw SAF ID: 1000868329)
         val routeData = kmzFile!!.inputStream().use { input ->

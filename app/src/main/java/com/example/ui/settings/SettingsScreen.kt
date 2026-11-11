@@ -2907,7 +2907,7 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Active KMZ Route Alignment", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-                    Text("Currently active: ${activeRoute?.name ?: "Sample NH-58 Route"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Currently active: ${activeRoute?.name ?: "None (No KMZ loaded)"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),

@@ -394,7 +394,7 @@ fun HomeScreen(
 
             // 5. Prominent Next KM Stone Card
             val curChainage = matchResult.chainage
-            val (nextKmStone, nextKmDistance) = remember(curChainage) {
+            val (nextKmStone, nextKmDistance) = remember(curChainage, activeRoute?.id) {
                 if (curChainage != null) {
                     val curM = curChainage.metres
                     val nextKm = ((curM / 1000) + 1) * 1000
@@ -402,8 +402,10 @@ fun HomeScreen(
                     val kmLabel = com.example.model.Chainage.fromMetres(nextKm).format()
                     val distLabel = "${dist}m away"
                     kmLabel to distLabel
+                } else if (activeRoute == null) {
+                    "--+---" to "No KMZ"
                 } else {
-                    "181+000" to "12m away"
+                    "--+---" to "Waiting GPS"
                 }
             }
 

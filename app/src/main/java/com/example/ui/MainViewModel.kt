@@ -586,14 +586,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isImportingRoute: StateFlow<Boolean> = _isImportingRoute.asStateFlow()
 
     init {
-        // Auto-load bundled sample route if none exists yet
-        viewModelScope.launch {
-            allRoutes.collect { routes ->
-                if (routes.isEmpty()) {
-                    routeRepository.loadBundledSampleRoute()
-                }
-            }
-        }
 
         // Restore saved manual chainage override
         viewModelScope.launch {
@@ -1448,22 +1440,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Import failed"
                 _uiMessages.emit(UiMessage.Error("Failed to import: $err"))
-            }
-        }
-    }
-
-    fun loadBundledSampleRoute() {
-        viewModelScope.launch {
-            _isImportingRoute.value = true
-            val result = routeRepository.loadBundledSampleRoute()
-            _isImportingRoute.value = false
-            if (result.isSuccess) {
-                val data = result.getOrNull()
-                _uiMessages.emit(
-                    UiMessage.Success("Loaded ${data?.name} (${data?.markers?.size ?: 0} markers, 130+000 to 209+883)")
-                )
-            } else {
-                _uiMessages.emit(UiMessage.Error("Failed to load sample: ${result.exceptionOrNull()?.message}"))
             }
         }
     }
