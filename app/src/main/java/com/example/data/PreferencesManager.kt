@@ -166,8 +166,6 @@ class PreferencesManager(private val context: Context) {
         val KEY_ROUTE_CORRECTIONS_JSON = stringPreferencesKey("route_chainage_corrections_json")
         val KEY_ROUTE_CORRECTIONS_ENABLED = booleanPreferencesKey("route_chainage_corrections_enabled")
         val KEY_MANUAL_CHAINAGE_OVERRIDE = stringPreferencesKey("manual_chainage_override")
-        val KEY_MANUAL_CHAINAGE_CUSTOM_TEXT = stringPreferencesKey("manual_chainage_custom_text")
-        val KEY_SAVED_CUSTOM_CHAINAGES = stringPreferencesKey("saved_custom_chainages")
         val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
     }
 
@@ -580,46 +578,12 @@ class PreferencesManager(private val context: Context) {
         if (!raw.isNullOrBlank()) Chainage.parse(raw) else null
     }
 
-    val manualChainageTextFlow: Flow<String?> = context.dataStore.data.map { prefs ->
-        val custom = prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT]
-        val raw = prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]
-        when {
-            !custom.isNullOrBlank() -> custom
-            !raw.isNullOrBlank() -> raw
-            else -> null
-        }
-    }
-
-    val savedCustomChainagesFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
-        val raw = prefs[KEY_SAVED_CUSTOM_CHAINAGES].orEmpty()
-        if (raw.isBlank()) emptyList()
-        else raw.split("||").map { it.trim() }.filter { it.isNotBlank() }
-    }
-
-    suspend fun setManualChainageOverride(chainage: Chainage?, customText: String? = null) {
+    suspend fun setManualChainageOverride(chainage: Chainage?) {
         context.dataStore.edit { prefs ->
-            val formatted = customText?.trim()?.takeIf { it.isNotBlank() } ?: chainage?.format()
-            if (formatted != null) {
-                prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT] = formatted
-                if (chainage != null) {
-                    prefs[KEY_MANUAL_CHAINAGE_OVERRIDE] = chainage.format()
-                } else {
-                    prefs.remove(KEY_MANUAL_CHAINAGE_OVERRIDE)
-                }
+            if (chainage != null) {
+                prefs[KEY_MANUAL_CHAINAGE_OVERRIDE] = chainage.format()
             } else {
-                prefs.remove(KEY_MANUAL_CHAINAGE_CUSTOM_TEXT)
                 prefs.remove(KEY_MANUAL_CHAINAGE_OVERRIDE)
-            }
-        }
-    }
-
-    suspend fun saveCustomChainagesList(items: List<String>) {
-        context.dataStore.edit { prefs ->
-            val cleaned = items.map { it.trim() }.filter { it.isNotBlank() }.distinct()
-            if (cleaned.isEmpty()) {
-                prefs.remove(KEY_SAVED_CUSTOM_CHAINAGES)
-            } else {
-                prefs[KEY_SAVED_CUSTOM_CHAINAGES] = cleaned.joinToString("||")
             }
         }
     }

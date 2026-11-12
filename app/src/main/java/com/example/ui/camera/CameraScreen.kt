@@ -62,10 +62,8 @@ import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import com.example.camera.CameraResolutionHelper
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Exposure
@@ -165,6 +163,7 @@ import com.example.model.CaptureMode
 import com.example.model.CaptureTimer
 import com.example.model.Chainage
 import com.example.model.ChainageSource
+import com.example.ui.dialogs.ChainageManagementDialog
 import com.example.model.LogoPosition
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
@@ -324,9 +323,7 @@ fun CameraScreen(
 
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
-    val matchResult by viewModel.cameraMatchResult.collectAsStateWithLifecycle()
-    val manualChainageText by viewModel.manualChainageText.collectAsStateWithLifecycle()
-    val savedCustomChainages by viewModel.savedCustomChainages.collectAsStateWithLifecycle()
+    val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
     val overlayConfig by viewModel.overlayConfig.collectAsStateWithLifecycle()
     val currentLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
@@ -619,35 +616,32 @@ fun CameraScreen(
 
         if (isLandscape) {
             // ==========================================================
-            // LANDSCAPE CAMERA CONTROLS: SMART MINIMALIST GLASS UI
-            // Full transparent background (Color.Transparent) for all elements & buttons
+            // LANDSCAPE CAMERA CONTROLS (MATCHING REFERENCE SCREENSHOT)
             // ==========================================================
-            val glassBorderIdle = Color.White.copy(alpha = 0.38f)
 
-            // 1. TOP BAR: Collapsible Smart Minimalist Glass Toolbar (Left) & Status Checkmark (Right)
+            // 1. TOP BAR: Collapsible Smart Toolbar (Left) & Amber Status Checkmark (Right)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
-                    .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left: Chevron Toggle + Expandable Minimalist Glass Toolbar Buttons
+                // Left: Chevron Toggle + Expandable Toolbar Buttons
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Smart Toolbar Show/Hide Toggle Button (Full Transparent Glass)
+                    // Smart Toolbar Show/Hide Toggle Button
                     IconButton(
                         onClick = { isTopToolbarExpanded = !isTopToolbarExpanded },
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
-                            .background(Color.Transparent)
-                            .border(0.8.dp, glassBorderIdle, CircleShape)
+                            .background(Color(0x751A1A1A))
+                            .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                             .testTag("landscape_toolbar_toggle")
                     ) {
                         Icon(
@@ -658,7 +652,7 @@ fun CameraScreen(
                         )
                     }
 
-                    // Expandable Smart Camera Secondary Controls (Full Transparent Glass)
+                    // Expandable Smart Camera Secondary Controls
                     AnimatedVisibility(
                         visible = isTopToolbarExpanded,
                         enter = fadeIn() + expandHorizontally(),
@@ -672,35 +666,27 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { viewModel.toggleFlash() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (isFlashOn) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(Color(0x751A1A1A))
+                                    .border(0.8.dp, if (isFlashOn) HighlightYellow else Color.White.copy(alpha = 0.25f), CircleShape)
                                     .testTag("landscape_flash_button")
                             ) {
                                 Icon(
                                     imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
                                     contentDescription = "Toggle Flash",
                                     tint = if (isFlashOn) HighlightYellow else PrimaryText,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
 
                             // 2. HDR Toggle Button
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (isHdrEnabled) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(Color(0x751A1A1A))
+                                    .border(0.8.dp, if (isHdrEnabled) HighlightYellow else Color.White.copy(alpha = 0.25f), CircleShape)
                                     .clickable {
                                         isHdrEnabled = !isHdrEnabled
                                         viewModel.showToast(if (isHdrEnabled) "HDR Mode Active" else "HDR Mode Disabled", ToastType.SETTINGS_SAVED)
@@ -710,18 +696,15 @@ fun CameraScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
-                                    color = Color.Transparent,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        0.8.dp,
-                                        if (isHdrEnabled) HighlightYellow else Color.White.copy(alpha = 0.75f)
-                                    )
+                                    color = if (isHdrEnabled) HighlightYellow else Color.Transparent,
+                                    border = if (isHdrEnabled) null else androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.8f))
                                 ) {
                                     Text(
                                         text = "HDR",
-                                        color = if (isHdrEnabled) HighlightYellow else PrimaryText,
-                                        fontSize = 8.5.sp,
+                                        color = if (isHdrEnabled) Color.Black else PrimaryText,
+                                        fontSize = 9.sp,
                                         fontWeight = FontWeight.Black,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.5.dp)
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                                     )
                                 }
                             }
@@ -730,46 +713,38 @@ fun CameraScreen(
                             IconButton(
                                 onClick = { viewModel.cycleGrid() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(Color(0x751A1A1A))
+                                    .border(0.8.dp, if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else Color.White.copy(alpha = 0.25f), CircleShape)
                                     .testTag("landscape_grid_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.GridOn,
                                     contentDescription = "Grid: ${cameraSettings.gridMode.label}",
                                     tint = if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else PrimaryText,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
 
-                            // 4. Smart Photo Output Button (Full Transparent Glass Pill)
+                            // 4. Smart Photo Output Button
                             val photoBadgeLandscape = CameraResolutionHelper.getPhotoBadgeText(
                                 cameraSettings.photoResolution,
                                 cameraSettings.photoAspectRatio
                             )
                             Surface(
-                                shape = RoundedCornerShape(19.dp),
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    0.8.dp,
-                                    if (activeOutputSettingsType == "PHOTO") HighlightYellow else glassBorderIdle
-                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (activeOutputSettingsType == "PHOTO") HighlightYellow.copy(alpha = 0.25f) else Color(0x751A1A1A),
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White.copy(alpha = 0.25f)),
                                 modifier = Modifier
-                                    .heightIn(min = 38.dp)
-                                    .clip(RoundedCornerShape(19.dp))
+                                    .heightIn(min = 40.dp)
                                     .clickable {
                                         activeOutputSettingsType = if (activeOutputSettingsType == "PHOTO") null else "PHOTO"
                                     }
                                     .testTag("landscape_photo_settings_button")
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
@@ -782,40 +757,36 @@ fun CameraScreen(
                                     Text(
                                         text = photoBadgeLandscape,
                                         color = if (activeOutputSettingsType == "PHOTO") HighlightYellow else PrimaryText,
-                                        fontSize = 9.5.sp,
+                                        fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Icon(
                                         imageVector = Icons.Default.ArrowDropDown,
                                         contentDescription = null,
                                         tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else SecondaryText,
-                                        modifier = Modifier.size(13.dp)
+                                        modifier = Modifier.size(12.dp)
                                     )
                                 }
                             }
 
-                            // 5. Smart Video Output Button (Full Transparent Glass Pill)
+                            // 5. Smart Video Output Button
                             val videoBadgeLandscape = CameraResolutionHelper.getVideoBadgeText(
                                 cameraSettings.videoResolution,
                                 cameraSettings.videoAspectRatio
                             )
                             Surface(
-                                shape = RoundedCornerShape(19.dp),
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    0.8.dp,
-                                    if (activeOutputSettingsType == "VIDEO") AccentRed else glassBorderIdle
-                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (activeOutputSettingsType == "VIDEO") AccentRed.copy(alpha = 0.25f) else Color(0x751A1A1A),
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White.copy(alpha = 0.25f)),
                                 modifier = Modifier
-                                    .heightIn(min = 38.dp)
-                                    .clip(RoundedCornerShape(19.dp))
+                                    .heightIn(min = 40.dp)
                                     .clickable {
                                         activeOutputSettingsType = if (activeOutputSettingsType == "VIDEO") null else "VIDEO"
                                     }
                                     .testTag("landscape_video_settings_button")
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
@@ -828,41 +799,37 @@ fun CameraScreen(
                                     Text(
                                         text = videoBadgeLandscape,
                                         color = if (activeOutputSettingsType == "VIDEO") AccentRed else PrimaryText,
-                                        fontSize = 9.5.sp,
+                                        fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Icon(
                                         imageVector = Icons.Default.ArrowDropDown,
                                         contentDescription = null,
                                         tint = if (activeOutputSettingsType == "VIDEO") AccentRed else SecondaryText,
-                                        modifier = Modifier.size(13.dp)
+                                        modifier = Modifier.size(12.dp)
                                     )
                                 }
                             }
 
-                            // 6. Timer Cycle Button
+                            // 5. Timer Cycle Button
                             IconButton(
                                 onClick = { viewModel.cycleTimer() },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(Color(0x751A1A1A))
+                                    .border(0.8.dp, if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else Color.White.copy(alpha = 0.25f), CircleShape)
                                     .testTag("landscape_timer_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Timer,
                                     contentDescription = "Timer: ${cameraSettings.captureTimer.label}",
                                     tint = if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else PrimaryText,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
 
-                            // 7. Focus Frame / Horizon Leveler Toggle Button
+                            // 6. Focus Frame / Horizon Leveler Toggle Button
                             IconButton(
                                 onClick = {
                                     val nextLevel = !cameraSettings.showHorizonLevel
@@ -870,46 +837,42 @@ fun CameraScreen(
                                     viewModel.showToast(if (nextLevel) "Horizon level on" else "Horizon level off", ToastType.SETTINGS_SAVED)
                                 },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (cameraSettings.showHorizonLevel) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(Color(0x751A1A1A))
+                                    .border(0.8.dp, if (cameraSettings.showHorizonLevel) HighlightYellow else Color.White.copy(alpha = 0.25f), CircleShape)
                                     .testTag("landscape_level_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.FilterCenterFocus,
                                     contentDescription = "Horizon Leveler",
                                     tint = if (cameraSettings.showHorizonLevel) HighlightYellow else PrimaryText,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
 
-                            // 8. Settings Gear Button
+                            // 7. Settings Gear Button
                             IconButton(
                                 onClick = { showQuickSettingsPopup = true },
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(0.8.dp, glassBorderIdle, CircleShape)
+                                    .background(Color(0x751A1A1A))
+                                    .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                                     .testTag("landscape_settings_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Settings,
                                     contentDescription = "Camera Settings",
                                     tint = PrimaryText,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // Center if recording: Minimalist Transparent Glass Recording Pill
+                // Center if recording: Recording pill
                 if (isRecording) {
                     val infiniteTransition = rememberInfiniteTransition(label = "pulse_rec")
                     val recAlpha by infiniteTransition.animateFloat(
@@ -919,12 +882,12 @@ fun CameraScreen(
                         label = "recording_pulse"
                     )
                     Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = Color.Transparent,
-                        border = androidx.compose.foundation.BorderStroke(0.9.dp, AccentRed)
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xD90F172A),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentRed)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -949,14 +912,14 @@ fun CameraScreen(
                     Spacer(modifier = Modifier.weight(1f))
                 }
 
-                // Right: Minimalist Transparent Glass Alignment Status Checkmark Button
+                // Right: Amber Status / Preset Checkmark Button (matching screenshot)
                 Box(
                     modifier = Modifier
                         .padding(end = 92.dp)
                         .size(38.dp)
                         .clip(CircleShape)
-                        .background(Color.Transparent)
-                        .border(0.8.dp, HighlightYellow.copy(alpha = 0.75f), CircleShape)
+                        .background(Color(0x40FBBF24))
+                        .border(0.8.dp, Color(0xFFFBBF24).copy(alpha = 0.7f), CircleShape)
                         .clickable {
                             viewModel.showToast("Road Alignment: ${activeRoute?.name ?: "Active"}", ToastType.INFO)
                         },
@@ -966,23 +929,22 @@ fun CameraScreen(
                         imageVector = Icons.Default.Check,
                         contentDescription = "Status OK",
                         tint = HighlightYellow,
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
 
-            // 2. LEFT CORNER: HIGHWAY-RELATED MINIMALIST GLASS CONTROLS (Full Transparent Background)
+            // 2. LEFT CORNER: HIGHWAY-RELATED CONTROLS (Vertical Column)
             Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(top = 54.dp, start = 14.dp, bottom = 12.dp)
-                    .width(150.dp)
+                    .padding(top = 56.dp, start = 14.dp, bottom = 12.dp)
+                    .width(152.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Control 1: Minimalist Transparent Glass MiniMap Preview Card
+                // Control 1: MiniMap Preview Card
                 MiniMapPreview(
                     location = locationState.point,
                     bearing = locationState.bearing,
@@ -992,22 +954,21 @@ fun CameraScreen(
                     showGpsBadge = false,
                     showProjectTag = false,
                     showAttribution = false,
-                    transparentBackground = true,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(66.dp)
+                        .height(68.dp)
                         .clickable { showSimDialog = true }
                         .testTag("landscape_minimap_preview")
                 )
 
-                // Control 2: LHS / RHS Segmented Pill (Full Transparent Glass)
+                // Control 2: LHS / RHS Segmented Pill
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                    color = Color(0x751A1A1A),
+                    border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(33.dp)
+                        .height(34.dp)
                         .testTag("landscape_side_pill")
                 ) {
                     Row(modifier = Modifier.fillMaxSize()) {
@@ -1020,7 +981,6 @@ fun CameraScreen(
                                 .weight(1f)
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
-                                .background(Color.Transparent)
                                 .clickable { viewModel.updateSide(RoadSide.LHS) },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1039,18 +999,18 @@ fun CameraScreen(
                                 Text(
                                     text = "LHS",
                                     color = if (isLhs) HighlightYellow else PrimaryText,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = if (isLhs) FontWeight.Black else FontWeight.Medium
                                 )
                             }
                         }
 
-                        // Subtle Glass Divider line
+                        // Divider line
                         Box(
                             modifier = Modifier
                                 .width(0.8.dp)
                                 .fillMaxHeight()
-                                .background(Color.White.copy(alpha = 0.25f))
+                                .background(Color.White.copy(alpha = 0.15f))
                         )
 
                         // RHS Segment
@@ -1059,7 +1019,6 @@ fun CameraScreen(
                                 .weight(1f)
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp))
-                                .background(Color.Transparent)
                                 .clickable { viewModel.updateSide(RoadSide.RHS) },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1078,7 +1037,7 @@ fun CameraScreen(
                                 Text(
                                     text = "RHS",
                                     color = if (isRhs) HighlightYellow else PrimaryText,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = if (isRhs) FontWeight.Black else FontWeight.Medium
                                 )
                             }
@@ -1086,16 +1045,15 @@ fun CameraScreen(
                     }
                 }
 
-                // Control 3: Lane Selector Dropdown Pill (Full Transparent Glass)
+                // Control 3: Lane Selector Dropdown Pill
                 Box {
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = Color.Transparent,
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                        color = Color(0x751A1A1A),
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.25f)),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(33.dp)
-                            .clip(RoundedCornerShape(18.dp))
+                            .height(34.dp)
                             .clickable { showLaneMenu = true }
                             .testTag("landscape_lane_pill")
                     ) {
@@ -1113,7 +1071,7 @@ fun CameraScreen(
                                 Text(
                                     text = projectProfile.lane.ifBlank { "Main CW" },
                                     color = PrimaryText,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -1122,7 +1080,7 @@ fun CameraScreen(
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
                                 contentDescription = "Select Lane",
-                                tint = PrimaryText.copy(alpha = 0.85f),
+                                tint = SecondaryText,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -1131,11 +1089,7 @@ fun CameraScreen(
                     DropdownMenu(
                         expanded = showLaneMenu,
                         onDismissRequest = { showLaneMenu = false },
-                        containerColor = Color.Transparent,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 0.dp,
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                        modifier = Modifier.background(Color.Transparent)
+                        modifier = Modifier.background(SurfaceDark)
                     ) {
                         ProjectProfile.LANE_PRESETS.forEach { l ->
                             val isSel = projectProfile.lane.equals(l, ignoreCase = true)
@@ -1156,16 +1110,15 @@ fun CameraScreen(
                     }
                 }
 
-                // Control 4: Activity Selector Dropdown Pill (Full Transparent Glass)
+                // Control 4: Activity Selector Dropdown Pill
                 Box {
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = Color.Transparent,
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                        color = Color(0x751A1A1A),
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.25f)),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(33.dp)
-                            .clip(RoundedCornerShape(18.dp))
+                            .height(34.dp)
                             .clickable { showActivityMenu = true }
                             .testTag("landscape_activity_pill")
                     ) {
@@ -1183,12 +1136,12 @@ fun CameraScreen(
                                     imageVector = Icons.Default.Layers,
                                     contentDescription = null,
                                     tint = PrimaryText,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
                                 Text(
                                     text = projectProfile.activity.ifBlank { "BC" },
                                     color = PrimaryText,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -1197,7 +1150,7 @@ fun CameraScreen(
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
                                 contentDescription = "Select Activity",
-                                tint = PrimaryText.copy(alpha = 0.85f),
+                                tint = SecondaryText,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -1206,11 +1159,7 @@ fun CameraScreen(
                     DropdownMenu(
                         expanded = showActivityMenu,
                         onDismissRequest = { showActivityMenu = false },
-                        containerColor = Color.Transparent,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 0.dp,
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                        modifier = Modifier.background(Color.Transparent)
+                        modifier = Modifier.background(SurfaceDark)
                     ) {
                         ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
                             val isSel = projectProfile.activity.equals(act, ignoreCase = true)
@@ -1228,7 +1177,7 @@ fun CameraScreen(
                                 }
                             )
                         }
-                        HorizontalDivider(color = glassBorderIdle)
+                        HorizontalDivider(color = BorderColor)
                         DropdownMenuItem(
                             text = { Text("Custom / Manual...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
                             onClick = {
@@ -1239,31 +1188,21 @@ fun CameraScreen(
                     }
                 }
 
-                // Control 5: Chainage Adjustment Pill (Full Transparent Glass)
-                val isManualSource = matchResult.source == ChainageSource.MANUAL
-                val isCustomCorrectionSource = matchResult.source == ChainageSource.CUSTOM_CORRECTION
-                val sourceBorderColor = when (matchResult.source) {
-                    ChainageSource.MANUAL -> AccentRed
-                    ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
-                    else -> glassBorderIdle
-                }
-                val sourcePrefix = when (matchResult.source) {
-                    ChainageSource.MANUAL -> "MANUAL: "
-                    ChainageSource.CUSTOM_CORRECTION -> "CUSTOM: "
-                    ChainageSource.KMZ -> "KMZ: "
-                    ChainageSource.GPS -> "GPS: "
-                }
+                // Control 5: Chainage Adjustment Pill
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
+                    color = Color(0x751A1A1A),
                     border = androidx.compose.foundation.BorderStroke(
                         0.8.dp,
-                        sourceBorderColor
+                        when (matchResult.source) {
+                            ChainageSource.MANUAL -> AccentRed
+                            ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                            else -> Color.White.copy(alpha = 0.25f)
+                        }
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(33.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .height(34.dp)
                         .clickable { viewModel.openManualChainageDialog() }
                         .testTag("landscape_chainage_pill")
                 ) {
@@ -1278,16 +1217,21 @@ fun CameraScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             RoadMarkingIcon(
-                                tint = when {
-                                    isManualSource -> AccentRed
-                                    isCustomCorrectionSource -> Color(0xFFC084FC)
+                                tint = when (matchResult.source) {
+                                    ChainageSource.MANUAL -> AccentRed
+                                    ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
                                     else -> PrimaryText
                                 }
                             )
+                            val prefix = when (matchResult.source) {
+                                ChainageSource.MANUAL -> "M: "
+                                ChainageSource.CUSTOM_CORRECTION -> "CAL: "
+                                else -> "CH: "
+                            }
                             Text(
-                                text = "$sourcePrefix${matchResult.displayChainage}",
+                                text = "$prefix${matchResult.displayChainage}",
                                 color = PrimaryText,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1296,25 +1240,21 @@ fun CameraScreen(
                         Icon(
                             imageVector = Icons.Default.Edit,
                             contentDescription = "Edit Chainage",
-                            tint = PrimaryText.copy(alpha = 0.85f),
-                            modifier = Modifier.size(13.dp)
+                            tint = SecondaryText,
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 }
 
-                // Control 6: Comment Pill (Full Transparent Glass)
+                // Control 6: Comment Pill
                 val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.8.dp,
-                        if (hasComment) Color(0xFF38BDF8) else glassBorderIdle
-                    ),
+                    color = if (hasComment) Color(0x990284C7) else Color(0x751A1A1A),
+                    border = androidx.compose.foundation.BorderStroke(0.8.dp, if (hasComment) Color(0xFF38BDF8) else Color.White.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(33.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .height(34.dp)
                         .clickable {
                             commentInput = projectProfile.customDescription
                             showCustomCommentDialog = true
@@ -1334,8 +1274,8 @@ fun CameraScreen(
                         )
                         Text(
                             text = if (hasComment) projectProfile.customDescription else "+ Comment",
-                            color = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
-                            fontSize = 11.5.sp,
+                            color = PrimaryText,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -1344,19 +1284,19 @@ fun CameraScreen(
                 }
             }
 
-            // 3. EXPOSURE COMPENSATION SLIDER (Minimalist Full Transparent Glass)
+            // 3. EXPOSURE COMPENSATION SLIDER (When Toggled)
             if (showExposureSlider) {
                 Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, HighlightYellow.copy(alpha = 0.8f)),
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xD90F172A),
+                    border = androidx.compose.foundation.BorderStroke(0.8.dp, HighlightYellow),
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 56.dp)
+                        .padding(top = 58.dp)
                         .width(320.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -1374,13 +1314,13 @@ fun CameraScreen(
                             colors = SliderDefaults.colors(
                                 thumbColor = HighlightYellow,
                                 activeTrackColor = HighlightYellow,
-                                inactiveTrackColor = Color.White.copy(alpha = 0.35f)
+                                inactiveTrackColor = SecondaryText.copy(alpha = 0.3f)
                             ),
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(
                             onClick = { viewModel.setExposureCompensation(0) },
-                            modifier = Modifier.height(30.dp)
+                            modifier = Modifier.height(32.dp)
                         ) {
                             Text("Reset", color = HighlightYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
@@ -1388,7 +1328,7 @@ fun CameraScreen(
                 }
             }
 
-            // 3b. ON-SCREEN ZOOM CONTROLS (LANDSCAPE — Full Transparent Glass)
+            // 3b. ON-SCREEN ZOOM CONTROLS (LANDSCAPE)
             CameraZoomControlBar(
                 currentZoomRatio = currentZoomRatio,
                 minZoomRatio = minZoomRatio,
@@ -1402,14 +1342,13 @@ fun CameraScreen(
                     .padding(bottom = 12.dp)
             )
 
-            // 4. BOTTOM-RIGHT TIMESTAMP & WATERMARK OVERLAY (Full Transparent Background)
+            // 4. BOTTOM-RIGHT TIMESTAMP & WATERMARK OVERLAY
             Column(
                 horizontalAlignment = Alignment.End,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(end = 94.dp, bottom = 12.dp)
+                    .padding(end = 96.dp, bottom = 12.dp)
             ) {
                 // Custom Logo (if enabled)
                 if (overlayConfig.showLogo) {
@@ -1441,254 +1380,238 @@ fun CameraScreen(
                 )
             }
 
-            // 5. RIGHT CORNER: MINIMALIST GLASS CAPTURE & RECORDING DOCK (Full Transparent Background)
+            // 5. RIGHT CORNER: CAPTURE & RECORDING CONTROLS (Authoritative Vertical Control Bar)
             Surface(
                 shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
-                color = Color.Transparent,
-                border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.28f)),
+                color = Color(0xD9090D16),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .width(80.dp)
+                    .width(82.dp)
                     .windowInsetsPadding(WindowInsets.navigationBars)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Transparent)
-                        .padding(vertical = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    // 1. Gallery Recent Photo Shortcut (Top — Full Transparent Glass)
-                    Box(
+                    Column(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.Transparent)
-                            .border(0.8.dp, glassBorderIdle, RoundedCornerShape(12.dp))
-                            .clickable { onNavigateToPhotos() }
-                            .testTag("landscape_gallery_button"),
-                        contentAlignment = Alignment.Center
+                            .fillMaxSize()
+                            .padding(vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
-                            AsyncImage(
-                                model = File(lastPhoto!!.filePath),
-                                contentDescription = "Recent Photo",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.PhotoLibrary,
-                                contentDescription = "Gallery",
-                                tint = PrimaryText,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-
-                    // 2. Camera Flip Button (Full Transparent Glass)
-                    IconButton(
-                        onClick = { viewModel.toggleCameraFacing() },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(Color.Transparent)
-                            .border(0.8.dp, glassBorderIdle, CircleShape)
-                            .testTag("landscape_camera_flip_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FlipCameraAndroid,
-                            contentDescription = "Flip Camera",
-                            tint = PrimaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // 3. Main Shutter Button (Smart Minimalist Transparent Glass Ring + Aperture Icon)
-                    if (isRecording) {
-                        // Quick Photo Capture while Video Recording
+                        // 1. Gallery Recent Photo Shortcut (Top)
                         Box(
                             modifier = Modifier
-                                .size(52.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(1.dp, HighlightYellow, CircleShape)
-                                .clickable {
-                                    try {
-                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    } catch (ignored: Exception) {}
-                                    showQuickCaptureFlash = true
-                                    capturePhoto(
-                                        controller = controller,
-                                        context = context,
-                                        deviceRotationDegrees = rotationDegrees.toInt(),
-                                        isLandscape = isLandscape,
-                                        photoAspectRatio = cameraSettings.photoAspectRatio,
-                                        onSuccess = { bitmap ->
-                                            viewModel.processCapture(bitmap)
-                                            viewModel.showSuccess("Quick photo saved to Gallery!")
-                                        },
-                                        onError = {
-                                            val fallback = createSimulatedCameraFrame(
-                                                context = context,
-                                                rotationDegrees = rotationDegrees.toInt(),
-                                                isLandscapeMode = isLandscape,
-                                                resolutionStr = cameraSettings.photoResolution,
-                                                aspectRatioStr = cameraSettings.photoAspectRatio
-                                            )
-                                            viewModel.processCapture(fallback)
-                                            viewModel.showSuccess("Quick photo saved to Gallery!")
-                                        }
-                                    )
-                                }
-                                .testTag("landscape_quick_photo_capture"),
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                                .background(Color(0x501A1A1A))
+                                .clickable { onNavigateToPhotos() }
+                                .testTag("landscape_gallery_button"),
                             contentAlignment = Alignment.Center
                         ) {
+                            if (lastPhoto?.filePath != null && File(lastPhoto!!.filePath).exists()) {
+                                AsyncImage(
+                                    model = File(lastPhoto!!.filePath),
+                                    contentDescription = "Recent Photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.PhotoLibrary,
+                                    contentDescription = "Gallery",
+                                    tint = PrimaryText,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+
+                        // 2. Camera Flip Button
+                        IconButton(
+                            onClick = { viewModel.toggleCameraFacing() },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x751A1A1A))
+                                .border(0.8.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                                .testTag("landscape_camera_flip_button")
+                        ) {
                             Icon(
-                                imageVector = Icons.Default.Camera,
-                                contentDescription = "Quick Photo Capture",
-                                tint = HighlightYellow,
+                                imageVector = Icons.Default.FlipCameraAndroid,
+                                contentDescription = "Flip Camera",
+                                tint = PrimaryText,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(66.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(2.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-                                .padding(5.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(0.9.dp, Color.White.copy(alpha = 0.45f), CircleShape)
-                                .clickable(enabled = !isCapturing && !isCountingDown) {
-                                    if (captureMode != CaptureMode.PHOTO) {
-                                        viewModel.setCaptureMode(CaptureMode.PHOTO)
+
+                        // 3. Main Shutter Button (Prominent circular glass button with aperture iris icon)
+                        if (isRecording) {
+                            // Quick Photo Capture while Video Recording
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x751A1A1A))
+                                    .border(1.dp, HighlightYellow, CircleShape)
+                                    .clickable {
+                                        try {
+                                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        } catch (ignored: Exception) {}
+                                        showQuickCaptureFlash = true
+                                        capturePhoto(
+                                            controller = controller,
+                                            context = context,
+                                            deviceRotationDegrees = rotationDegrees.toInt(),
+                                            isLandscape = isLandscape,
+                                            photoAspectRatio = cameraSettings.photoAspectRatio,
+                                            onSuccess = { bitmap ->
+                                                viewModel.processCapture(bitmap)
+                                                viewModel.showSuccess("Quick photo saved to Gallery!")
+                                            },
+                                            onError = {
+                                                val fallback = createSimulatedCameraFrame(
+                                                    context = context,
+                                                    rotationDegrees = rotationDegrees.toInt(),
+                                                    isLandscapeMode = isLandscape,
+                                                    resolutionStr = cameraSettings.photoResolution,
+                                                    aspectRatioStr = cameraSettings.photoAspectRatio
+                                                )
+                                                viewModel.processCapture(fallback)
+                                                viewModel.showSuccess("Quick photo saved to Gallery!")
+                                            }
+                                        )
                                     }
-                                    triggerPhotoCapture()
-                                }
-                                .testTag("landscape_shutter_button"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isCapturing) {
-                                CircularProgressIndicator(
-                                    color = PrimaryText,
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.5.dp
+                                    .testTag("landscape_quick_photo_capture"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Camera,
+                                    contentDescription = "Quick Photo Capture",
+                                    tint = HighlightYellow,
+                                    modifier = Modifier.size(24.dp)
                                 )
-                            } else {
-                                CameraApertureIcon(tint = PrimaryText)
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .border(3.5.dp, Color.White.copy(alpha = 0.95f), CircleShape)
+                                    .background(Color.White)
+                                    .clickable(enabled = !isCapturing && !isCountingDown) {
+                                        if (captureMode != CaptureMode.PHOTO) {
+                                            viewModel.setCaptureMode(CaptureMode.PHOTO)
+                                        }
+                                        triggerPhotoCapture()
+                                    }
+                                    .testTag("landscape_shutter_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isCapturing) {
+                                    CircularProgressIndicator(
+                                        color = Color.Black,
+                                        modifier = Modifier.size(28.dp),
+                                        strokeWidth = 3.dp
+                                    )
+                                } else {
+                                    CameraApertureIcon(tint = Color.Black)
+                                }
+                            }
+                        }
+
+                        // 4. Video Recording Button (Red Circle Dot / Stop Square) or Pause/Resume
+                        if (isRecording) {
+                            // Fixed Stop Video Recording Button
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentRed)
+                                    .border(2.dp, Color.White, CircleShape)
+                                    .clickable { toggleVideoRecording() }
+                                    .testTag("landscape_stop_video_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(PrimaryText)
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x751A1A1A))
+                                    .border(1.dp, if (captureMode == CaptureMode.VIDEO) AccentRed else Color.White.copy(alpha = 0.3f), CircleShape)
+                                    .clickable {
+                                        if (captureMode != CaptureMode.VIDEO) {
+                                            viewModel.setCaptureMode(CaptureMode.VIDEO)
+                                        }
+                                        toggleVideoRecording()
+                                    }
+                                    .testTag("landscape_video_record_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clip(CircleShape)
+                                        .background(AccentRed)
+                                )
+                            }
+                        }
+
+                        // 5. Bottom Action: Pause/Resume if recording, else Sliders / Quick settings button
+                        if (isRecording) {
+                            IconButton(
+                                onClick = {
+                                    if (isRecordingPaused) {
+                                        videoManager.resume()
+                                        viewModel.onVideoRecordingPaused(false)
+                                        viewModel.showInfo("Video recording resumed")
+                                    } else {
+                                        videoManager.pause()
+                                        viewModel.onVideoRecordingPaused(true)
+                                        viewModel.showInfo("Video recording paused")
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x751A1A1A))
+                                    .border(0.8.dp, if (isRecordingPaused) HighlightYellow else Color.White.copy(alpha = 0.25f), CircleShape)
+                                    .testTag("landscape_pause_resume_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                    contentDescription = if (isRecordingPaused) "Resume Recording" else "Pause Recording",
+                                    tint = if (isRecordingPaused) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        } else {
+                            IconButton(
+                                onClick = { showExposureSlider = !showExposureSlider },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(if (showExposureSlider) DarkYellowSurface else Color(0x751A1A1A))
+                                    .border(0.8.dp, if (showExposureSlider) HighlightYellow else Color.White.copy(alpha = 0.2f), CircleShape)
+                                    .testTag("landscape_tune_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "Exposure / Settings",
+                                    tint = if (showExposureSlider) HighlightYellow else PrimaryText,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
                     }
-
-                    // 4. Video Recording Button (Minimalist Transparent Glass Circle)
-                    if (isRecording) {
-                        Box(
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(1.5.dp, AccentRed, CircleShape)
-                                .clickable { toggleVideoRecording() }
-                                .testTag("landscape_stop_video_button"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(AccentRed)
-                            )
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(
-                                    0.9.dp,
-                                    if (captureMode == CaptureMode.VIDEO) AccentRed else glassBorderIdle,
-                                    CircleShape
-                                )
-                                .clickable {
-                                    if (captureMode != CaptureMode.VIDEO) {
-                                        viewModel.setCaptureMode(CaptureMode.VIDEO)
-                                    }
-                                    toggleVideoRecording()
-                                }
-                                .testTag("landscape_video_record_button"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clip(CircleShape)
-                                    .background(AccentRed)
-                            )
-                        }
-                    }
-
-                    // 5. Bottom Action: Pause/Resume if recording, else Exposure Tune Button (Full Transparent Glass)
-                    if (isRecording) {
-                        IconButton(
-                            onClick = {
-                                if (isRecordingPaused) {
-                                    videoManager.resume()
-                                    viewModel.onVideoRecordingPaused(false)
-                                    viewModel.showInfo("Video recording resumed")
-                                } else {
-                                    videoManager.pause()
-                                    viewModel.onVideoRecordingPaused(true)
-                                    viewModel.showInfo("Video recording paused")
-                                }
-                            },
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(
-                                    0.8.dp,
-                                    if (isRecordingPaused) HighlightYellow else glassBorderIdle,
-                                    CircleShape
-                                )
-                                .testTag("landscape_pause_resume_button")
-                        ) {
-                            Icon(
-                                imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                contentDescription = if (isRecordingPaused) "Resume Recording" else "Pause Recording",
-                                tint = if (isRecordingPaused) HighlightYellow else PrimaryText,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    } else {
-                        IconButton(
-                            onClick = { showExposureSlider = !showExposureSlider },
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(
-                                    0.8.dp,
-                                    if (showExposureSlider) HighlightYellow else glassBorderIdle,
-                                    CircleShape
-                                )
-                                .testTag("landscape_tune_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = "Exposure / Settings",
-                                tint = if (showExposureSlider) HighlightYellow else PrimaryText,
-                                modifier = Modifier.size(19.dp)
-                            )
-                        }
-                    }
                 }
-            }
         } else {
             // 6. Modern Glassmorphism Top Bar & HUD (PORTRAIT)
             Column(
@@ -2327,25 +2250,21 @@ fun CameraScreen(
 
                     // Chainage quick edit button
                     item {
-                        val isManualActive = matchResult.source == ChainageSource.MANUAL
-                        val isCustomActive = matchResult.source == ChainageSource.CUSTOM_CORRECTION
-                        val chipBg = when {
-                            isManualActive -> Color(0x25DC2626)
-                            isCustomActive -> Color(0x259333EA)
+                        val chipBg = when (matchResult.source) {
+                            ChainageSource.MANUAL -> Color(0x25DC2626)
+                            ChainageSource.CUSTOM_CORRECTION -> Color(0x257C3AED)
                             else -> Color(0x1A101726)
                         }
-                        val chipBorder = when {
-                            isManualActive -> AccentRed
-                            isCustomActive -> Color(0xFFA855F7)
+                        val chipBorder = when (matchResult.source) {
+                            ChainageSource.MANUAL -> AccentRed
+                            ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
                             else -> Color(0x35FFFFFF)
                         }
-                        val sourceTag = when (matchResult.source) {
-                            ChainageSource.MANUAL -> "MANUAL"
-                            ChainageSource.CUSTOM_CORRECTION -> "CUSTOM CORRECTION"
-                            ChainageSource.KMZ -> "KMZ"
-                            ChainageSource.GPS -> "GPS"
+                        val chipText = when (matchResult.source) {
+                            ChainageSource.MANUAL -> "Manual: ${matchResult.displayChainage}"
+                            ChainageSource.CUSTOM_CORRECTION -> "Cal: ${matchResult.displayChainage}"
+                            else -> "CH: ${matchResult.displayChainage}"
                         }
-                        val chipText = "$sourceTag: ${matchResult.displayChainage}"
                         FloatingGlassCard(
                             shape = RoundedCornerShape(14.dp),
                             backgroundColor = chipBg,
@@ -2859,434 +2778,21 @@ fun CameraScreen(
             }
         }
 
-        // Manual Chainage Input Dialog
+        // Smart Chainage Management & Manual Dialog
         if (showManualDialog) {
-            val dialogColors = com.example.ui.theme.rememberDialogColors()
-            val keyboardController = LocalSoftwareKeyboardController.current
-            val focusManager = LocalFocusManager.current
-            val primaryAccent = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
-            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+            val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
+            val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
 
-            val initialChainageText = remember(manualChainageText, matchResult.displayChainage) {
-                when {
-                    !manualChainageText.isNullOrBlank() -> manualChainageText!!
-                    matchResult.displayChainage != "---" && matchResult.displayChainage != "Manual" -> matchResult.displayChainage
-                    else -> ""
-                }
-            }
-            var chainageInput by remember(showManualDialog) { mutableStateOf(initialChainageText) }
-            var editingItemOriginal by remember(showManualDialog) { mutableStateOf<String?>(null) }
-            var validationError by remember(showManualDialog) { mutableStateOf<String?>(null) }
-            val isManualActive = !manualChainageText.isNullOrBlank() || matchResult.source == ChainageSource.MANUAL
-            val parsedPreview = remember(chainageInput) { Chainage.parse(chainageInput.trim()) }
-
-            val activeSourceText = when (matchResult.source) {
-                ChainageSource.MANUAL -> "MANUAL"
-                ChainageSource.CUSTOM_CORRECTION -> "CUSTOM CORRECTION"
-                ChainageSource.KMZ -> "KMZ"
-                ChainageSource.GPS -> "GPS"
-            }
-            val activeSourceColor = when (matchResult.source) {
-                ChainageSource.MANUAL -> AccentRed
-                ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
-                ChainageSource.KMZ -> Color(0xFF10B981)
-                ChainageSource.GPS -> primaryAccent
-            }
-
-            AlertDialog(
-                onDismissRequest = { viewModel.closeManualChainageDialog() },
-                shape = dialogColors.shape,
-                containerColor = dialogColors.containerColor,
-                modifier = Modifier.testTag("manual_chainage_dialog"),
-                title = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = when {
-                                editingItemOriginal != null -> "Edit Custom Chainage"
-                                isManualActive -> "Manual Chainage Active"
-                                else -> "Manual Chainage Input"
-                            },
-                            color = dialogColors.titleColor,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = activeSourceColor.copy(alpha = 0.15f),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                activeSourceColor
-                            )
-                        ) {
-                            Text(
-                                text = activeSourceText,
-                                color = activeSourceColor,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
-                        }
-                    }
-                },
-                text = {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = if (editingItemOriginal != null) {
-                                "Update custom chainage \"$editingItemOriginal\" below:"
-                            } else {
-                                "Enter chainage (supports \"198+880\", \"198880\", \"200+000\"):"
-                            },
-                            fontSize = 12.sp,
-                            color = dialogColors.textSecondaryColor
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = chainageInput,
-                                onValueChange = {
-                                    chainageInput = it
-                                    validationError = null
-                                },
-                                label = {
-                                    Text(if (editingItemOriginal != null) "Edit Chainage" else "Manual Chainage")
-                                },
-                                placeholder = {
-                                    Text(
-                                        "e.g. 198+880 or 198880",
-                                        color = dialogColors.textSecondaryColor.copy(alpha = 0.6f)
-                                    )
-                                },
-                                isError = validationError != null,
-                                singleLine = true,
-                                trailingIcon = {
-                                    if (chainageInput.isNotEmpty()) {
-                                        IconButton(onClick = {
-                                            chainageInput = ""
-                                            validationError = null
-                                        }) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Clear input",
-                                                tint = dialogColors.textSecondaryColor,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                },
-                                keyboardOptions = KeyboardOptions(
-                                    imeAction = ImeAction.Done
-                                ),
-                                keyboardActions = KeyboardActions(
-                                    onDone = {
-                                        keyboardController?.hide()
-                                        focusManager.clearFocus()
-                                        val trimmed = chainageInput.trim()
-                                        val parsed = Chainage.parse(trimmed)
-                                        if (parsed != null) {
-                                            val formatted = parsed.format()
-                                            chainageInput = formatted
-                                            if (editingItemOriginal != null) {
-                                                viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
-                                                editingItemOriginal = null
-                                            }
-                                            viewModel.setManualChainage(formatted)
-                                        } else {
-                                            validationError = "Invalid format. Use 198+880, 198880, or 200+000."
-                                        }
-                                    }
-                                ),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = dialogColors.textColor,
-                                    unfocusedTextColor = dialogColors.textColor,
-                                    focusedBorderColor = primaryAccent,
-                                    unfocusedBorderColor = dialogColors.inputBorder,
-                                    focusedLabelColor = primaryAccent,
-                                    unfocusedLabelColor = dialogColors.textSecondaryColor,
-                                    cursorColor = primaryAccent
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("manual_chainage_input")
-                            )
-
-                            // Quick Add / Update button for the saved custom chainage list
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = primaryAccent.copy(alpha = 0.15f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent),
-                                modifier = Modifier
-                                    .height(52.dp)
-                                    .padding(top = 6.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable(enabled = chainageInput.isNotBlank()) {
-                                        val trimmed = chainageInput.trim()
-                                        val parsed = Chainage.parse(trimmed)
-                                        if (parsed != null) {
-                                            val formatted = parsed.format()
-                                            chainageInput = formatted
-                                            validationError = null
-                                            if (editingItemOriginal != null) {
-                                                viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
-                                                editingItemOriginal = null
-                                            } else {
-                                                viewModel.addCustomChainagePreset(formatted)
-                                            }
-                                        } else {
-                                            validationError = "Invalid format. Use 198+880, 198880, or 200+000."
-                                        }
-                                    }
-                                    .testTag("add_custom_chainage_button")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (editingItemOriginal != null) Icons.Default.Check else Icons.Default.Add,
-                                        contentDescription = if (editingItemOriginal != null) "Save Edited Chainage" else "Add Custom Chainage",
-                                        tint = primaryAccent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = if (editingItemOriginal != null) "Update" else "Add",
-                                        color = primaryAccent,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-
-                        if (validationError != null) {
-                            Text(
-                                text = validationError!!,
-                                color = AccentRed,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        } else if (chainageInput.isNotBlank()) {
-                            Text(
-                                text = if (parsedPreview != null) {
-                                    "Auto-formatted: ${parsedPreview.format()} (${parsedPreview.metres} m)"
-                                } else {
-                                    "Enter valid chainage (e.g. 198+880, 198880, 200+000)"
-                                },
-                                color = if (parsedPreview != null) Color(0xFF10B981) else AccentRed,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-
-                        // Quick Step / Edit Nudge Buttons (-50m, -10m, +10m, +50m)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(-50L to "-50m", -10L to "-10m", 10L to "+10m", 50L to "+50m").forEach { (delta, label) ->
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (dialogColors.isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(32.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            val baseMetres = Chainage.parse(chainageInput)?.metres
-                                                ?: matchResult.chainage?.metres
-                                                ?: 0L
-                                            chainageInput = Chainage((baseMetres + delta).coerceAtLeast(0L)).format()
-                                            validationError = null
-                                        }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = label,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = dialogColors.textColor
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // Saved Custom Chainages List (Tap to select, Edit icon to edit, Delete icon to remove)
-                        if (savedCustomChainages.isNotEmpty()) {
-                            HorizontalDivider(color = dialogColors.borderColor)
-                            Text(
-                                text = "Saved Custom Chainages (Tap to use or Edit):",
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = dialogColors.textSecondaryColor
-                            )
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 150.dp)
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                savedCustomChainages.forEach { savedItem ->
-                                    val isSelected = manualChainageText.equals(savedItem, ignoreCase = true)
-                                    val isBeingEdited = editingItemOriginal.equals(savedItem, ignoreCase = true)
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = when {
-                                            isBeingEdited -> primaryAccent.copy(alpha = 0.18f)
-                                            isSelected -> AccentRed.copy(alpha = 0.14f)
-                                            dialogColors.isDark -> Color(0xFF1E293B)
-                                            else -> Color(0xFFF8FAFC)
-                                        },
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            1.dp,
-                                            when {
-                                                isBeingEdited -> primaryAccent
-                                                isSelected -> AccentRed
-                                                else -> dialogColors.borderColor
-                                            }
-                                        ),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .clickable {
-                                                chainageInput = savedItem
-                                                viewModel.setManualChainage(savedItem)
-                                            }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Text(
-                                                    text = savedItem,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = dialogColors.textColor
-                                                )
-                                                if (isSelected) {
-                                                    Text(
-                                                        text = "(MANUAL Active)",
-                                                        fontSize = 10.5.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = AccentRed
-                                                    )
-                                                }
-                                            }
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                            ) {
-                                                IconButton(
-                                                    onClick = {
-                                                        editingItemOriginal = savedItem
-                                                        chainageInput = savedItem
-                                                    },
-                                                    modifier = Modifier.size(28.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Edit,
-                                                        contentDescription = "Edit $savedItem",
-                                                        tint = primaryAccent,
-                                                        modifier = Modifier.size(15.dp)
-                                                    )
-                                                }
-                                                IconButton(
-                                                    onClick = {
-                                                        if (editingItemOriginal.equals(savedItem, ignoreCase = true)) {
-                                                            editingItemOriginal = null
-                                                        }
-                                                        viewModel.deleteCustomChainagePreset(savedItem)
-                                                    },
-                                                    modifier = Modifier.size(28.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Delete,
-                                                        contentDescription = "Delete $savedItem",
-                                                        tint = AccentRed,
-                                                        modifier = Modifier.size(15.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val trimmed = chainageInput.trim()
-                            val parsed = Chainage.parse(trimmed)
-                            if (parsed != null) {
-                                val formatted = parsed.format()
-                                chainageInput = formatted
-                                validationError = null
-                                if (editingItemOriginal != null) {
-                                    viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
-                                    editingItemOriginal = null
-                                }
-                                viewModel.setManualChainage(formatted)
-                            } else {
-                                validationError = "Invalid chainage. Enter formats like 198+880, 198880, or 200+000."
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.testTag("save_manual_chainage_button")
-                    ) {
-                        Text(
-                            text = if (editingItemOriginal != null) "Save & Apply" else "Apply",
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                },
-                dismissButton = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(
-                            onClick = {
-                                chainageInput = ""
-                                editingItemOriginal = null
-                                validationError = null
-                                viewModel.clearManualChainage()
-                            },
-                            modifier = Modifier.testTag("clear_manual_chainage_button")
-                        ) {
-                            Text("Reset", color = AccentRed, fontWeight = FontWeight.Bold)
-                        }
-                        TextButton(
-                            onClick = {
-                                editingItemOriginal = null
-                                validationError = null
-                                viewModel.closeManualChainageDialog()
-                            }
-                        ) {
-                            Text("Cancel", color = dialogColors.textSecondaryColor)
-                        }
-                    }
-                }
+            ChainageManagementDialog(
+                viewModel = viewModel,
+                matchResult = matchResult,
+                activeRoute = activeRoute,
+                currentGpsPoint = locationState.point,
+                currentGpsAccuracy = locationState.accuracy,
+                correctionPoints = correctionsForRoute,
+                isCorrectionsEnabled = isCorrectionsEnabled,
+                initialTab = 0,
+                onDismiss = { viewModel.closeManualChainageDialog() }
             )
         }
 
@@ -4455,7 +3961,7 @@ fun LiveViewfinderWatermarkBlock(
         )
     } else null
 
-    val bgModifier = if (!isLandscape && (overlayConfig.backgroundOpacity > 0.05f || overlayConfig.backgroundStyle != "Transparent")) {
+    val bgModifier = if (overlayConfig.backgroundOpacity > 0.05f || overlayConfig.backgroundStyle != "Transparent") {
         val bgBoxColor = remember(overlayConfig.backgroundColorHex, overlayConfig.backgroundOpacity) {
             try {
                 val base = android.graphics.Color.parseColor(overlayConfig.backgroundColorHex)
@@ -4468,9 +3974,7 @@ fun LiveViewfinderWatermarkBlock(
         Modifier
             .background(bgBoxColor, RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp)
-    } else {
-        Modifier.background(Color.Transparent)
-    }
+    } else Modifier
 
     Column(
         horizontalAlignment = Alignment.End,

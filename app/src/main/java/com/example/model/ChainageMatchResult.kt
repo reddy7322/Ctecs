@@ -35,18 +35,13 @@ data class ChainageMatchResult(
     val distanceAlongAlignmentMetres: Double = 0.0,
     val nearestReferenceMarkerLabel: String? = null,
     val bracketingMarkersInfo: String? = null,
-    val sourceKmzReferenceStatus: String = "Valid",
-    val customChainageText: String? = null
+    val sourceKmzReferenceStatus: String = "Valid"
 ) {
     val displayChainage: String
-        get() = customChainageText?.takeIf { it.isNotBlank() }
-            ?: chainage?.format()
-            ?: if (isManual) "Manual" else "---"
+        get() = chainage?.format() ?: if (isManual) "Manual" else "---"
 
     val displayKmChainage: String
-        get() = customChainageText?.takeIf { it.isNotBlank() }?.let {
-            if (it.startsWith("KM", ignoreCase = true)) it else "KM $it"
-        } ?: if (chainage != null) "KM ${chainage.format()}" else if (isManual) "Manual" else "---"
+        get() = if (chainage != null) "KM ${chainage.format()}" else if (isManual) "Manual" else "---"
 
     companion object {
         fun noRoute(accuracy: Float = 0f) = ChainageMatchResult(
@@ -57,20 +52,14 @@ data class ChainageMatchResult(
             source = ChainageSource.GPS
         )
 
-        fun manual(
-            chainage: Chainage?,
-            point: GeoPoint? = null,
-            side: String = "Unknown",
-            customText: String? = null
-        ) = ChainageMatchResult(
+        fun manual(chainage: Chainage, point: GeoPoint? = null, side: String = "Unknown") = ChainageMatchResult(
             chainage = chainage,
             projectedPoint = point,
             confidence = MatchConfidence.HIGH,
             isManual = true,
-            statusMessage = "Manual Chainage",
+            statusMessage = "Manual Entry",
             detectedSide = side,
-            source = ChainageSource.MANUAL,
-            customChainageText = customText ?: chainage?.format()
+            source = ChainageSource.MANUAL
         )
     }
 }
