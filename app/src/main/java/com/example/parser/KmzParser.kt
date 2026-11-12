@@ -226,7 +226,11 @@ object KmzParser {
         } catch (e: RouteParseException) {
             throw e
         } catch (e: Exception) {
-            throw RouteParseException("Error parsing KML: ${e.message}", e)
+            try {
+                return parseKmlWithDom(ByteArrayInputStream(rawBytes), originalFileName)
+            } catch (domErr: Exception) {
+                throw RouteParseException("Error parsing KML: ${e.message}", e)
+            }
         }
     }
 
@@ -833,20 +837,26 @@ object KmzParser {
     }
 
     private fun parseSingleCoordinate(raw: String): GeoPoint? {
-        val parts = raw.split(",").map { it.trim() }
+        val parts = raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         if (parts.size >= 2) {
-            val lon = parts[0].toDoubleOrNull() ?: return null
-            val lat = parts[1].toDoubleOrNull() ?: return null
+            val p0 = parts[0].toDoubleOrNull() ?: return null
+            val p1 = parts[1].toDoubleOrNull() ?: return null
             val alt = if (parts.size >= 3) parts[2].toDoubleOrNull() ?: 0.0 else 0.0
-            if (lat in -90.0..90.0 && lon in -180.0..180.0) {
-                return GeoPoint(lat, lon, alt)
+            // Standard KML order: longitude, latitude, altitude (p0 = lon, p1 = lat)
+            if (p1 in -90.0..90.0 && p0 in -180.0..180.0) {
+                return GeoPoint(p1, p0, alt)
+            }
+            // Swapped fallback order: latitude, longitude, altitude (p0 = lat, p1 = lon)
+            if (p0 in -90.0..90.0 && p1 in -180.0..180.0) {
+                return GeoPoint(p0, p1, alt)
             }
         }
         return null
     }
 
     private fun parseMultipleCoordinates(raw: String): List<GeoPoint> {
-        val tokens = raw.split("\\s+".toRegex()).map { it.trim() }.filter { it.isNotEmpty() }
+        val cleanRaw = raw.replace(Regex("\\s*,\\s*"), ",")
+        val tokens = cleanRaw.split("\\s+".toRegex()).map { it.trim() }.filter { it.isNotEmpty() }
         val points = mutableListOf<GeoPoint>()
         for (tok in tokens) {
             val pt = parseSingleCoordinate(tok)

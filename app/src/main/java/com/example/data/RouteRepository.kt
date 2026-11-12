@@ -167,9 +167,6 @@ class RouteRepository(
     }
 
     private fun resolveFileNameFromUri(context: Context, uri: Uri, fallback: String): String {
-        if (fallback.endsWith(".kmz", ignoreCase = true) || fallback.endsWith(".kml", ignoreCase = true)) {
-            return fallback
-        }
         if (uri.scheme == "content") {
             try {
                 context.contentResolver.query(
