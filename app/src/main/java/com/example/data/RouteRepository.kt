@@ -100,13 +100,11 @@ class RouteRepository(
         val filePath = entity.localFilePath
         if (filePath != null) {
             val file = File(filePath)
-            if (file.exists()) {
+            if (file.exists() && file.length() > 0L) {
                 try {
-                    file.inputStream().use { input ->
-                        val data = KmzParser.parse(input, entity.fileName).copy(id = entity.id, name = entity.name)
-                        _activeRouteData.value = data
-                        return@withContext data
-                    }
+                    val data = KmzParser.parse(file, entity.fileName).copy(id = entity.id, name = entity.name)
+                    _activeRouteData.value = data
+                    return@withContext data
                 } catch (ignored: Exception) {}
             }
         }
@@ -115,22 +113,46 @@ class RouteRepository(
 
     suspend fun importRouteFromUri(uri: Uri, displayName: String): Result<RouteData> = withContext(Dispatchers.IO) {
         try {
+            // Take persistable permission if content URI
+            if (uri.scheme == "content") {
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (ignored: Exception) {}
+            }
+
             // Resolve actual display name from ContentResolver
             val resolvedName = resolveFileNameFromUri(context, uri, displayName)
             val routesDir = File(context.filesDir, "imported_routes").apply { mkdirs() }
             val sanitizedName = resolvedName.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
             val targetFile = File(routesDir, "${System.currentTimeMillis()}_$sanitizedName")
 
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(targetFile).use { output ->
-                    input.copyTo(output)
+            var copied = false
+            if (uri.scheme == "file") {
+                val srcFile = uri.path?.let { File(it) }
+                if (srcFile != null && srcFile.exists() && srcFile.isFile) {
+                    srcFile.copyTo(targetFile, overwrite = true)
+                    copied = true
                 }
-            } ?: return@withContext Result.failure(Exception("Cannot open file stream"))
-
-            // Parse file with automatic magic-byte detection
-            val parsedRoute = targetFile.inputStream().use { input ->
-                KmzParser.parse(input, sanitizedName)
             }
+            if (!copied) {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        input.copyTo(output)
+                    }
+                    copied = true
+                }
+            }
+
+            if (!copied || !targetFile.exists() || targetFile.length() == 0L) {
+                targetFile.delete()
+                return@withContext Result.failure(Exception("Cannot open or read file from local storage: $resolvedName"))
+            }
+
+            // Parse file with automatic ZipFile / magic-byte detection
+            val parsedRoute = KmzParser.parse(targetFile, sanitizedName)
 
             val finalDisplayName = if (parsedRoute.name.isNotBlank() && parsedRoute.name != sanitizedName) {
                 parsedRoute.name
@@ -167,6 +189,7 @@ class RouteRepository(
     }
 
     private fun resolveFileNameFromUri(context: Context, uri: Uri, fallback: String): String {
+        var resultName: String? = null
         if (uri.scheme == "content") {
             try {
                 context.contentResolver.query(
@@ -180,13 +203,24 @@ class RouteRepository(
                         val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                         if (idx != -1) {
                             val name = cursor.getString(idx)
-                            if (!name.isNullOrBlank()) return name
+                            if (!name.isNullOrBlank()) resultName = name
                         }
                     }
                 }
             } catch (ignored: Exception) {}
+        } else if (uri.scheme == "file") {
+            val file = uri.path?.let { File(it) }
+            if (file != null && file.name.isNotBlank()) {
+                resultName = file.name
+            }
         }
-        return fallback
+
+        val decodedFallback = try { Uri.decode(fallback) } catch (e: Exception) { fallback }
+        val candidate = resultName ?: decodedFallback.ifBlank {
+            uri.lastPathSegment?.let { try { Uri.decode(it) } catch (e: Exception) { it } }?.substringAfterLast('/') ?: "imported_route.kmz"
+        }
+        val cleanCandidate = candidate.substringAfterLast('/').substringAfterLast(':')
+        return if (cleanCandidate.isNotBlank()) cleanCandidate else "imported_route.kmz"
     }
 
     suspend fun setActiveRoute(routeId: String) = withContext(Dispatchers.IO) {
@@ -225,14 +259,15 @@ class RouteRepository(
 
     suspend fun importRouteFromBytes(bytes: ByteArray, fileName: String, displayName: String): Result<RouteData> = withContext(Dispatchers.IO) {
         try {
+            if (bytes.isEmpty()) {
+                return@withContext Result.failure(Exception("Cannot import empty route file"))
+            }
             val routesDir = File(context.filesDir, "imported_routes").apply { mkdirs() }
             val sanitizedName = fileName.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
             val targetFile = File(routesDir, "${System.currentTimeMillis()}_$sanitizedName")
             targetFile.writeBytes(bytes)
 
-            val parsedRoute = targetFile.inputStream().use { input ->
-                KmzParser.parse(input, sanitizedName)
-            }
+            val parsedRoute = KmzParser.parse(targetFile, sanitizedName)
 
             val finalDisplayName = if (displayName.isNotBlank() && displayName != sanitizedName) {
                 displayName

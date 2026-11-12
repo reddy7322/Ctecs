@@ -397,7 +397,42 @@ fun SettingsScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            val displayName = uri.lastPathSegment?.substringAfterLast('/') ?: "imported_alignment.kmz"
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (ignored: Exception) {}
+
+            var fileName: String? = null
+            if (uri.scheme == "content") {
+                try {
+                    context.contentResolver.query(
+                        uri,
+                        arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                        null,
+                        null,
+                        null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (idx != -1) {
+                                val n = cursor.getString(idx)
+                                if (!n.isNullOrBlank()) fileName = n
+                            }
+                        }
+                    }
+                } catch (ignored: Exception) {}
+            } else if (uri.scheme == "file") {
+                uri.path?.let { p ->
+                    val f = java.io.File(p)
+                    if (f.name.isNotBlank()) fileName = f.name
+                }
+            }
+            val rawFallback = uri.lastPathSegment?.substringAfterLast('/') ?: "imported_alignment.kmz"
+            val decodedFallback = try { Uri.decode(rawFallback) } catch (e: Exception) { rawFallback }
+            val resolvedName = (fileName ?: decodedFallback).substringAfterLast('/').substringAfterLast(':')
+            val displayName = if (resolvedName.isNotBlank()) resolvedName else "imported_alignment.kmz"
             viewModel.importRoute(uri, displayName)
             viewModel.showToast("Importing $displayName...")
         }
@@ -470,16 +505,51 @@ fun SettingsScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
-            if (fileName.endsWith(".kmz", ignoreCase = true) || fileName.endsWith(".kml", ignoreCase = true)) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (ignored: Exception) {}
+
+            var fileName: String? = null
+            if (uri.scheme == "content") {
+                try {
+                    context.contentResolver.query(
+                        uri,
+                        arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                        null,
+                        null,
+                        null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (idx != -1) {
+                                val n = cursor.getString(idx)
+                                if (!n.isNullOrBlank()) fileName = n
+                            }
+                        }
+                    }
+                } catch (ignored: Exception) {}
+            } else if (uri.scheme == "file") {
+                uri.path?.let { p ->
+                    val f = java.io.File(p)
+                    if (f.name.isNotBlank()) fileName = f.name
+                }
+            }
+            val rawFallback = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+            val decodedFallback = try { Uri.decode(rawFallback) } catch (e: Exception) { rawFallback }
+            val resolvedFileName = (fileName ?: decodedFallback).substringAfterLast('/').substringAfterLast(':')
+
+            if (resolvedFileName.endsWith(".kmz", ignoreCase = true) || resolvedFileName.endsWith(".kml", ignoreCase = true)) {
                 // Direct KMZ or KML imported via project import
-                viewModel.importRoute(uri, fileName)
+                viewModel.importRoute(uri, resolvedFileName)
                 if (currentProject.highwayId.isBlank()) {
-                    val pName = fileName.substringBeforeLast(".")
+                    val pName = resolvedFileName.substringBeforeLast(".")
                     viewModel.saveProjectProfileSilent(currentProject.copy(highwayId = pName))
                     viewModel.addDefinedProject(DefinedProject(name = pName, stretch = currentProject.packageSection, workType = currentProject.workType))
                 }
-                viewModel.showSuccess("Imported KMZ/KML alignment: $fileName")
+                viewModel.showSuccess("Imported KMZ/KML alignment: $resolvedFileName")
                 return@rememberLauncherForActivityResult
             }
 

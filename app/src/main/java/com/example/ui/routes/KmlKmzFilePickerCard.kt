@@ -90,29 +90,40 @@ fun KmlKmzFilePickerCard(
                         if (cursor.moveToFirst()) {
                             val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                             if (idx != -1) {
-                                fileName = cursor.getString(idx)
+                                val n = cursor.getString(idx)
+                                if (!n.isNullOrBlank()) fileName = n
                             }
                         }
                     }
                 } catch (ignored: Exception) {}
+            } else if (uri.scheme == "file") {
+                uri.path?.let { p ->
+                    val f = java.io.File(p)
+                    if (f.name.isNotBlank()) fileName = f.name
+                }
             }
-            val resolvedName = fileName ?: uri.lastPathSegment?.substringAfterLast("/") ?: "imported_route.kmz"
+            val rawFallback = uri.lastPathSegment?.substringAfterLast("/") ?: "imported_route.kmz"
+            val decodedFallback = try { Uri.decode(rawFallback) } catch (e: Exception) { rawFallback }
+            val resolvedName = fileName ?: decodedFallback
             onFileSelected(uri, resolvedName)
         }
     }
 
     val launchPicker = {
-        filePickerLauncher.launch(
-            arrayOf(
-                "application/vnd.google-earth.kml+xml",
-                "application/vnd.google-earth.kmz",
-                "application/xml",
-                "text/xml",
-                "application/zip",
-                "application/octet-stream",
-                "*/*"
+        try {
+            filePickerLauncher.launch(arrayOf("*/*"))
+        } catch (e: Exception) {
+            // Fallback to explicit MIME types if device provider requires it
+            filePickerLauncher.launch(
+                arrayOf(
+                    "application/vnd.google-earth.kml+xml",
+                    "application/vnd.google-earth.kmz",
+                    "application/zip",
+                    "application/octet-stream",
+                    "*/*"
+                )
             )
-        )
+        }
     }
 
     val primaryColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)

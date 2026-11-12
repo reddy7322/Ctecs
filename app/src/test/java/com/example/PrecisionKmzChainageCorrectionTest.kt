@@ -426,5 +426,190 @@ class PrecisionKmzChainageCorrectionTest {
         assertNotNull(calibrated)
         assertEquals(150600L, calibrated?.correctedChainage?.metres)
     }
+
+    @Test
+    fun testIndianHighwayChainageFormats() {
+        assertEquals(198000L, Chainage.parse("198/0")?.metres)
+        assertEquals(198200L, Chainage.parse("198/200")?.metres)
+        assertEquals(198200L, Chainage.parse("198/2")?.metres)
+        assertEquals(198400L, Chainage.parse("198/4")?.metres)
+        assertEquals(198600L, Chainage.parse("KM 198/6")?.metres)
+        assertEquals(198400L, Chainage.parse("KM 198/400")?.metres)
+        assertEquals(198880L, Chainage.parse("CH: 198+880.40")?.metres)
+        assertEquals(198880L, Chainage.parse("198.88 km")?.metres)
+        assertEquals(198880L, Chainage.parse("198880 m")?.metres)
+        assertEquals(198000L, Chainage.parse("STA 198+00")?.metres)
+        assertEquals(198500L, Chainage.parse("<td><b>Chainage:</b> 198+500</td>")?.metres)
+    }
+
+    @Test
+    fun testKmlWithNamespaces() {
+        val namespacedKml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml:kml xmlns:kml="http://www.opengis.net/kml/2.2">
+              <kml:Document>
+                <kml:name>Namespaced Highway</kml:name>
+                <kml:Placemark>
+                  <kml:name>CH 10+000</kml:name>
+                  <kml:Point>
+                    <kml:coordinates>77.1000,28.5000,200.0</kml:coordinates>
+                  </kml:Point>
+                </kml:Placemark>
+                <kml:Placemark>
+                  <kml:name>Alignment Centerline</kml:name>
+                  <kml:LineString>
+                    <kml:coordinates>
+                      77.1000,28.5000,200.0
+                      77.1000,28.5100,200.0
+                    </kml:coordinates>
+                  </kml:LineString>
+                </kml:Placemark>
+              </kml:Document>
+            </kml:kml>
+        """.trimIndent()
+
+        val route = KmzParser.parseKmlStream(ByteArrayInputStream(namespacedKml.toByteArray()), "namespaced.kml")
+        assertEquals("Namespaced Highway", route.name)
+        assertTrue(route.markers.isNotEmpty())
+        assertEquals(10000L, route.markers[0].chainage.metres)
+        assertEquals(1, route.alignments.size)
+        assertEquals(2, route.alignments[0].points.size)
+    }
+
+    @Test
+    fun testKmlWithSpaceDelimitedCoordinates() {
+        val spaceKml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document>
+                <name>Space Delimited Alignment</name>
+                <Placemark>
+                  <name>Alignment 0+000</name>
+                  <LineString>
+                    <coordinates>
+                      77.1000 28.5000 200.0
+                      77.1000 28.5100 200.0
+                    </coordinates>
+                  </LineString>
+                </Placemark>
+              </Document>
+            </kml>
+        """.trimIndent()
+
+        val route = KmzParser.parseKmlStream(ByteArrayInputStream(spaceKml.toByteArray()), "space.kml")
+        assertEquals(1, route.alignments.size)
+        assertEquals(2, route.alignments[0].points.size)
+    }
+
+    @Test
+    fun testKmlWithContinuousCommaDelimitedCoordinates() {
+        val continuousKml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document>
+                <name>Continuous Comma Alignment</name>
+                <Placemark>
+                  <name>Continuous Alignment</name>
+                  <LineString>
+                    <coordinates>77.1,28.5,200.0,77.1,28.51,200.0,77.1,28.52,200.0</coordinates>
+                  </LineString>
+                </Placemark>
+              </Document>
+            </kml>
+        """.trimIndent()
+
+        val route = KmzParser.parseKmlStream(ByteArrayInputStream(continuousKml.toByteArray()), "continuous.kml")
+        assertEquals(1, route.alignments.size)
+        assertEquals(3, route.alignments[0].points.size)
+    }
+
+    @Test
+    fun testKmlWithUnclassifiedPointsFallback() {
+        val unclassifiedKml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document>
+                <name>Waypoint Survey</name>
+                <Placemark>
+                  <name>Survey Station Alpha</name>
+                  <Point>
+                    <coordinates>77.1000,28.5000,0</coordinates>
+                  </Point>
+                </Placemark>
+                <Placemark>
+                  <name>Survey Station Beta</name>
+                  <Point>
+                    <coordinates>77.1000,28.5100,0</coordinates>
+                  </Point>
+                </Placemark>
+              </Document>
+            </kml>
+        """.trimIndent()
+
+        val route = KmzParser.parseKmlStream(ByteArrayInputStream(unclassifiedKml.toByteArray()), "waypoints.kml")
+        assertEquals("Waypoint Survey", route.name)
+        assertEquals(2, route.markers.size)
+        assertEquals(1, route.alignments.size)
+    }
+
+    @Test
+    fun testKmzZipArchiveParsingViaFile() {
+        val kmlContent = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document>
+                <name>Zipped KMZ Route</name>
+                <Placemark>
+                  <name>0+000 Start</name>
+                  <Point>
+                    <coordinates>77.1000,28.5000,100.0</coordinates>
+                  </Point>
+                </Placemark>
+                <Placemark>
+                  <name>1+000 Milestone</name>
+                  <Point>
+                    <coordinates>77.1000,28.5090,100.0</coordinates>
+                  </Point>
+                </Placemark>
+                <Placemark>
+                  <name>Main Highway Polyline</name>
+                  <LineString>
+                    <coordinates>
+                      77.1000,28.5000,100.0
+                      77.1000,28.5090,100.0
+                    </coordinates>
+                  </LineString>
+                </Placemark>
+              </Document>
+            </kml>
+        """.trimIndent()
+
+        val tempKmz = java.io.File.createTempFile("test_route_", ".kmz")
+        try {
+            java.util.zip.ZipOutputStream(java.io.FileOutputStream(tempKmz)).use { zos ->
+                val entry = java.util.zip.ZipEntry("doc.kml")
+                zos.putNextEntry(entry)
+                zos.write(kmlContent.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
+
+            // Test parsing via File
+            val routeFromFile = KmzParser.parse(tempKmz)
+            assertEquals("Zipped KMZ Route", routeFromFile.name)
+            assertEquals(2, routeFromFile.markers.size)
+            assertEquals(0L, routeFromFile.markers[0].chainage.metres)
+            assertEquals(1000L, routeFromFile.markers[1].chainage.metres)
+            assertEquals(1, routeFromFile.alignments.size)
+
+            // Test parsing via InputStream
+            val routeFromStream = tempKmz.inputStream().use { input ->
+                KmzParser.parse(input, "test_route.kmz")
+            }
+            assertEquals("Zipped KMZ Route", routeFromStream.name)
+            assertEquals(2, routeFromStream.markers.size)
+        } finally {
+            tempKmz.delete()
+        }
+    }
 }
 
