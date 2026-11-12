@@ -55,7 +55,8 @@ fun MiniMapPreview(
     overrideIsDark: Boolean? = null,
     mapType: String = "standard",
     mapThemePreference: String = "system",
-    showAttribution: Boolean = false
+    showAttribution: Boolean = false,
+    transparentBackground: Boolean = false
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -70,11 +71,16 @@ fun MiniMapPreview(
         modifier
     }
 
+    val shape = RoundedCornerShape(12.dp)
     Box(
         modifier = appliedModifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(mapTheme.containerBackground)
-            .border(0.8.dp, mapTheme.containerBorder, RoundedCornerShape(10.dp))
+            .clip(shape)
+            .background(if (transparentBackground) Color.Transparent else mapTheme.containerBackground)
+            .border(
+                width = 0.8.dp,
+                color = if (transparentBackground) Color.White.copy(alpha = 0.38f) else mapTheme.containerBorder,
+                shape = shape
+            )
     ) {
         val centerGeo = location ?: routeData?.bounds?.center
 
@@ -85,7 +91,7 @@ fun MiniMapPreview(
 
             // 1. OpenStreetMap or Satellite Tile Background (Real geographic map data)
             var hasOsmTiles = false
-            if (centerGeo != null) {
+            if (centerGeo != null && !transparentBackground) {
                 val osmBmp = OsmTileManager.renderMapBitmap(
                     context = context,
                     center = centerGeo,
@@ -109,19 +115,26 @@ fun MiniMapPreview(
                 }
             }
 
-            // Fallback grid when tiles are loading or offline
+            // Fallback grid when tiles are loading, offline, or in full transparent glass HUD mode
             if (!hasOsmTiles) {
-                drawRect(color = mapTheme.mapBackground)
+                if (!transparentBackground) {
+                    drawRect(color = mapTheme.mapBackground)
+                }
+                val gridLineColor = if (transparentBackground) {
+                    Color.White.copy(alpha = 0.16f)
+                } else {
+                    mapTheme.gridLineColor
+                }
                 val gridStep = w / 4f
                 for (i in 1..3) {
                     drawLine(
-                        color = mapTheme.gridLineColor,
+                        color = gridLineColor,
                         start = Offset(i * gridStep, 0f),
                         end = Offset(i * gridStep, h),
                         strokeWidth = 1f
                     )
                     drawLine(
-                        color = mapTheme.gridLineColor,
+                        color = gridLineColor,
                         start = Offset(0f, i * gridStep),
                         end = Offset(w, i * gridStep),
                         strokeWidth = 1f

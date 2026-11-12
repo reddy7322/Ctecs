@@ -193,6 +193,18 @@ fun SettingsScreen(
     var isPreviewLandscape by remember { mutableStateOf(false) }
     var paddingTargetMode by remember { mutableStateOf("photo") }
     var previewMediaMode by remember { mutableStateOf("photo") }
+    var showTimestampPreviewPopup by remember { mutableStateOf(false) }
+
+    val isDark = com.example.ui.theme.isAppDarkTheme()
+    val primaryAccent = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+    val primaryAccentContent = if (isDark) Color.Black else Color.White
+    val secondaryAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
+    val secondaryAccentContent = if (isDark) Color.Black else Color.White
+    val timestampAccent = if (isDark) Color(0xFF818CF8) else Color(0xFF4F46E5)
+    val timestampAccentContent = Color.White
+    val gpsAccent = if (isDark) Color(0xFF34D399) else Color(0xFF059669)
+    val gpsAccentContent = if (isDark) Color.Black else Color.White
+    val videoAccent = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626)
 
     // Responsive local input states for zero-lag typing across all sections
     var projectNameInput by remember { mutableStateOf(currentProject.highwayId) }
@@ -253,20 +265,15 @@ fun SettingsScreen(
         CameraResolutionHelper.getSupportedVideoResolutions(context, isFrontCamera)
     }
 
-    // ALL 14 SECTIONS ARE COLLAPSED INITIALLY
+    // ALL 9 UNIFIED SECTIONS ARE COLLAPSED INITIALLY
     val expandedSections = remember {
         mutableStateMapOf(
             "project" to false,
             "camera" to false,
-            "photo" to false,
-            "video" to false,
-            "resolution" to false,
             "timestamp" to false,
             "gps" to false,
             "chainage" to false,
-            "metadata" to false,
             "logo" to false,
-            "quality" to false,
             "storage" to false,
             "display" to false,
             "permissions_about" to false
@@ -575,11 +582,11 @@ fun SettingsScreen(
                             text = "Settings",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8)
+                                color = primaryAccent
                             )
                         )
                         Text(
-                            text = "14 Categories • Complete Camera & Overlay Config",
+                            text = "9 Categories • Complete Camera & Overlay Config",
                             style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                         )
                     }
@@ -597,6 +604,16 @@ fun SettingsScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showTimestampPreviewPopup = true },
+                        modifier = Modifier.testTag("top_timestamp_preview_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BrandingWatermark,
+                            contentDescription = "Smart Timestamp Live Preview",
+                            tint = timestampAccent
+                        )
+                    }
                     IconButton(
                         onClick = { showRestoreDialog = true },
                         modifier = Modifier.testTag("restore_defaults_button")
@@ -630,15 +647,19 @@ fun SettingsScreen(
                     Text(
                         text = "Preferences saved persistently",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF38BDF8)
+                        color = primaryAccent,
+                        fontWeight = FontWeight.Medium
                     )
                     Button(
                         onClick = onNavigateBack,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00BCD4)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = primaryAccent,
+                            contentColor = primaryAccentContent
+                        ),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.testTag("settings_done_button")
                     ) {
-                        Text("Done", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Text("Done", color = primaryAccentContent, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -669,7 +690,7 @@ fun SettingsScreen(
                     .testTag("settings_search_input"),
                 placeholder = { Text("Search settings (e.g. project, stretch, work type, resolution, logo)...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), fontSize = 13.sp) },
                 leadingIcon = {
-                    Icon(Icons.Default.Search, contentDescription = "Search", tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Search, contentDescription = "Search", tint = primaryAccent, modifier = Modifier.size(18.dp))
                 },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -680,7 +701,7 @@ fun SettingsScreen(
                 },
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF38BDF8),
+                    focusedBorderColor = primaryAccent,
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
                     focusedTextColor = MaterialTheme.colorScheme.onSurface,
                     unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -708,7 +729,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "CATEGORIES (ALL COLLAPSED)",
+                    text = "CATEGORIES",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -717,20 +738,18 @@ fun SettingsScreen(
                     TextButton(
                         onClick = {
                             listOf(
-                                "project", "camera", "photo", "video", "resolution",
-                                "timestamp", "gps", "chainage", "metadata", "logo",
-                                "quality", "storage", "display", "permissions_about"
+                                "project", "camera", "timestamp", "gps", "chainage",
+                                "logo", "storage", "display", "permissions_about"
                             ).forEach { expandedSections[it] = true }
                         }
                     ) {
-                        Text("Expand All", fontSize = 11.sp, color = Color(0xFF38BDF8))
+                        Text("Expand All", fontSize = 11.sp, color = primaryAccent, fontWeight = FontWeight.SemiBold)
                     }
                     TextButton(
                         onClick = {
                             listOf(
-                                "project", "camera", "photo", "video", "resolution",
-                                "timestamp", "gps", "chainage", "metadata", "logo",
-                                "quality", "storage", "display", "permissions_about"
+                                "project", "camera", "timestamp", "gps", "chainage",
+                                "logo", "storage", "display", "permissions_about"
                             ).forEach { expandedSections[it] = false }
                         }
                     ) {
@@ -739,19 +758,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // LIVE WATERMARK PREVIEW CARD
-            WatermarkLivePreviewCard(
-                overlay = currentOverlay,
-                project = currentProject,
-                cameraSettings = currentCameraSettings,
-                isLandscape = isPreviewLandscape,
-                onToggleOrientation = { isPreviewLandscape = !isPreviewLandscape },
-                locationName = currentLocationName
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // ====================================================
             // 1. PROJECT SETTINGS
@@ -772,7 +779,7 @@ fun SettingsScreen(
                     title = "Project Settings",
                     subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} (${currentProject.startChainage} - ${currentProject.endChainage}) • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
                     icon = Icons.Default.Engineering,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = primaryAccent,
                     isExpanded = expandedSections["project"] ?: false,
                     onToggleExpand = { expandedSections["project"] = !(expandedSections["project"] ?: false) }
                 ) {
@@ -798,7 +805,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .testTag("settings_project_input"),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF38BDF8),
+                                focusedBorderColor = primaryAccent,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -824,7 +831,7 @@ fun SettingsScreen(
                                 text = "PROJECTS",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
+                                color = primaryAccent,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                             )
                             if (definedProjects.isEmpty()) {
@@ -848,7 +855,7 @@ fun SettingsScreen(
                                                 Text(
                                                     text = proj.name,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface
+                                                    color = if (isSelected) primaryAccent else MaterialTheme.colorScheme.onSurface
                                                 )
                                                 val details = listOfNotNull(
                                                     proj.stretch.takeIf { it.isNotBlank() },
@@ -870,7 +877,7 @@ fun SettingsScreen(
                                                     Icon(
                                                         imageVector = Icons.Default.Check,
                                                         contentDescription = "Selected",
-                                                        tint = Color(0xFF38BDF8),
+                                                        tint = primaryAccent,
                                                         modifier = Modifier.size(18.dp)
                                                     )
                                                 }
@@ -915,7 +922,7 @@ fun SettingsScreen(
                                         Text(
                                             text = "+ Save \"${currentProject.highwayId}\" to Projects",
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = Color(0xFF38BDF8),
+                                            color = primaryAccent,
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     },
@@ -948,7 +955,7 @@ fun SettingsScreen(
                         placeholder = { Text("Enter Strech / Section", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("settings_stretch_input"),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF38BDF8),
+                            focusedBorderColor = primaryAccent,
                             unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                             focusedTextColor = MaterialTheme.colorScheme.onSurface,
                             unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -980,7 +987,7 @@ fun SettingsScreen(
                             placeholder = { Text("0+000", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                             modifier = Modifier.weight(1f).testTag("settings_start_chainage_input"),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF38BDF8),
+                                focusedBorderColor = primaryAccent,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -1007,7 +1014,7 @@ fun SettingsScreen(
                             placeholder = { Text("50+000", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                             modifier = Modifier.weight(1f).testTag("settings_end_chainage_input"),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF38BDF8),
+                                focusedBorderColor = primaryAccent,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -1047,7 +1054,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .testTag("settings_work_type_input"),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF38BDF8),
+                                focusedBorderColor = primaryAccent,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -1073,8 +1080,8 @@ fun SettingsScreen(
                                         ) {
                                             Surface(
                                                 shape = RoundedCornerShape(4.dp),
-                                                color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.surfaceVariant,
-                                                contentColor = if (isSelected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = if (isSelected) primaryAccent else MaterialTheme.colorScheme.surfaceVariant,
+                                                contentColor = if (isSelected) primaryAccentContent else MaterialTheme.colorScheme.onSurfaceVariant
                                             ) {
                                                 Text(
                                                     text = wt.code,
@@ -1086,7 +1093,7 @@ fun SettingsScreen(
                                             Text(
                                                 text = if (wt.code.equals("None", ignoreCase = true)) "None (Empty Work Type)" else wt.title,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface
+                                                color = if (isSelected) primaryAccent else MaterialTheme.colorScheme.onSurface
                                             )
                                         }
                                     },
@@ -1095,7 +1102,7 @@ fun SettingsScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Check,
                                                 contentDescription = "Selected",
-                                                tint = Color(0xFF38BDF8),
+                                                tint = primaryAccent,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -1125,7 +1132,7 @@ fun SettingsScreen(
                             Icon(
                                 imageVector = Icons.Default.LinearScale,
                                 contentDescription = null,
-                                tint = if (activeRoute != null) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (activeRoute != null) gpsAccent else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
@@ -1135,7 +1142,7 @@ fun SettingsScreen(
                                     "No KMZ/KML attached • Will export project settings only"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (activeRoute != null) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (activeRoute != null) gpsAccent else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -1155,9 +1162,9 @@ fun SettingsScreen(
                                 .testTag("export_project_button"),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = Color(0xFF38BDF8)
+                                contentColor = primaryAccent
                             ),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                            border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent.copy(alpha = 0.5f))
                         ) {
                             Icon(
                                 imageVector = Icons.Default.UploadFile,
@@ -1181,8 +1188,8 @@ fun SettingsScreen(
                                 .testTag("import_project_button"),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF00BCD4),
-                                contentColor = Color.Black
+                                containerColor = secondaryAccent,
+                                contentColor = secondaryAccentContent
                             )
                         ) {
                             Icon(
@@ -1200,17 +1207,28 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 2. CAMERA AND LENS
+            // 2. CAMERA, LENS, PHOTO & VIDEO SETTINGS (COMBINED UNIFIED SECTION)
             // ====================================================
-            if (matchesSearch("camera lens zoom shutter sound grid touch mirror battery save white balance", searchQuery)) {
+            if (matchesSearch("camera lens zoom shutter sound grid touch mirror battery save white balance photo settings original picture ratio jpeg quality timer exif video recording settings fps audio sound mic segmentation resolution frame rate size dimensions megapixels 4k 1080p 720p image video quality compression bitrate hardware encoder", searchQuery)) {
                 SmartDropdownSection(
-                    title = "Camera and Lens",
-                    subtitle = "Grid ${currentCameraSettings.gridMode.label} • Shutter Sound • Lens Controls",
+                    title = "Camera, Photo & Video Settings",
+                    subtitle = "Photo: ${currentCameraSettings.photoResolution} (${currentCameraSettings.previewRatio.label}) • Video: ${currentCameraSettings.videoResolution} (${currentCameraSettings.videoFps} FPS) • JPEG ${currentCameraSettings.jpegQuality}%",
                     icon = Icons.Default.CameraAlt,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = primaryAccent,
                     isExpanded = expandedSections["camera"] ?: false,
                     onToggleExpand = { expandedSections["camera"] = !(expandedSections["camera"] ?: false) }
                 ) {
+                    // ----------------------------------------------------
+                    // SUBGROUP 1: CAMERA & LENS CONTROLS
+                    // ----------------------------------------------------
+                    Text(
+                        text = "CAMERA & LENS CONTROLS",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = primaryAccent,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                    )
+
                     CompactSwitchRow(
                         title = "Touch to take photo",
                         subtitle = "Tap anywhere on preview frame to trigger photo capture",
@@ -1261,23 +1279,23 @@ fun SettingsScreen(
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(batterySaveMode = it)) },
                         tag = "switch_battery_save"
                     )
-                }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
 
-            // ====================================================
-            // 3. PHOTO SETTINGS
-            // ====================================================
-            if (matchesSearch("photo settings original picture ratio jpeg quality timer ratio exif", searchQuery)) {
-                SmartDropdownSection(
-                    title = "Photo Settings",
-                    subtitle = "Resolution: ${currentCameraSettings.photoResolution} • Ratio: ${currentCameraSettings.previewRatio.label}",
-                    icon = Icons.Default.PhotoCamera,
-                    accentColor = Color(0xFF00BCD4),
-                    isExpanded = expandedSections["photo"] ?: false,
-                    onToggleExpand = { expandedSections["photo"] = !(expandedSections["photo"] ?: false) }
-                ) {
+                    // ----------------------------------------------------
+                    // SUBGROUP 2: PHOTO SETTINGS & IMAGE QUALITY
+                    // ----------------------------------------------------
+                    Text(
+                        text = "PHOTO SETTINGS & IMAGE QUALITY",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = secondaryAccent,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+
                     CompactSwitchRow(
                         title = "Save original photo",
                         subtitle = "Save pristine un-watermarked photo alongside stamped copy",
@@ -1294,19 +1312,13 @@ fun SettingsScreen(
                         tag = "switch_preserve_exif"
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Photo Resolution (Real Hardware Capabilities)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-                    OutlinedButton(
-                        onClick = { showPhotoResolutionDialog = true },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00BCD4)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00BCD4))
-                    ) {
-                        Text("Photo Resolution: ${currentCameraSettings.photoResolution}", fontWeight = FontWeight.Bold)
-                    }
-
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Preview Aspect Ratio", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        text = "Preview Aspect Ratio",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1315,10 +1327,10 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = currentCameraSettings.previewRatio == ratio,
                                 onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(previewRatio = ratio)) },
-                                label = { Text(ratio.label, fontSize = 11.sp) },
+                                label = { Text(ratio.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFF00BCD4),
-                                    selectedLabelColor = Color.Black,
+                                    selectedContainerColor = secondaryAccent,
+                                    selectedLabelColor = secondaryAccentContent,
                                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1333,23 +1345,23 @@ fun SettingsScreen(
                         onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(jpegQuality = it.toInt())) },
                         valueText = "${currentCameraSettings.jpegQuality}%"
                     )
-                }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
 
-            // ====================================================
-            // 4. VIDEO RECORDING SETTINGS
-            // ====================================================
-            if (matchesSearch("video recording settings fps audio sound mic segmentation quality", searchQuery)) {
-                SmartDropdownSection(
-                    title = "Video Recording Settings",
-                    subtitle = "Resolution: ${currentCameraSettings.videoResolution} • Audio: ${if (currentCameraSettings.recordAudio) "ON" else "OFF"}",
-                    icon = Icons.Default.Videocam,
-                    accentColor = Color(0xFFEF4444),
-                    isExpanded = expandedSections["video"] ?: false,
-                    onToggleExpand = { expandedSections["video"] = !(expandedSections["video"] ?: false) }
-                ) {
+                    // ----------------------------------------------------
+                    // SUBGROUP 3: VIDEO RECORDING & FRAME RATE
+                    // ----------------------------------------------------
+                    Text(
+                        text = "VIDEO RECORDING & FRAME RATE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = videoAccent,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+
                     CompactSwitchRow(
                         title = "Record Audio",
                         subtitle = "Include microphone audio track in recorded video clips",
@@ -1358,19 +1370,13 @@ fun SettingsScreen(
                         tag = "switch_record_audio"
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Video Recording Resolution", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-                    OutlinedButton(
-                        onClick = { showVideoResolutionDialog = true },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444))
-                    ) {
-                        Text("Video Resolution: ${currentCameraSettings.videoResolution}", fontWeight = FontWeight.Bold)
-                    }
-
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Target Video Frame Rate", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        text = "Target Video Frame Rate",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1379,9 +1385,9 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = currentCameraSettings.videoFps == fps,
                                 onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(videoFps = fps)) },
-                                label = { Text("$fps FPS", fontSize = 12.sp) },
+                                label = { Text("$fps FPS", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFEF4444),
+                                    selectedContainerColor = videoAccent,
                                     selectedLabelColor = Color.White,
                                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1389,34 +1395,40 @@ fun SettingsScreen(
                             )
                         }
                     }
-                }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // ====================================================
-            // 5. RESOLUTION AND FRAME RATE (DEDICATED DUAL CAPABILITY CARD)
-            // ====================================================
-            if (matchesSearch("resolution frame rate photo video size dimensions megapixels 4k 1080p 720p", searchQuery)) {
-                SmartDropdownSection(
-                    title = "Resolution and Frame Rate",
-                    subtitle = "Photo: ${currentCameraSettings.photoResolution} | Video: ${currentCameraSettings.videoResolution}",
-                    icon = Icons.Default.AspectRatio,
-                    accentColor = Color(0xFFFFD700),
-                    isExpanded = expandedSections["resolution"] ?: false,
-                    onToggleExpand = { expandedSections["resolution"] = !(expandedSections["resolution"] ?: false) }
-                ) {
                     Text(
-                        text = "Separate hardware resolution lists derived from active sensor output capabilities. Orientation flips are normalized and deduplicated.",
+                        text = "Videos use hardware-accelerated MediaCodec & MediaMuxer frame pipeline to burn-in dynamic metadata without video quality loss.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+
+                    // ----------------------------------------------------
+                    // SUBGROUP 4: RESOLUTION CAPABILITIES (PHOTO & VIDEO)
+                    // ----------------------------------------------------
+                    Text(
+                        text = "RESOLUTION CAPABILITIES (PHOTO & VIDEO)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = primaryAccent,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    Text(
+                        text = "Separate hardware resolution lists derived from active sensor output capabilities.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
-                    // Photo Resolution Selector
+                    // Unified Photo Resolution Selector
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, secondaryAccent.copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -1425,27 +1437,30 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Photo Resolution Capabilities", fontWeight = FontWeight.Bold, color = Color(0xFF00BCD4), fontSize = 13.sp)
+                                Text("Still Photo Resolution", fontWeight = FontWeight.Bold, color = secondaryAccent, fontSize = 13.sp)
                                 Text("${photoResolutions.size} Options Detected", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text("Current Selection: ${currentCameraSettings.photoResolution}", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = { showPhotoResolutionDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00BCD4)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = secondaryAccent,
+                                    contentColor = secondaryAccentContent
+                                ),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth().testTag("choose_photo_resolution_button")
                             ) {
-                                Text("Choose Still Photo Resolution...", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Choose Still Photo Resolution...", color = secondaryAccentContent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
 
-                    // Video Resolution Selector
+                    // Unified Video Resolution Selector
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, videoAccent.copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -1454,17 +1469,20 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Video Recording Capabilities", fontWeight = FontWeight.Bold, color = Color(0xFFEF4444), fontSize = 13.sp)
+                                Text("Video Recording Resolution", fontWeight = FontWeight.Bold, color = videoAccent, fontSize = 13.sp)
                                 Text("${videoResolutions.size} Options Detected", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text("Current Selection: ${currentCameraSettings.videoResolution}", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = { showVideoResolutionDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = videoAccent,
+                                    contentColor = Color.White
+                                ),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth().testTag("choose_video_resolution_button")
                             ) {
                                 Text("Choose Video Recording Resolution...", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
@@ -1490,10 +1508,76 @@ fun SettingsScreen(
                     title = "Timestamp",
                     subtitle = "${currentOverlay.timestampFormat} • ${currentOverlay.watermarkPosition} • ${currentOverlay.fontFamily} • ${currentOverlay.fontSizeSp.toInt()}sp",
                     icon = Icons.Default.BrandingWatermark,
-                    accentColor = Color(0xFFFFD700),
+                    accentColor = timestampAccent,
                     isExpanded = expandedSections["timestamp"] ?: false,
                     onToggleExpand = { expandedSections["timestamp"] = !(expandedSections["timestamp"] ?: false) }
                 ) {
+                    // Smart Timestamp Popup Trigger Card (Replaces duplicate inline previews)
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = timestampAccent.copy(alpha = 0.1f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, timestampAccent.copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .clickable { showTimestampPreviewPopup = true }
+                            .testTag("open_timestamp_preview_popup")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = timestampAccent.copy(alpha = 0.18f),
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.BrandingWatermark,
+                                            contentDescription = null,
+                                            tint = timestampAccent,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "Smart Timestamp Live Preview",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "${currentOverlay.watermarkPosition} • ${currentOverlay.fontFamily} ${currentOverlay.fontSizeSp.toInt()}sp • Tap for live popup",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = timestampAccent,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = { showTimestampPreviewPopup = true },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = timestampAccent,
+                                    contentColor = timestampAccentContent
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("Live Preview", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
                     // ----------------------------------------------------
                     // SUBSECTION 1: DISPLAY & OVERLAY TOGGLES
                     // ----------------------------------------------------
@@ -1501,7 +1585,7 @@ fun SettingsScreen(
                         text = "DISPLAY & OVERLAY TOGGLES",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
                     )
 
@@ -1525,7 +1609,7 @@ fun SettingsScreen(
                         Card(
                             shape = RoundedCornerShape(10.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.35f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, timestampAccent.copy(alpha = 0.45f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
@@ -1541,7 +1625,7 @@ fun SettingsScreen(
                                     Text(
                                         text = "DETECTED LOCATION",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFFFFD700),
+                                        color = timestampAccent,
                                         fontWeight = FontWeight.Bold
                                     )
                                     val displayLoc = currentLocationName.ifBlank {
@@ -1566,7 +1650,7 @@ fun SettingsScreen(
                                     Icon(
                                         imageVector = Icons.Default.Refresh,
                                         contentDescription = "Refresh Location Name",
-                                        tint = Color(0xFFFFD700),
+                                        tint = timestampAccent,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -1623,7 +1707,7 @@ fun SettingsScreen(
                         text = "TIMESTAMP FORMAT PRESETS",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
@@ -1652,7 +1736,7 @@ fun SettingsScreen(
                         Card(
                             shape = RoundedCornerShape(10.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, timestampAccent.copy(alpha = 0.6f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { isFormatDropdownOpen = true }
@@ -1670,7 +1754,7 @@ fun SettingsScreen(
                                         text = currentSampleDate,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFFD700)
+                                        color = timestampAccent
                                     )
                                     Text(
                                         text = "Pattern: ${currentOverlay.timestampFormat}",
@@ -1681,7 +1765,7 @@ fun SettingsScreen(
                                 Icon(
                                     imageVector = if (isFormatDropdownOpen) Icons.Default.ExpandLess else Icons.Default.ArrowDropDown,
                                     contentDescription = "Select Format",
-                                    tint = Color(0xFFFFD700)
+                                    tint = timestampAccent
                                 )
                             }
                         }
@@ -1713,13 +1797,13 @@ fun SettingsScreen(
                                                     text = sample,
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                    color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
+                                                    color = if (isSelected) timestampAccent else MaterialTheme.colorScheme.onSurface
                                                 )
                                                 if (isSelected) {
                                                     Icon(
                                                         imageVector = Icons.Default.Check,
                                                         contentDescription = null,
-                                                        tint = Color(0xFFFFD700),
+                                                        tint = timestampAccent,
                                                         modifier = Modifier.size(18.dp)
                                                     )
                                                 }
@@ -1750,7 +1834,7 @@ fun SettingsScreen(
                                             text = "✍ Custom Format Pattern...",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF38BDF8)
+                                            color = primaryAccent
                                         )
                                     }
                                 },
@@ -1776,7 +1860,7 @@ fun SettingsScreen(
                                 singleLine = true,
                                 modifier = Modifier.weight(1f),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color(0xFFFFD700),
+                                    focusedBorderColor = timestampAccent,
                                     unfocusedBorderColor = MaterialTheme.colorScheme.outline
                                 )
                             )
@@ -1793,10 +1877,13 @@ fun SettingsScreen(
                                         }
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = timestampAccent,
+                                    contentColor = timestampAccentContent
+                                ),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
-                                Text("Apply", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Apply", color = timestampAccentContent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -1810,7 +1897,7 @@ fun SettingsScreen(
                         text = "WATERMARK PLACEMENT POSITION",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
@@ -1830,7 +1917,7 @@ fun SettingsScreen(
                         Card(
                             shape = RoundedCornerShape(10.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, timestampAccent.copy(alpha = 0.6f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { isPositionDropdownOpen = true }
@@ -1848,7 +1935,7 @@ fun SettingsScreen(
                                         text = currentOverlay.watermarkPosition,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFFD700)
+                                        color = timestampAccent
                                     )
                                     Text(
                                         text = "Anchors timestamp & metadata to this frame position",
@@ -1859,7 +1946,7 @@ fun SettingsScreen(
                                 Icon(
                                     imageVector = if (isPositionDropdownOpen) Icons.Default.ExpandLess else Icons.Default.ArrowDropDown,
                                     contentDescription = "Select Placement",
-                                    tint = Color(0xFFFFD700)
+                                    tint = timestampAccent
                                 )
                             }
                         }
@@ -1885,13 +1972,13 @@ fun SettingsScreen(
                                                 text = pos,
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
+                                                color = if (isSelected) timestampAccent else MaterialTheme.colorScheme.onSurface
                                             )
                                             if (isSelected) {
                                                 Icon(
                                                     imageVector = Icons.Default.Check,
                                                     contentDescription = null,
-                                                    tint = Color(0xFFFFD700),
+                                                    tint = timestampAccent,
                                                     modifier = Modifier.size(18.dp)
                                                 )
                                             }
@@ -1915,7 +2002,7 @@ fun SettingsScreen(
                         text = "FONT SELECTION & TYPOGRAPHY",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
@@ -1936,7 +2023,7 @@ fun SettingsScreen(
                         Card(
                             shape = RoundedCornerShape(10.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.6f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, timestampAccent.copy(alpha = 0.6f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { isFontDropdownOpen = true }
@@ -1954,7 +2041,7 @@ fun SettingsScreen(
                                         text = activeFontDisplay,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFFD700)
+                                        color = timestampAccent
                                     )
                                     Text(
                                         text = "Sample: 03 Nov 2026 • 29.8339°N 77.8893°E",
@@ -1965,7 +2052,7 @@ fun SettingsScreen(
                                 Icon(
                                     imageVector = if (isFontDropdownOpen) Icons.Default.ExpandLess else Icons.Default.ArrowDropDown,
                                     contentDescription = "Select Font",
-                                    tint = Color(0xFFFFD700)
+                                    tint = timestampAccent
                                 )
                             }
                         }
@@ -1994,7 +2081,7 @@ fun SettingsScreen(
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                                     fontFamily = family,
-                                                    color = if (isSelected) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
+                                                    color = if (isSelected) timestampAccent else MaterialTheme.colorScheme.onSurface
                                                 )
                                                 Text(
                                                     text = "189+320 LHS • 23:45:10",
@@ -2007,7 +2094,7 @@ fun SettingsScreen(
                                                 Icon(
                                                     imageVector = Icons.Default.Check,
                                                     contentDescription = null,
-                                                    tint = Color(0xFFFFD700),
+                                                    tint = timestampAccent,
                                                     modifier = Modifier.size(18.dp)
                                                 )
                                             }
@@ -2040,7 +2127,7 @@ fun SettingsScreen(
                                                     text = "Custom: ${currentOverlay.customFontName ?: "Loaded Font"}",
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = Color(0xFF22C55E)
+                                                    color = gpsAccent
                                                 )
                                                 Text(
                                                     text = "Imported TTF/OTF File Active",
@@ -2051,7 +2138,7 @@ fun SettingsScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Check,
                                                 contentDescription = null,
-                                                tint = Color(0xFF22C55E),
+                                                tint = gpsAccent,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -2070,7 +2157,7 @@ fun SettingsScreen(
                                         Icon(
                                             imageVector = Icons.Default.UploadFile,
                                             contentDescription = null,
-                                            tint = Color(0xFF38BDF8),
+                                            tint = primaryAccent,
                                             modifier = Modifier.size(20.dp)
                                         )
                                         Spacer(modifier = Modifier.width(10.dp))
@@ -2078,7 +2165,7 @@ fun SettingsScreen(
                                             text = "Import Custom Font (TTF/OTF)...",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF38BDF8)
+                                            color = primaryAccent
                                         )
                                     }
                                 },
@@ -2108,14 +2195,14 @@ fun SettingsScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
                                                 contentDescription = null,
-                                                tint = Color(0xFFEF4444),
+                                                tint = videoAccent,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                             Spacer(modifier = Modifier.width(10.dp))
                                             Text(
                                                 text = "Revert to Default Font",
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = Color(0xFFEF4444)
+                                                color = videoAccent
                                             )
                                         }
                                     },
@@ -2143,7 +2230,7 @@ fun SettingsScreen(
                         text = "FONT & TEXT CUSTOMIZATION",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
@@ -2169,10 +2256,10 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = isSelected,
                                 onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(fontStyle = weight)) },
-                                label = { Text(weight, fontSize = 11.sp) },
+                                label = { Text(weight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
+                                    selectedContainerColor = timestampAccent,
+                                    selectedLabelColor = timestampAccentContent
                                 ),
                                 modifier = Modifier.weight(1f)
                             )
@@ -2193,10 +2280,10 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = isSelected,
                                 onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(textAlignment = align)) },
-                                label = { Text(align, fontSize = 11.sp) },
+                                label = { Text(align, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
+                                    selectedContainerColor = timestampAccent,
+                                    selectedLabelColor = timestampAccentContent
                                 ),
                                 modifier = Modifier.weight(1f)
                             )
@@ -2221,19 +2308,19 @@ fun SettingsScreen(
                         text = "TEXT COLOR, OUTLINE & SHADOW",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
                     val colorPresets = listOf(
                         "#FFFFFF" to "White",
-                        "#FFD700" to "Gold",
-                        "#38BDF8" to "Cyan",
-                        "#22C55E" to "Green",
+                        "#38BDF8" to "Sky Blue",
+                        "#6366F1" to "Indigo",
+                        "#22C55E" to "Emerald",
+                        "#14B8A6" to "Teal",
                         "#F97316" to "Orange",
-                        "#EF4444" to "Red",
-                        "#FACC15" to "Yellow",
-                        "#E2E8F0" to "Gray"
+                        "#EF4444" to "Crimson",
+                        "#EC4899" to "Rose"
                     )
 
                     Row(
@@ -2257,7 +2344,7 @@ fun SettingsScreen(
                                     .background(parsedColor)
                                     .border(
                                         width = if (isSelected) 3.dp else 1.dp,
-                                        color = if (isSelected) Color(0xFFFFD700) else Color.Gray.copy(alpha = 0.5f),
+                                        color = if (isSelected) timestampAccent else Color.Gray.copy(alpha = 0.5f),
                                         shape = CircleShape
                                     )
                                     .clickable {
@@ -2270,7 +2357,7 @@ fun SettingsScreen(
                                     Icon(
                                         imageVector = Icons.Default.Check,
                                         contentDescription = null,
-                                        tint = if (hex == "#FFFFFF" || hex == "#FFD700" || hex == "#FACC15") Color.Black else Color.White,
+                                        tint = if (hex.equals("#FFFFFF", ignoreCase = true)) Color.Black else Color.White,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -2304,7 +2391,7 @@ fun SettingsScreen(
                             singleLine = true,
                             modifier = Modifier.weight(1f),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFFFFD700),
+                                focusedBorderColor = timestampAccent,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline
                             )
                         )
@@ -2319,10 +2406,13 @@ fun SettingsScreen(
                                     viewModel.showToast("Invalid Hex color (must be #RRGGBB)", ToastType.ERROR)
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = timestampAccent,
+                                contentColor = timestampAccentContent
+                            ),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Apply", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("Apply", color = timestampAccentContent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
 
@@ -2360,7 +2450,7 @@ fun SettingsScreen(
                         text = "TEXT BACKGROUND PANEL STYLE",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
@@ -2389,10 +2479,10 @@ fun SettingsScreen(
                                         )
                                     )
                                 },
-                                label = { Text(style, fontSize = 11.sp) },
+                                label = { Text(style, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
+                                    selectedContainerColor = timestampAccent,
+                                    selectedLabelColor = timestampAccentContent
                                 ),
                                 modifier = Modifier.weight(1f)
                             )
@@ -2427,10 +2517,10 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = isSelected,
                                     onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(backgroundColorHex = hex)) },
-                                    label = { Text(name, fontSize = 11.sp) },
+                                    label = { Text(name, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Color(0xFFFFD700),
-                                        selectedLabelColor = Color.Black
+                                        selectedContainerColor = timestampAccent,
+                                        selectedLabelColor = timestampAccentContent
                                     ),
                                     modifier = Modifier.weight(1f)
                                 )
@@ -2447,7 +2537,7 @@ fun SettingsScreen(
                         text = "MANUAL OVERLAY PADDING CONTROLS",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700),
+                        color = timestampAccent,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                     Text(
@@ -2486,20 +2576,20 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = paddingTargetMode == "photo",
                                 onClick = { paddingTargetMode = "photo" },
-                                label = { Text("📷 Photo Padding", fontSize = 11.sp) },
+                                label = { Text("Photo Padding", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
+                                    selectedContainerColor = timestampAccent,
+                                    selectedLabelColor = timestampAccentContent
                                 ),
                                 modifier = Modifier.weight(1f)
                             )
                             FilterChip(
                                 selected = paddingTargetMode == "video",
                                 onClick = { paddingTargetMode = "video" },
-                                label = { Text("🎥 Video Padding", fontSize = 11.sp) },
+                                label = { Text("Video Padding", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
+                                    selectedContainerColor = timestampAccent,
+                                    selectedLabelColor = timestampAccentContent
                                 ),
                                 modifier = Modifier.weight(1f)
                             )
@@ -2616,7 +2706,8 @@ fun SettingsScreen(
                                 viewModel.showToast("Padding reset to default (Top 16, Bottom 20, Left 16, Right 16 dp)", ToastType.INFO)
                             },
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFD700)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = timestampAccent),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, timestampAccent.copy(alpha = 0.5f)),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -2632,191 +2723,13 @@ fun SettingsScreen(
                                 viewModel.showToast("Position reset to Bottom Right", ToastType.INFO)
                             },
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryAccent),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent.copy(alpha = 0.5f)),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Reset Position", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
-
-                    // ----------------------------------------------------
-                    // SUBSECTION 9: LIVE INTERACTIVE PREVIEW
-                    // ----------------------------------------------------
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "LIVE INTERACTIVE PREVIEW",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFFD700)
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            FilterChip(
-                                selected = previewMediaMode == "photo",
-                                onClick = { previewMediaMode = "photo" },
-                                label = { Text("📷 Photo (4:3)", fontSize = 10.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                            FilterChip(
-                                selected = previewMediaMode == "video",
-                                onClick = { previewMediaMode = "video" },
-                                label = { Text("🎥 Video (16:9)", fontSize = 10.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFFFD700),
-                                    selectedLabelColor = Color.Black
-                                )
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    val previewParsedColor = try {
-                        Color(android.graphics.Color.parseColor(currentOverlay.textColorHex)).copy(alpha = currentOverlay.textOpacity.coerceIn(0.2f, 1.0f))
-                    } catch (e: Exception) {
-                        Color.White
-                    }
-
-                    val previewBgParsed = if (currentOverlay.backgroundStyle != "Transparent") {
-                        try {
-                            Color(android.graphics.Color.parseColor(currentOverlay.backgroundColorHex)).copy(alpha = currentOverlay.backgroundOpacity.coerceIn(0.1f, 1f))
-                        } catch (e: Exception) {
-                            Color.Black.copy(alpha = 0.6f)
-                        }
-                    } else {
-                        Color.Transparent
-                    }
-
-                    val previewFontFamily = when (currentOverlay.fontFamily.lowercase()) {
-                        "monospace" -> FontFamily.Monospace
-                        "serif" -> FontFamily.Serif
-                        "cursive" -> FontFamily.Cursive
-                        else -> FontFamily.SansSerif
-                    }
-
-                    val previewFontWeight = when (currentOverlay.fontStyle.lowercase()) {
-                        "bold" -> FontWeight.Bold
-                        "medium" -> FontWeight.Medium
-                        else -> FontWeight.Normal
-                    }
-
-                    val previewFontStyle = if (currentOverlay.fontStyle.equals("italic", ignoreCase = true)) FontStyle.Italic else FontStyle.Normal
-
-                    val previewTextAlign = when (currentOverlay.textAlignment.lowercase()) {
-                        "left" -> TextAlign.Start
-                        "center" -> TextAlign.Center
-                        else -> TextAlign.End
-                    }
-
-                    val activePreviewPadding = currentOverlay.getEffectivePadding(isVideo = previewMediaMode == "video")
-                    val scaledPadLeft = (activePreviewPadding.left * 0.45f).coerceIn(4f, 40f).dp
-                    val scaledPadRight = (activePreviewPadding.right * 0.45f).coerceIn(4f, 40f).dp
-                    val scaledPadTop = (activePreviewPadding.top * 0.45f).coerceIn(4f, 40f).dp
-                    val scaledPadBottom = (activePreviewPadding.bottom * 0.45f).coerceIn(4f, 40f).dp
-
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(if (previewMediaMode == "video") 155.dp else 190.dp)
-                                .background(Color(0xFF0F172A))
-                                .padding(
-                                    start = scaledPadLeft,
-                                    end = scaledPadRight,
-                                    top = scaledPadTop,
-                                    bottom = scaledPadBottom
-                                ),
-                            contentAlignment = when (currentOverlay.watermarkPosition.lowercase()) {
-                                "top left" -> Alignment.TopStart
-                                "top center" -> Alignment.TopCenter
-                                "top right" -> Alignment.TopEnd
-                                "center left" -> Alignment.CenterStart
-                                "center" -> Alignment.Center
-                                "center right" -> Alignment.CenterEnd
-                                "bottom left" -> Alignment.BottomStart
-                                "bottom center" -> Alignment.BottomCenter
-                                else -> Alignment.BottomEnd
-                            }
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(previewBgParsed)
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                                horizontalAlignment = when (currentOverlay.textAlignment.lowercase()) {
-                                    "left" -> Alignment.Start
-                                    "center" -> Alignment.CenterHorizontally
-                                    else -> Alignment.End
-                                }
-                            ) {
-                                if (currentOverlay.showProjectInfo) {
-                                    Text(
-                                        text = "NH-44 Expansion | 198+450 RHS • DBM",
-                                        color = previewParsedColor,
-                                        fontSize = 11.sp,
-                                        fontFamily = previewFontFamily,
-                                        fontWeight = previewFontWeight,
-                                        fontStyle = previewFontStyle,
-                                        textAlign = previewTextAlign
-                                    )
-                                }
-                                if (currentOverlay.showLocationName) {
-                                    val locNameDisplay = currentLocationName.ifBlank {
-                                        currentOverlay.lastDetectedLocationName.ifBlank { "Dehradun, Uttarakhand" }
-                                    }
-                                    Text(
-                                        text = locNameDisplay,
-                                        color = previewParsedColor,
-                                        fontSize = 11.sp,
-                                        fontFamily = previewFontFamily,
-                                        fontWeight = previewFontWeight,
-                                        fontStyle = previewFontStyle,
-                                        textAlign = previewTextAlign
-                                    )
-                                }
-                                Text(
-                                    text = currentSampleDate,
-                                    color = previewParsedColor,
-                                    fontSize = 11.sp,
-                                    fontFamily = previewFontFamily,
-                                    fontWeight = previewFontWeight,
-                                    fontStyle = previewFontStyle,
-                                    textAlign = previewTextAlign
-                                )
-                                if (currentOverlay.showCoordinates || currentOverlay.showAccuracy) {
-                                    val coordText = if (currentOverlay.showCoordinates && currentOverlay.showAccuracy) {
-                                        "30.3165°N 78.0322°E • ±4m"
-                                    } else if (currentOverlay.showCoordinates) {
-                                        "30.3165°N 78.0322°E"
-                                    } else {
-                                        "GPS ±4m"
-                                    }
-                                    Text(
-                                        text = coordText,
-                                        color = previewParsedColor,
-                                        fontSize = 10.sp,
-                                        fontFamily = previewFontFamily,
-                                        fontWeight = previewFontWeight,
-                                        fontStyle = previewFontStyle,
-                                        textAlign = previewTextAlign
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -2832,7 +2745,7 @@ fun SettingsScreen(
                     title = "GPS and Location",
                     subtitle = "${currentCameraSettings.coordinateFormat.label} • Threshold ±${currentCameraSettings.gpsAccuracyThresholdMeters.toInt()}m",
                     icon = Icons.Default.MyLocation,
-                    accentColor = Color(0xFF22C55E),
+                    accentColor = gpsAccent,
                     isExpanded = expandedSections["gps"] ?: false,
                     onToggleExpand = { expandedSections["gps"] = !(expandedSections["gps"] ?: false) }
                 ) {
@@ -2854,10 +2767,10 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = currentCameraSettings.coordinateFormat == format,
                                 onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(coordinateFormat = format)) },
-                                label = { Text(format.name, fontSize = 11.sp) },
+                                label = { Text(format.name, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFF22C55E),
-                                    selectedLabelColor = Color.Black,
+                                    selectedContainerColor = gpsAccent,
+                                    selectedLabelColor = gpsAccentContent,
                                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2893,7 +2806,7 @@ fun SettingsScreen(
                     title = "Chainage, KMZ and LHS/RHS",
                     subtitle = "Matching Radius: ${currentCameraSettings.routeMatchingRadiusMeters.toInt()}m",
                     icon = Icons.Default.LinearScale,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = primaryAccent,
                     isExpanded = expandedSections["chainage"] ?: false,
                     onToggleExpand = { expandedSections["chainage"] = !(expandedSections["chainage"] ?: false) }
                 ) {
@@ -2915,13 +2828,13 @@ fun SettingsScreen(
                     ) {
                         Button(
                             onClick = { kmzPickerLauncher.launch(arrayOf("*/*")) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7), contentColor = Color.White),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Import Custom KMZ/KML", fontSize = 11.sp)
+                            Text("Import Custom KMZ/KML", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -2950,7 +2863,7 @@ fun SettingsScreen(
                     title = "Custom Logo",
                     subtitle = if (hasCustomLogo) "Custom Logo Active • ${currentOverlay.logoSizeDp}dp" else "No Logo Uploaded",
                     icon = Icons.Default.AddPhotoAlternate,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = primaryAccent,
                     isExpanded = expandedSections["logo"] ?: false,
                     onToggleExpand = { expandedSections["logo"] = !(expandedSections["logo"] ?: false) }
                 ) {
@@ -2970,13 +2883,13 @@ fun SettingsScreen(
                                     modifier = Modifier
                                         .size(48.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFF38BDF8).copy(alpha = 0.15f)),
+                                        .background(primaryAccent.copy(alpha = 0.15f)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.AddPhotoAlternate,
                                         contentDescription = null,
-                                        tint = Color(0xFF38BDF8),
+                                        tint = primaryAccent,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
@@ -2996,7 +2909,7 @@ fun SettingsScreen(
                                 )
                                 Button(
                                     onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7), contentColor = Color.White),
                                     shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier.testTag("upload_custom_logo_button")
                                 ) {
@@ -3056,7 +2969,7 @@ fun SettingsScreen(
                                             Icon(
                                                 imageVector = Icons.Default.AddPhotoAlternate,
                                                 contentDescription = null,
-                                                tint = Color(0xFF38BDF8)
+                                                tint = primaryAccent
                                             )
                                         }
                                     }
@@ -3086,7 +2999,7 @@ fun SettingsScreen(
                                         Icon(
                                             imageVector = Icons.Default.Refresh,
                                             contentDescription = "Replace Logo",
-                                            tint = Color(0xFF38BDF8)
+                                            tint = primaryAccent
                                         )
                                     }
                                     IconButton(
@@ -3100,7 +3013,7 @@ fun SettingsScreen(
                                         Icon(
                                             imageVector = Icons.Default.Delete,
                                             contentDescription = "Remove Logo",
-                                            tint = Color(0xFFEF4444)
+                                            tint = videoAccent
                                         )
                                     }
                                 }
@@ -3155,10 +3068,10 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = currentOverlay.logoPosition == pos,
                                     onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoPosition = pos)) },
-                                    label = { Text(label, fontSize = 11.sp) },
+                                    label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Color(0xFF38BDF8),
-                                        selectedLabelColor = Color.Black,
+                                        selectedContainerColor = primaryAccent,
+                                        selectedLabelColor = primaryAccentContent,
                                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                         labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -3185,10 +3098,10 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = currentOverlay.logoShape == shape,
                                     onClick = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(logoShape = shape)) },
-                                    label = { Text(label, fontSize = 11.sp) },
+                                    label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Color(0xFF38BDF8),
-                                        selectedLabelColor = Color.Black,
+                                        selectedContainerColor = primaryAccent,
+                                        selectedLabelColor = primaryAccentContent,
                                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                         labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -3214,7 +3127,7 @@ fun SettingsScreen(
                             text = "PDF Default Logo & Signature (DPR Reports)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
+                            color = primaryAccent
                         )
                         Text(
                             text = "Configure default header logo, signature, and engineer name for exported PDF reports.",
@@ -3265,7 +3178,7 @@ fun SettingsScreen(
                                                 text = "Active Header Logo (${pdfLogoBmp.width}×${pdfLogoBmp.height}px)",
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Medium,
-                                                color = Color(0xFF16A34A)
+                                                color = gpsAccent
                                             )
                                         }
                                     }
@@ -3349,7 +3262,7 @@ fun SettingsScreen(
                                                 text = "Active Signature Stamp",
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Medium,
-                                                color = Color(0xFF16A34A)
+                                                color = gpsAccent
                                             )
                                         }
                                     }
@@ -3419,37 +3332,6 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 11. IMAGE AND VIDEO QUALITY
-            // ====================================================
-            if (matchesSearch("image video quality jpeg compression bitrate hardware encoder", searchQuery)) {
-                SmartDropdownSection(
-                    title = "Image and Video Quality",
-                    subtitle = "JPEG Quality: ${currentCameraSettings.jpegQuality}% • HW Accelerated",
-                    icon = Icons.Default.HighQuality,
-                    accentColor = Color(0xFF38BDF8),
-                    isExpanded = expandedSections["quality"] ?: false,
-                    onToggleExpand = { expandedSections["quality"] = !(expandedSections["quality"] ?: false) }
-                ) {
-                    SliderRow(
-                        title = "JPEG Quality Level",
-                        value = currentCameraSettings.jpegQuality.toFloat(),
-                        valueRange = 80f..100f,
-                        onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(jpegQuality = it.toInt())) },
-                        valueText = "${currentCameraSettings.jpegQuality}%"
-                    )
-
-                    Text(
-                        text = "Videos use hardware-accelerated MediaCodec & MediaMuxer frame pipeline to burn-in dynamic metadata without video quality loss.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // ====================================================
             // 12. STORAGE, FILENAMES AND GALLERY
             // ====================================================
             if (matchesSearch("storage filenames gallery prefix folder path dcim movies file name format save format photos videos", searchQuery)) {
@@ -3473,7 +3355,7 @@ fun SettingsScreen(
                     title = "Storage, Filenames and Gallery",
                     subtitle = "Format: $dynamicPreview",
                     icon = Icons.Default.Storage,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = primaryAccent,
                     isExpanded = expandedSections["storage"] ?: false,
                     onToggleExpand = { expandedSections["storage"] = !(expandedSections["storage"] ?: false) }
                 ) {
@@ -3487,7 +3369,7 @@ fun SettingsScreen(
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                         ),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f))
+                        border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent.copy(alpha = 0.5f))
                     ) {
                         Column(
                             modifier = Modifier
@@ -3508,7 +3390,7 @@ fun SettingsScreen(
                                     Icon(
                                         imageVector = Icons.Default.Info,
                                         contentDescription = "File name format",
-                                        tint = Color(0xFF38BDF8),
+                                        tint = primaryAccent,
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Column {
@@ -3521,7 +3403,7 @@ fun SettingsScreen(
                                         Text(
                                             text = "Photos & Videos (Tap to choose format)",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFF38BDF8)
+                                            color = primaryAccent
                                         )
                                     }
                                 }
@@ -3530,7 +3412,7 @@ fun SettingsScreen(
                                         Icon(
                                             imageVector = Icons.Default.ArrowDropDown,
                                             contentDescription = "Dropdown format selector",
-                                            tint = Color(0xFF38BDF8)
+                                            tint = primaryAccent
                                         )
                                     }
                                 }
@@ -3556,13 +3438,13 @@ fun SettingsScreen(
                                         text = "$dynamicPreview.jpg",
                                         style = MaterialTheme.typography.bodySmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8)
+                                        color = primaryAccent
                                     )
                                     Text(
                                         text = "$dynamicPreview.mp4 (Video)",
                                         style = MaterialTheme.typography.bodySmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8).copy(alpha = 0.8f)
+                                        color = primaryAccent.copy(alpha = 0.85f)
                                     )
                                 }
                             }
@@ -3593,7 +3475,7 @@ fun SettingsScreen(
                                             ) {
                                                 Text(
                                                     text = preview,
-                                                    color = if (isSel) Color(0xFF38BDF8) else MaterialTheme.colorScheme.onSurface,
+                                                    color = if (isSel) primaryAccent else MaterialTheme.colorScheme.onSurface,
                                                     fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
                                                     fontSize = 13.sp,
                                                     modifier = Modifier.weight(1f).padding(end = 8.dp)
@@ -3605,7 +3487,7 @@ fun SettingsScreen(
                                                         showInlineFormatDropdown = false
                                                     },
                                                     colors = RadioButtonDefaults.colors(
-                                                        selectedColor = Color(0xFF38BDF8)
+                                                        selectedColor = primaryAccent
                                                     )
                                                 )
                                             }
@@ -3629,7 +3511,7 @@ fun SettingsScreen(
                         label = { Text("Custom Filename Prefix (Optional e.g. NH58_)") },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF38BDF8),
+                            focusedBorderColor = primaryAccent,
                             unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                             focusedTextColor = MaterialTheme.colorScheme.onSurface,
                             unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -3655,7 +3537,7 @@ fun SettingsScreen(
                         label = { Text("Storage Directory Path") },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF38BDF8),
+                            focusedBorderColor = primaryAccent,
                             unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                             focusedTextColor = MaterialTheme.colorScheme.onSurface,
                             unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -3686,7 +3568,7 @@ fun SettingsScreen(
                     title = "Display and Appearance",
                     subtitle = "Theme: ${viewModel.themeMode.collectAsStateWithLifecycle().value.uppercase()}",
                     icon = Icons.Default.Palette,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = primaryAccent,
                     isExpanded = expandedSections["display"] ?: false,
                     onToggleExpand = { expandedSections["display"] = !(expandedSections["display"] ?: false) }
                 ) {
@@ -3709,10 +3591,10 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = themeMode == mode,
                                 onClick = { viewModel.setThemeMode(mode) },
-                                label = { Text(label, fontSize = 12.sp) },
+                                label = { Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFF38BDF8),
-                                    selectedLabelColor = Color.Black,
+                                    selectedContainerColor = primaryAccent,
+                                    selectedLabelColor = primaryAccentContent,
                                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -3732,15 +3614,15 @@ fun SettingsScreen(
                     title = "Permissions and App Information",
                     subtitle = "Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
                     icon = Icons.Default.Info,
-                    accentColor = Color(0xFF38BDF8),
+                    accentColor = primaryAccent,
                     isExpanded = expandedSections["permissions_about"] ?: false,
                     onToggleExpand = { expandedSections["permissions_about"] = !(expandedSections["permissions_about"] ?: false) }
                 ) {
                     val isDark = com.example.ui.theme.isAppDarkTheme()
                     val currentChannel = com.example.update.AppReleaseChannel.current()
                     val isBetaApp = currentChannel == com.example.update.AppReleaseChannel.BETA
-                    val channelColor = if (isBetaApp) Color(0xFFF59E0B) else Color(0xFF0284C7)
-                    val channelBg = if (isBetaApp) Color(0xFFB45309).copy(alpha = 0.2f) else Color(0xFF0284C7).copy(alpha = 0.15f)
+                    val channelColor = if (isBetaApp) (if (isDark) Color(0xFFA78BFA) else Color(0xFF7C3AED)) else (if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7))
+                    val channelBg = if (isBetaApp) Color(0xFF7C3AED).copy(alpha = 0.16f) else Color(0xFF0284C7).copy(alpha = 0.15f)
 
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -3856,7 +3738,7 @@ fun SettingsScreen(
                     } else {
                         Button(
                             onClick = { viewModel.checkForAppUpdate(isManual = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = if (isBetaApp) Color(0xFFB45309) else Color(0xFF0284C7), contentColor = Color.White),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (isBetaApp) Color(0xFF7C3AED) else Color(0xFF0284C7), contentColor = Color.White),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                         ) {
@@ -4003,6 +3885,23 @@ fun SettingsScreen(
                 }
                 showSignatureDrawDialog = false
             }
+        )
+    }
+
+    if (showTimestampPreviewPopup) {
+        SmartTimestampPreviewDialog(
+            overlay = currentOverlay,
+            project = currentProject,
+            cameraSettings = currentCameraSettings,
+            locationName = currentLocationName,
+            isLandscape = isPreviewLandscape,
+            onToggleOrientation = { isPreviewLandscape = !isPreviewLandscape },
+            mediaMode = previewMediaMode,
+            onMediaModeChange = { previewMediaMode = it },
+            onPositionSelect = { newPos ->
+                viewModel.saveOverlayConfigSilent(currentOverlay.copy(watermarkPosition = newPos))
+            },
+            onDismiss = { showTimestampPreviewPopup = false }
         )
     }
 }
@@ -4431,6 +4330,10 @@ private fun CompactSwitchRow(
     onCheckedChange: (Boolean) -> Unit,
     tag: String
 ) {
+    val isDark = com.example.ui.theme.isAppDarkTheme()
+    val switchTrackColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+    val switchThumbColor = if (isDark) Color.Black else Color.White
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -4447,8 +4350,8 @@ private fun CompactSwitchRow(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.Black,
-                checkedTrackColor = Color(0xFF38BDF8),
+                checkedThumbColor = switchThumbColor,
+                checkedTrackColor = switchTrackColor,
                 uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
             ),
             modifier = Modifier.testTag(tag)
@@ -4464,6 +4367,9 @@ private fun SliderRow(
     onValueChange: (Float) -> Unit,
     valueText: String
 ) {
+    val isDark = com.example.ui.theme.isAppDarkTheme()
+    val sliderAccent = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -4471,15 +4377,15 @@ private fun SliderRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
-            Text(valueText, style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+            Text(valueText, style = MaterialTheme.typography.labelSmall, color = sliderAccent, fontWeight = FontWeight.Bold)
         }
         Slider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
             colors = SliderDefaults.colors(
-                thumbColor = Color(0xFF38BDF8),
-                activeTrackColor = Color(0xFF38BDF8),
+                thumbColor = sliderAccent,
+                activeTrackColor = sliderAccent,
                 inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
             )
         )
@@ -4493,6 +4399,8 @@ private fun PaddingSliderWithDirectInput(
     range: ClosedFloatingPointRange<Float> = 0f..120f,
     onValueChange: (Int) -> Unit
 ) {
+    val isDark = com.example.ui.theme.isAppDarkTheme()
+    val padAccent = if (isDark) Color(0xFF818CF8) else Color(0xFF4F46E5)
     var textValue by remember(valueDp) { mutableStateOf(valueDp.toString()) }
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(
@@ -4522,7 +4430,7 @@ private fun PaddingSliderWithDirectInput(
                     textStyle = MaterialTheme.typography.labelMedium.copy(
                         textAlign = TextAlign.Center,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700)
+                        color = padAccent
                     ),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -4531,7 +4439,7 @@ private fun PaddingSliderWithDirectInput(
                         .height(44.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFFFFD700),
+                        focusedBorderColor = padAccent,
                         unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                     )
                 )
@@ -4548,107 +4456,353 @@ private fun PaddingSliderWithDirectInput(
             onValueChange = { onValueChange(it.toInt()) },
             valueRange = range,
             colors = SliderDefaults.colors(
-                thumbColor = Color(0xFFFFD700),
-                activeTrackColor = Color(0xFFFFD700),
+                thumbColor = padAccent,
+                activeTrackColor = padAccent,
                 inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
             )
         )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun WatermarkLivePreviewCard(
+private fun SmartTimestampPreviewDialog(
     overlay: OverlayConfig,
     project: ProjectProfile,
     cameraSettings: CameraSettings,
+    locationName: String,
     isLandscape: Boolean,
     onToggleOrientation: () -> Unit,
-    locationName: String = ""
+    mediaMode: String,
+    onMediaModeChange: (String) -> Unit,
+    onPositionSelect: (String) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+    val dialogColors = com.example.ui.theme.rememberDialogColors()
+    val accentColor = if (dialogColors.isDark) Color(0xFF818CF8) else Color(0xFF4F46E5)
+    val secondaryColor = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+
+    var liveNow by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            liveNow = Date()
+            kotlinx.coroutines.delay(1000L)
+        }
+    }
+
+    val formattedLiveTimestamp = remember(overlay.timestampFormat, cameraSettings.is24HourFormat, liveNow) {
+        try {
+            SimpleDateFormat(overlay.timestampFormat, Locale.US).format(liveNow)
+        } catch (e: Exception) {
+            overlay.timestampFormat
+        }
+    }
+
+    val previewParsedColor = try {
+        Color(android.graphics.Color.parseColor(overlay.textColorHex)).copy(alpha = overlay.textOpacity.coerceIn(0.2f, 1.0f))
+    } catch (e: Exception) {
+        Color.White
+    }
+
+    val previewBgParsed = if (overlay.backgroundStyle != "Transparent") {
+        try {
+            Color(android.graphics.Color.parseColor(overlay.backgroundColorHex)).copy(alpha = overlay.backgroundOpacity.coerceIn(0.1f, 1f))
+        } catch (e: Exception) {
+            Color.Black.copy(alpha = 0.6f)
+        }
+    } else {
+        Color.Transparent
+    }
+
+    val previewFontFamily = when (overlay.fontFamily.lowercase()) {
+        "monospace" -> FontFamily.Monospace
+        "serif" -> FontFamily.Serif
+        "cursive" -> FontFamily.Cursive
+        else -> FontFamily.SansSerif
+    }
+
+    val previewFontWeight = when (overlay.fontStyle.lowercase()) {
+        "bold" -> FontWeight.Bold
+        "medium" -> FontWeight.Medium
+        else -> FontWeight.Normal
+    }
+
+    val previewFontStyle = if (overlay.fontStyle.equals("italic", ignoreCase = true)) FontStyle.Italic else FontStyle.Normal
+
+    val previewTextAlign = when (overlay.textAlignment.lowercase()) {
+        "left" -> TextAlign.Start
+        "center" -> TextAlign.Center
+        else -> TextAlign.End
+    }
+
+    val activePreviewPadding = overlay.getEffectivePadding(isVideo = mediaMode == "video")
+    val scaledPadLeft = (activePreviewPadding.left * 0.45f).coerceIn(4f, 40f).dp
+    val scaledPadRight = (activePreviewPadding.right * 0.45f).coerceIn(4f, 40f).dp
+    val scaledPadTop = (activePreviewPadding.top * 0.45f).coerceIn(4f, 40f).dp
+    val scaledPadBottom = (activePreviewPadding.bottom * 0.45f).coerceIn(4f, 40f).dp
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
+        title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "LIVE WATERMARK STAMP PREVIEW",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF38BDF8)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = accentColor.copy(alpha = 0.15f),
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.BrandingWatermark,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            text = "Smart Timestamp Preview",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = dialogColors.titleColor
+                        )
+                        Text(
+                            text = "Real-time live watermark & layout simulation",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = dialogColors.textSecondaryColor
+                        )
+                    }
+                }
                 IconButton(onClick = onToggleOrientation) {
                     Icon(
                         imageVector = Icons.Default.RotateRight,
-                        contentDescription = "Rotate Preview",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp)
+                        contentDescription = "Toggle Portrait/Landscape",
+                        tint = secondaryColor
                     )
                 }
             }
-
-            Box(
+        },
+        text = {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (isLandscape) 130.dp else 160.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF1E293B)),
-                contentAlignment = Alignment.BottomEnd
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    modifier = Modifier.padding(10.dp)
+                // Mode & Orientation Controls Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val highwayPreview = project.buildHighwayText("181+000")
-                    if (highwayPreview.isNotBlank()) {
-                        Text(
-                            text = highwayPreview,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.End
-                        )
-                    }
-                    val commentLine = project.getCustomCommentLine()
-                    if (commentLine != null) {
-                        Text(
-                            text = commentLine,
-                            color = Color(0xFF38BDF8),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.End
-                        )
-                    }
-                    if (overlay.showLocationName && locationName.isNotBlank()) {
-                        Text(
-                            text = locationName,
-                            color = Color(0xFFFFD700),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.End
-                        )
-                    }
-                    Text(
-                        text = "28 October 2026 10:57 PM",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
+                    FilterChip(
+                        selected = mediaMode == "photo",
+                        onClick = { onMediaModeChange("photo") },
+                        label = { Text("Photo (4:3)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = accentColor,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
                     )
+                    FilterChip(
+                        selected = mediaMode == "video",
+                        onClick = { onMediaModeChange("video") },
+                        label = { Text("Video (16:9)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = accentColor,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Live Preview Canvas Card
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                    border = androidx.compose.foundation.BorderStroke(1.2.dp, accentColor.copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(
+                                when {
+                                    isLandscape -> 140.dp
+                                    mediaMode == "video" -> 165.dp
+                                    else -> 205.dp
+                                }
+                            )
+                            .background(Color(0xFF0F172A))
+                            .padding(
+                                start = scaledPadLeft,
+                                end = scaledPadRight,
+                                top = scaledPadTop,
+                                bottom = scaledPadBottom
+                            ),
+                        contentAlignment = when (overlay.watermarkPosition.lowercase()) {
+                            "top left" -> Alignment.TopStart
+                            "top center" -> Alignment.TopCenter
+                            "top right" -> Alignment.TopEnd
+                            "center left" -> Alignment.CenterStart
+                            "center" -> Alignment.Center
+                            "center right" -> Alignment.CenterEnd
+                            "bottom left" -> Alignment.BottomStart
+                            "bottom center" -> Alignment.BottomCenter
+                            else -> Alignment.BottomEnd
+                        }
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(previewBgParsed)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalAlignment = when (overlay.textAlignment.lowercase()) {
+                                "left" -> Alignment.Start
+                                "center" -> Alignment.CenterHorizontally
+                                else -> Alignment.End
+                            }
+                        ) {
+                            if (overlay.showProjectInfo) {
+                                val highwayPreview = project.buildHighwayText("198+450").ifBlank {
+                                    "NH-44 Expansion | 198+450 RHS • DBM"
+                                }
+                                Text(
+                                    text = highwayPreview,
+                                    color = previewParsedColor,
+                                    fontSize = 11.sp,
+                                    fontFamily = previewFontFamily,
+                                    fontWeight = previewFontWeight,
+                                    fontStyle = previewFontStyle,
+                                    textAlign = previewTextAlign
+                                )
+                            }
+                            val commentLine = project.getCustomCommentLine()
+                            if (!commentLine.isNullOrBlank()) {
+                                Text(
+                                    text = commentLine,
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 10.sp,
+                                    fontFamily = previewFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = previewTextAlign
+                                )
+                            }
+                            if (overlay.showLocationName) {
+                                val locNameDisplay = locationName.ifBlank {
+                                    overlay.lastDetectedLocationName.ifBlank { "Dehradun, Uttarakhand" }
+                                }
+                                Text(
+                                    text = locNameDisplay,
+                                    color = previewParsedColor,
+                                    fontSize = 11.sp,
+                                    fontFamily = previewFontFamily,
+                                    fontWeight = previewFontWeight,
+                                    fontStyle = previewFontStyle,
+                                    textAlign = previewTextAlign
+                                )
+                            }
+                            if (overlay.burnInTimestamp) {
+                                Text(
+                                    text = formattedLiveTimestamp,
+                                    color = previewParsedColor,
+                                    fontSize = 11.sp,
+                                    fontFamily = previewFontFamily,
+                                    fontWeight = previewFontWeight,
+                                    fontStyle = previewFontStyle,
+                                    textAlign = previewTextAlign
+                                )
+                            }
+                            if (overlay.showCoordinates || overlay.showAccuracy) {
+                                val coordText = if (overlay.showCoordinates && overlay.showAccuracy) {
+                                    "30.3165°N 78.0322°E • ±4m"
+                                } else if (overlay.showCoordinates) {
+                                    "30.3165°N 78.0322°E"
+                                } else {
+                                    "GPS ±4m"
+                                }
+                                Text(
+                                    text = coordText,
+                                    color = previewParsedColor,
+                                    fontSize = 10.sp,
+                                    fontFamily = previewFontFamily,
+                                    fontWeight = previewFontWeight,
+                                    fontStyle = previewFontStyle,
+                                    textAlign = previewTextAlign
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Quick Position Selector inside Popup
+                Text(
+                    text = "QUICK POSITION SELECTOR",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = accentColor
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "Top Left", "Top Center", "Top Right",
+                        "Center Left", "Center", "Center Right",
+                        "Bottom Left", "Bottom Center", "Bottom Right"
+                    ).forEach { pos ->
+                        val isSel = overlay.watermarkPosition.equals(pos, ignoreCase = true)
+                        FilterChip(
+                            selected = isSel,
+                            onClick = { onPositionSelect(pos) },
+                            label = { Text(pos, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = accentColor,
+                                selectedLabelColor = Color.White,
+                                containerColor = dialogColors.surfaceVariantColor,
+                                labelColor = dialogColors.textColor
+                            )
+                        )
+                    }
+                }
+
+                // Active Summary Row
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = dialogColors.surfaceVariantColor,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
-                        text = "29°50'1\"N 77°53'21\"E • GPS ±4m",
-                        color = Color.White,
-                        fontSize = 10.sp
+                        text = "Font: ${overlay.fontFamily} (${overlay.fontSizeSp.toInt()}sp) • Align: ${overlay.textAlignment} • Margins: T${activePreviewPadding.top} B${activePreviewPadding.bottom} L${activePreviewPadding.left} R${activePreviewPadding.right}dp",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = dialogColors.textSecondaryColor,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                 }
             }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = Color.White),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Done", fontWeight = FontWeight.Bold)
+            }
         }
-    }
+    )
 }
 
 private fun matchesSearch(text: String, query: String): Boolean {

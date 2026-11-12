@@ -394,9 +394,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _exposureCompensation = MutableStateFlow(0)
     val exposureCompensation: StateFlow<Int> = _exposureCompensation.asStateFlow()
 
-    // Manual chainage override state
+    // Manual chainage override state (Camera Screen simple custom chainage, independent of Chainage Control System)
     private val _manualChainage = MutableStateFlow<Chainage?>(null)
     val manualChainage: StateFlow<Chainage?> = _manualChainage.asStateFlow()
+
+    private val _manualChainageText = MutableStateFlow<String?>(null)
+    val manualChainageText: StateFlow<String?> = _manualChainageText.asStateFlow()
+
+    val savedCustomChainages: StateFlow<List<String>> = preferencesManager.savedCustomChainagesFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
 
     // Smart KMZ Chainage Correction StateFlows
     val routeCorrectionsMap: StateFlow<Map<String, List<ChainageCorrectionPoint>>> = preferencesManager.routeCorrectionsFlow.stateIn(
@@ -457,23 +466,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val liveMatchResult: StateFlow<ChainageMatchResult> = combine(
         locationState,
         effectiveRouteFlow,
-        manualChainage,
         routeCorrectionsMap,
         isRouteCorrectionsEnabled
-    ) { loc: LocationState, route: RouteData?, manual: Chainage?, correctionsMap: Map<String, List<ChainageCorrectionPoint>>, isCorrectionsEnabled: Boolean ->
-        // Tier 1: MANUAL OVERRIDE (Highest priority)
-        if (manual != null) {
-            val side = progressionTracker.getCurrentSide()
-            return@combine ChainageMatchResult.manual(
-                chainage = manual,
-                point = loc.point,
-                side = side
-            ).copy(
-                source = ChainageSource.MANUAL,
-                statusMessage = "Manual Override Active (${manual.format()})"
-            )
-        }
-
+    ) { loc: LocationState, route: RouteData?, correctionsMap: Map<String, List<ChainageCorrectionPoint>>, isCorrectionsEnabled: Boolean ->
         // Tier 4 fallback if no GPS fix
         if (loc.point == null) {
             return@combine ChainageMatchResult.noRoute(loc.accuracy).copy(source = ChainageSource.GPS)
@@ -558,6 +553,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = ChainageMatchResult.noRoute()
     )
 
+    // Camera Screen chainage match result: uses simple manual custom chainage when set,
+    // without coupling to the Chainage Control System.
+    val cameraMatchResult: StateFlow<ChainageMatchResult> = combine(
+        liveMatchResult,
+        manualChainage,
+        manualChainageText
+    ) { baseResult, manual, manualText ->
+        if (!manualText.isNullOrBlank() || manual != null) {
+            val side = baseResult.detectedSide.ifBlank { progressionTracker.getCurrentSide() }
+            ChainageMatchResult.manual(
+                chainage = manual,
+                point = baseResult.projectedPoint ?: locationState.value.point,
+                side = side,
+                customText = manualText ?: manual?.format()
+            )
+        } else if (baseResult.source == ChainageSource.CUSTOM_CORRECTION) {
+            baseResult.copy(source = ChainageSource.KMZ)
+        } else {
+            baseResult
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ChainageMatchResult.noRoute()
+    )
+
     // Photos list
     val allPhotos: StateFlow<List<PhotoRecordEntity>> = photoRepository.allPhotos.stateIn(
         scope = viewModelScope,
@@ -589,8 +610,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Restore saved manual chainage override
         viewModelScope.launch {
-            preferencesManager.manualChainageOverrideFlow.collect { savedManual ->
-                _manualChainage.value = savedManual
+            preferencesManager.manualChainageTextFlow.collect { savedText ->
+                _manualChainageText.value = savedText
+                _manualChainage.value = if (!savedText.isNullOrBlank()) Chainage.parse(savedText) else null
             }
         }
 
@@ -766,54 +788,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setManualChainage(input: String) {
-        val parsed = Chainage.parse(input)
-        if (parsed != null) {
-            _manualChainage.value = parsed
-            _showManualChainageDialog.value = false
-            viewModelScope.launch {
-                preferencesManager.setManualChainageOverride(parsed)
-                preferencesManager.addChainageLogEntry(
-                    ChainageLogEntry(
-                        actionType = "MANUAL_OVERRIDE",
-                        routeId = activeRouteData.value?.id ?: "",
-                        routeName = activeRouteData.value?.name ?: "No Route",
-                        summary = "Manual Override: ${parsed.format()}",
-                        details = "Previous: ${liveMatchResult.value.displayChainage}"
-                    )
-                )
-                _uiMessages.emit(UiMessage.Success("Manual chainage active: ${parsed.format()}"))
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) {
+            clearManualChainage()
+            return
+        }
+        val parsed = Chainage.parse(trimmed)
+        val displayStr = parsed?.format() ?: trimmed
+        _manualChainage.value = parsed
+        _manualChainageText.value = displayStr
+        _showManualChainageDialog.value = false
+        viewModelScope.launch {
+            preferencesManager.setManualChainageOverride(parsed, displayStr)
+            val currentList = savedCustomChainages.value.toMutableList()
+            if (currentList.none { it.equals(displayStr, ignoreCase = true) }) {
+                currentList.add(0, displayStr)
+                preferencesManager.saveCustomChainagesList(currentList)
             }
-        } else {
-            viewModelScope.launch {
-                _uiMessages.emit(UiMessage.Error("Invalid chainage format. Use e.g. 198+880 or 198880"))
-            }
+            showToast("Custom chainage set: $displayStr", ToastType.SUCCESS)
         }
     }
 
     fun clearManualChainage() {
         _manualChainage.value = null
+        _manualChainageText.value = null
         _showManualChainageDialog.value = false
         viewModelScope.launch {
-            preferencesManager.setManualChainageOverride(null)
-            preferencesManager.addChainageLogEntry(
-                ChainageLogEntry(
-                    actionType = "MANUAL_RESET",
-                    routeId = activeRouteData.value?.id ?: "",
-                    routeName = activeRouteData.value?.name ?: "No Route",
-                    summary = "Reset to Auto GPS",
-                    details = "Manual override cleared"
-                )
-            )
-            _uiMessages.emit(UiMessage.Info("Switched back to automatic GPS chainage"))
+            preferencesManager.setManualChainageOverride(null, null)
+            showToast("Reset to automatic chainage", ToastType.INFO)
+        }
+    }
+
+    fun addCustomChainagePreset(input: String) {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return
+        val parsed = Chainage.parse(trimmed)
+        val displayStr = parsed?.format() ?: trimmed
+        viewModelScope.launch {
+            val currentList = savedCustomChainages.value.toMutableList()
+            currentList.removeAll { it.equals(displayStr, ignoreCase = true) }
+            currentList.add(0, displayStr)
+            preferencesManager.saveCustomChainagesList(currentList)
+            showToast("Added custom chainage: $displayStr", ToastType.SUCCESS)
+        }
+    }
+
+    fun updateCustomChainagePreset(oldValue: String, newValue: String) {
+        val trimmed = newValue.trim()
+        if (trimmed.isBlank()) return
+        val parsed = Chainage.parse(trimmed)
+        val displayStr = parsed?.format() ?: trimmed
+        viewModelScope.launch {
+            val currentList = savedCustomChainages.value.toMutableList()
+            val idx = currentList.indexOfFirst { it.equals(oldValue, ignoreCase = true) }
+            if (idx >= 0) {
+                currentList[idx] = displayStr
+            } else {
+                currentList.add(0, displayStr)
+            }
+            preferencesManager.saveCustomChainagesList(currentList)
+            if (_manualChainageText.value.equals(oldValue, ignoreCase = true)) {
+                _manualChainage.value = parsed
+                _manualChainageText.value = displayStr
+                preferencesManager.setManualChainageOverride(parsed, displayStr)
+            }
+            showToast("Updated custom chainage: $displayStr", ToastType.SUCCESS)
+        }
+    }
+
+    fun deleteCustomChainagePreset(value: String) {
+        viewModelScope.launch {
+            val currentList = savedCustomChainages.value.filterNot { it.equals(value, ignoreCase = true) }
+            preferencesManager.saveCustomChainagesList(currentList)
         }
     }
 
     // Smart KMZ Correction Points Management
     fun addCorrectionPoint(point: ChainageCorrectionPoint) {
-        _manualChainage.value = null
         progressionTracker.resetChainageFilter()
         viewModelScope.launch {
-            preferencesManager.setManualChainageOverride(null)
             preferencesManager.setRouteCorrectionsEnabled(true)
             preferencesManager.saveRouteCorrectionPoint(point)
             preferencesManager.addChainageLogEntry(
@@ -830,10 +883,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateCorrectionPoint(point: ChainageCorrectionPoint) {
-        _manualChainage.value = null
         progressionTracker.resetChainageFilter()
         viewModelScope.launch {
-            preferencesManager.setManualChainageOverride(null)
             preferencesManager.setRouteCorrectionsEnabled(true)
             preferencesManager.saveRouteCorrectionPoint(point)
             preferencesManager.addChainageLogEntry(
@@ -1169,7 +1220,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             locationName = locName,
             gpsAccuracy = locationState.value.accuracy,
             bearing = locationState.value.bearing,
-            matchResult = liveMatchResult.value,
+            matchResult = cameraMatchResult.value,
             projectProfile = projectProfile.value,
             overlayConfig = overlayConfig.value,
             activeRoute = activeRouteData.value,
@@ -1499,7 +1550,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     location = locationState.value.point,
                     gpsAccuracy = locationState.value.accuracy,
                     bearing = locationState.value.bearing,
-                    matchResult = liveMatchResult.value,
+                    matchResult = cameraMatchResult.value,
                     projectProfile = projectProfile.value,
                     overlayConfig = overlayConfig.value,
                     activeRoute = activeRouteData.value,
