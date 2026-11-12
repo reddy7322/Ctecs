@@ -611,5 +611,235 @@ class PrecisionKmzChainageCorrectionTest {
             tempKmz.delete()
         }
     }
+
+    @Test
+    fun testReferenceMuzzafarnagarHaridwarNh58KmzStructureCompatibility() {
+        val sb = StringBuilder(512 * 1024)
+        sb.append("""<?xml version="1.0" encoding="UTF-8"?>""").append('\n')
+        sb.append("""<kml xmlns="http://www.opengis.net/kml/2.2">""").append('\n')
+        sb.append("""  <Folder>""").append('\n')
+        sb.append("""    <name>Model</name>""").append('\n')
+
+        // Nested Folder 1: Chainage Point Placemarks (1,599 markers: 130+000 to 209+850 step 50m, then 209+883)
+        sb.append("""    <Folder>""").append('\n')
+        sb.append("""      <name>Chainage_Markers</name>""").append('\n')
+
+        val baseLat = 29.470000
+        val baseLng = 77.700000
+        val degPerMetreLat = 1.0 / 111132.954
+
+        val chainageValues = ArrayList<Long>(1599)
+        var chM = 130000L
+        while (chM <= 209850L) {
+            chainageValues.add(chM)
+            chM += 50L
+        }
+        chainageValues.add(209883L) // Irregular 33 m interval at the end
+        assertEquals(1599, chainageValues.size)
+
+        for (metres in chainageValues) {
+            val offsetFromStartM = (metres - 130000L).toDouble()
+            val lat = baseLat + offsetFromStartM * degPerMetreLat
+            val label = Chainage(metres).format()
+            sb.append("""      <Placemark><name>$label</name><Point><coordinates>$baseLng,$lat,245.0</coordinates></Point></Placemark>""").append('\n')
+        }
+        sb.append("""    </Folder>""").append('\n')
+
+        // Nested Folder 2: Alignment LineStrings & MultiGeometry features totaling 3,774 LineStrings
+        sb.append("""    <Folder>""").append('\n')
+        sb.append("""      <name>Alignment_Geometry</name>""").append('\n')
+
+        var lineStringsEmitted = 0
+        for (i in 0 until chainageValues.size - 1) {
+            val m1 = chainageValues[i]
+            val m2 = chainageValues[i + 1]
+            val lat1 = baseLat + (m1 - 130000L) * degPerMetreLat
+            val lat2 = baseLat + (m2 - 130000L) * degPerMetreLat
+            if (i % 10 == 0 && i + 1 < chainageValues.size - 1) {
+                val m3 = chainageValues[i + 2]
+                val lat3 = baseLat + (m3 - 130000L) * degPerMetreLat
+                sb.append("""      <Placemark><name>Align_$i</name><MultiGeometry>""")
+                sb.append("""<LineString><coordinates>$baseLng,$lat1,245.0 $baseLng,$lat2,245.0</coordinates></LineString>""")
+                sb.append("""<LineString><coordinates>$baseLng,$lat2,245.0 $baseLng,$lat3,245.0</coordinates></LineString>""")
+                sb.append("""</MultiGeometry></Placemark>""").append('\n')
+                lineStringsEmitted += 2
+            } else {
+                sb.append("""      <Placemark><name>Seg_$i</name><LineString><coordinates>$baseLng,$lat1,245.0 $baseLng,$lat2,245.0</coordinates></LineString></Placemark>""").append('\n')
+                lineStringsEmitted += 1
+            }
+        }
+
+        val remaining = 3774 - lineStringsEmitted
+        for (k in 0 until remaining) {
+            val stationM = 130000L + (k % 1598) * 50L
+            val lat = baseLat + (stationM - 130000L) * degPerMetreLat
+            val lngLeft = baseLng - 0.00004
+            val lngRight = baseLng + 0.00004
+            sb.append("""      <Placemark><LineString><coordinates>$lngLeft,$lat,245.0 $lngRight,$lat,245.0</coordinates></LineString></Placemark>""").append('\n')
+            lineStringsEmitted++
+        }
+        assertEquals(3774, lineStringsEmitted)
+
+        sb.append("""    </Folder>""").append('\n')
+        sb.append("""  </Folder>""").append('\n')
+        sb.append("""</kml>""").append('\n')
+
+        val tempKmz = java.io.File.createTempFile("Muzzafarnagar-Haridwar-NH-58-50m", ".kmz")
+        try {
+            java.util.zip.ZipOutputStream(java.io.FileOutputStream(tempKmz)).use { zos ->
+                zos.putNextEntry(java.util.zip.ZipEntry("doc.kml"))
+                zos.write(sb.toString().toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
+
+            ChainageMatcher.clearCache()
+            val route = KmzParser.parse(tempKmz, "Muzzafarnagar-Haridwar-NH-58-50m.kmz")
+
+            assertEquals("Muzzafarnagar-Haridwar-NH-58-50m.kmz", route.fileName)
+            assertEquals("Muzzafarnagar-Haridwar-NH-58-50m", route.name)
+
+            assertEquals(1599, route.markers.size)
+            assertEquals(130000L, route.startChainage?.metres)
+            assertEquals("130+000", route.startChainage?.format())
+            assertEquals(209883L, route.endChainage?.metres)
+            assertEquals("209+883", route.endChainage?.format())
+
+            assertEquals(50L, route.markers[1].chainage.metres - route.markers[0].chainage.metres)
+            assertEquals(209850L, route.markers[1597].chainage.metres)
+            assertEquals(209883L, route.markers[1598].chainage.metres)
+            assertEquals(33L, route.markers[1598].chainage.metres - route.markers[1597].chainage.metres)
+
+            assertNotNull(route.diagnostics)
+            assertEquals(1599, route.diagnostics?.rawPointCount)
+            assertEquals(3774, route.diagnostics?.rawLineStringCount)
+            assertTrue((route.diagnostics?.multiGeometryCount ?: 0) > 0)
+
+            val targetMetres = 196040L
+            val gpsAt196040 = GeoPoint(
+                latitude = baseLat + (targetMetres - 130000L) * degPerMetreLat,
+                longitude = baseLng + 0.00002,
+                altitude = 245.0
+            )
+            val match196040 = ChainageMatcher.match(
+                gpsPoint = gpsAt196040,
+                gpsAccuracy = 3.5f,
+                routeData = route
+            )
+            assertEquals(MatchConfidence.HIGH, match196040.confidence)
+            val matchedM = match196040.chainage?.metres ?: 0L
+            assertTrue("Expected ~196040m, got $matchedM", matchedM in 196038L..196042L)
+
+            val gpsAtEnd = GeoPoint(
+                latitude = baseLat + (209883L - 130000L) * degPerMetreLat,
+                longitude = baseLng,
+                altitude = 245.0
+            )
+            val matchEnd = ChainageMatcher.match(
+                gpsPoint = gpsAtEnd,
+                gpsAccuracy = 3.0f,
+                routeData = route
+            )
+            assertEquals(209883L, matchEnd.chainage?.metres)
+            assertEquals("209+883", matchEnd.chainage?.format())
+
+            val calPoint1 = ChainageCorrectionPoint(
+                id = "cal-1",
+                routeId = route.id,
+                latitude = gpsAt196040.latitude,
+                longitude = gpsAt196040.longitude,
+                originalKmzMetres = 196040L,
+                correctedMetres = 196100L,
+                isEnabled = true
+            )
+            val calResult1 = SmartChainageCorrectionEngine.applyCorrection(
+                rawChainage = match196040.chainage!!,
+                routeData = route,
+                correctionPoints = listOf(calPoint1),
+                confidence = match196040.confidence,
+                distanceAlongAlignmentMetres = match196040.distanceAlongAlignmentMetres
+            )
+            assertNotNull(calResult1)
+            assertEquals(60L, calResult1?.appliedOffsetMetres)
+            assertTrue((calResult1?.correctedChainage?.metres ?: 0L) in 196098L..196102L)
+
+            val calPointRecalibrated = calPoint1.copy(correctedMetres = 196020L)
+            val calResult2 = SmartChainageCorrectionEngine.applyCorrection(
+                rawChainage = match196040.chainage!!,
+                routeData = route,
+                correctionPoints = listOf(calPointRecalibrated),
+                confidence = match196040.confidence,
+                distanceAlongAlignmentMetres = match196040.distanceAlongAlignmentMetres
+            )
+            assertNotNull(calResult2)
+            assertEquals(-20L, calResult2?.appliedOffsetMetres)
+            assertTrue((calResult2?.correctedChainage?.metres ?: 0L) in 196018L..196022L)
+        } finally {
+            tempKmz.delete()
+        }
+    }
+
+    @Test
+    fun testKmzCaseInsensitiveSubfolderAndSecurityEdgeCases() {
+        val validKml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Folder>
+                <Placemark><name>130+000</name><Point><coordinates>77.7000,29.4700,0</coordinates></Point></Placemark>
+                <Placemark><name>130+050</name><Point><coordinates>77.7000,29.47045,0</coordinates></Point></Placemark>
+              </Folder>
+            </kml>
+        """.trimIndent()
+
+        val subfolderKmz = java.io.File.createTempFile("subfolder_doc_", ".kmz")
+        try {
+            java.util.zip.ZipOutputStream(java.io.FileOutputStream(subfolderKmz)).use { zos ->
+                zos.putNextEntry(java.util.zip.ZipEntry("files/SubFolder/DOC.KML"))
+                zos.write(validKml.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
+            val parsed = KmzParser.parse(subfolderKmz, "subfolder.kmz")
+            assertEquals(2, parsed.markers.size)
+            assertEquals("files/SubFolder/DOC.KML", parsed.diagnostics?.selectedKmlEntryName)
+        } finally {
+            subfolderKmz.delete()
+        }
+
+        assertFalse(KmzParser.isSafeZipEntryName("../evil.kml"))
+        assertFalse(KmzParser.isSafeZipEntryName("folder/../../evil.kml"))
+        assertFalse(KmzParser.isSafeZipEntryName("/etc/passwd"))
+        assertTrue(KmzParser.isSafeZipEntryName("doc.kml"))
+        assertTrue(KmzParser.isSafeZipEntryName("subfolder/alignment.kml"))
+
+        val noKmlZip = java.io.File.createTempFile("no_kml_", ".kmz")
+        try {
+            java.util.zip.ZipOutputStream(java.io.FileOutputStream(noKmlZip)).use { zos ->
+                zos.putNextEntry(java.util.zip.ZipEntry("readme.txt"))
+                zos.write("not a kml".toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
+            try {
+                KmzParser.parse(noKmlZip, "no_kml.kmz")
+                fail("Expected RouteParseException for KMZ without .kml entry")
+            } catch (e: com.example.parser.RouteParseException) {
+                assertTrue(e.message.orEmpty().contains("No valid KML", ignoreCase = true))
+            }
+        } finally {
+            noKmlZip.delete()
+        }
+
+        val emptyGeometryKml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document><name>Empty Route</name></Document>
+            </kml>
+        """.trimIndent()
+        try {
+            KmzParser.parseKmlBytes(emptyGeometryKml.toByteArray(Charsets.UTF_8), "empty_geom.kml")
+            fail("Expected RouteParseException for valid KML with no geometry")
+        } catch (e: com.example.parser.RouteParseException) {
+            assertTrue(e.message.orEmpty().contains("no supported route geometry", ignoreCase = true))
+        }
+    }
 }
+
 

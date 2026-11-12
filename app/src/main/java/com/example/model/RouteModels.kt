@@ -47,7 +47,12 @@ data class AlignmentDiagnostics(
     val chainageEquations: List<String> = emptyList(),
     val warnings: List<String> = emptyList(),
     val qualityScorePercent: Int = 100,
-    val summaryMessage: String = "Validated KMZ Alignment"
+    val summaryMessage: String = "Validated KMZ Alignment",
+    val rawPlacemarkCount: Int = 0,
+    val rawPointCount: Int = 0,
+    val rawLineStringCount: Int = 0,
+    val multiGeometryCount: Int = 0,
+    val selectedKmlEntryName: String = "doc.kml"
 )
 
 /**

@@ -82,23 +82,61 @@ object ChainageMatcher {
         }
 
         // Map reference markers to their cumulative distance along this alignment polyline
-        val mapped = mutableListOf<MappedMarkerRef>()
+        data class CandidateMarkerProj(
+            val ref: MappedMarkerRef,
+            val perpDist: Double
+        )
+        val rawMapped = ArrayList<CandidateMarkerProj>(allMarkers.size)
         for (m in allMarkers) {
-            // Find nearest segment for this marker along the alignment
+            val mLat = m.point.latitude
+            val mLng = m.point.longitude
             var bestDist = Double.MAX_VALUE
             var bestAlong = 0.0
             for (i in 0 until n - 1) {
-                val proj = GeoUtils.projectPointToSegment(m.point, pts[i], pts[i + 1])
+                val p1 = pts[i]
+                val p2 = pts[i + 1]
+                // Fast bounding-box pre-filter (~220m margin around segment)
+                val minLat = if (p1.latitude < p2.latitude) p1.latitude else p2.latitude
+                val maxLat = if (p1.latitude > p2.latitude) p1.latitude else p2.latitude
+                if (mLat < minLat - 0.002 || mLat > maxLat + 0.002) continue
+
+                val minLng = if (p1.longitude < p2.longitude) p1.longitude else p2.longitude
+                val maxLng = if (p1.longitude > p2.longitude) p1.longitude else p2.longitude
+                if (mLng < minLng - 0.002 || mLng > maxLng + 0.002) continue
+
+                val proj = GeoUtils.projectPointToSegment(m.point, p1, p2)
                 if (proj.perpendicularDistance < bestDist) {
                     bestDist = proj.perpendicularDistance
                     bestAlong = cumDist[i] + proj.t * segLengths[i]
                 }
             }
             if (bestDist <= 150.0) { // Marker belongs to this alignment
-                mapped.add(MappedMarkerRef(m, bestAlong, m.chainage.metres))
+                rawMapped.add(CandidateMarkerProj(MappedMarkerRef(m, bestAlong, m.chainage.metres), bestDist))
             }
         }
-        mapped.sortBy { it.distanceAlongAlignmentM }
+        rawMapped.sortBy { it.ref.distanceAlongAlignmentM }
+
+        // Deduplicate markers that clamp to the exact same alignment distance (e.g. off-end markers at 0.0 or totalDist)
+        val mapped = ArrayList<MappedMarkerRef>(rawMapped.size)
+        for (cand in rawMapped) {
+            if (mapped.isEmpty()) {
+                mapped.add(cand.ref)
+            } else {
+                val prev = mapped.last()
+                if (abs(cand.ref.distanceAlongAlignmentM - prev.distanceAlongAlignmentM) < 0.5) {
+                    // Keep the marker whose actual coordinate is closer to that point on the alignment
+                    val prevDist = GeoUtils.distanceMetres(
+                        prev.marker.point,
+                        if (prev.distanceAlongAlignmentM <= 0.5) pts.first() else pts.last()
+                    )
+                    if (cand.perpDist < prevDist) {
+                        mapped[mapped.lastIndex] = cand.ref
+                    }
+                } else {
+                    mapped.add(cand.ref)
+                }
+            }
+        }
 
         // If no explicit markers mapped to this alignment path, synthesize baseline chainage
         // directly from the path coordinates so every point along the path has an accurate baseline chainage

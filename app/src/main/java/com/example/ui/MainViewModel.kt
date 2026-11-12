@@ -1544,25 +1544,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importRoute(uri: Uri, displayName: String) {
+    private val _routeImportStatus = MutableStateFlow<String?>(null)
+    val routeImportStatus: StateFlow<String?> = _routeImportStatus.asStateFlow()
+
+    private val _routeImportError = MutableStateFlow<String?>(null)
+    val routeImportError: StateFlow<String?> = _routeImportError.asStateFlow()
+
+    fun clearRouteImportMessages() {
+        _routeImportStatus.value = null
+        _routeImportError.value = null
+    }
+
+    fun importRoute(
+        uri: Uri,
+        displayName: String,
+        onComplete: ((Result<RouteData>) -> Unit)? = null
+    ) {
+        if (_isImportingRoute.value) {
+            showToast("Import already in progress...", ToastType.INFO)
+            return
+        }
         viewModelScope.launch {
             _isImportingRoute.value = true
-            val result = routeRepository.importRouteFromUri(uri, displayName)
-            _isImportingRoute.value = false
-            if (result.isSuccess) {
-                val data = result.getOrNull()
-                _uiMessages.emit(
-                    UiMessage.Success("Imported '${data?.name}' (${data?.markers?.size ?: 0} markers)")
-                )
-            } else {
-                val err = result.exceptionOrNull()?.message ?: "Import failed"
-                _uiMessages.emit(UiMessage.Error("Failed to import: $err"))
+            _routeImportError.value = null
+            _routeImportStatus.value = "Importing & parsing $displayName..."
+            try {
+                val result = routeRepository.importRouteFromUri(uri, displayName)
+                if (result.isSuccess) {
+                    val data = result.getOrNull()
+                    selectedAlignmentId.value = null
+                    lastCalculatedMatchResult = null
+                    progressionTracker.resetChainageFilter()
+                    if (_manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()) {
+                        _manualChainage.value = null
+                        _manualChainageText.value = null
+                        preferencesManager.setManualChainageOverride(null, null)
+                    }
+                    val rangeStr = if (data?.startChainage != null && data.endChainage != null) {
+                        " • ${data.startChainage.format()} → ${data.endChainage.format()}"
+                    } else ""
+                    val msg = "Imported '${data?.fileName ?: displayName}' (${data?.markers?.size ?: 0} markers$rangeStr)"
+                    _routeImportStatus.value = msg
+                    _routeImportError.value = null
+                    _uiMessages.emit(UiMessage.Success(msg))
+                    showToast(msg, ToastType.SUCCESS)
+                } else {
+                    val err = result.exceptionOrNull()?.message ?: "Import failed"
+                    _routeImportStatus.value = null
+                    _routeImportError.value = err
+                    _uiMessages.emit(UiMessage.Error("Failed to import: $err"))
+                    showToast("Import failed: $err", ToastType.ERROR)
+                }
+                onComplete?.invoke(result)
+            } finally {
+                _isImportingRoute.value = false
             }
         }
     }
 
     fun selectActiveRoute(id: String) {
         viewModelScope.launch {
+            selectedAlignmentId.value = null
+            lastCalculatedMatchResult = null
+            progressionTracker.resetChainageFilter()
             routeRepository.setActiveRoute(id)
             _uiMessages.emit(UiMessage.Info("Active route updated"))
         }
@@ -1570,8 +1614,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteRoute(id: String) {
         viewModelScope.launch {
+            selectedAlignmentId.value = null
+            lastCalculatedMatchResult = null
+            progressionTracker.resetChainageFilter()
             routeRepository.deleteRoute(id)
-            _uiMessages.emit(UiMessage.Info("Route deleted"))
+            _routeImportStatus.value = null
+            _routeImportError.value = null
+            _uiMessages.emit(UiMessage.Info("Alignment removed"))
+            showToast("Alignment removed", ToastType.INFO)
         }
     }
 

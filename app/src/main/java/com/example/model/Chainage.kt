@@ -32,7 +32,7 @@ data class Chainage(val metres: Long) : Comparable<Chainage> {
         )
 
         private val CHAINAGE_SLASH_REGEX = Regex(
-            """(?i)(?:CH|CHAINAGE|KM)?[:\s\.-]*(-?\d+)\s*[/]+\s*(\d{1,4})(?:\s*m)?(?:\b|$)"""
+            """(?i)^\s*(?:CH|CHAINAGE|KM)?[:\s\.-]*(-?\d+)\s*[/]+\s*(\d{1,4})(?:\s*m)?\s*$"""
         )
 
         private val UNIT_METRES_REGEX = Regex(
@@ -84,7 +84,7 @@ data class Chainage(val metres: Long) : Comparable<Chainage> {
                 // 198/0 = 198 km 000m
                 // 198/2 = 198 km 200m, 198/4 = 198 km 400m, 198/6 = 198 km 600m, 198/8 = 198 km 800m
                 val m = when {
-                    subStr.length == 1 && sub in 1..9 -> sub * 100 // or 200m stone convention: 1 -> 100m, 2 -> 200m
+                    subStr.length == 1 && sub in 1..9 -> sub * 100
                     sub < 1000 -> sub
                     else -> sub % 1000
                 }
@@ -134,6 +134,23 @@ data class Chainage(val metres: Long) : Comparable<Chainage> {
                 return Chainage(totalMetres)
             }
 
+            return null
+        }
+
+        /**
+         * Parses chainage from a KML `<description>` tag only when it contains an explicit
+         * `km+m` pattern or an explicit chainage prefix (`Chainage`, `CH`, `KM`, `STA`),
+         * avoiding false positives on generic numeric fields or dates in HTML descriptions.
+         */
+        fun parseFromDescription(raw: String?): Chainage? {
+            if (raw.isNullOrBlank()) return null
+            val cleaned = raw.replace(Regex("<[^>]*>"), " ").trim()
+            if (cleaned.isBlank()) return null
+            if (CHAINAGE_PLUS_REGEX.containsMatchIn(cleaned) ||
+                Regex("""(?i)\b(?:chainage|ch|km|sta|station)\b""").containsMatchIn(cleaned)
+            ) {
+                return parse(cleaned)
+            }
             return null
         }
 
