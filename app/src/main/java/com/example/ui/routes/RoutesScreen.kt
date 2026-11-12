@@ -86,35 +86,6 @@ fun RoutesScreen(
     var showMarkerInspector by remember { mutableStateOf(false) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
 
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            var fileName: String? = null
-            if (uri.scheme == "content") {
-                try {
-                    context.contentResolver.query(
-                        uri,
-                        arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
-                        null,
-                        null,
-                        null
-                    )?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                            if (idx != -1) {
-                                fileName = cursor.getString(idx)
-                            }
-                        }
-                    }
-                } catch (ignored: Exception) {}
-            }
-            val resolvedName = fileName ?: uri.lastPathSegment?.substringAfterLast("/") ?: "imported_route.kmz"
-            viewModel.importRoute(uri, resolvedName)
-        }
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -148,39 +119,26 @@ fun RoutesScreen(
                 )
             }
 
-            // 2. Action Buttons: Import & Live Highway Survey
+            // 2. KML / KMZ File Picker Component & Survey Action
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { filePickerLauncher.launch("*/*") },
-                        enabled = !isImporting,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("import_kmz_button")
-                    ) {
-                        if (isImporting) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.size(6.dp))
-                        } else {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.size(6.dp))
-                        }
-                        Text("Import KMZ", maxLines = 1)
-                    }
+                KmlKmzFilePickerCard(
+                    onFileSelected = { uri, resolvedName ->
+                        viewModel.importRoute(uri, resolvedName)
+                    },
+                    isImporting = isImporting
+                )
+            }
 
-                    OutlinedButton(
-                        onClick = onNavigateToSurvey,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("survey_alignment_button")
-                    ) {
-                        Icon(imageVector = Icons.Default.Engineering, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.size(6.dp))
-                        Text("Live Survey", maxLines = 1)
-                    }
+            item {
+                OutlinedButton(
+                    onClick = onNavigateToSurvey,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("survey_alignment_button")
+                ) {
+                    Icon(imageVector = Icons.Default.Engineering, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text("Launch Live Alignment Survey", fontWeight = FontWeight.SemiBold)
                 }
             }
 

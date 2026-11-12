@@ -27,24 +27,76 @@ class RouteRepository(
     val allRoutes = routeDao.getAllRoutes()
 
     init {
-        // Load initial active route
+        // Purge any legacy preloaded sample routes and load active user-imported route
         scope.launch {
+            purgeLegacyPreloadedSampleRoutes()
             preferencesManager.activeRouteIdFlow.collect { activeId ->
                 if (activeId != null) {
-                    loadRouteById(activeId)
-                } else {
-                    // Check if there are any routes in db
-                    val entity = withContext(Dispatchers.IO) {
-                        // Check if bundled sample can be loaded initially if DB is empty
-                        null
+                    val loaded = loadRouteById(activeId)
+                    if (loaded == null) {
+                        _activeRouteData.value = null
                     }
+                } else {
+                    _activeRouteData.value = null
                 }
             }
         }
     }
 
+    private fun isLegacyPreloadedSample(route: RouteEntity): Boolean {
+        val isModelNh58Range = route.startChainageMetres == 130000L &&
+            route.endChainageMetres == 209883L &&
+            (route.name.equals("Model", ignoreCase = true) || route.markerCount == 1600)
+        return isModelNh58Range ||
+            route.fileName.equals("NH-58-Muzzafarnagar-Haridwar.kmz", ignoreCase = true) ||
+            route.fileName.equals("NH-58_Muzzafarnagar_Haridwar.kmz", ignoreCase = true) ||
+            route.fileName.equals("sample_nh58.kmz", ignoreCase = true) ||
+            route.fileName.equals("sample_nh58.kml", ignoreCase = true) ||
+            route.fileName.contains("sample_nh58", ignoreCase = true) ||
+            route.fileName.contains("Muzzafarnagar", ignoreCase = true) ||
+            route.name.equals("NH-58 Muzaffarnagar-Haridwar", ignoreCase = true) ||
+            route.localFilePath?.contains("NH-58_Muzzafarnagar_Haridwar", ignoreCase = true) == true ||
+            route.localFilePath?.contains("sample_nh58", ignoreCase = true) == true
+    }
+
+    private suspend fun purgeLegacyPreloadedSampleRoutes() = withContext(Dispatchers.IO) {
+        try {
+            val routesDir = File(context.filesDir, "imported_routes")
+            File(routesDir, "NH-58_Muzzafarnagar_Haridwar.kmz").takeIf { it.exists() }?.delete()
+            File(routesDir, "sample_nh58.kmz").takeIf { it.exists() }?.delete()
+            File(routesDir, "sample_nh58.kml").takeIf { it.exists() }?.delete()
+            routesDir.listFiles()?.forEach { file ->
+                if (file.name.contains("sample_nh58", ignoreCase = true) ||
+                    file.name.contains("Muzzafarnagar", ignoreCase = true)
+                ) {
+                    file.delete()
+                }
+            }
+
+            val existingRoutes = routeDao.getAllRoutes().firstOrNull().orEmpty()
+            val activeId = preferencesManager.activeRouteIdFlow.firstOrNull()
+            for (route in existingRoutes) {
+                if (isLegacyPreloadedSample(route)) {
+                    route.localFilePath?.let { File(it).delete() }
+                    routeDao.deleteRouteById(route.id)
+                    if (activeId == route.id) {
+                        preferencesManager.setActiveRouteId(null)
+                        _activeRouteData.value = null
+                    }
+                }
+            }
+        } catch (ignored: Exception) {}
+    }
+
     suspend fun loadRouteById(routeId: String): RouteData? = withContext(Dispatchers.IO) {
         val entity = routeDao.getRouteById(routeId) ?: return@withContext null
+        if (isLegacyPreloadedSample(entity)) {
+            entity.localFilePath?.let { File(it).delete() }
+            routeDao.deleteRouteById(entity.id)
+            preferencesManager.setActiveRouteId(null)
+            _activeRouteData.value = null
+            return@withContext null
+        }
         val filePath = entity.localFilePath
         if (filePath != null) {
             val file = File(filePath)
@@ -115,9 +167,6 @@ class RouteRepository(
     }
 
     private fun resolveFileNameFromUri(context: Context, uri: Uri, fallback: String): String {
-        if (fallback.endsWith(".kmz", ignoreCase = true) || fallback.endsWith(".kml", ignoreCase = true)) {
-            return fallback
-        }
         if (uri.scheme == "content") {
             try {
                 context.contentResolver.query(
@@ -138,49 +187,6 @@ class RouteRepository(
             } catch (ignored: Exception) {}
         }
         return fallback
-    }
-
-    suspend fun loadBundledSampleRoute(): Result<RouteData> = withContext(Dispatchers.IO) {
-        try {
-            val assetName = "sample_nh58.kmz"
-            val routesDir = File(context.filesDir, "imported_routes").apply { mkdirs() }
-            val targetFile = File(routesDir, "NH-58_Muzzafarnagar_Haridwar.kmz")
-
-            context.assets.open(assetName).use { input ->
-                FileOutputStream(targetFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
-
-            val parsedRoute = targetFile.inputStream().use { input ->
-                KmzParser.parse(input, "NH-58-Muzzafarnagar-Haridwar.kmz")
-            }
-
-            val entity = RouteEntity(
-                id = parsedRoute.id,
-                name = "NH-58 Muzaffarnagar-Haridwar",
-                fileName = "NH-58-Muzzafarnagar-Haridwar.kmz",
-                markerCount = parsedRoute.markers.size,
-                startChainageMetres = parsedRoute.startChainage?.metres,
-                endChainageMetres = parsedRoute.endChainage?.metres,
-                minLat = parsedRoute.bounds.minLat,
-                maxLat = parsedRoute.bounds.maxLat,
-                minLng = parsedRoute.bounds.minLng,
-                maxLng = parsedRoute.bounds.maxLng,
-                importedAt = parsedRoute.importedAt,
-                isActive = true,
-                localFilePath = targetFile.absolutePath
-            )
-
-            routeDao.deactivateAllRoutes()
-            routeDao.insertRoute(entity)
-            preferencesManager.setActiveRouteId(parsedRoute.id)
-            _activeRouteData.value = parsedRoute
-
-            Result.success(parsedRoute)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
     }
 
     suspend fun setActiveRoute(routeId: String) = withContext(Dispatchers.IO) {

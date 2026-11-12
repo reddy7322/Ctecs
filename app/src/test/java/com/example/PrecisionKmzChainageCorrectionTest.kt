@@ -328,4 +328,103 @@ class PrecisionKmzChainageCorrectionTest {
         assertEquals(1, route.alignments.size)
         assertEquals("LHS", route.alignments[0].carriagewayType)
     }
+
+    @Test
+    fun testKalmanFilterStabilizesGpsChainageJitter() {
+        val tracker = com.example.geo.ChainageProgressionTracker()
+        val basePoint = GeoPoint(28.5000, 77.1000)
+
+        // Initial reading at 205+174 with 7m GPS accuracy
+        val r0 = ChainageMatchResult(
+            chainage = Chainage(205174L),
+            projectedPoint = basePoint,
+            gpsAccuracy = 7.0f,
+            confidence = MatchConfidence.MEDIUM,
+            detectedSide = "LHS",
+            source = ChainageSource.CUSTOM_CORRECTION,
+            rawUncorrectedChainage = Chainage(205217L)
+        )
+        val out0 = tracker.processResult(r0, "route-1")
+        assertEquals(205174L, out0.chainage?.metres)
+        assertEquals(205217L, out0.rawUncorrectedChainage?.metres)
+
+        // Simulate stationary GPS jitter (±1m to ±2m oscillation around basePoint)
+        val jitterSamples = listOf(205175L, 205173L, 205176L, 205174L, 205173L, 205175L)
+        for (noisyMetres in jitterSamples) {
+            val noisyResult = r0.copy(
+                chainage = Chainage(noisyMetres),
+                rawUncorrectedChainage = Chainage(noisyMetres + 43L)
+            )
+            val stabilized = tracker.processResult(noisyResult, "route-1")
+            // Stationary deadband + Kalman filter keeps value rock-solid at 205+174
+            assertEquals(205174L, stabilized.chainage?.metres)
+            assertEquals("205+174", stabilized.displayChainage)
+        }
+
+        // Now simulate a genuine calibration or jump (+100m to 205+274): must snap immediately without lag
+        val jumpedResult = r0.copy(
+            chainage = Chainage(205274L),
+            rawUncorrectedChainage = Chainage(205317L)
+        )
+        val jumpedOut = tracker.processResult(jumpedResult, "route-1")
+        assertEquals(205274L, jumpedOut.chainage?.metres)
+    }
+
+    @Test
+    fun testKmzParserExtractsPathCoordinatesForBaselineChainage() {
+        // KML containing ONLY a LineString path (no Point markers) starting at 150+000
+        val pathOnlyKml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document>
+                <name>NH-44 Highway Path 150+000</name>
+                <Placemark>
+                  <name>Main Alignment 150+000</name>
+                  <LineString>
+                    <coordinates>
+                      77.0000,28.0000,200.0
+                      77.0000,28.0090,200.0
+                      77.0000,28.0180,200.0
+                    </coordinates>
+                  </LineString>
+                </Placemark>
+              </Document>
+            </kml>
+        """.trimIndent()
+
+        val route = KmzParser.parseKmlStream(ByteArrayInputStream(pathOnlyKml.toByteArray()), "path_only.kml")
+
+        // Verify path coordinates were extracted and baseline markers were generated along the ~2000m path
+        val extractedCoords = KmzParser.extractPathCoordinates(route)
+        assertEquals(3, extractedCoords.size)
+        assertTrue("Baseline markers should be synthesized along the path", route.markers.size >= 15)
+        assertEquals(150000L, route.startChainage?.metres)
+        assertTrue("End chainage should be ~152+000", (route.endChainage?.metres ?: 0L) in 151950L..152050L)
+
+        // Match a GPS point midway along the first segment (latitude 28.0045 -> ~500m from start)
+        val midGps = GeoPoint(28.0045, 77.00005, 200.0)
+        val match = ChainageMatcher.match(gpsPoint = midGps, gpsAccuracy = 4.0f, routeData = route)
+        assertEquals(MatchConfidence.HIGH, match.confidence)
+        val matchedMetres = match.chainage?.metres ?: 0L
+        assertTrue("Midpoint chainage on path-only KMZ should be ~150+500, got $matchedMetres", matchedMetres in 150475L..150525L)
+
+        // Verify calibration system works seamlessly on top of the extracted path baseline chainage
+        val cp = ChainageCorrectionPoint(
+            routeId = route.id,
+            latitude = midGps.latitude,
+            longitude = midGps.longitude,
+            originalKmzMetres = matchedMetres,
+            correctedMetres = 150600L,
+            isEnabled = true
+        )
+        val calibrated = SmartChainageCorrectionEngine.applyCorrection(
+            rawChainage = match.chainage!!,
+            routeData = route,
+            correctionPoints = listOf(cp),
+            confidence = match.confidence
+        )
+        assertNotNull(calibrated)
+        assertEquals(150600L, calibrated?.correctedChainage?.metres)
+    }
 }
+

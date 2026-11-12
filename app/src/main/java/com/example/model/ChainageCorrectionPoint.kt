@@ -19,6 +19,7 @@ import org.json.JSONObject
 data class ChainageCorrectionPoint(
     val id: String = java.util.UUID.randomUUID().toString(),
     val routeId: String,
+    val projectId: String = "",
     val latitude: Double,
     val longitude: Double,
     val originalKmzMetres: Long,
@@ -39,6 +40,7 @@ data class ChainageCorrectionPoint(
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("routeId", routeId)
+        put("projectId", projectId)
         put("lat", latitude)
         put("lng", longitude)
         put("originalKmzMetres", originalKmzMetres)
@@ -54,6 +56,7 @@ data class ChainageCorrectionPoint(
             return ChainageCorrectionPoint(
                 id = obj.optString("id", java.util.UUID.randomUUID().toString()),
                 routeId = obj.optString("routeId", ""),
+                projectId = obj.optString("projectId", ""),
                 latitude = obj.optDouble("lat", 0.0),
                 longitude = obj.optDouble("lng", 0.0),
                 originalKmzMetres = obj.optLong("originalKmzMetres", 0L),
