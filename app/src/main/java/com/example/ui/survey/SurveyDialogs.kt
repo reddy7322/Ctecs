@@ -14,11 +14,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -157,14 +155,12 @@ fun NewSurveyConfigDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = if (colors.isDark) 0.5f else 0.8f)),
             modifier = Modifier
-                .widthIn(max = 560.dp)
-                .fillMaxWidth(0.95f)
-                .padding(vertical = 8.dp)
-                .imePadding()
+                .fillMaxWidth()
+                .padding(vertical = 12.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -629,14 +625,12 @@ fun SmartChainageConfirmationDialog(
 
     Dialog(onDismissRequest = { /* Modal: must Confirm or Edit to avoid accidental outside tap */ }) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
+            border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.gold),
             modifier = Modifier
-                .widthIn(max = 500.dp)
-                .fillMaxWidth(0.94f)
-                .padding(8.dp)
-                .imePadding()
+                .fillMaxWidth()
+                .padding(12.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -865,13 +859,10 @@ fun EndingChainageReachedDialog(
 
     Dialog(onDismissRequest = onContinueSurvey) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
-            modifier = Modifier
-                .widthIn(max = 480.dp)
-                .fillMaxWidth(0.92f)
-                .padding(8.dp)
+            border = androidx.compose.foundation.BorderStroke(1.2.dp, colors.gold),
+            modifier = Modifier.fillMaxWidth().padding(12.dp)
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -975,14 +966,10 @@ fun SurveyQuickSettingsDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
-            modifier = Modifier
-                .widthIn(max = 520.dp)
-                .fillMaxWidth(0.94f)
-                .padding(8.dp)
-                .imePadding()
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth().padding(12.dp)
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -1139,14 +1126,12 @@ fun AddKmStoneDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = if (colors.isDark) 0.6f else 0.8f)),
             modifier = Modifier
-                .widthIn(max = 520.dp)
-                .fillMaxWidth(0.94f)
-                .padding(8.dp)
-                .imePadding()
+                .fillMaxWidth()
+                .padding(12.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -1298,13 +1283,10 @@ fun RelocationDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
-            modifier = Modifier
-                .widthIn(max = 480.dp)
-                .fillMaxWidth(0.92f)
-                .padding(8.dp)
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = 0.6f)),
+            modifier = Modifier.padding(12.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -1395,14 +1377,10 @@ fun ChangeOffsetDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
-            modifier = Modifier
-                .widthIn(max = 480.dp)
-                .fillMaxWidth(0.92f)
-                .padding(8.dp)
-                .imePadding()
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = 0.5f)),
+            modifier = Modifier.padding(12.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -1546,13 +1524,12 @@ fun SavedSurveysDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.sky.copy(alpha = 0.5f)),
             modifier = Modifier
-                .widthIn(max = 560.dp)
-                .fillMaxWidth(0.95f)
-                .padding(8.dp)
+                .fillMaxWidth()
+                .padding(12.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(
@@ -1640,13 +1617,10 @@ fun ResumeSessionDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
-            modifier = Modifier
-                .widthIn(max = 480.dp)
-                .fillMaxWidth(0.92f)
-                .padding(8.dp)
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = 0.6f)),
+            modifier = Modifier.padding(12.dp)
         ) {
             Column(
                 modifier = Modifier
