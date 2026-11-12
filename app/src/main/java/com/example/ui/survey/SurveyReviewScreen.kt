@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -164,13 +165,19 @@ fun SurveyReviewScreen(
                 CircularProgressIndicator(color = colors.gold)
             }
         } else {
-            LazyColumn(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(innerPadding),
+                contentAlignment = Alignment.TopCenter
             ) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .widthIn(max = 760.dp)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                 // 1. Summary Dashboard View Card
                 item {
                     SurveySummaryDashboardCard(
@@ -498,6 +505,7 @@ fun SurveyReviewScreen(
                 }
             }
         }
+    }
     }
 
     if (showChangeOffsetDialog) {

@@ -53,6 +53,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.ui.theme.isAppDarkTheme
 
+/**
+ * Material UI button color variants for CTECS survey controls.
+ */
 enum class GlassButtonVariant {
     GOLD,
     SUCCESS,
@@ -61,9 +64,13 @@ enum class GlassButtonVariant {
     NEUTRAL
 }
 
+// Alias for modern naming
+typealias SurveyButtonVariant = GlassButtonVariant
+
 /**
  * Unified theme colors model for the Survey module, delivering consistent,
  * high-contrast visual clarity across both Light and Dark theme modes.
+ * Clean, solid Material Design surfaces without muddy transparencies.
  */
 data class SurveyThemeColors(
     val isDark: Boolean,
@@ -92,54 +99,54 @@ fun rememberSurveyThemeColors(): SurveyThemeColors {
         if (isDark) {
             SurveyThemeColors(
                 isDark = true,
-                background = Color(0xFF0F172A),
-                cardBackground = Color(0xEB131B2E),
-                cardBorder = Color(0x40FFD700),
-                headerBackground = Color(0xEE131B2E),
+                background = Color(0xFF0A0F1D),
+                cardBackground = Color(0xFF131C2E),
+                cardBorder = Color(0xFF1E293B),
+                headerBackground = Color(0xFF131C2E),
                 textPrimary = Color(0xFFF8FAFC),
                 textSecondary = Color(0xFF94A3B8),
                 textMuted = Color(0xFF64748B),
-                divider = Color(0x26FFFFFF),
-                gold = Color(0xFFFFD700),
+                divider = Color(0xFF1E293B),
+                gold = Color(0xFFF59E0B),
                 sky = Color(0xFF38BDF8),
                 green = Color(0xFF22C55E),
                 red = Color(0xFFEF4444),
-                inputBackground = Color(0xFF1E293B),
-                inputBorder = Color(0x40FFFFFF),
-                inputFocusedBorder = Color(0xFFFFD700),
-                surfaceHighlight = Color(0x28FFD700)
+                inputBackground = Color(0xFF0F172A),
+                inputBorder = Color(0xFF334155),
+                inputFocusedBorder = Color(0xFFF59E0B),
+                surfaceHighlight = Color(0xFF1E293B)
             )
         } else {
             SurveyThemeColors(
                 isDark = false,
                 background = Color(0xFFF8FAFC),
-                cardBackground = Color(0xF5FFFFFF),
-                cardBorder = Color(0xFFCBD5E1),
-                headerBackground = Color(0xF2FFFFFF),
+                cardBackground = Color(0xFFFFFFFF),
+                cardBorder = Color(0xFFE2E8F0),
+                headerBackground = Color(0xFFFFFFFF),
                 textPrimary = Color(0xFF0F172A),
                 textSecondary = Color(0xFF475569),
                 textMuted = Color(0xFF94A3B8),
-                divider = Color(0x1F0F172A),
-                gold = Color(0xFFB45309), // Warm readable amber in light mode
+                divider = Color(0xFFE2E8F0),
+                gold = Color(0xFFD97706), // Crisp amber in light mode
                 sky = Color(0xFF0284C7),
                 green = Color(0xFF16A34A),
                 red = Color(0xFFDC2626),
-                inputBackground = Color(0xFFFFFFFF),
+                inputBackground = Color(0xFFF8FAFC),
                 inputBorder = Color(0xFFCBD5E1),
                 inputFocusedBorder = Color(0xFF0284C7),
-                surfaceHighlight = Color(0x18B45309)
+                surfaceHighlight = Color(0xFFF1F5F9)
             )
         }
     }
 }
 
 /**
- * Premium minimalist glass button tailored for CTECS highway survey operations.
- * Automatically adapts between Light Theme (crisp borders, readable dark text/accents)
- * and Dark Theme (translucent dark glass, glowing gold/sky accents).
+ * Modern Material Design Flat Button for CTECS Survey operations.
+ * Eliminates glass effects, thick borders, heavy shadows, and gradients.
+ * Uses flat solid/tonal Material UI fills with high-contrast text and clean ripple effects.
  */
 @Composable
-fun SurveyGlassButton(
+fun SurveyMaterialButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -149,104 +156,105 @@ fun SurveyGlassButton(
     isLoading: Boolean = false,
     fontSize: TextUnit = 12.sp,
     height: Dp = 42.dp,
-    shape: RoundedCornerShape = RoundedCornerShape(12.dp),
+    shape: RoundedCornerShape = RoundedCornerShape(10.dp),
     contentPadding: PaddingValues? = null
 ) {
     val isDark = isAppDarkTheme()
     val interactionSource = remember { MutableInteractionSource() }
 
+    // Flat Material color pairs (Background, Text/Icon content, subtle border)
     val (bgBase, borderBase, contentBase) = if (isDark) {
         when (variant) {
             GlassButtonVariant.GOLD -> Triple(
-                Color(0x28FFD700),
-                Color(0x99FFD700),
-                Color(0xFFFFD700)
+                Color(0xFFD97706),
+                Color(0xFFF59E0B),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.SUCCESS -> Triple(
-                Color(0x2822C55E),
-                Color(0x8822C55E),
-                Color(0xFF22C55E)
+                Color(0xFF16A34A),
+                Color(0xFF22C55E),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.SKY -> Triple(
-                Color(0x2438BDF8),
-                Color(0x8838BDF8),
-                Color(0xFF38BDF8)
+                Color(0xFF0284C7),
+                Color(0xFF38BDF8),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.DESTRUCTIVE -> Triple(
-                Color(0x28EF4444),
-                Color(0x88EF4444),
-                Color(0xFFEF4444)
+                Color(0xFFDC2626),
+                Color(0xFFEF4444),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.NEUTRAL -> Triple(
-                Color(0x1F334155),
-                Color(0x4D64748B),
+                Color(0xFF1E293B),
+                Color(0xFF334155),
                 Color(0xFFF8FAFC)
             )
         }
     } else {
         when (variant) {
             GlassButtonVariant.GOLD -> Triple(
-                Color(0x20F59E0B),
-                Color(0x88B45309),
-                Color(0xFFB45309)
+                Color(0xFFD97706),
+                Color(0xFFB45309),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.SUCCESS -> Triple(
-                Color(0x2016A34A),
-                Color(0x8816A34A),
-                Color(0xFF15803D)
+                Color(0xFF16A34A),
+                Color(0xFF15803D),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.SKY -> Triple(
-                Color(0x200284C7),
-                Color(0x880284C7),
-                Color(0xFF0369A1)
+                Color(0xFF0284C7),
+                Color(0xFF0369A1),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.DESTRUCTIVE -> Triple(
-                Color(0x20DC2626),
-                Color(0x88DC2626),
-                Color(0xFFB91C1C)
+                Color(0xFFDC2626),
+                Color(0xFFB91C1C),
+                Color(0xFFFFFFFF)
             )
             GlassButtonVariant.NEUTRAL -> Triple(
-                Color(0x120F172A),
-                Color(0x330F172A),
-                Color(0xFF1E293B)
+                Color(0xFFF1F5F9),
+                Color(0xFFCBD5E1),
+                Color(0xFF0F172A)
             )
         }
     }
 
-    val disabledBg = if (isDark) Color(0x101E293B) else Color(0x080F172A)
-    val disabledBorder = if (isDark) Color(0x26475569) else Color(0x1F94A3B8)
-    val disabledContent = if (isDark) Color(0x6694A3B8) else Color(0x66475569)
+    val disabledBg = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
+    val disabledBorder = if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
+    val disabledContent = if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
 
     val animatedBg by animateColorAsState(
         targetValue = if (enabled) bgBase else disabledBg,
-        animationSpec = tween(180),
-        label = "glass_bg"
+        animationSpec = tween(150),
+        label = "btn_bg"
     )
     val animatedBorder by animateColorAsState(
         targetValue = if (enabled) borderBase else disabledBorder,
-        animationSpec = tween(180),
-        label = "glass_border"
+        animationSpec = tween(150),
+        label = "btn_border"
     )
     val animatedContent by animateColorAsState(
         targetValue = if (enabled) contentBase else disabledContent,
-        animationSpec = tween(180),
-        label = "glass_content"
+        animationSpec = tween(150),
+        label = "btn_content"
     )
 
-    val actualPadding = contentPadding ?: PaddingValues(horizontal = 10.dp)
+    val actualPadding = contentPadding ?: PaddingValues(horizontal = 10.dp, vertical = 4.dp)
 
     Surface(
         shape = shape,
         color = animatedBg,
-        border = BorderStroke(1.dp, animatedBorder),
+        border = BorderStroke(0.75.dp, animatedBorder.copy(alpha = 0.5f)),
         shadowElevation = 0.dp,
         modifier = modifier
             .height(height)
-            .heightIn(min = 32.dp)
+            .heightIn(min = 38.dp)
             .clip(shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = ripple(color = animatedContent.copy(alpha = 0.25f)),
+                indication = ripple(color = animatedContent.copy(alpha = 0.2f)),
                 enabled = enabled && !isLoading,
                 onClick = onClick
             )
@@ -260,7 +268,7 @@ fun SurveyGlassButton(
         ) {
             if (isLoading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                     color = animatedContent,
                     strokeWidth = 2.dp
                 )
@@ -289,10 +297,44 @@ fun SurveyGlassButton(
 }
 
 /**
- * Compact circular or rounded-square glass icon button for map controls and toolbar triggers.
+ * Backwards compatible alias for SurveyMaterialButton.
+ * Replaces glass styling with flat Material UI design seamlessly.
  */
 @Composable
-fun SurveyGlassIconButton(
+fun SurveyGlassButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    variant: GlassButtonVariant = GlassButtonVariant.NEUTRAL,
+    enabled: Boolean = true,
+    isLoading: Boolean = false,
+    fontSize: TextUnit = 12.sp,
+    height: Dp = 42.dp,
+    shape: RoundedCornerShape = RoundedCornerShape(10.dp),
+    contentPadding: PaddingValues? = null
+) {
+    SurveyMaterialButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        icon = icon,
+        variant = variant,
+        enabled = enabled,
+        isLoading = isLoading,
+        fontSize = fontSize,
+        height = height,
+        shape = shape,
+        contentPadding = contentPadding
+    )
+}
+
+/**
+ * Modern Material Design Flat Icon Button for map controls and toolbar actions.
+ * Flat background, clean icon tint, minimum 48dp interactive touch target.
+ */
+@Composable
+fun SurveyMaterialIconButton(
     icon: ImageVector,
     contentDescription: String?,
     onClick: () -> Unit,
@@ -302,7 +344,7 @@ fun SurveyGlassIconButton(
     active: Boolean = false,
     size: Dp = 38.dp,
     iconSize: Dp? = null,
-    shape: Shape = RoundedCornerShape(12.dp)
+    shape: Shape = RoundedCornerShape(10.dp)
 ) {
     val isDark = isAppDarkTheme()
     val interactionSource = remember { MutableInteractionSource() }
@@ -311,57 +353,57 @@ fun SurveyGlassIconButton(
     val (bgBase, borderBase, contentBase) = if (isDark) {
         when (variant) {
             GlassButtonVariant.GOLD -> Triple(
-                if (isHighlight) Color(0x38FFD700) else Color(0x28FFD700),
-                Color(0xFFFFD700),
-                Color(0xFFFFD700)
+                if (isHighlight) Color(0xFFD97706) else Color(0xFF1E293B),
+                if (isHighlight) Color(0xFFF59E0B) else Color(0xFF334155),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFF59E0B)
             )
             GlassButtonVariant.SUCCESS -> Triple(
-                Color(0x2822C55E),
-                Color(0xFF22C55E),
-                Color(0xFF22C55E)
+                if (isHighlight) Color(0xFF16A34A) else Color(0xFF1E293B),
+                if (isHighlight) Color(0xFF22C55E) else Color(0xFF334155),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF22C55E)
             )
             GlassButtonVariant.SKY -> Triple(
-                Color(0x2438BDF8),
-                Color(0xFF38BDF8),
-                Color(0xFF38BDF8)
+                if (isHighlight) Color(0xFF0284C7) else Color(0xFF1E293B),
+                if (isHighlight) Color(0xFF38BDF8) else Color(0xFF334155),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF38BDF8)
             )
             GlassButtonVariant.DESTRUCTIVE -> Triple(
-                Color(0x28EF4444),
-                Color(0xFFEF4444),
-                Color(0xFFEF4444)
+                if (isHighlight) Color(0xFFDC2626) else Color(0xFF1E293B),
+                if (isHighlight) Color(0xFFEF4444) else Color(0xFF334155),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFEF4444)
             )
             GlassButtonVariant.NEUTRAL -> Triple(
-                if (isHighlight) Color(0x3838BDF8) else Color(0xB30F172A),
-                if (isHighlight) Color(0xFF38BDF8) else Color(0x3864748B),
-                if (isHighlight) Color(0xFF38BDF8) else Color(0xFFF1F5F9)
+                if (isHighlight) Color(0xFF0284C7) else Color(0xFF1E293B),
+                if (isHighlight) Color(0xFF38BDF8) else Color(0xFF334155),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFF8FAFC)
             )
         }
     } else {
         when (variant) {
             GlassButtonVariant.GOLD -> Triple(
-                if (isHighlight) Color(0x30F59E0B) else Color(0x1AF59E0B),
-                Color(0xFFB45309),
-                Color(0xFFB45309)
+                if (isHighlight) Color(0xFFD97706) else Color(0xFFF1F5F9),
+                if (isHighlight) Color(0xFFB45309) else Color(0xFFCBD5E1),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFD97706)
             )
             GlassButtonVariant.SUCCESS -> Triple(
-                Color(0x2016A34A),
-                Color(0xFF16A34A),
-                Color(0xFF15803D)
+                if (isHighlight) Color(0xFF16A34A) else Color(0xFFF1F5F9),
+                if (isHighlight) Color(0xFF15803D) else Color(0xFFCBD5E1),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF16A34A)
             )
             GlassButtonVariant.SKY -> Triple(
-                Color(0x200284C7),
-                Color(0xFF0284C7),
-                Color(0xFF0369A1)
+                if (isHighlight) Color(0xFF0284C7) else Color(0xFFF1F5F9),
+                if (isHighlight) Color(0xFF0369A1) else Color(0xFFCBD5E1),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF0284C7)
             )
             GlassButtonVariant.DESTRUCTIVE -> Triple(
-                Color(0x20DC2626),
-                Color(0xFFDC2626),
-                Color(0xFFB91C1C)
+                if (isHighlight) Color(0xFFDC2626) else Color(0xFFF1F5F9),
+                if (isHighlight) Color(0xFFB91C1C) else Color(0xFFCBD5E1),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFDC2626)
             )
             GlassButtonVariant.NEUTRAL -> Triple(
-                if (isHighlight) Color(0x250284C7) else Color(0xF0FFFFFF),
-                if (isHighlight) Color(0xFF0284C7) else Color(0x330F172A),
-                if (isHighlight) Color(0xFF0284C7) else Color(0xFF1E293B)
+                if (isHighlight) Color(0xFF0284C7) else Color(0xFFF1F5F9),
+                if (isHighlight) Color(0xFF0284C7) else Color(0xFFCBD5E1),
+                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF0F172A)
             )
         }
     }
@@ -371,14 +413,14 @@ fun SurveyGlassIconButton(
     Surface(
         shape = shape,
         color = bgBase,
-        border = BorderStroke(1.dp, borderBase.copy(alpha = if (isHighlight) 0.85f else 0.4f)),
-        shadowElevation = if (isDark) 2.dp else 1.dp,
+        border = BorderStroke(0.75.dp, borderBase),
+        shadowElevation = 0.dp,
         modifier = modifier
             .size(size)
             .clip(shape)
             .clickable(
                 interactionSource = interactionSource,
-                indication = ripple(color = contentBase.copy(alpha = 0.3f)),
+                indication = ripple(color = contentBase.copy(alpha = 0.25f)),
                 onClick = onClick
             )
     ) {
@@ -394,8 +436,38 @@ fun SurveyGlassIconButton(
 }
 
 /**
- * Ultra-sleek segmented toggle pill for Auto vs Manual modes, Offset sides, etc.
- * Supports both Light and Dark themes seamlessly.
+ * Backwards compatible alias for SurveyMaterialIconButton.
+ */
+@Composable
+fun SurveyGlassIconButton(
+    icon: ImageVector,
+    contentDescription: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    variant: GlassButtonVariant = GlassButtonVariant.NEUTRAL,
+    isActive: Boolean = false,
+    active: Boolean = false,
+    size: Dp = 38.dp,
+    iconSize: Dp? = null,
+    shape: Shape = RoundedCornerShape(10.dp)
+) {
+    SurveyMaterialIconButton(
+        icon = icon,
+        contentDescription = contentDescription,
+        onClick = onClick,
+        modifier = modifier,
+        variant = variant,
+        isActive = isActive,
+        active = active,
+        size = size,
+        iconSize = iconSize,
+        shape = shape
+    )
+}
+
+/**
+ * Modern Material 3 Segmented Toggle Pill for Road Side, Lane selection, Auto vs Manual modes, etc.
+ * High contrast, clean solid indicator pill, zero glass blurring.
  */
 @Composable
 fun <T> SurveyGlassSegmentedToggle(
@@ -406,15 +478,16 @@ fun <T> SurveyGlassSegmentedToggle(
     activeColor: Color? = null
 ) {
     val isDark = isAppDarkTheme()
-    val resolvedActiveColor = activeColor ?: if (isDark) Color(0xFFFFD700) else Color(0xFFB45309)
-    val surfaceBg = if (isDark) Color(0x990F172A) else Color(0xF2FFFFFF)
-    val surfaceBorder = if (isDark) Color(0x3864748B) else Color(0x330F172A)
+    val resolvedActiveColor = activeColor ?: if (isDark) Color(0xFFD97706) else Color(0xFFD97706)
+    val surfaceBg = if (isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+    val surfaceBorder = if (isDark) Color(0xFF1E293B) else Color(0xFFCBD5E1)
     val unselectedTextColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
 
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
         color = surfaceBg,
-        border = BorderStroke(1.dp, surfaceBorder),
+        border = BorderStroke(0.75.dp, surfaceBorder),
+        shadowElevation = 0.dp,
         modifier = modifier.height(36.dp)
     ) {
         Row(
@@ -424,18 +497,13 @@ fun <T> SurveyGlassSegmentedToggle(
             options.forEach { (option, label) ->
                 val isSelected = option == selected
                 val pillBg by animateColorAsState(
-                    targetValue = if (isSelected) resolvedActiveColor.copy(alpha = if (isDark) 0.22f else 0.18f) else Color.Transparent,
-                    animationSpec = tween(150),
+                    targetValue = if (isSelected) resolvedActiveColor else Color.Transparent,
+                    animationSpec = tween(120),
                     label = "pill_bg"
                 )
-                val pillBorder by animateColorAsState(
-                    targetValue = if (isSelected) resolvedActiveColor.copy(alpha = 0.85f) else Color.Transparent,
-                    animationSpec = tween(150),
-                    label = "pill_border"
-                )
                 val textColor by animateColorAsState(
-                    targetValue = if (isSelected) resolvedActiveColor else unselectedTextColor,
-                    animationSpec = tween(150),
+                    targetValue = if (isSelected) Color.White else unselectedTextColor,
+                    animationSpec = tween(120),
                     label = "pill_text"
                 )
 
@@ -443,7 +511,7 @@ fun <T> SurveyGlassSegmentedToggle(
                     modifier = Modifier
                         .weight(1f)
                         .height(32.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(6.dp))
                         .background(pillBg)
                         .clickable { onSelect(option) },
                     contentAlignment = Alignment.Center
@@ -477,7 +545,7 @@ fun SurveyThemeSelectorDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
             border = BorderStroke(1.dp, colors.cardBorder),
             modifier = Modifier.padding(12.dp)
@@ -500,7 +568,7 @@ fun SurveyThemeSelectorDialog(
                         fontSize = 14.sp
                     )
                     SurveyGlassIconButton(
-                        icon = androidx.compose.material.icons.Icons.Default.Check,
+                        icon = Icons.Default.Check,
                         contentDescription = "Done",
                         onClick = onDismiss,
                         variant = GlassButtonVariant.GOLD,
@@ -518,9 +586,9 @@ fun SurveyThemeSelectorDialog(
                 ).forEach { (mode, label, icon) ->
                     val isSelected = currentTheme.equals(mode, ignoreCase = true)
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = if (isSelected) colors.surfaceHighlight else Color.Transparent,
-                        border = if (isSelected) BorderStroke(1.dp, colors.gold.copy(alpha = 0.6f)) else BorderStroke(0.5.dp, colors.cardBorder.copy(alpha = 0.3f)),
+                        border = if (isSelected) BorderStroke(1.dp, colors.gold) else BorderStroke(0.5.dp, colors.cardBorder),
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {

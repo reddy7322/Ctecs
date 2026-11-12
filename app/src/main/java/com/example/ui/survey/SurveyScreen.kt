@@ -22,10 +22,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -464,19 +466,22 @@ fun SurveyScreen(
         }
 
         // ----------------------------------------------------
-        // 2. TOP MINIMALIST GLASS TOOLBAR
+        // 2. TOP TOOLBAR (Material Design)
         // ----------------------------------------------------
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            contentAlignment = Alignment.TopCenter
         ) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = colors.headerBackground,
                 border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 760.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -689,14 +694,20 @@ fun SurveyScreen(
         // 6. GPS accuracy & status
         // 7. Total surveyed distance
         // ----------------------------------------------------
+        // ----------------------------------------------------
+        // 4. FLOATING HUD INFO CARD & BOTTOM CONTROLS
+        // Responsive Material UI Design with dynamic button arrangement
+        // ----------------------------------------------------
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .widthIn(max = 760.dp)
+                .navigationBarsPadding()
+                .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
             Card(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
                 border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
                 modifier = Modifier.fillMaxWidth()
@@ -720,12 +731,12 @@ fun SurveyScreen(
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
-                                    color = colors.sky.copy(alpha = 0.15f)
+                                    color = if (colors.isDark) Color(0xFF0369A1) else Color(0xFFE0F2FE)
                                 ) {
                                     Text(
                                         text = "${activeSession?.displayRoadSide ?: "RHS"} • ${activeSession?.displayLaneName ?: "Fast Lane"}",
                                         fontSize = 10.5.sp,
-                                        color = colors.sky,
+                                        color = if (colors.isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1),
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
@@ -788,13 +799,24 @@ fun SurveyScreen(
                         if (remMetres != null) {
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = if (remMetres <= 500L) colors.gold.copy(alpha = 0.2f) else colors.sky.copy(alpha = 0.15f),
-                                border = androidx.compose.foundation.BorderStroke(0.5.dp, if (remMetres <= 500L) colors.gold else colors.sky)
+                                color = if (remMetres <= 500L) {
+                                    if (colors.isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
+                                } else {
+                                    if (colors.isDark) Color(0xFF0369A1) else Color(0xFFE0F2FE)
+                                },
+                                border = androidx.compose.foundation.BorderStroke(
+                                    0.5.dp,
+                                    if (remMetres <= 500L) colors.gold else colors.sky
+                                )
                             ) {
                                 Text(
                                     text = "Remaining: ${String.format(Locale.US, "%.2f km", remMetres / 1000.0)}",
                                     fontSize = 10.5.sp,
-                                    color = if (remMetres <= 500L) colors.gold else colors.sky,
+                                    color = if (remMetres <= 500L) {
+                                        if (colors.isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
+                                    } else {
+                                        if (colors.isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+                                    },
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
@@ -814,110 +836,216 @@ fun SurveyScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             // ----------------------------------------------------
-            // 5. ERGONOMIC SURVEY ACTION CONTROLS (Dynamic Minimalist Glass UI)
+            // 5. ERGONOMIC SURVEY ACTION CONTROLS (Material Design Flat Buttons)
+            // Dynamically arranged based on available width (wrapping on narrow displays)
             // ----------------------------------------------------
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val isCompact = maxWidth < 370.dp
+                val isNarrow = maxWidth < 340.dp
+                val isCompact = maxWidth < 400.dp
                 val status = activeSession?.status ?: SurveyStatus.NOT_STARTED
                 val isRecordingOrPaused = status == SurveyStatus.RECORDING || status == SurveyStatus.PAUSED || status == SurveyStatus.READY_TO_RESUME
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Settings / Offset Adjust Button
-                    SurveyGlassButton(
-                        text = if (isCompact) "Settings" else "Survey Settings",
-                        icon = Icons.Default.Tune,
-                        onClick = {
-                            if (activeSession != null) {
-                                showQuickSettingsDialog = true
-                            } else {
-                                showNewConfigDialog = true
-                            }
-                        },
-                        variant = GlassButtonVariant.SKY,
-                        modifier = Modifier.weight(if (isCompact) 0.95f else 1.05f),
-                        height = 42.dp
-                    )
-
-                    // Primary Action Button (Start / Pause / Resume)
-                    when (status) {
-                        SurveyStatus.RECORDING -> {
+                if (isNarrow) {
+                    // Two-row wrapping on compact/split-screen viewports
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             SurveyGlassButton(
-                                text = "Pause",
-                                icon = Icons.Default.Pause,
+                                text = "Settings",
+                                icon = Icons.Default.Tune,
                                 onClick = {
-                                    coroutineScope.launch {
-                                        surveyManager.pauseSurvey()
-                                        viewModel.showToast("Survey paused", ToastType.INFO)
+                                    if (activeSession != null) showQuickSettingsDialog = true else showNewConfigDialog = true
+                                },
+                                variant = GlassButtonVariant.SKY,
+                                modifier = Modifier.weight(1f),
+                                height = 44.dp
+                            )
+                            when (status) {
+                                SurveyStatus.RECORDING -> {
+                                    SurveyGlassButton(
+                                        text = "Pause",
+                                        icon = Icons.Default.Pause,
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                surveyManager.pauseSurvey()
+                                                viewModel.showToast("Survey paused", ToastType.INFO)
+                                            }
+                                        },
+                                        variant = GlassButtonVariant.GOLD,
+                                        modifier = Modifier.weight(1f),
+                                        height = 44.dp
+                                    )
+                                }
+                                SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
+                                    SurveyGlassButton(
+                                        text = "Resume",
+                                        icon = Icons.Default.PlayArrow,
+                                        onClick = {
+                                            surveyManager.requestResumeSurvey(currentGps)
+                                            viewModel.showToast("Resuming survey...", ToastType.INFO)
+                                        },
+                                        variant = GlassButtonVariant.SUCCESS,
+                                        modifier = Modifier.weight(1f),
+                                        height = 44.dp
+                                    )
+                                }
+                                else -> {
+                                    SurveyGlassButton(
+                                        text = "Start",
+                                        icon = Icons.Default.PlayArrow,
+                                        onClick = { showNewConfigDialog = true },
+                                        variant = GlassButtonVariant.GOLD,
+                                        modifier = Modifier.weight(1f),
+                                        height = 44.dp
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            SurveyGlassButton(
+                                text = "+ KM Stone",
+                                icon = Icons.Default.AddLocationAlt,
+                                onClick = {
+                                    if (activeSession != null) {
+                                        showAddKmStoneDialog = true
+                                    } else {
+                                        viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
                                     }
                                 },
                                 variant = GlassButtonVariant.GOLD,
-                                modifier = Modifier.weight(1.15f),
-                                height = 42.dp
+                                modifier = Modifier.weight(1.2f),
+                                height = 44.dp
                             )
-                        }
-                        SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
-                            SurveyGlassButton(
-                                text = "Resume",
-                                icon = Icons.Default.PlayArrow,
-                                onClick = {
-                                    surveyManager.requestResumeSurvey(currentGps)
-                                    viewModel.showToast("Resuming survey...", ToastType.INFO)
-                                },
-                                variant = GlassButtonVariant.SUCCESS,
-                                modifier = Modifier.weight(1.15f),
-                                height = 42.dp
-                            )
-                        }
-                        else -> {
-                            SurveyGlassButton(
-                                text = if (isCompact) "Start" else "Start Survey",
-                                icon = Icons.Default.PlayArrow,
-                                onClick = { showNewConfigDialog = true },
-                                variant = GlassButtonVariant.GOLD,
-                                modifier = Modifier.weight(1.25f),
-                                height = 42.dp
-                            )
+
+                            if (isRecordingOrPaused) {
+                                SurveyGlassButton(
+                                    text = "Stop",
+                                    icon = Icons.Default.Stop,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            val finalized = surveyManager.stopSurvey()
+                                            if (finalized != null) {
+                                                reviewSessionTarget = finalized
+                                                viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
+                                            }
+                                        }
+                                    },
+                                    variant = GlassButtonVariant.DESTRUCTIVE,
+                                    modifier = Modifier.weight(0.8f),
+                                    height = 44.dp
+                                )
+                            }
                         }
                     }
-
-                    // Prominent + KM Stone Marker Button
-                    SurveyGlassButton(
-                        text = if (isCompact) "+ KM" else "+ KM Stone",
-                        icon = Icons.Default.AddLocationAlt,
-                        onClick = {
-                            if (activeSession != null) {
-                                showAddKmStoneDialog = true
-                            } else {
-                                viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
-                            }
-                        },
-                        variant = GlassButtonVariant.GOLD,
-                        modifier = Modifier.weight(if (isCompact) 1.05f else 1.25f),
-                        height = 42.dp
-                    )
-
-                    // Stop / Review Button
-                    if (isRecordingOrPaused) {
+                } else {
+                    // Standard responsive single-row layout
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Settings / Offset Adjust Button
                         SurveyGlassButton(
-                            text = "Stop",
-                            icon = Icons.Default.Stop,
+                            text = if (isCompact) "Settings" else "Survey Settings",
+                            icon = Icons.Default.Tune,
                             onClick = {
-                                coroutineScope.launch {
-                                    val finalized = surveyManager.stopSurvey()
-                                    if (finalized != null) {
-                                        reviewSessionTarget = finalized
-                                        viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
-                                    }
+                                if (activeSession != null) {
+                                    showQuickSettingsDialog = true
+                                } else {
+                                    showNewConfigDialog = true
                                 }
                             },
-                            variant = GlassButtonVariant.DESTRUCTIVE,
-                            modifier = Modifier.weight(0.85f),
-                            height = 42.dp
+                            variant = GlassButtonVariant.SKY,
+                            modifier = Modifier.weight(if (isCompact) 0.95f else 1.05f),
+                            height = 44.dp
                         )
+
+                        // Primary Action Button (Start / Pause / Resume)
+                        when (status) {
+                            SurveyStatus.RECORDING -> {
+                                SurveyGlassButton(
+                                    text = "Pause",
+                                    icon = Icons.Default.Pause,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            surveyManager.pauseSurvey()
+                                            viewModel.showToast("Survey paused", ToastType.INFO)
+                                        }
+                                    },
+                                    variant = GlassButtonVariant.GOLD,
+                                    modifier = Modifier.weight(1.15f),
+                                    height = 44.dp
+                                )
+                            }
+                            SurveyStatus.PAUSED, SurveyStatus.READY_TO_RESUME -> {
+                                SurveyGlassButton(
+                                    text = "Resume",
+                                    icon = Icons.Default.PlayArrow,
+                                    onClick = {
+                                        surveyManager.requestResumeSurvey(currentGps)
+                                        viewModel.showToast("Resuming survey...", ToastType.INFO)
+                                    },
+                                    variant = GlassButtonVariant.SUCCESS,
+                                    modifier = Modifier.weight(1.15f),
+                                    height = 44.dp
+                                )
+                            }
+                            else -> {
+                                SurveyGlassButton(
+                                    text = if (isCompact) "Start" else "Start Survey",
+                                    icon = Icons.Default.PlayArrow,
+                                    onClick = { showNewConfigDialog = true },
+                                    variant = GlassButtonVariant.GOLD,
+                                    modifier = Modifier.weight(1.25f),
+                                    height = 44.dp
+                                )
+                            }
+                        }
+
+                        // Prominent + KM Stone Marker Button
+                        SurveyGlassButton(
+                            text = if (isCompact) "+ KM" else "+ KM Stone",
+                            icon = Icons.Default.AddLocationAlt,
+                            onClick = {
+                                if (activeSession != null) {
+                                    showAddKmStoneDialog = true
+                                } else {
+                                    viewModel.showToast("Start a survey before marking KM stones", ToastType.WARNING)
+                                }
+                            },
+                            variant = GlassButtonVariant.GOLD,
+                            modifier = Modifier.weight(if (isCompact) 1.05f else 1.25f),
+                            height = 44.dp
+                        )
+
+                        // Stop / Review Button
+                        if (isRecordingOrPaused) {
+                            SurveyGlassButton(
+                                text = "Stop",
+                                icon = Icons.Default.Stop,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val finalized = surveyManager.stopSurvey()
+                                        if (finalized != null) {
+                                            reviewSessionTarget = finalized
+                                            viewModel.showToast("Survey finalized!", ToastType.SUCCESS)
+                                        }
+                                    }
+                                },
+                                variant = GlassButtonVariant.DESTRUCTIVE,
+                                modifier = Modifier.weight(0.85f),
+                                height = 44.dp
+                            )
+                        }
                     }
                 }
             }
