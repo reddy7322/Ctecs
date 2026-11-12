@@ -1240,12 +1240,25 @@ fun CameraScreen(
                 }
 
                 // Control 5: Chainage Adjustment Pill (Full Transparent Glass)
+                val isManualSource = matchResult.source == ChainageSource.MANUAL
+                val isCustomCorrectionSource = matchResult.source == ChainageSource.CUSTOM_CORRECTION
+                val sourceBorderColor = when (matchResult.source) {
+                    ChainageSource.MANUAL -> AccentRed
+                    ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                    else -> glassBorderIdle
+                }
+                val sourcePrefix = when (matchResult.source) {
+                    ChainageSource.MANUAL -> "MANUAL: "
+                    ChainageSource.CUSTOM_CORRECTION -> "CUSTOM: "
+                    ChainageSource.KMZ -> "KMZ: "
+                    ChainageSource.GPS -> "GPS: "
+                }
                 Surface(
                     shape = RoundedCornerShape(18.dp),
                     color = Color.Transparent,
                     border = androidx.compose.foundation.BorderStroke(
                         0.8.dp,
-                        if (matchResult.source == ChainageSource.MANUAL) AccentRed else glassBorderIdle
+                        sourceBorderColor
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1265,13 +1278,16 @@ fun CameraScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             RoadMarkingIcon(
-                                tint = if (matchResult.source == ChainageSource.MANUAL) AccentRed else PrimaryText
+                                tint = when {
+                                    isManualSource -> AccentRed
+                                    isCustomCorrectionSource -> Color(0xFFC084FC)
+                                    else -> PrimaryText
+                                }
                             )
-                            val prefix = if (matchResult.source == ChainageSource.MANUAL) "M: " else "CH: "
                             Text(
-                                text = "$prefix${matchResult.displayChainage}",
+                                text = "$sourcePrefix${matchResult.displayChainage}",
                                 color = PrimaryText,
-                                fontSize = 11.5.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -2312,13 +2328,24 @@ fun CameraScreen(
                     // Chainage quick edit button
                     item {
                         val isManualActive = matchResult.source == ChainageSource.MANUAL
-                        val chipBg = if (isManualActive) Color(0x25DC2626) else Color(0x1A101726)
-                        val chipBorder = if (isManualActive) AccentRed else Color(0x35FFFFFF)
-                        val chipText = if (isManualActive) {
-                            "Manual: ${matchResult.displayChainage}"
-                        } else {
-                            "CH: ${matchResult.displayChainage}"
+                        val isCustomActive = matchResult.source == ChainageSource.CUSTOM_CORRECTION
+                        val chipBg = when {
+                            isManualActive -> Color(0x25DC2626)
+                            isCustomActive -> Color(0x259333EA)
+                            else -> Color(0x1A101726)
                         }
+                        val chipBorder = when {
+                            isManualActive -> AccentRed
+                            isCustomActive -> Color(0xFFA855F7)
+                            else -> Color(0x35FFFFFF)
+                        }
+                        val sourceTag = when (matchResult.source) {
+                            ChainageSource.MANUAL -> "MANUAL"
+                            ChainageSource.CUSTOM_CORRECTION -> "CUSTOM CORRECTION"
+                            ChainageSource.KMZ -> "KMZ"
+                            ChainageSource.GPS -> "GPS"
+                        }
+                        val chipText = "$sourceTag: ${matchResult.displayChainage}"
                         FloatingGlassCard(
                             shape = RoundedCornerShape(14.dp),
                             backgroundColor = chipBg,
@@ -2832,7 +2859,7 @@ fun CameraScreen(
             }
         }
 
-        // Simple Manual Custom Add & Edit Chainage Dialog (Standalone — Not Connected to Chainage Control System)
+        // Manual Chainage Input Dialog
         if (showManualDialog) {
             val dialogColors = com.example.ui.theme.rememberDialogColors()
             val keyboardController = LocalSoftwareKeyboardController.current
@@ -2849,7 +2876,22 @@ fun CameraScreen(
             }
             var chainageInput by remember(showManualDialog) { mutableStateOf(initialChainageText) }
             var editingItemOriginal by remember(showManualDialog) { mutableStateOf<String?>(null) }
+            var validationError by remember(showManualDialog) { mutableStateOf<String?>(null) }
             val isManualActive = !manualChainageText.isNullOrBlank() || matchResult.source == ChainageSource.MANUAL
+            val parsedPreview = remember(chainageInput) { Chainage.parse(chainageInput.trim()) }
+
+            val activeSourceText = when (matchResult.source) {
+                ChainageSource.MANUAL -> "MANUAL"
+                ChainageSource.CUSTOM_CORRECTION -> "CUSTOM CORRECTION"
+                ChainageSource.KMZ -> "KMZ"
+                ChainageSource.GPS -> "GPS"
+            }
+            val activeSourceColor = when (matchResult.source) {
+                ChainageSource.MANUAL -> AccentRed
+                ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                ChainageSource.KMZ -> Color(0xFF10B981)
+                ChainageSource.GPS -> primaryAccent
+            }
 
             AlertDialog(
                 onDismissRequest = { viewModel.closeManualChainageDialog() },
@@ -2865,25 +2907,25 @@ fun CameraScreen(
                         Text(
                             text = when {
                                 editingItemOriginal != null -> "Edit Custom Chainage"
-                                isManualActive -> "Edit Manual Chainage"
-                                else -> "Add Custom Chainage"
+                                isManualActive -> "Manual Chainage Active"
+                                else -> "Manual Chainage Input"
                             },
                             color = dialogColors.titleColor,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                            fontSize = 17.sp
                         )
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isManualActive) AccentRed.copy(alpha = 0.15f) else primaryAccent.copy(alpha = 0.15f),
+                            color = activeSourceColor.copy(alpha = 0.15f),
                             border = androidx.compose.foundation.BorderStroke(
                                 1.dp,
-                                if (isManualActive) AccentRed else primaryAccent
+                                activeSourceColor
                             )
                         ) {
                             Text(
-                                text = if (isManualActive) "MANUAL" else "AUTO",
-                                color = if (isManualActive) AccentRed else primaryAccent,
-                                fontSize = 10.sp,
+                                text = activeSourceText,
+                                color = activeSourceColor,
+                                fontSize = 9.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
@@ -2899,9 +2941,9 @@ fun CameraScreen(
                             text = if (editingItemOriginal != null) {
                                 "Update custom chainage \"$editingItemOriginal\" below:"
                             } else {
-                                "Enter or edit custom chainage (e.g. 206+100 or 198+450):"
+                                "Enter chainage (supports \"198+880\", \"198880\", \"200+000\"):"
                             },
-                            fontSize = 12.5.sp,
+                            fontSize = 12.sp,
                             color = dialogColors.textSecondaryColor
                         )
 
@@ -2912,20 +2954,27 @@ fun CameraScreen(
                         ) {
                             OutlinedTextField(
                                 value = chainageInput,
-                                onValueChange = { chainageInput = it },
+                                onValueChange = {
+                                    chainageInput = it
+                                    validationError = null
+                                },
                                 label = {
-                                    Text(if (editingItemOriginal != null) "Edit Chainage" else "Custom Chainage")
+                                    Text(if (editingItemOriginal != null) "Edit Chainage" else "Manual Chainage")
                                 },
                                 placeholder = {
                                     Text(
-                                        "e.g. 206+100",
+                                        "e.g. 198+880 or 198880",
                                         color = dialogColors.textSecondaryColor.copy(alpha = 0.6f)
                                     )
                                 },
+                                isError = validationError != null,
                                 singleLine = true,
                                 trailingIcon = {
                                     if (chainageInput.isNotEmpty()) {
-                                        IconButton(onClick = { chainageInput = "" }) {
+                                        IconButton(onClick = {
+                                            chainageInput = ""
+                                            validationError = null
+                                        }) {
                                             Icon(
                                                 imageVector = Icons.Default.Close,
                                                 contentDescription = "Clear input",
@@ -2943,12 +2992,17 @@ fun CameraScreen(
                                         keyboardController?.hide()
                                         focusManager.clearFocus()
                                         val trimmed = chainageInput.trim()
-                                        if (trimmed.isNotBlank()) {
+                                        val parsed = Chainage.parse(trimmed)
+                                        if (parsed != null) {
+                                            val formatted = parsed.format()
+                                            chainageInput = formatted
                                             if (editingItemOriginal != null) {
-                                                viewModel.updateCustomChainagePreset(editingItemOriginal!!, trimmed)
+                                                viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
                                                 editingItemOriginal = null
                                             }
-                                            viewModel.setManualChainage(trimmed)
+                                            viewModel.setManualChainage(formatted)
+                                        } else {
+                                            validationError = "Invalid format. Use 198+880, 198880, or 200+000."
                                         }
                                     }
                                 ),
@@ -2977,13 +3031,19 @@ fun CameraScreen(
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable(enabled = chainageInput.isNotBlank()) {
                                         val trimmed = chainageInput.trim()
-                                        if (trimmed.isNotBlank()) {
+                                        val parsed = Chainage.parse(trimmed)
+                                        if (parsed != null) {
+                                            val formatted = parsed.format()
+                                            chainageInput = formatted
+                                            validationError = null
                                             if (editingItemOriginal != null) {
-                                                viewModel.updateCustomChainagePreset(editingItemOriginal!!, trimmed)
+                                                viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
                                                 editingItemOriginal = null
                                             } else {
-                                                viewModel.addCustomChainagePreset(trimmed)
+                                                viewModel.addCustomChainagePreset(formatted)
                                             }
+                                        } else {
+                                            validationError = "Invalid format. Use 198+880, 198880, or 200+000."
                                         }
                                     }
                                     .testTag("add_custom_chainage_button")
@@ -3009,6 +3069,26 @@ fun CameraScreen(
                             }
                         }
 
+                        if (validationError != null) {
+                            Text(
+                                text = validationError!!,
+                                color = AccentRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        } else if (chainageInput.isNotBlank()) {
+                            Text(
+                                text = if (parsedPreview != null) {
+                                    "Auto-formatted: ${parsedPreview.format()} (${parsedPreview.metres} m)"
+                                } else {
+                                    "Enter valid chainage (e.g. 198+880, 198880, 200+000)"
+                                },
+                                color = if (parsedPreview != null) Color(0xFF10B981) else AccentRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
                         // Quick Step / Edit Nudge Buttons (-50m, -10m, +10m, +50m)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -3028,6 +3108,7 @@ fun CameraScreen(
                                                 ?: matchResult.chainage?.metres
                                                 ?: 0L
                                             chainageInput = Chainage((baseMetres + delta).coerceAtLeast(0L)).format()
+                                            validationError = null
                                         }
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
@@ -3105,7 +3186,7 @@ fun CameraScreen(
                                                 )
                                                 if (isSelected) {
                                                     Text(
-                                                        text = "(Active)",
+                                                        text = "(MANUAL Active)",
                                                         fontSize = 10.5.sp,
                                                         fontWeight = FontWeight.SemiBold,
                                                         color = AccentRed
@@ -3158,14 +3239,18 @@ fun CameraScreen(
                     Button(
                         onClick = {
                             val trimmed = chainageInput.trim()
-                            if (trimmed.isNotBlank()) {
+                            val parsed = Chainage.parse(trimmed)
+                            if (parsed != null) {
+                                val formatted = parsed.format()
+                                chainageInput = formatted
+                                validationError = null
                                 if (editingItemOriginal != null) {
-                                    viewModel.updateCustomChainagePreset(editingItemOriginal!!, trimmed)
+                                    viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
                                     editingItemOriginal = null
                                 }
-                                viewModel.setManualChainage(trimmed)
+                                viewModel.setManualChainage(formatted)
                             } else {
-                                viewModel.clearManualChainage()
+                                validationError = "Invalid chainage. Enter formats like 198+880, 198880, or 200+000."
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
@@ -3180,21 +3265,21 @@ fun CameraScreen(
                 },
                 dismissButton = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isManualActive) {
-                            TextButton(
-                                onClick = {
-                                    chainageInput = ""
-                                    editingItemOriginal = null
-                                    viewModel.clearManualChainage()
-                                },
-                                modifier = Modifier.testTag("clear_manual_chainage_button")
-                            ) {
-                                Text("Auto / Clear", color = AccentRed, fontWeight = FontWeight.Bold)
-                            }
+                        TextButton(
+                            onClick = {
+                                chainageInput = ""
+                                editingItemOriginal = null
+                                validationError = null
+                                viewModel.clearManualChainage()
+                            },
+                            modifier = Modifier.testTag("clear_manual_chainage_button")
+                        ) {
+                            Text("Reset", color = AccentRed, fontWeight = FontWeight.Bold)
                         }
                         TextButton(
                             onClick = {
                                 editingItemOriginal = null
+                                validationError = null
                                 viewModel.closeManualChainageDialog()
                             }
                         ) {

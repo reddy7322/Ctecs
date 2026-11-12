@@ -262,6 +262,7 @@ fun HomeScreen(
 
             // 2. Dominant Central Chainage Display (Highest Priority)
             val displayChainageText = when {
+                matchResult.source == ChainageSource.MANUAL || matchResult.isManual -> matchResult.displayChainage
                 activeRoute == null -> "NO KMZ"
                 locationState.point == null -> "--+---"
                 matchResult.chainage != null -> matchResult.displayChainage
@@ -1175,10 +1176,10 @@ fun CentralChainageDisplay(
 
                 // Responsive Telemetry Metadata Strip
                 val sourceLabel = when (source) {
-                    ChainageSource.MANUAL -> "Manual"
-                    ChainageSource.CUSTOM_CORRECTION -> if (rawChainage != null) "Calibrated ($rawChainage)" else "Smart Calibrated"
-                    ChainageSource.KMZ -> "KMZ Route"
-                    ChainageSource.GPS -> "GPS-Derived"
+                    ChainageSource.MANUAL -> "MANUAL"
+                    ChainageSource.CUSTOM_CORRECTION -> if (rawChainage != null) "CUSTOM CORRECTION ($rawChainage)" else "CUSTOM CORRECTION"
+                    ChainageSource.KMZ -> "KMZ"
+                    ChainageSource.GPS -> "GPS"
                 }
 
                 val (confText, confCol) = when (confidence) {
