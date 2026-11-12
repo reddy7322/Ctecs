@@ -309,7 +309,6 @@ fun ChainageManagementDialog(
                                 }
                             },
                             onSelectRoute = { viewModel.selectActiveRoute(it) },
-                            onLoadSampleRoute = { viewModel.loadBundledSampleRoute() },
                             onResetAll = { showResetConfirmDialog = true }
                         )
                     }
@@ -637,7 +636,6 @@ private fun SmartKmzCalibrationTab(
     onAddNew: () -> Unit,
     onSavePoint: (ChainageCorrectionPoint) -> Unit,
     onSelectRoute: (String) -> Unit,
-    onLoadSampleRoute: () -> Unit,
     onResetAll: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -732,18 +730,32 @@ private fun SmartKmzCalibrationTab(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(14.dp))
-            }
-
-            Button(
-                onClick = onLoadSampleRoute,
-                colors = ButtonDefaults.buttonColors(containerColor = primaryAccent),
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.testTag("load_sample_alignment_for_calibration_button")
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Load Sample Highway Alignment (NH-48)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (dialogColors.isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9),
+                    border = BorderStroke(1.dp, dialogColors.borderColor),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "No Imported Highway Alignments",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = dialogColors.titleColor
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Import a KML/KMZ alignment file via the Routes screen to perform alignment calibration and milestone correction.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = dialogColors.textSecondaryColor,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             }
         }
         return
