@@ -43,25 +43,40 @@ class RouteRepository(
         }
     }
 
+    private fun isLegacyPreloadedSample(route: RouteEntity): Boolean {
+        val isModelNh58Range = route.startChainageMetres == 130000L &&
+            route.endChainageMetres == 209883L &&
+            (route.name.equals("Model", ignoreCase = true) || route.markerCount == 1600)
+        return isModelNh58Range ||
+            route.fileName.equals("NH-58-Muzzafarnagar-Haridwar.kmz", ignoreCase = true) ||
+            route.fileName.equals("NH-58_Muzzafarnagar_Haridwar.kmz", ignoreCase = true) ||
+            route.fileName.equals("sample_nh58.kmz", ignoreCase = true) ||
+            route.fileName.equals("sample_nh58.kml", ignoreCase = true) ||
+            route.fileName.contains("sample_nh58", ignoreCase = true) ||
+            route.fileName.contains("Muzzafarnagar", ignoreCase = true) ||
+            route.name.equals("NH-58 Muzaffarnagar-Haridwar", ignoreCase = true) ||
+            route.localFilePath?.contains("NH-58_Muzzafarnagar_Haridwar", ignoreCase = true) == true ||
+            route.localFilePath?.contains("sample_nh58", ignoreCase = true) == true
+    }
+
     private suspend fun purgeLegacyPreloadedSampleRoutes() = withContext(Dispatchers.IO) {
         try {
             val routesDir = File(context.filesDir, "imported_routes")
             File(routesDir, "NH-58_Muzzafarnagar_Haridwar.kmz").takeIf { it.exists() }?.delete()
             File(routesDir, "sample_nh58.kmz").takeIf { it.exists() }?.delete()
             File(routesDir, "sample_nh58.kml").takeIf { it.exists() }?.delete()
+            routesDir.listFiles()?.forEach { file ->
+                if (file.name.contains("sample_nh58", ignoreCase = true) ||
+                    file.name.contains("Muzzafarnagar", ignoreCase = true)
+                ) {
+                    file.delete()
+                }
+            }
 
             val existingRoutes = routeDao.getAllRoutes().firstOrNull().orEmpty()
             val activeId = preferencesManager.activeRouteIdFlow.firstOrNull()
             for (route in existingRoutes) {
-                val isPreloadedSample =
-                    route.fileName.equals("NH-58-Muzzafarnagar-Haridwar.kmz", ignoreCase = true) ||
-                    route.fileName.equals("NH-58_Muzzafarnagar_Haridwar.kmz", ignoreCase = true) ||
-                    route.fileName.equals("sample_nh58.kmz", ignoreCase = true) ||
-                    route.fileName.equals("sample_nh58.kml", ignoreCase = true) ||
-                    route.name.equals("NH-58 Muzaffarnagar-Haridwar", ignoreCase = true) ||
-                    route.localFilePath?.endsWith("NH-58_Muzzafarnagar_Haridwar.kmz", ignoreCase = true) == true ||
-                    route.localFilePath?.endsWith("sample_nh58.kmz", ignoreCase = true) == true
-                if (isPreloadedSample) {
+                if (isLegacyPreloadedSample(route)) {
                     route.localFilePath?.let { File(it).delete() }
                     routeDao.deleteRouteById(route.id)
                     if (activeId == route.id) {
@@ -75,6 +90,13 @@ class RouteRepository(
 
     suspend fun loadRouteById(routeId: String): RouteData? = withContext(Dispatchers.IO) {
         val entity = routeDao.getRouteById(routeId) ?: return@withContext null
+        if (isLegacyPreloadedSample(entity)) {
+            entity.localFilePath?.let { File(it).delete() }
+            routeDao.deleteRouteById(entity.id)
+            preferencesManager.setActiveRouteId(null)
+            _activeRouteData.value = null
+            return@withContext null
+        }
         val filePath = entity.localFilePath
         if (filePath != null) {
             val file = File(filePath)

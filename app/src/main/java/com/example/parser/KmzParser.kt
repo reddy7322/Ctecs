@@ -428,7 +428,13 @@ object KmzParser {
             sortedMarkers.firstOrNull()?.chainage to sortedMarkers.lastOrNull()?.chainage
         }
 
-        val finalName = documentName ?: originalFileName.substringBeforeLast(".")
+        val cleanFileBase = originalFileName.substringBeforeLast(".").replace(Regex("^\\d+_"), "")
+        val isGenericDocName = documentName.isNullOrBlank() ||
+            documentName.equals("Model", ignoreCase = true) ||
+            documentName.equals("doc", ignoreCase = true) ||
+            documentName.equals("doc.kml", ignoreCase = true) ||
+            documentName.equals("Untitled", ignoreCase = true)
+        val finalName = if (!isGenericDocName) documentName!! else cleanFileBase.ifBlank { documentName ?: "KMZ Route" }
         val diagnostics = analyzeAlignmentDiagnostics(sortedMarkers, processedAlignments)
 
         return RouteData(
