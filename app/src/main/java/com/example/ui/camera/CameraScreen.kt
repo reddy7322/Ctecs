@@ -9,6 +9,7 @@ import android.content.res.Configuration
 import androidx.camera.view.LifecycleCameraController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -148,6 +149,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -156,6 +159,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.location.LocationStatus
@@ -164,8 +168,10 @@ import com.example.model.CameraMode
 import com.example.model.CaptureMode
 import com.example.model.CaptureTimer
 import com.example.model.Chainage
+import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.LogoPosition
+import com.example.model.MatchConfidence
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.ProjectProfile
@@ -327,11 +333,27 @@ fun CameraScreen(
     val matchResult by viewModel.cameraMatchResult.collectAsStateWithLifecycle()
     val manualChainageText by viewModel.manualChainageText.collectAsStateWithLifecycle()
     val savedCustomChainages by viewModel.savedCustomChainages.collectAsStateWithLifecycle()
+    val isRouteCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
     val overlayConfig by viewModel.overlayConfig.collectAsStateWithLifecycle()
     val currentLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
     val lastPhoto by viewModel.lastCapturedPhoto.collectAsStateWithLifecycle()
     val showManualDialog by viewModel.showManualChainageDialog.collectAsStateWithLifecycle()
+
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
+    val isCameraScreenVisible = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+
+    val hasActiveRoute = remember(activeRoute) {
+        activeRoute != null && (activeRoute!!.alignments.isNotEmpty() || activeRoute!!.markers.isNotEmpty())
+    }
+    val chainageIndicators = remember(matchResult, manualChainageText, hasActiveRoute, isRouteCorrectionsEnabled) {
+        resolveChainageIndicatorsState(
+            matchResult = matchResult,
+            manualChainageText = manualChainageText,
+            hasActiveRoute = hasActiveRoute,
+            isCorrectionsEnabled = isRouteCorrectionsEnabled
+        )
+    }
 
     // Real-time Compass & Device Orientation state
     val rotationDegrees by viewModel.rotationDegrees.collectAsStateWithLifecycle()
@@ -342,14 +364,10 @@ fun CameraScreen(
         label = "icon_rotation"
     )
 
-    val definedProjects by viewModel.definedProjects.collectAsStateWithLifecycle()
-
     var showSimDialog by remember { mutableStateOf(false) }
     var showActivityMenu by remember { mutableStateOf(false) }
-    var showSubActivityMenu by remember { mutableStateOf(false) }
     var showSideMenu by remember { mutableStateOf(false) }
     var showManualActivityDialog by remember { mutableStateOf(false) }
-    var showHighwayCustomisationDialog by remember { mutableStateOf(false) }
     var showExposureSlider by remember { mutableStateOf(false) }
     var showZoomSlider by remember { mutableStateOf(false) }
     var showQuickSettingsPopup by remember { mutableStateOf(false) }
@@ -1285,63 +1303,17 @@ fun CameraScreen(
                                 showManualActivityDialog = true
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Highway Customisation...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
-                            onClick = {
-                                showActivityMenu = false
-                                showHighwayCustomisationDialog = true
-                            }
-                        )
                     }
                 }
 
-                // Control 5: Highway Customisation Pill (Project / Stretch / Sub-Activity / Custom)
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(33.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .clickable { showHighwayCustomisationDialog = true }
-                        .testTag("landscape_highway_customisation_pill")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Highway Customisation",
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) } ?: "Highway Setup",
-                            color = PrimaryText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                // Control 5: Chainage Adjustment Pill (Full Transparent Glass)
-                val isManualSource = matchResult.source == ChainageSource.MANUAL
-                val isCustomCorrectionSource = matchResult.source == ChainageSource.CUSTOM_CORRECTION
-                val sourceBorderColor = when (matchResult.source) {
-                    ChainageSource.MANUAL -> AccentRed
-                    ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
+                // Control 5: Chainage Adjustment Pill (Minimal Smart Status UI)
+                val isManualSource = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
+                val isCustomCorrectionSource = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
+                val sourceBorderColor = when {
+                    isManualSource -> AccentRed
+                    isCustomCorrectionSource -> Color(0xFFA855F7)
+                    chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
                     else -> glassBorderIdle
-                }
-                val sourcePrefix = when (matchResult.source) {
-                    ChainageSource.MANUAL -> "MANUAL: "
-                    ChainageSource.CUSTOM_CORRECTION -> "CUSTOM: "
-                    ChainageSource.KMZ -> "KMZ: "
-                    ChainageSource.GPS -> "GPS: "
                 }
                 Surface(
                     shape = RoundedCornerShape(18.dp),
@@ -1358,36 +1330,27 @@ fun CameraScreen(
                         .testTag("landscape_chainage_pill")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            RoadMarkingIcon(
-                                tint = when {
-                                    isManualSource -> AccentRed
-                                    isCustomCorrectionSource -> Color(0xFFC084FC)
-                                    else -> PrimaryText
-                                }
-                            )
-                            Text(
-                                text = "$sourcePrefix${matchResult.displayChainage}",
-                                color = PrimaryText,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Edit Chainage",
-                            tint = PrimaryText.copy(alpha = 0.85f),
-                            modifier = Modifier.size(13.dp)
+                        Text(
+                            text = chainageIndicators.displayChainage,
+                            color = PrimaryText,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        ChainageStatusBubblesRow(
+                            state = chainageIndicators,
+                            isDarkTheme = true,
+                            isScreenVisible = isCameraScreenVisible,
+                            showInactiveBubbles = false,
+                            tagPrefix = "hud_landscape_"
                         )
                     }
                 }
@@ -2301,44 +2264,6 @@ fun CameraScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Project / Highway Customisation Chip
-                    item {
-                        val hwLabel = projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) } ?: "Highway"
-                        val stretchSuffix = projectProfile.packageSection.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { " • $it" } ?: ""
-                        FloatingGlassCard(
-                            shape = RoundedCornerShape(14.dp),
-                            backgroundColor = Color(0x1A101726),
-                            borderColor = Color(0x35FFFFFF),
-                            onClick = { showHighwayCustomisationDialog = true },
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .wrapContentHeight()
-                                .testTag("highway_customisation_chip")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Highway Customisation",
-                                    tint = HighlightYellow,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Text(
-                                    text = "$hwLabel$stretchSuffix",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 150.dp)
-                                )
-                            }
-                        }
-                    }
-
                     // Side chip (RHS / LHS / BHS / Median / None)
                     item {
                         FloatingGlassCard(
@@ -2485,105 +2410,26 @@ fun CameraScreen(
                                         showManualActivityDialog = true
                                     }
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Full Highway Customisation...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
-                                    onClick = {
-                                        showActivityMenu = false
-                                        showHighwayCustomisationDialog = true
-                                    }
-                                )
                             }
                         }
                     }
 
-                    // Sub-Activity chip
+                    // Chainage quick edit button (Minimal Smart Status UI)
                     item {
-                        Box {
-                            val hasSub = projectProfile.hasActiveSubActivity()
-                            FloatingGlassCard(
-                                shape = RoundedCornerShape(14.dp),
-                                backgroundColor = if (hasSub) Color(0x2510B981) else Color(0x1A101726),
-                                borderColor = if (hasSub) Color(0xFF10B981) else Color(0x35FFFFFF),
-                                onClick = { showSubActivityMenu = true },
-                                modifier = Modifier
-                                    .wrapContentWidth()
-                                    .wrapContentHeight()
-                                    .testTag("sub_activity_chip")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Layers,
-                                        contentDescription = "Sub-Activity",
-                                        tint = if (hasSub) Color(0xFF10B981) else Color.White,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Text(
-                                        text = if (hasSub) projectProfile.subActivity else "Sub: None",
-                                        color = Color.White,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = showSubActivityMenu,
-                                onDismissRequest = { showSubActivityMenu = false }
-                            ) {
-                                ProjectProfile.SUB_ACTIVITY_PRESETS.forEach { sub ->
-                                    val isSel = projectProfile.subActivity.equals(sub, ignoreCase = true) ||
-                                        (sub == "None" && !projectProfile.hasActiveSubActivity())
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = sub,
-                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSel) HighlightYellow else Color.Unspecified
-                                            )
-                                        },
-                                        onClick = {
-                                            viewModel.updateSubActivity(if (sub == "None") "" else sub)
-                                            showSubActivityMenu = false
-                                        }
-                                    )
-                                }
-                                HorizontalDivider(color = BorderColor)
-                                DropdownMenuItem(
-                                    text = { Text("Custom Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
-                                    onClick = {
-                                        showSubActivityMenu = false
-                                        showManualActivityDialog = true
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    // Chainage quick edit button
-                    item {
-                        val isManualActive = matchResult.source == ChainageSource.MANUAL
-                        val isCustomActive = matchResult.source == ChainageSource.CUSTOM_CORRECTION
+                        val isManualActive = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
+                        val isCustomActive = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
                         val chipBg = when {
                             isManualActive -> Color(0x25DC2626)
                             isCustomActive -> Color(0x259333EA)
+                            chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0x25F59E0B)
                             else -> Color(0x1A101726)
                         }
                         val chipBorder = when {
                             isManualActive -> AccentRed
                             isCustomActive -> Color(0xFFA855F7)
+                            chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
                             else -> Color(0x35FFFFFF)
                         }
-                        val sourceTag = when (matchResult.source) {
-                            ChainageSource.MANUAL -> "MANUAL"
-                            ChainageSource.CUSTOM_CORRECTION -> "CUSTOM CORRECTION"
-                            ChainageSource.KMZ -> "KMZ"
-                            ChainageSource.GPS -> "GPS"
-                        }
-                        val chipText = "$sourceTag: ${matchResult.displayChainage}"
                         FloatingGlassCard(
                             shape = RoundedCornerShape(14.dp),
                             backgroundColor = chipBg,
@@ -2597,19 +2443,22 @@ fun CameraScreen(
                             Row(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Chainage",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(12.dp)
-                                )
                                 Text(
-                                    text = chipText,
+                                    text = chainageIndicators.displayChainage,
                                     color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.testTag("hud_chainage_value")
+                                )
+                                ChainageStatusBubblesRow(
+                                    state = chainageIndicators,
+                                    isDarkTheme = true,
+                                    isScreenVisible = isCameraScreenVisible,
+                                    showInactiveBubbles = false,
+                                    tagPrefix = "hud_portrait_"
                                 )
                             }
                         }
@@ -3097,7 +2946,7 @@ fun CameraScreen(
             }
         }
 
-        // Manual Chainage Input Dialog
+        // Minimal Smart Chainage Edit Dialog
         if (showManualDialog) {
             val dialogColors = com.example.ui.theme.rememberDialogColors()
             val keyboardController = LocalSoftwareKeyboardController.current
@@ -3105,90 +2954,64 @@ fun CameraScreen(
             val primaryAccent = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
             val onAccent = if (dialogColors.isDark) Color.Black else Color.White
 
-            val initialChainageText = remember(manualChainageText, matchResult.displayChainage) {
-                when {
+            // Lock initial input on dialog open so background KMZ updates never overwrite user input
+            var chainageInput by remember(showManualDialog) {
+                val initVal = when {
                     !manualChainageText.isNullOrBlank() -> manualChainageText!!
                     matchResult.displayChainage != "---" && matchResult.displayChainage != "Manual" -> matchResult.displayChainage
                     else -> ""
                 }
+                mutableStateOf(initVal)
             }
-            var chainageInput by remember(showManualDialog) { mutableStateOf(initialChainageText) }
             var editingItemOriginal by remember(showManualDialog) { mutableStateOf<String?>(null) }
             var validationError by remember(showManualDialog) { mutableStateOf<String?>(null) }
-            val isManualActive = !manualChainageText.isNullOrBlank() || matchResult.source == ChainageSource.MANUAL
-            val parsedPreview = remember(chainageInput) { Chainage.parse(chainageInput.trim()) }
-
-            val activeSourceText = when (matchResult.source) {
-                ChainageSource.MANUAL -> "MANUAL"
-                ChainageSource.CUSTOM_CORRECTION -> "CUSTOM CORRECTION"
-                ChainageSource.KMZ -> "KMZ"
-                ChainageSource.GPS -> "GPS"
-            }
-            val activeSourceColor = when (matchResult.source) {
-                ChainageSource.MANUAL -> AccentRed
-                ChainageSource.CUSTOM_CORRECTION -> Color(0xFFA855F7)
-                ChainageSource.KMZ -> Color(0xFF10B981)
-                ChainageSource.GPS -> primaryAccent
-            }
 
             AlertDialog(
                 onDismissRequest = { viewModel.closeManualChainageDialog() },
                 shape = dialogColors.shape,
                 containerColor = dialogColors.containerColor,
-                modifier = Modifier.testTag("manual_chainage_dialog"),
+                modifier = Modifier
+                    .widthIn(min = 270.dp, max = if (isLandscape) 370.dp else 330.dp)
+                    .testTag("manual_chainage_dialog"),
                 title = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // Main visual focus: Active Chainage Value
                         Text(
-                            text = when {
-                                editingItemOriginal != null -> "Edit Custom Chainage"
-                                isManualActive -> "Manual Chainage Active"
-                                else -> "Manual Chainage Input"
-                            },
+                            text = chainageIndicators.displayChainage,
                             color = dialogColors.titleColor,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 19.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .testTag("chainage_edit_primary_value")
                         )
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = activeSourceColor.copy(alpha = 0.15f),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                activeSourceColor
-                            )
-                        ) {
-                            Text(
-                                text = activeSourceText,
-                                color = activeSourceColor,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        // Secondary compact rounded status bubbles: KMZ, CUSTOM, MANUAL
+                        ChainageStatusBubblesRow(
+                            state = chainageIndicators,
+                            isDarkTheme = dialogColors.isDark,
+                            isScreenVisible = isCameraScreenVisible,
+                            showInactiveBubbles = true,
+                            tagPrefix = ""
+                        )
                     }
                 },
                 text = {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = if (editingItemOriginal != null) {
-                                "Update custom chainage \"$editingItemOriginal\" below:"
-                            } else {
-                                "Enter chainage (supports \"198+880\", \"198880\", \"200+000\"):"
-                            },
-                            fontSize = 12.sp,
-                            color = dialogColors.textSecondaryColor
-                        )
-
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             OutlinedTextField(
                                 value = chainageInput,
@@ -3196,13 +3019,11 @@ fun CameraScreen(
                                     chainageInput = it
                                     validationError = null
                                 },
-                                label = {
-                                    Text(if (editingItemOriginal != null) "Edit Chainage" else "Manual Chainage")
-                                },
                                 placeholder = {
                                     Text(
-                                        "e.g. 198+880 or 198880",
-                                        color = dialogColors.textSecondaryColor.copy(alpha = 0.6f)
+                                        "0+000",
+                                        color = dialogColors.textSecondaryColor.copy(alpha = 0.55f),
+                                        fontSize = 13.sp
                                     )
                                 },
                                 isError = validationError != null,
@@ -3215,9 +3036,9 @@ fun CameraScreen(
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Default.Close,
-                                                contentDescription = "Clear input",
+                                                contentDescription = "Clear",
                                                 tint = dialogColors.textSecondaryColor,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         }
                                     }
@@ -3240,7 +3061,7 @@ fun CameraScreen(
                                             }
                                             viewModel.setManualChainage(formatted)
                                         } else {
-                                            validationError = "Invalid format. Use 198+880, 198880, or 200+000."
+                                            validationError = "Invalid format (e.g. 198+880)"
                                         }
                                     }
                                 ),
@@ -3249,8 +3070,6 @@ fun CameraScreen(
                                     unfocusedTextColor = dialogColors.textColor,
                                     focusedBorderColor = primaryAccent,
                                     unfocusedBorderColor = dialogColors.inputBorder,
-                                    focusedLabelColor = primaryAccent,
-                                    unfocusedLabelColor = dialogColors.textSecondaryColor,
                                     cursorColor = primaryAccent
                                 ),
                                 modifier = Modifier
@@ -3258,14 +3077,12 @@ fun CameraScreen(
                                     .testTag("manual_chainage_input")
                             )
 
-                            // Quick Add / Update button for the saved custom chainage list
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = primaryAccent.copy(alpha = 0.15f),
+                                color = primaryAccent.copy(alpha = 0.14f),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent),
                                 modifier = Modifier
-                                    .height(52.dp)
-                                    .padding(top = 6.dp)
+                                    .size(48.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable(enabled = chainageInput.isNotBlank()) {
                                         val trimmed = chainageInput.trim()
@@ -3281,27 +3098,17 @@ fun CameraScreen(
                                                 viewModel.addCustomChainagePreset(formatted)
                                             }
                                         } else {
-                                            validationError = "Invalid format. Use 198+880, 198880, or 200+000."
+                                            validationError = "Invalid format (e.g. 198+880)"
                                         }
                                     }
                                     .testTag("add_custom_chainage_button")
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
+                                Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = if (editingItemOriginal != null) Icons.Default.Check else Icons.Default.Add,
-                                        contentDescription = if (editingItemOriginal != null) "Save Edited Chainage" else "Add Custom Chainage",
+                                        contentDescription = if (editingItemOriginal != null) "Update" else "Add",
                                         tint = primaryAccent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = if (editingItemOriginal != null) "Update" else "Add",
-                                        color = primaryAccent,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
@@ -3314,33 +3121,22 @@ fun CameraScreen(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
-                        } else if (chainageInput.isNotBlank()) {
-                            Text(
-                                text = if (parsedPreview != null) {
-                                    "Auto-formatted: ${parsedPreview.format()} (${parsedPreview.metres} m)"
-                                } else {
-                                    "Enter valid chainage (e.g. 198+880, 198880, 200+000)"
-                                },
-                                color = if (parsedPreview != null) Color(0xFF10B981) else AccentRed,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
                         }
 
-                        // Quick Step / Edit Nudge Buttons (-50m, -10m, +10m, +50m)
+                        // Compact Step Nudge Pills (-50m, -10m, +10m, +50m)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
                             listOf(-50L to "-50m", -10L to "-10m", 10L to "+10m", 50L to "+50m").forEach { (delta, label) ->
                                 Surface(
-                                    shape = RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(50),
                                     color = if (dialogColors.isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9),
                                     border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(32.dp)
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .height(28.dp)
+                                        .clip(RoundedCornerShape(50))
                                         .clickable {
                                             val baseMetres = Chainage.parse(chainageInput)?.metres
                                                 ?: matchResult.chainage?.metres
@@ -3352,7 +3148,7 @@ fun CameraScreen(
                                     Box(contentAlignment = Alignment.Center) {
                                         Text(
                                             text = label,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = dialogColors.textColor
                                         )
@@ -3361,29 +3157,21 @@ fun CameraScreen(
                             }
                         }
 
-                        // Saved Custom Chainages List (Tap to select, Edit icon to edit, Delete icon to remove)
                         if (savedCustomChainages.isNotEmpty()) {
-                            HorizontalDivider(color = dialogColors.borderColor)
-                            Text(
-                                text = "Saved Custom Chainages (Tap to use or Edit):",
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = dialogColors.textSecondaryColor
-                            )
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = 150.dp)
+                                    .heightIn(max = if (isLandscape) 105.dp else 135.dp)
                                     .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 savedCustomChainages.forEach { savedItem ->
                                     val isSelected = manualChainageText.equals(savedItem, ignoreCase = true)
                                     val isBeingEdited = editingItemOriginal.equals(savedItem, ignoreCase = true)
                                     Surface(
-                                        shape = RoundedCornerShape(10.dp),
+                                        shape = RoundedCornerShape(50),
                                         color = when {
-                                            isBeingEdited -> primaryAccent.copy(alpha = 0.18f)
+                                            isBeingEdited -> primaryAccent.copy(alpha = 0.16f)
                                             isSelected -> AccentRed.copy(alpha = 0.14f)
                                             dialogColors.isDark -> Color(0xFF1E293B)
                                             else -> Color(0xFFF8FAFC)
@@ -3398,7 +3186,7 @@ fun CameraScreen(
                                         ),
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
+                                            .clip(RoundedCornerShape(50))
                                             .clickable {
                                                 chainageInput = savedItem
                                                 viewModel.setManualChainage(savedItem)
@@ -3407,7 +3195,7 @@ fun CameraScreen(
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                .padding(horizontal = 10.dp, vertical = 4.dp),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -3416,20 +3204,25 @@ fun CameraScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                                 modifier = Modifier.weight(1f)
                                             ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(5.dp)
+                                                        .clip(CircleShape)
+                                                        .background(
+                                                            when {
+                                                                isSelected -> AccentRed
+                                                                isBeingEdited -> primaryAccent
+                                                                else -> dialogColors.textSecondaryColor.copy(alpha = 0.45f)
+                                                            }
+                                                        )
+                                                )
                                                 Text(
                                                     text = savedItem,
-                                                    fontSize = 13.sp,
+                                                    fontSize = 12.sp,
+                                                    fontFamily = FontFamily.Monospace,
                                                     fontWeight = FontWeight.Bold,
                                                     color = dialogColors.textColor
                                                 )
-                                                if (isSelected) {
-                                                    Text(
-                                                        text = "(MANUAL Active)",
-                                                        fontSize = 10.5.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = AccentRed
-                                                    )
-                                                }
                                             }
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
@@ -3440,13 +3233,13 @@ fun CameraScreen(
                                                         editingItemOriginal = savedItem
                                                         chainageInput = savedItem
                                                     },
-                                                    modifier = Modifier.size(28.dp)
+                                                    modifier = Modifier.size(24.dp)
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.Edit,
                                                         contentDescription = "Edit $savedItem",
                                                         tint = primaryAccent,
-                                                        modifier = Modifier.size(15.dp)
+                                                        modifier = Modifier.size(13.dp)
                                                     )
                                                 }
                                                 IconButton(
@@ -3456,13 +3249,13 @@ fun CameraScreen(
                                                         }
                                                         viewModel.deleteCustomChainagePreset(savedItem)
                                                     },
-                                                    modifier = Modifier.size(28.dp)
+                                                    modifier = Modifier.size(24.dp)
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.Delete,
                                                         contentDescription = "Delete $savedItem",
                                                         tint = AccentRed,
-                                                        modifier = Modifier.size(15.dp)
+                                                        modifier = Modifier.size(13.dp)
                                                     )
                                                 }
                                             }
@@ -3488,7 +3281,7 @@ fun CameraScreen(
                                 }
                                 viewModel.setManualChainage(formatted)
                             } else {
-                                validationError = "Invalid chainage. Enter formats like 198+880, 198880, or 200+000."
+                                validationError = "Invalid format (e.g. 198+880)"
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
@@ -3496,7 +3289,7 @@ fun CameraScreen(
                         modifier = Modifier.testTag("save_manual_chainage_button")
                     ) {
                         Text(
-                            text = if (editingItemOriginal != null) "Save & Apply" else "Apply",
+                            text = "Apply",
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -3649,337 +3442,6 @@ fun CameraScreen(
                         TextButton(onClick = { showManualActivityDialog = false }) {
                             Text("Cancel", color = dialogColors.textSecondaryColor)
                         }
-                    }
-                }
-            )
-        }
-
-        // Complete Camera Highway Customisation Dialog
-        if (showHighwayCustomisationDialog) {
-            val dialogColors = com.example.ui.theme.rememberDialogColors()
-            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
-            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
-
-            var hwId by remember(projectProfile.highwayId, showHighwayCustomisationDialog) {
-                mutableStateOf(if (projectProfile.highwayId.equals("None", ignoreCase = true)) "" else projectProfile.highwayId)
-            }
-            var stretch by remember(projectProfile.packageSection, showHighwayCustomisationDialog) {
-                mutableStateOf(if (projectProfile.packageSection.equals("None", ignoreCase = true)) "" else projectProfile.packageSection)
-            }
-            var workType by remember(projectProfile.workType, showHighwayCustomisationDialog) {
-                mutableStateOf(projectProfile.workType)
-            }
-            var selectedSide by remember(projectProfile.roadSide, showHighwayCustomisationDialog) {
-                mutableStateOf(projectProfile.roadSide)
-            }
-            var selectedLane by remember(projectProfile.lane, showHighwayCustomisationDialog) {
-                mutableStateOf(projectProfile.lane.ifBlank { "None" })
-            }
-            var selectedActivity by remember(projectProfile.activity, showHighwayCustomisationDialog) {
-                mutableStateOf(projectProfile.activity.ifBlank { "None" })
-            }
-            var selectedSubActivity by remember(projectProfile.subActivity, showHighwayCustomisationDialog) {
-                mutableStateOf(if (projectProfile.subActivity.equals("None", ignoreCase = true)) "" else projectProfile.subActivity)
-            }
-            var customDesc by remember(projectProfile.customDescription, showHighwayCustomisationDialog) {
-                mutableStateOf(if (projectProfile.customDescription.equals("None", ignoreCase = true)) "" else projectProfile.customDescription)
-            }
-
-            AlertDialog(
-                onDismissRequest = { showHighwayCustomisationDialog = false },
-                shape = dialogColors.shape,
-                containerColor = dialogColors.containerColor,
-                modifier = Modifier.testTag("highway_customisation_dialog"),
-                title = {
-                    Text(
-                        text = "Highway Customisation",
-                        color = dialogColors.titleColor,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp
-                    )
-                },
-                text = {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 460.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (definedProjects.isNotEmpty()) {
-                            Text(
-                                text = "SAVED PROJECTS",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = primaryAccent
-                            )
-                            androidx.compose.foundation.lazy.LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                items(definedProjects.size) { idx ->
-                                    val defProj = definedProjects[idx]
-                                    val isCurrent = hwId.equals(defProj.name, ignoreCase = true)
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (isCurrent) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            1.dp,
-                                            if (isCurrent) primaryAccent else dialogColors.inputBorder
-                                        ),
-                                        modifier = Modifier.clickable {
-                                            hwId = defProj.name
-                                            stretch = defProj.stretch
-                                            workType = defProj.workType
-                                        }
-                                    ) {
-                                        Text(
-                                            text = if (defProj.stretch.isNotBlank()) "${defProj.name} (${defProj.stretch})" else defProj.name,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isCurrent) primaryAccent else dialogColors.textColor,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        OutlinedTextField(
-                            value = hwId,
-                            onValueChange = { hwId = it },
-                            label = { Text("Project / Highway Name (Blank = None)") },
-                            placeholder = { Text("e.g. NH-58, NH-44") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("hc_highway_input")
-                        )
-
-                        OutlinedTextField(
-                            value = stretch,
-                            onValueChange = { stretch = it },
-                            label = { Text("Stretch / Package Section (Blank = None)") },
-                            placeholder = { Text("e.g. Muzzafarnagar-Haridwar, Pkg-3") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("hc_stretch_input")
-                        )
-
-                        // Work Type Quick Selector
-                        Text(
-                            text = "WORK TYPE",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = primaryAccent
-                        )
-                        androidx.compose.foundation.lazy.LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(ProjectProfile.WORK_TYPE_PRESETS.size) { idx ->
-                                val wt = ProjectProfile.WORK_TYPE_PRESETS[idx]
-                                val isSel = workType.equals(wt.code, ignoreCase = true) || (wt.code == "None" && workType.isBlank())
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (isSel) primaryAccent else dialogColors.inputBorder
-                                    ),
-                                    modifier = Modifier.clickable { workType = wt.code }
-                                ) {
-                                    Text(
-                                        text = wt.code,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSel) primaryAccent else dialogColors.textColor,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Road Side Selector (LHS / RHS / BHS / Median / None)
-                        Text(
-                            text = "ROAD SIDE (LHS / RHS / BHS / NONE)",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = primaryAccent
-                        )
-                        androidx.compose.foundation.lazy.LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(RoadSide.entries.size) { idx ->
-                                val sideOpt = RoadSide.entries[idx]
-                                val isSel = selectedSide == sideOpt
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (isSel) primaryAccent else dialogColors.inputBorder
-                                    ),
-                                    modifier = Modifier.clickable { selectedSide = sideOpt }
-                                ) {
-                                    Text(
-                                        text = sideOpt.label,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSel) primaryAccent else dialogColors.textColor,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Lane Selector
-                        Text(
-                            text = "LANE",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = primaryAccent
-                        )
-                        androidx.compose.foundation.lazy.LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(ProjectProfile.LANE_PRESETS.size) { idx ->
-                                val l = ProjectProfile.LANE_PRESETS[idx]
-                                val isSel = selectedLane.equals(l, ignoreCase = true) || (l == "None" && selectedLane.isBlank())
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (isSel) primaryAccent else dialogColors.inputBorder
-                                    ),
-                                    modifier = Modifier.clickable { selectedLane = l }
-                                ) {
-                                    Text(
-                                        text = l,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSel) primaryAccent else dialogColors.textColor,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Activity Selector + Custom Input
-                        Text(
-                            text = "ACTIVITY / LAYER",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = primaryAccent
-                        )
-                        androidx.compose.foundation.lazy.LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(ProjectProfile.ACTIVITY_PRESETS.size) { idx ->
-                                val act = ProjectProfile.ACTIVITY_PRESETS[idx]
-                                val isSel = selectedActivity.equals(act, ignoreCase = true) || (act == "None" && selectedActivity.isBlank())
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (isSel) primaryAccent else dialogColors.inputBorder
-                                    ),
-                                    modifier = Modifier.clickable { selectedActivity = act }
-                                ) {
-                                    Text(
-                                        text = act,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSel) primaryAccent else dialogColors.textColor,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                        OutlinedTextField(
-                            value = if (selectedActivity.equals("None", ignoreCase = true)) "" else selectedActivity,
-                            onValueChange = { selectedActivity = it.ifBlank { "None" } },
-                            label = { Text("Custom Activity (or leave blank for None)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("hc_activity_input")
-                        )
-
-                        // Sub-Activity Selector + Custom Input
-                        Text(
-                            text = "SUB-ACTIVITY / STAGE",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = primaryAccent
-                        )
-                        androidx.compose.foundation.lazy.LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(ProjectProfile.SUB_ACTIVITY_PRESETS.size) { idx ->
-                                val sub = ProjectProfile.SUB_ACTIVITY_PRESETS[idx]
-                                val isSel = selectedSubActivity.equals(sub, ignoreCase = true) || (sub == "None" && selectedSubActivity.isBlank())
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (isSel) primaryAccent else dialogColors.inputBorder
-                                    ),
-                                    modifier = Modifier.clickable {
-                                        selectedSubActivity = if (sub == "None") "" else sub
-                                    }
-                                ) {
-                                    Text(
-                                        text = sub,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSel) primaryAccent else dialogColors.textColor,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                        OutlinedTextField(
-                            value = selectedSubActivity,
-                            onValueChange = { selectedSubActivity = it },
-                            label = { Text("Custom Sub-Activity (Optional)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("hc_sub_activity_input")
-                        )
-
-                        OutlinedTextField(
-                            value = customDesc,
-                            onValueChange = { customDesc = it },
-                            label = { Text("Custom Text / Comment Watermark") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("hc_custom_desc_input")
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val updatedProfile = projectProfile.copy(
-                                highwayId = hwId.trim(),
-                                packageSection = stretch.trim(),
-                                workType = workType.trim().ifBlank { "None" },
-                                roadSide = selectedSide,
-                                lane = selectedLane.trim().ifBlank { "None" },
-                                activity = selectedActivity.trim().ifBlank { "None" },
-                                subActivity = selectedSubActivity.trim(),
-                                customDescription = customDesc.trim()
-                            )
-                            viewModel.updateSide(selectedSide)
-                            viewModel.saveProjectProfile(updatedProfile)
-                            viewModel.showToast("Highway customisation saved", ToastType.SUCCESS)
-                            showHighwayCustomisationDialog = false
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.testTag("save_highway_customisation_button")
-                    ) {
-                        Text("Save & Apply", fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showHighwayCustomisationDialog = false }) {
-                        Text("Cancel", color = dialogColors.textSecondaryColor)
                     }
                 }
             )
@@ -5140,3 +4602,266 @@ fun FloatingGlassCard(
         }
     }
 }
+
+enum class ChainageBubbleStatus {
+    ACTIVE,
+    WARNING,
+    INACTIVE
+}
+
+data class ChainageIndicatorsState(
+    val displayChainage: String,
+    val kmzStatus: ChainageBubbleStatus,
+    val customStatus: ChainageBubbleStatus,
+    val manualStatus: ChainageBubbleStatus
+)
+
+/**
+ * Resolves the three minimal smart chainage status indicators (KMZ, CUSTOM, MANUAL)
+ * with strict source priority:
+ * - MANUAL mode active -> MANUAL is ACTIVE (static bulb), KMZ & CUSTOM are INACTIVE,
+ *   and manual chainage is locked against automatic KMZ overwriting.
+ * - CUSTOM correction applied to KMZ alignment -> both KMZ (ACTIVE or WARNING) and
+ *   CUSTOM (ACTIVE) are shown without implying two independent engines.
+ * - KMZ alignment calculation -> KMZ is ACTIVE when reliable, WARNING when alignment
+ *   matching is unreliable or out-of-corridor for a loaded route, and INACTIVE when no route is available.
+ */
+internal fun resolveChainageIndicatorsState(
+    matchResult: ChainageMatchResult,
+    manualChainageText: String?,
+    hasActiveRoute: Boolean,
+    isCorrectionsEnabled: Boolean
+): ChainageIndicatorsState {
+    val cleanManual = manualChainageText?.trim()?.takeIf { it.isNotEmpty() }
+    val isManualActive = cleanManual != null ||
+        matchResult.isManual ||
+        matchResult.source == ChainageSource.MANUAL
+
+    if (isManualActive) {
+        val manualDisplay = cleanManual
+            ?: matchResult.customChainageText?.takeIf { it.isNotBlank() }
+            ?: matchResult.chainage?.format()
+            ?: matchResult.displayChainage
+        return ChainageIndicatorsState(
+            displayChainage = manualDisplay,
+            kmzStatus = ChainageBubbleStatus.INACTIVE,
+            customStatus = ChainageBubbleStatus.INACTIVE,
+            manualStatus = ChainageBubbleStatus.ACTIVE
+        )
+    }
+
+    val isKmzDerived = (matchResult.source == ChainageSource.KMZ ||
+        matchResult.source == ChainageSource.CUSTOM_CORRECTION) &&
+        matchResult.chainage != null &&
+        matchResult.confidence != MatchConfidence.NO_MATCH
+
+    val isUnreliable = matchResult.isUncertain ||
+        matchResult.confidence == MatchConfidence.LOW ||
+        !matchResult.sourceKmzReferenceStatus.equals("Valid", ignoreCase = true)
+
+    val kmzStatus = when {
+        !hasActiveRoute && !isKmzDerived -> ChainageBubbleStatus.INACTIVE
+        !isKmzDerived -> ChainageBubbleStatus.WARNING
+        isUnreliable -> ChainageBubbleStatus.WARNING
+        else -> ChainageBubbleStatus.ACTIVE
+    }
+
+    val isCustomApplied = isCorrectionsEnabled &&
+        matchResult.source == ChainageSource.CUSTOM_CORRECTION &&
+        matchResult.chainage != null &&
+        matchResult.confidence != MatchConfidence.NO_MATCH
+
+    val customStatus = if (isCustomApplied) {
+        ChainageBubbleStatus.ACTIVE
+    } else {
+        ChainageBubbleStatus.INACTIVE
+    }
+
+    return ChainageIndicatorsState(
+        displayChainage = matchResult.displayChainage,
+        kmzStatus = kmzStatus,
+        customStatus = customStatus,
+        manualStatus = ChainageBubbleStatus.INACTIVE
+    )
+}
+
+@Composable
+internal fun ChainageStatusBubblesRow(
+    state: ChainageIndicatorsState,
+    isDarkTheme: Boolean,
+    isScreenVisible: Boolean,
+    showInactiveBubbles: Boolean = true,
+    tagPrefix: String = "",
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        if (showInactiveBubbles) {
+            ChainageStatusBubble(
+                label = "KMZ",
+                status = state.kmzStatus,
+                isDynamic = true,
+                isDarkTheme = isDarkTheme,
+                isScreenVisible = isScreenVisible,
+                bubbleTag = "${tagPrefix}chainage_status_bubble_kmz",
+                bulbTag = "${tagPrefix}chainage_bulb_kmz"
+            )
+            ChainageStatusBubble(
+                label = "CUSTOM",
+                status = state.customStatus,
+                isDynamic = true,
+                isDarkTheme = isDarkTheme,
+                isScreenVisible = isScreenVisible,
+                bubbleTag = "${tagPrefix}chainage_status_bubble_custom",
+                bulbTag = "${tagPrefix}chainage_bulb_custom"
+            )
+            ChainageStatusBubble(
+                label = "MANUAL",
+                status = state.manualStatus,
+                isDynamic = false,
+                isDarkTheme = isDarkTheme,
+                isScreenVisible = isScreenVisible,
+                bubbleTag = "${tagPrefix}chainage_status_bubble_manual",
+                bulbTag = "${tagPrefix}chainage_bulb_manual"
+            )
+        } else {
+            if (state.manualStatus == ChainageBubbleStatus.ACTIVE) {
+                ChainageStatusBubble(
+                    label = "MANUAL",
+                    status = ChainageBubbleStatus.ACTIVE,
+                    isDynamic = false,
+                    isDarkTheme = isDarkTheme,
+                    isScreenVisible = isScreenVisible,
+                    bubbleTag = "${tagPrefix}chainage_status_bubble_manual",
+                    bulbTag = "${tagPrefix}chainage_bulb_manual"
+                )
+            } else {
+                ChainageStatusBubble(
+                    label = "KMZ",
+                    status = state.kmzStatus,
+                    isDynamic = true,
+                    isDarkTheme = isDarkTheme,
+                    isScreenVisible = isScreenVisible,
+                    bubbleTag = "${tagPrefix}chainage_status_bubble_kmz",
+                    bulbTag = "${tagPrefix}chainage_bulb_kmz"
+                )
+                if (state.customStatus == ChainageBubbleStatus.ACTIVE) {
+                    ChainageStatusBubble(
+                        label = "CUSTOM",
+                        status = ChainageBubbleStatus.ACTIVE,
+                        isDynamic = true,
+                        isDarkTheme = isDarkTheme,
+                        isScreenVisible = isScreenVisible,
+                        bubbleTag = "${tagPrefix}chainage_status_bubble_custom",
+                        bulbTag = "${tagPrefix}chainage_bulb_custom"
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ChainageStatusBubble(
+    label: String,
+    status: ChainageBubbleStatus,
+    isDynamic: Boolean,
+    isDarkTheme: Boolean,
+    isScreenVisible: Boolean,
+    bubbleTag: String,
+    bulbTag: String,
+    modifier: Modifier = Modifier
+) {
+    val shouldPulse = isDynamic && status == ChainageBubbleStatus.ACTIVE && isScreenVisible
+    val pulseProgress = if (shouldPulse) {
+        val transition = rememberInfiniteTransition(label = "bulb_pulse_$label")
+        val animated by transition.animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "bulb_alpha_$label"
+        )
+        animated
+    } else {
+        1.0f
+    }
+
+    val bulbColor = when (status) {
+        ChainageBubbleStatus.ACTIVE -> when (label) {
+            "KMZ" -> if (isDarkTheme) Color(0xFF10B981) else Color(0xFF059669)
+            "CUSTOM" -> if (isDarkTheme) Color(0xFFA855F7) else Color(0xFF7C3AED)
+            else -> if (isDarkTheme) Color(0xFFEF4444) else Color(0xFFDC2626)
+        }
+        ChainageBubbleStatus.WARNING -> if (isDarkTheme) Color(0xFFF59E0B) else Color(0xFFD97706)
+        ChainageBubbleStatus.INACTIVE -> if (isDarkTheme) Color(0xFF64748B).copy(alpha = 0.45f) else Color(0xFF94A3B8).copy(alpha = 0.55f)
+    }
+
+    val textColor = when (status) {
+        ChainageBubbleStatus.ACTIVE -> when (label) {
+            "KMZ" -> if (isDarkTheme) Color(0xFF34D399) else Color(0xFF047857)
+            "CUSTOM" -> if (isDarkTheme) Color(0xFFC084FC) else Color(0xFF6D28D9)
+            else -> if (isDarkTheme) Color(0xFFF87171) else Color(0xFFB91C1C)
+        }
+        ChainageBubbleStatus.WARNING -> if (isDarkTheme) Color(0xFFFBBF24) else Color(0xFFB45309)
+        ChainageBubbleStatus.INACTIVE -> if (isDarkTheme) Color(0xFF94A3B8).copy(alpha = 0.55f) else Color(0xFF64748B).copy(alpha = 0.65f)
+    }
+
+    val bgColor = when (status) {
+        ChainageBubbleStatus.ACTIVE -> bulbColor.copy(alpha = if (isDarkTheme) 0.16f else 0.12f)
+        ChainageBubbleStatus.WARNING -> bulbColor.copy(alpha = if (isDarkTheme) 0.16f else 0.12f)
+        ChainageBubbleStatus.INACTIVE -> if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.5f) else Color(0xFFF1F5F9)
+    }
+
+    val borderColor = when (status) {
+        ChainageBubbleStatus.ACTIVE -> bulbColor.copy(alpha = if (isDarkTheme) 0.55f else 0.45f)
+        ChainageBubbleStatus.WARNING -> bulbColor.copy(alpha = if (isDarkTheme) 0.55f else 0.45f)
+        ChainageBubbleStatus.INACTIVE -> if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.5f) else Color(0xFFCBD5E1)
+    }
+
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = bgColor,
+        border = BorderStroke(0.8.dp, borderColor),
+        modifier = modifier
+            .semantics { stateDescription = "${label}_${status.name}" }
+            .testTag(bubbleTag)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.5.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(5.dp)
+                    .graphicsLayer {
+                        alpha = if (shouldPulse) pulseProgress else 1.0f
+                        val scale = if (shouldPulse) 0.85f + 0.15f * pulseProgress else 1.0f
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                    .clip(CircleShape)
+                    .background(bulbColor)
+                    .semantics {
+                        stateDescription = if (shouldPulse) "ANIMATED_ACTIVE" else status.name
+                    }
+                    .testTag(bulbTag)
+            )
+            Text(
+                text = label,
+                color = textColor,
+                fontSize = 8.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 0.3.sp,
+                maxLines = 1
+            )
+        }
+    }
+}
+

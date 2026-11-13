@@ -1,20 +1,27 @@
 package com.example.ui.home
 
 import android.app.Activity
+import android.graphics.drawable.ColorDrawable
+import android.os.Build
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -24,8 +31,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,22 +46,29 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CompassCalibration
 import androidx.compose.material.icons.filled.DarkMode
@@ -85,35 +101,45 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
-import com.example.model.ChainageSource
-import com.example.ui.dialogs.ChainageManagementDialog
-import com.example.ui.dialogs.ChainageSourceBadge
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -125,12 +151,24 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.geo.OsmTileManager
+import com.example.model.ChainageMatchResult
+import com.example.model.ChainageSource
 import com.example.model.GeoPoint
 import com.example.model.MatchConfidence
+import com.example.model.RoadSide
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
+import com.example.ui.dialogs.ChainageManagementDialog
+import com.example.ui.dialogs.ChainageSourceBadge
 import com.example.ui.theme.AccentRed
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -158,6 +196,24 @@ fun HomeScreen(
     val currentThemeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
     val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
+
+    // App-level & Home-level blocking modal states for safe screensaver gating
+    val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
+    val showWhatsNewDialog by viewModel.showWhatsNewDialog.collectAsStateWithLifecycle()
+    val interruptedSession by viewModel.interruptedSurveySession.collectAsStateWithLifecycle()
+    val isPageLoading by viewModel.isPageLoading.collectAsStateWithLifecycle()
+
+    var showChainageManagementDialog by remember { mutableStateOf(false) }
+    var showEditProjectStretchDialog by remember { mutableStateOf(false) }
+    var isScreensaverVisible by remember { mutableStateOf(false) }
+    val screensaverStateHolder = remember { ScreensaverChainageStateHolder() }
+
+    val isBlockingScreensaverModal = showChainageManagementDialog ||
+        showEditProjectStretchDialog ||
+        availableUpdate != null ||
+        showWhatsNewDialog ||
+        interruptedSession != null ||
+        isPageLoading
 
     val isDark = com.example.ui.theme.isAppDarkTheme()
 
@@ -197,19 +253,54 @@ fun HomeScreen(
         label = "gps_dot_pulse"
     )
 
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .background(pageBgColor)
+    val screensaverDisplayState = remember(
+        matchResult,
+        activeRoute?.id,
+        locationState.point != null,
+        projectProfile.roadSide
     ) {
-        val maxH = maxHeight
-        val isUltraCompact = maxH < 570.dp
-        val isCompactHeight = maxH < 670.dp
-        val verticalGap = when {
-            isUltraCompact -> 4.dp
-            isCompactHeight -> 5.5.dp
-            else -> 7.dp
+        screensaverStateHolder.resolve(
+            matchResult = matchResult,
+            route = activeRoute,
+            hasGpsFix = locationState.point != null,
+            projectRoadSide = projectProfile.roadSide
+        )
+    }
+
+    HomeScreensaverCoordinator(
+        isBlockingUiOpen = isBlockingScreensaverModal,
+        inactivityTimeoutMs = HOME_SCREENSAVER_INACTIVITY_TIMEOUT_MS,
+        isScreensaverVisible = isScreensaverVisible,
+        onShowScreensaver = { isScreensaverVisible = true },
+        onDismissScreensaver = { isScreensaverVisible = false },
+        screensaverContent = { dismissScreensaver ->
+            ChainageScreensaverOverlay(
+                displayState = screensaverDisplayState,
+                location = locationState.point,
+                bearing = locationState.bearing,
+                compassHeading = compassState.azimuthDegrees,
+                routeData = activeRoute,
+                mapThemePreference = mapThemePreference,
+                mapTypePreference = mapTypePreference,
+                isDarkAppTheme = isDark,
+                onDismiss = dismissScreensaver
+            )
         }
+    ) { interactionModifier ->
+        BoxWithConstraints(
+            modifier = modifier
+                .then(interactionModifier)
+                .fillMaxSize()
+                .background(pageBgColor)
+        ) {
+            val maxH = maxHeight
+            val isUltraCompact = maxH < 570.dp
+            val isCompactHeight = maxH < 670.dp
+            val verticalGap = when {
+                isUltraCompact -> 4.dp
+                isCompactHeight -> 5.5.dp
+                else -> 7.dp
+            }
 
         Column(
             modifier = Modifier
@@ -281,8 +372,6 @@ fun HomeScreen(
                 else -> "RHS"
             }
 
-            var showChainageManagementDialog by remember { mutableStateOf(false) }
-
             CentralChainageDisplay(
                 chainageText = displayChainageText,
                 detectedSide = detectedSide,
@@ -322,7 +411,6 @@ fun HomeScreen(
             }
 
             // 3. Project & Stretch Information Cards
-            var showEditProjectStretchDialog by remember { mutableStateOf(false) }
 
             ProjectStretchCardsRow(
                 projectName = projectProfile.highwayId,
@@ -394,26 +482,32 @@ fun HomeScreen(
             }
 
             // 5. Prominent Next KM Stone Card
-            val curChainage = matchResult.chainage
-            val (nextKmStone, nextKmDistance) = remember(curChainage, activeRoute?.id) {
-                if (curChainage != null) {
-                    val curM = curChainage.metres
-                    val nextKm = ((curM / 1000) + 1) * 1000
-                    val dist = (nextKm - curM).coerceAtLeast(1)
-                    val kmLabel = com.example.model.Chainage.fromMetres(nextKm).format()
-                    val distLabel = "${dist}m away"
-                    kmLabel to distLabel
-                } else if (activeRoute == null) {
-                    "--+---" to "No KMZ"
-                } else {
-                    "--+---" to "Waiting GPS"
-                }
+            val nextKmTracker = remember { NextKmStoneTracker() }
+            val isExplicitRoadSide = projectProfile.roadSide == com.example.model.RoadSide.LHS ||
+                projectProfile.roadSide == com.example.model.RoadSide.RHS
+            val nextKmState = remember(
+                matchResult,
+                activeRoute?.id,
+                activeRoute?.markers?.size,
+                detectedSide,
+                isExplicitRoadSide
+            ) {
+                nextKmTracker.evaluate(
+                    matchResult = matchResult,
+                    route = activeRoute,
+                    detectedSide = detectedSide,
+                    isAutoDetectedSide = !isExplicitRoadSide
+                )
             }
 
             NextChainageCard(
-                nextChainage = nextKmStone,
-                distanceText = nextKmDistance,
-                detectedSide = detectedSide,
+                nextChainage = nextKmState.nextChainage,
+                distanceText = nextKmState.distanceText,
+                detectedSide = nextKmState.directionSide,
+                directionArrow = nextKmState.directionArrow,
+                distanceMetres = nextKmState.distanceMetres,
+                intervalMetres = nextKmState.intervalMetres,
+                isReliable = nextKmState.isReliable,
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
@@ -436,6 +530,7 @@ fun HomeScreen(
                 isDark = isDark,
                 isCompact = isCompactHeight
             )
+            }
         }
     }
 }
@@ -1844,11 +1939,378 @@ fun KmStoneIcon(
     }
 }
 
+/**
+ * Validated KM Stone reference along the active alignment.
+ */
+data class KmStoneReference(
+    val chainageMetres: Long,
+    val formattedChainage: String
+)
+
+/**
+ * Immutable UI state for the Home Page Smart Dynamic Next KM Stone Card.
+ */
+data class NextKmStoneState(
+    val nextChainage: String,
+    val nextChainageMetres: Long?,
+    val distanceMetres: Long?,
+    val distanceText: String,
+    val directionSide: String,
+    val directionArrow: String,
+    val intervalMetres: Long = 1000L,
+    val isReliable: Boolean = true
+)
+
+/**
+ * Stateful, allocation-light tracker for the Home Page Next KM Stone Card.
+ *
+ * Features:
+ * 1. LHS -> Increasing Chainage (next higher KM Stone `> currentChainage`).
+ * 2. RHS -> Decreasing Chainage (next lower KM Stone `< currentChainage`).
+ * 3. Uses actual KM Stone markers from imported KMZ/KML (`RouteData.markers`) wherever available,
+ *    supporting irregular KM Stone intervals (e.g., 850 m or 1,250 m) and chainage equations while
+ *    filtering out dense sub-km intermediate ticks (50 m / 100 m / 200 m).
+ * 4. Falls back to the next valid 1 km calibrated boundary when KM Stone markers are unavailable.
+ * 5. Applies boundary crossing hysteresis (3 m deadband) and auto-side hysteresis to prevent
+ *    GPS jitter flicker while immediately responding to genuine reverse travel or user side changes.
+ */
+class NextKmStoneTracker(
+    private val boundaryHysteresisMetres: Long = 3L
+) {
+    private var cachedRouteId: String? = null
+    private var cachedMarkerCount: Int = -1
+    private var cachedKmStones: List<KmStoneReference> = emptyList()
+
+    private var confirmedSide: String? = null
+    private var pendingSide: String? = null
+    private var pendingSideCount: Int = 0
+
+    private var lastChainageMetres: Long? = null
+    private var lastTargetStoneMetres: Long? = null
+    private var lastPassedStoneMetres: Long? = null
+    private var lastIntervalMetres: Long = 1000L
+
+    fun reset() {
+        confirmedSide = null
+        pendingSide = null
+        pendingSideCount = 0
+        lastChainageMetres = null
+        lastTargetStoneMetres = null
+        lastPassedStoneMetres = null
+        lastIntervalMetres = 1000L
+    }
+
+    fun evaluate(
+        matchResult: com.example.model.ChainageMatchResult,
+        route: com.example.model.RouteData?,
+        detectedSide: String,
+        isAutoDetectedSide: Boolean = false
+    ): NextKmStoneState {
+        val rawSide = detectedSide.trim().uppercase(Locale.ROOT)
+        val validInputSide = if (rawSide == "LHS" || rawSide == "RHS") rawSide else null
+        val fallbackSide = validInputSide ?: confirmedSide ?: "RHS"
+        val fallbackArrow = if (fallbackSide == "LHS") "↑" else "↓"
+
+        if (route == null) {
+            return NextKmStoneState(
+                nextChainage = "--+---",
+                nextChainageMetres = null,
+                distanceMetres = null,
+                distanceText = "No KMZ",
+                directionSide = fallbackSide,
+                directionArrow = fallbackArrow,
+                isReliable = false
+            )
+        }
+
+        val currentChainage = matchResult.chainage
+        if (currentChainage == null || matchResult.confidence == com.example.model.MatchConfidence.NO_MATCH) {
+            return NextKmStoneState(
+                nextChainage = "--+---",
+                nextChainageMetres = null,
+                distanceMetres = null,
+                distanceText = "Waiting GPS",
+                directionSide = fallbackSide,
+                directionArrow = fallbackArrow,
+                isReliable = false
+            )
+        }
+
+        // Guard against unreliable or severely off-corridor matches
+        val isUnreliableMatch = matchResult.isUncertain ||
+            (matchResult.confidence == com.example.model.MatchConfidence.LOW && matchResult.offsetMetres > 120.0)
+        if (isUnreliableMatch) {
+            return NextKmStoneState(
+                nextChainage = "--+---",
+                nextChainageMetres = null,
+                distanceMetres = null,
+                distanceText = "Low GPS Accuracy",
+                directionSide = fallbackSide,
+                directionArrow = fallbackArrow,
+                isReliable = false
+            )
+        }
+
+        if (validInputSide == null) {
+            return NextKmStoneState(
+                nextChainage = "--+---",
+                nextChainageMetres = null,
+                distanceMetres = null,
+                distanceText = "Side Unavailable",
+                directionSide = "---",
+                directionArrow = "•",
+                isReliable = false
+            )
+        }
+
+        val curM = currentChainage.metres.coerceAtLeast(0L)
+        val prevM = lastChainageMetres
+
+        // Resolve effective side with hysteresis against minor GPS jitter when auto-detected
+        val prevConfirmedSide = confirmedSide
+        val effectiveSide = if (!isAutoDetectedSide || prevConfirmedSide == null) {
+            confirmedSide = validInputSide
+            pendingSide = null
+            pendingSideCount = 0
+            validInputSide
+        } else if (validInputSide == prevConfirmedSide) {
+            pendingSide = null
+            pendingSideCount = 0
+            prevConfirmedSide
+        } else {
+            val movedDistance = if (prevM != null) kotlin.math.abs(curM - prevM) else Long.MAX_VALUE
+            if (movedDistance > boundaryHysteresisMetres) {
+                confirmedSide = validInputSide
+                pendingSide = null
+                pendingSideCount = 0
+                validInputSide
+            } else {
+                if (pendingSide == validInputSide) {
+                    pendingSideCount += 1
+                } else {
+                    pendingSide = validInputSide
+                    pendingSideCount = 1
+                }
+                if (pendingSideCount >= 2) {
+                    confirmedSide = validInputSide
+                    pendingSide = null
+                    pendingSideCount = 0
+                    validInputSide
+                } else {
+                    prevConfirmedSide
+                }
+            }
+        }
+
+        val sideChanged = prevConfirmedSide != null && prevConfirmedSide != effectiveSide
+        if (sideChanged) {
+            lastTargetStoneMetres = null
+            lastPassedStoneMetres = null
+        }
+
+        val kmStones = getOrExtractKmStones(route)
+        val candidate = resolveCandidateStone(curM, effectiveSide, kmStones)
+
+        var targetStoneM = candidate.targetMetres
+        var passedStoneM = candidate.passedMetres
+        var intervalM = candidate.intervalMetres
+
+        // Boundary hysteresis: when the user has just crossed a KM Stone in the travel direction,
+        // prevent 1-3 m backwards GPS jitter from flickering back to the just-passed stone.
+        val prevTargetM = lastTargetStoneMetres
+        val prevPassedM = lastPassedStoneMetres
+        if (!sideChanged && prevTargetM != null && prevPassedM != null && targetStoneM != prevTargetM) {
+            if (effectiveSide == "LHS") {
+                // On LHS (increasing), if we already advanced past prevPassedM to prevTargetM
+                // and curM jittered slightly below prevPassedM within boundaryHysteresisMetres:
+                if (targetStoneM == prevPassedM && curM < prevPassedM && (prevPassedM - curM) <= boundaryHysteresisMetres) {
+                    targetStoneM = prevTargetM
+                    passedStoneM = prevPassedM
+                    intervalM = lastIntervalMetres
+                }
+            } else {
+                // On RHS (decreasing), if we already advanced below prevPassedM to prevTargetM
+                // and curM jittered slightly above prevPassedM within boundaryHysteresisMetres:
+                if (targetStoneM == prevPassedM && curM > prevPassedM && (curM - prevPassedM) <= boundaryHysteresisMetres) {
+                    targetStoneM = prevTargetM
+                    passedStoneM = prevPassedM
+                    intervalM = lastIntervalMetres
+                }
+            }
+        }
+
+        lastChainageMetres = curM
+        lastTargetStoneMetres = targetStoneM
+        lastPassedStoneMetres = passedStoneM
+        lastIntervalMetres = intervalM
+
+        val rawDistanceMetres = if (effectiveSide == "LHS") {
+            (targetStoneM - curM).coerceAtLeast(0L)
+        } else {
+            (curM - targetStoneM).coerceAtLeast(0L)
+        }
+
+        // If holding across a tiny 1-3 m boundary hysteresis jitter, clamp displayed distance to the interval
+        val effectiveDistanceMetres = if (targetStoneM == prevTargetM && prevPassedM != null &&
+            ((effectiveSide == "LHS" && curM < prevPassedM) || (effectiveSide == "RHS" && curM > prevPassedM))
+        ) {
+            rawDistanceMetres.coerceAtMost(intervalM)
+        } else {
+            rawDistanceMetres
+        }
+
+        val nextChainageFormatted = com.example.model.Chainage.fromMetres(targetStoneM).format()
+        val distanceText = formatDistanceAway(effectiveDistanceMetres)
+        val directionArrow = if (effectiveSide == "LHS") "↑" else "↓"
+
+        return NextKmStoneState(
+            nextChainage = nextChainageFormatted,
+            nextChainageMetres = targetStoneM,
+            distanceMetres = effectiveDistanceMetres,
+            distanceText = distanceText,
+            directionSide = effectiveSide,
+            directionArrow = directionArrow,
+            intervalMetres = intervalM.coerceAtLeast(100L),
+            isReliable = true
+        )
+    }
+
+    private data class CandidateResolution(
+        val targetMetres: Long,
+        val passedMetres: Long,
+        val intervalMetres: Long
+    )
+
+    private fun resolveCandidateStone(
+        curM: Long,
+        side: String,
+        kmStones: List<KmStoneReference>
+    ): CandidateResolution {
+        if (side == "LHS") {
+            // LHS - Increasing Chainage: find next higher KM stone (> curM)
+            val nextFromMarkers = kmStones.firstOrNull { it.chainageMetres > curM }
+            val prevFromMarkers = kmStones.lastOrNull { it.chainageMetres <= curM }
+            val fallbackNext = ((curM / 1000L) + 1L) * 1000L
+            val fallbackPrev = (curM / 1000L) * 1000L
+
+            // Use KMZ marker stone if available and within a valid single-stone span (<= 2500 m)
+            if (nextFromMarkers != null && (nextFromMarkers.chainageMetres - curM) <= 2500L) {
+                val target = nextFromMarkers.chainageMetres
+                val passed = prevFromMarkers?.chainageMetres ?: fallbackPrev
+                val span = (target - passed).takeIf { it in 200L..3000L } ?: 1000L
+                return CandidateResolution(target, passed, span)
+            }
+            return CandidateResolution(fallbackNext, fallbackPrev, 1000L)
+        } else {
+            // RHS - Decreasing Chainage: find next lower KM stone (< curM)
+            val nextFromMarkers = kmStones.lastOrNull { it.chainageMetres < curM }
+            val prevFromMarkers = kmStones.firstOrNull { it.chainageMetres >= curM }
+            val fallbackNext = if (curM == 0L) {
+                0L
+            } else if (curM % 1000L == 0L) {
+                (curM - 1000L).coerceAtLeast(0L)
+            } else {
+                (curM / 1000L) * 1000L
+            }
+            val fallbackPrev = if (curM % 1000L == 0L) curM else ((curM / 1000L) + 1L) * 1000L
+
+            if (nextFromMarkers != null && (curM - nextFromMarkers.chainageMetres) <= 2500L) {
+                val target = nextFromMarkers.chainageMetres
+                val passed = prevFromMarkers?.chainageMetres ?: fallbackPrev
+                val span = (passed - target).takeIf { it in 200L..3000L } ?: 1000L
+                return CandidateResolution(target, passed, span)
+            }
+            return CandidateResolution(fallbackNext, fallbackPrev, 1000L)
+        }
+    }
+
+    private fun getOrExtractKmStones(route: com.example.model.RouteData): List<KmStoneReference> {
+        if (cachedRouteId == route.id && cachedMarkerCount == route.markers.size) {
+            return cachedKmStones
+        }
+        val extracted = extractKmStoneReferences(route.markers)
+        cachedRouteId = route.id
+        cachedMarkerCount = route.markers.size
+        cachedKmStones = extracted
+        return extracted
+    }
+
+    companion object {
+        /**
+         * Formats remaining distance in metres or kilometres according to CTECS specification:
+         * - `<= 1000 m`: `"950 m Away"`, `"50 m Away"`
+         * - `> 1000 m`: `"1.25 km Away"`
+         */
+        fun formatDistanceAway(distanceMetres: Long): String {
+            val clamped = distanceMetres.coerceAtLeast(0L)
+            return if (clamped <= 1000L) {
+                "$clamped m Away"
+            } else {
+                String.format(Locale.US, "%.2f km Away", clamped / 1000.0)
+            }
+        }
+
+        /**
+         * Extracts verified KM Stone references from route markers while filtering out dense
+         * intermediate sub-kilometre ticks (e.g. 50 m / 100 m / 200 m).
+         * Preserves irregular KM Stone intervals (e.g. 200+850, 202+100) and chainage equations.
+         */
+        fun extractKmStoneReferences(markers: List<com.example.model.RouteMarker>): List<KmStoneReference> {
+            if (markers.isEmpty()) return emptyList()
+            val sortedUnique = markers
+                .filter { it.chainage.metres >= 0L }
+                .sortedBy { it.chainage.metres }
+                .distinctBy { it.chainage.metres }
+
+            if (sortedUnique.isEmpty()) return emptyList()
+
+            return sortedUnique.mapIndexedNotNull { index, marker ->
+                val metres = marker.chainage.metres
+                val isExactKmBoundary = metres % 1000L == 0L
+
+                val folderLower = marker.folderName.lowercase(Locale.ROOT)
+                val labelLower = marker.label.trim().lowercase(Locale.ROOT)
+                val descLower = marker.description.trim().lowercase(Locale.ROOT)
+                val isExplicitKmStone = folderLower.contains("km stone") ||
+                    folderLower.contains("km_stone") ||
+                    folderLower.contains("milestone") ||
+                    folderLower.contains("kilometre") ||
+                    folderLower.contains("kilometer") ||
+                    folderLower.contains("equation") ||
+                    labelLower.contains("km stone") ||
+                    labelLower.contains("milestone") ||
+                    labelLower.contains("eq") ||
+                    descLower.contains("km stone") ||
+                    descLower.contains("milestone")
+
+                val prevGap = if (index > 0) metres - sortedUnique[index - 1].chainage.metres else Long.MAX_VALUE
+                val nextGap = if (index < sortedUnique.lastIndex) sortedUnique[index + 1].chainage.metres - metres else Long.MAX_VALUE
+                // If adjacent markers are spaced >= 300 m apart, the KMZ markers represent KM stones
+                // (including irregular KM stone intervals like 850 m or 1,250 m) rather than 50 m/100 m ticks.
+                val isIrregularKmStoneSpacing = prevGap >= 300L && nextGap >= 300L
+
+                if (isExactKmBoundary || isExplicitKmStone || isIrregularKmStoneSpacing) {
+                    KmStoneReference(
+                        chainageMetres = metres,
+                        formattedChainage = marker.chainage.format()
+                    )
+                } else {
+                    null
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun NextChainageCard(
     nextChainage: String,
     distanceText: String,
     detectedSide: String = "RHS",
+    directionArrow: String = if (detectedSide.equals("LHS", ignoreCase = true)) "↑" else "↓",
+    distanceMetres: Long? = null,
+    intervalMetres: Long = 1000L,
+    isReliable: Boolean = !nextChainage.contains("-"),
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
@@ -1857,27 +2319,72 @@ fun NextChainageCard(
     isCompact: Boolean = false
 ) {
     val cleanDistance = distanceText.replace("Exact ", "", ignoreCase = true).trim()
-    val distanceMetres = remember(cleanDistance) {
-        cleanDistance.filter { it.isDigit() }.toIntOrNull()?.coerceIn(0, 1000) ?: 500
+    val resolvedMetres = remember(distanceMetres, cleanDistance) {
+        distanceMetres?.toInt()
+            ?: cleanDistance.substringBefore(" ").filter { it.isDigit() }.toIntOrNull()
+            ?: 500
     }
-    val targetProgress = remember(distanceMetres) {
-        ((1000f - distanceMetres.toFloat()) / 1000f).coerceIn(0.04f, 1.0f)
+    val animatedMetres by animateIntAsState(
+        targetValue = resolvedMetres.coerceAtLeast(0),
+        animationSpec = tween(260, easing = FastOutSlowInEasing),
+        label = "km_stone_distance_metres"
+    )
+    val animatedDistanceLabel = remember(isReliable, distanceMetres, animatedMetres, cleanDistance) {
+        if (!isReliable || distanceMetres == null) {
+            cleanDistance
+        } else if (distanceMetres <= 1000L) {
+            "$animatedMetres m Away"
+        } else {
+            NextKmStoneTracker.formatDistanceAway(distanceMetres)
+        }
+    }
+
+    val safeSpan = intervalMetres.coerceAtLeast(100L).toFloat()
+    val targetProgress = remember(isReliable, resolvedMetres, safeSpan) {
+        if (!isReliable) {
+            0.0f
+        } else {
+            ((safeSpan - resolvedMetres.toFloat()) / safeSpan).coerceIn(0.05f, 1.0f)
+        }
     }
     val animatedProgress by animateFloatAsState(
         targetValue = targetProgress,
-        animationSpec = tween(350, easing = FastOutSlowInEasing),
+        animationSpec = tween(320, easing = FastOutSlowInEasing),
         label = "km_stone_progress"
     )
 
+    val isLhs = detectedSide.equals("LHS", ignoreCase = true)
     val labelColor = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
-    val badgeBgColor = if (isDark) Color(0xFF2563EB) else Color(0xFF2563EB)
+    val glassSurfaceColor = if (isDark) {
+        cardBgColor.copy(alpha = 0.88f)
+    } else {
+        cardBgColor.copy(alpha = 0.96f)
+    }
     val iconBoxBg = if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.35f) else Color(0xFFEFF6FF)
-    val sideBadgeBg = if (isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9)
-    val sideBadgeText = if (isDark) Color(0xFF93C5FD) else Color(0xFF1E40AF)
+    val sideBadgeBg = when {
+        !isReliable -> if (isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9)
+        isLhs -> if (isDark) Color(0xFF064E3B).copy(alpha = 0.55f) else Color(0xFFECFDF5)
+        else -> if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.55f) else Color(0xFFEFF6FF)
+    }
+    val sideBadgeBorder = when {
+        !isReliable -> cardBorderColor
+        isLhs -> if (isDark) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFF6EE7B7)
+        else -> if (isDark) Color(0xFF60A5FA).copy(alpha = 0.45f) else Color(0xFF93C5FD)
+    }
+    val sideBadgeText = when {
+        !isReliable -> subTextColor
+        isLhs -> if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
+        else -> if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
+    }
+    val distancePillBg = if (isReliable) {
+        if (isDark) Color(0xFF2563EB) else Color(0xFF2563EB)
+    } else {
+        if (isDark) Color(0xFF334155) else Color(0xFF64748B)
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "km_badge_pulse")
     val badgePulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.88f,
+        initialValue = if (isReliable) 0.88f else 0.95f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
             animation = tween(850, easing = FastOutSlowInEasing),
@@ -1888,7 +2395,7 @@ fun NextChainageCard(
 
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = cardBgColor,
+        color = glassSurfaceColor,
         border = BorderStroke(1.dp, cardBorderColor),
         shadowElevation = if (isDark) 0.dp else 1.dp,
         modifier = Modifier
@@ -1930,26 +2437,38 @@ fun NextChainageCard(
                             letterSpacing = 0.7.sp
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = if (!nextChainage.startsWith("KM") && !nextChainage.contains("-")) "KM $nextChainage" else nextChainage,
-                                color = mainTextColor,
-                                fontSize = if (isCompact) 14.5.sp else 15.5.sp,
-                                lineHeight = 17.sp,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 0.3.sp,
-                                maxLines = 1
-                            )
+                            AnimatedContent(
+                                targetState = nextChainage,
+                                transitionSpec = {
+                                    fadeIn(animationSpec = tween(220)) togetherWith
+                                        fadeOut(animationSpec = tween(160))
+                                },
+                                label = "next_km_chainage_anim"
+                            ) { targetChainage ->
+                                Text(
+                                    text = targetChainage,
+                                    color = mainTextColor,
+                                    fontSize = if (isCompact) 15.5.sp else 17.sp,
+                                    lineHeight = 18.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 0.3.sp,
+                                    maxLines = 1,
+                                    modifier = Modifier.testTag("next_km_stone_value")
+                                )
+                            }
                             Spacer(modifier = Modifier.width(6.dp))
                             Surface(
                                 shape = RoundedCornerShape(5.dp),
                                 color = sideBadgeBg,
-                                border = BorderStroke(0.8.dp, cardBorderColor)
+                                border = BorderStroke(0.8.dp, sideBadgeBorder),
+                                modifier = Modifier.testTag("next_km_stone_side")
                             ) {
                                 Text(
-                                    text = detectedSide.uppercase(Locale.ROOT),
+                                    text = "$directionArrow ${detectedSide.uppercase(Locale.ROOT)}".trim(),
                                     color = sideBadgeText,
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
                                 )
                             }
@@ -1957,30 +2476,43 @@ fun NextChainageCard(
                     }
                 }
 
-                // Prominent Distance Remaining Pill
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = badgeBgColor.copy(alpha = badgePulseAlpha),
-                    shadowElevation = 1.dp
+                // Subtle separator bar (`|`) + Distance Away pill
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(if (isCompact) 22.dp else 26.dp)
+                            .background(cardBorderColor.copy(alpha = 0.65f))
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = distancePillBg.copy(alpha = badgePulseAlpha),
+                        shadowElevation = 1.dp,
+                        modifier = Modifier.testTag("next_km_stone_distance")
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(5.5.dp)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = cleanDistance,
-                            color = Color.White,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(5.5.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = animatedDistanceLabel,
+                                color = Color.White,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
@@ -2800,6 +3332,810 @@ fun InteractiveSmartMap(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
             )
+        }
+    }
+}
+
+// -------------------------------------------------------------------
+// COMPONENT 7: HOME PAGE FULL-SCREEN DYNAMIC CHAINAGE SCREENSAVER
+// -------------------------------------------------------------------
+
+const val HOME_SCREENSAVER_INACTIVITY_TIMEOUT_MS = 20_000L
+
+data class ScreensaverDisplayState(
+    val chainageText: String,
+    val reliableSide: String?, // Strictly "LHS", "RHS", or null when unreliable or GPS is lost
+    val directionArrow: String, // "↑" for LHS, "↓" for RHS, "" when null
+    val isLiveGpsValid: Boolean,
+    val isIncreasingTrend: Boolean = true
+)
+
+/**
+ * Pure gating predicate deciding when the 20s inactivity timer may count down and present
+ * the full-screen Chainage Screensaver.
+ */
+fun shouldAllowScreensaver(
+    isLifecycleResumed: Boolean,
+    isDialogOpen: Boolean,
+    isKeyboardOpen: Boolean,
+    isInputFocused: Boolean = false
+): Boolean {
+    return isLifecycleResumed && !isDialogOpen && !isKeyboardOpen && !isInputFocused
+}
+
+/**
+ * Stateful holder for Screensaver display data that:
+ * - Retains the last valid chainage across temporary GPS loss without inventing values.
+ * - Strictly suppresses LHS/RHS when GPS is unavailable or side detection is unreliable.
+ * - Clears retained route chainage when unloading/switching routes.
+ */
+class ScreensaverChainageStateHolder {
+    private var lastValidChainageText: String? = null
+    private var lastValidChainageMetres: Long? = null
+    private var lastRouteId: String? = null
+
+    fun reset() {
+        lastValidChainageText = null
+        lastValidChainageMetres = null
+        lastRouteId = null
+    }
+
+    fun resolve(
+        matchResult: ChainageMatchResult,
+        route: RouteData?,
+        hasGpsFix: Boolean,
+        projectRoadSide: RoadSide
+    ): ScreensaverDisplayState {
+        if (route?.id != lastRouteId) {
+            lastValidChainageText = null
+            lastValidChainageMetres = null
+            lastRouteId = route?.id
+        }
+
+        val isManualActive = matchResult.source == ChainageSource.MANUAL || matchResult.isManual
+        if (isManualActive) {
+            val manualText = matchResult.displayChainage
+                .takeIf { it.isNotBlank() && it != "---" && it != "Manual" }
+            val metres = matchResult.chainage?.metres
+            val increasing = if (metres != null && lastValidChainageMetres != null) {
+                metres >= lastValidChainageMetres!!
+            } else {
+                true
+            }
+            if (manualText != null) {
+                lastValidChainageText = manualText
+            }
+            if (metres != null) {
+                lastValidChainageMetres = metres
+            }
+            val sideIfReliable = if (
+                hasGpsFix &&
+                route != null &&
+                matchResult.confidence != MatchConfidence.NO_MATCH &&
+                !matchResult.isUncertain
+            ) {
+                normalizeBinarySide(matchResult.detectedSide)
+                    ?: normalizeBinarySide(projectRoadSide.name)
+            } else {
+                null
+            }
+            return ScreensaverDisplayState(
+                chainageText = manualText ?: lastValidChainageText ?: "--+---",
+                reliableSide = sideIfReliable,
+                directionArrow = sideArrowFor(sideIfReliable),
+                isLiveGpsValid = hasGpsFix && route != null,
+                isIncreasingTrend = increasing
+            )
+        }
+
+        val isReliableLiveMatch = route != null &&
+            hasGpsFix &&
+            matchResult.chainage != null &&
+            matchResult.confidence != MatchConfidence.NO_MATCH &&
+            !matchResult.isUncertain &&
+            !(matchResult.confidence == MatchConfidence.LOW && matchResult.offsetMetres > 80.0)
+
+        if (isReliableLiveMatch) {
+            val metres = matchResult.chainage!!.metres
+            val text = matchResult.displayChainage
+            val increasing = lastValidChainageMetres?.let { metres >= it } ?: true
+            lastValidChainageText = text
+            lastValidChainageMetres = metres
+
+            val reliableSide = normalizeBinarySide(matchResult.detectedSide)
+                ?: normalizeBinarySide(projectRoadSide.name)
+
+            return ScreensaverDisplayState(
+                chainageText = text,
+                reliableSide = reliableSide,
+                directionArrow = sideArrowFor(reliableSide),
+                isLiveGpsValid = true,
+                isIncreasingTrend = increasing
+            )
+        }
+
+        // Temporary GPS loss, off-corridor uncertainty, or no route loaded:
+        // Retain last valid chainage on the active route (never invent movement),
+        // and omit LHS/RHS so no false direction is ever displayed.
+        return ScreensaverDisplayState(
+            chainageText = if (route != null) (lastValidChainageText ?: "--+---") else "--+---",
+            reliableSide = null,
+            directionArrow = "",
+            isLiveGpsValid = false,
+            isIncreasingTrend = true
+        )
+    }
+
+    companion object {
+        internal fun normalizeBinarySide(raw: String?): String? {
+            return when (raw?.trim()?.uppercase(Locale.ROOT)) {
+                "LHS" -> "LHS"
+                "RHS" -> "RHS"
+                else -> null
+            }
+        }
+
+        internal fun sideArrowFor(side: String?): String {
+            return when (side) {
+                "LHS" -> "↑"
+                "RHS" -> "↓"
+                else -> ""
+            }
+        }
+    }
+}
+
+/**
+ * Coordinates the single 20-second inactivity countdown for the Home Page, tracks foreground
+ * lifecycle, detects pointer/key activity cleanly without consuming child gestures, blocks while
+ * dialogs/keyboard are active, and hosts the full-screen immersive Dialog without disturbing Home
+ * Page scroll position or state.
+ */
+@Composable
+fun HomeScreensaverCoordinator(
+    isBlockingUiOpen: Boolean,
+    inactivityTimeoutMs: Long = HOME_SCREENSAVER_INACTIVITY_TIMEOUT_MS,
+    isScreensaverVisible: Boolean,
+    onShowScreensaver: () -> Unit,
+    onDismissScreensaver: () -> Unit,
+    screensaverContent: @Composable (onDismiss: () -> Unit) -> Unit,
+    content: @Composable (interactionModifier: Modifier) -> Unit
+) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isLifecycleResumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+
+    var interactionEpoch by remember { mutableLongStateOf(0L) }
+    var lastMoveBumpUptimeMs by remember { mutableLongStateOf(0L) }
+
+    fun notifyUserInteraction(force: Boolean) {
+        val nowMs = SystemClock.uptimeMillis()
+        if (force || (nowMs - lastMoveBumpUptimeMs) >= 400L) {
+            lastMoveBumpUptimeMs = nowMs
+            interactionEpoch += 1L
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    isLifecycleResumed = true
+                    interactionEpoch += 1L
+                }
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    isLifecycleResumed = false
+                    onDismissScreensaver()
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val density = LocalDensity.current
+    val isKeyboardOpen = WindowInsets.ime.getBottom(density) > 0
+    val canRunTimer = shouldAllowScreensaver(
+        isLifecycleResumed = isLifecycleResumed,
+        isDialogOpen = isBlockingUiOpen,
+        isKeyboardOpen = isKeyboardOpen
+    )
+
+    // Dismiss immediately if a dialog, keyboard, or background transition occurs
+    LaunchedEffect(canRunTimer, isScreensaverVisible) {
+        if (!canRunTimer && isScreensaverVisible) {
+            onDismissScreensaver()
+        }
+    }
+
+    // Single inactivity timer coroutine — automatically cancelled & restarted on any interaction
+    LaunchedEffect(isScreensaverVisible, canRunTimer, interactionEpoch, inactivityTimeoutMs) {
+        if (!isScreensaverVisible && canRunTimer) {
+            delay(inactivityTimeoutMs)
+            onShowScreensaver()
+        }
+    }
+
+    val interactionModifier = Modifier
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val hasDownOrUp = event.changes.any {
+                        it.changedToDownIgnoreConsumed() || it.changedToUpIgnoreConsumed()
+                    }
+                    if (hasDownOrUp) {
+                        notifyUserInteraction(force = true)
+                    } else if (event.changes.any { it.pressed }) {
+                        notifyUserInteraction(force = false)
+                    }
+                }
+            }
+        }
+        .onPreviewKeyEvent {
+            notifyUserInteraction(force = true)
+            false
+        }
+
+    content(interactionModifier)
+
+    if (isScreensaverVisible && canRunTimer) {
+        Dialog(
+            onDismissRequest = {
+                notifyUserInteraction(force = true)
+                onDismissScreensaver()
+            },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
+            )
+        ) {
+            val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+            DisposableEffect(dialogWindow) {
+                if (dialogWindow != null) {
+                    dialogWindow.setDimAmount(0f)
+                    dialogWindow.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+                    WindowCompat.setDecorFitsSystemWindows(dialogWindow, false)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        val attrs = dialogWindow.attributes
+                        attrs.layoutInDisplayCutoutMode =
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                        dialogWindow.attributes = attrs
+                    }
+                }
+                onDispose {}
+            }
+
+            screensaverContent {
+                notifyUserInteraction(force = true)
+                onDismissScreensaver()
+            }
+        }
+    }
+}
+
+/**
+ * Extremely Minimal Full-Screen Chainage Screensaver UI.
+ * Displays ONLY three elements:
+ * 1. Transparent Glassy KMZ/KML Map Background with glowing route & small GPS indicator.
+ * 2. Very Large, Bold, Centrally Aligned Dynamic Chainage.
+ * 3. Reliable LHS / RHS Direction with subtle directional arrow (omitted when unreliable).
+ */
+@Composable
+fun ChainageScreensaverOverlay(
+    displayState: ScreensaverDisplayState,
+    location: GeoPoint?,
+    bearing: Float?,
+    compassHeading: Float,
+    routeData: RouteData?,
+    mapThemePreference: String = "system",
+    mapTypePreference: String = "standard",
+    isDarkAppTheme: Boolean = com.example.ui.theme.isAppDarkTheme(),
+    onDismiss: () -> Unit
+) {
+    val isDarkMap = com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isDarkAppTheme)
+    val useDarkGlass = isDarkAppTheme || isDarkMap
+
+    val chainageColor by animateColorAsState(
+        targetValue = if (useDarkGlass) Color(0xFFF8FAFC) else Color(0xFF0F172A),
+        animationSpec = tween(300),
+        label = "screensaver_chainage_color"
+    )
+    val chainageShadowColor = if (useDarkGlass) {
+        Color(0xFF38BDF8).copy(alpha = 0.28f)
+    } else {
+        Color(0xFFFFFFFF).copy(alpha = 0.72f)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("home_chainage_screensaver")
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    awaitFirstDown(requireUnconsumed = false)
+                    onDismiss()
+                }
+            }
+            .semantics {
+                onClick(label = "Dismiss screensaver") {
+                    onDismiss()
+                    true
+                }
+            }
+    ) {
+        // 1. Background — Full-screen Transparent Glassy Map
+        ScreensaverGlassMapBackground(
+            location = location,
+            bearing = bearing,
+            compassHeading = compassHeading,
+            routeData = routeData,
+            isDarkMap = isDarkMap,
+            useDarkGlass = useDarkGlass,
+            mapTypePreference = mapTypePreference,
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("screensaver_glass_map")
+        )
+
+        // 2 & 3. Centre Dynamic Chainage + LHS/RHS Direction (Respects display cutouts & insets)
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+            val charCount = displayState.chainageText.length.coerceAtLeast(6)
+            val availableWidth = (maxWidth - 24.dp).coerceAtLeast(180.dp)
+            val maxByWidth = (availableWidth.value / (charCount * 0.61f * fontScale))
+            val maxByViewport = minOf(maxWidth.value * 0.24f, maxHeight.value * 0.34f)
+            val chainageFontSize = maxByWidth.coerceIn(36f, maxByViewport.coerceAtLeast(38f)).sp
+            val lineHeightSp = (chainageFontSize.value * 1.06f).sp
+
+            val spacingBetweenElements = (maxHeight * 0.032f).coerceIn(12.dp, 28.dp)
+            val sideFontSize = (chainageFontSize.value * 0.27f).coerceIn(16f, 25f).sp
+            val arrowSize = (sideFontSize.value * 1.1f).dp
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Element A: Centre – Very Large, Bold, Smoothly Animated Dynamic Chainage
+                ScreensaverAnimatedChainage(
+                    chainageText = displayState.chainageText,
+                    isIncreasing = displayState.isIncreasingTrend,
+                    textColor = chainageColor,
+                    glowColor = chainageShadowColor,
+                    fontSize = chainageFontSize,
+                    lineHeight = lineHeightSp,
+                    modifier = Modifier
+                        .testTag("screensaver_chainage_text")
+                        .clearAndSetSemantics {
+                            text = AnnotatedString(displayState.chainageText)
+                            contentDescription = displayState.chainageText
+                        }
+                )
+
+                Spacer(modifier = Modifier.height(spacingBetweenElements))
+
+                // Element B: Direction – Only LHS or RHS + Directional Arrow (hidden when unreliable)
+                AnimatedVisibility(
+                    visible = displayState.reliableSide != null,
+                    enter = fadeIn(tween(240)) + scaleIn(initialScale = 0.92f, animationSpec = tween(240)),
+                    exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f, animationSpec = tween(180))
+                ) {
+                    val side = displayState.reliableSide
+                    if (side != null) {
+                        ScreensaverDirectionIndicator(
+                            side = side,
+                            useDarkGlass = useDarkGlass,
+                            fontSize = sideFontSize,
+                            arrowSize = arrowSize,
+                            modifier = Modifier.testTag("screensaver_direction_badge")
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverAnimatedChainage(
+    chainageText: String,
+    isIncreasing: Boolean,
+    textColor: Color,
+    glowColor: Color,
+    fontSize: TextUnit,
+    lineHeight: TextUnit,
+    modifier: Modifier = Modifier
+) {
+    val style = TextStyle(
+        color = textColor,
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        fontWeight = FontWeight.Black,
+        letterSpacing = (-1.2).sp,
+        fontFeatureSettings = "tnum",
+        shadow = Shadow(
+            color = glowColor,
+            offset = Offset.Zero,
+            blurRadius = 22f
+        )
+    )
+
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+    ) {
+        val len = chainageText.length
+        for (i in 0 until len) {
+            val ch = chainageText[i]
+            val slotKey = len - i // Right-aligned digit position stability across transitions
+            AnimatedContent(
+                targetState = ch,
+                transitionSpec = {
+                    val enterOffset = { fullHeight: Int ->
+                        if (isIncreasing) fullHeight / 3 else -fullHeight / 3
+                    }
+                    val exitOffset = { fullHeight: Int ->
+                        if (isIncreasing) -fullHeight / 3 else fullHeight / 3
+                    }
+                    (slideInVertically(tween(210, easing = FastOutSlowInEasing), enterOffset) +
+                        fadeIn(tween(190))) togetherWith
+                        (slideOutVertically(tween(170), exitOffset) +
+                            fadeOut(tween(150)))
+                },
+                label = "screensaver_digit_$slotKey"
+            ) { targetChar ->
+                Text(
+                    text = targetChar.toString(),
+                    style = style,
+                    maxLines = 1,
+                    softWrap = false,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverDirectionIndicator(
+    side: String,
+    useDarkGlass: Boolean,
+    fontSize: TextUnit,
+    arrowSize: Dp,
+    modifier: Modifier = Modifier
+) {
+    val isLhs = side == "LHS"
+    val accentColor by animateColorAsState(
+        targetValue = when {
+            isLhs && useDarkGlass -> Color(0xFF34D399)
+            isLhs -> Color(0xFF059669)
+            useDarkGlass -> Color(0xFF38BDF8)
+            else -> Color(0xFF1D4ED8)
+        },
+        animationSpec = tween(260),
+        label = "screensaver_side_accent"
+    )
+    val glassBg = if (useDarkGlass) {
+        Color(0xFF0F172A).copy(alpha = 0.52f)
+    } else {
+        Color(0xFFFFFFFF).copy(alpha = 0.68f)
+    }
+    val glassBorder = accentColor.copy(alpha = if (useDarkGlass) 0.42f else 0.35f)
+
+    // Subtle directional float motion while screensaver is active (stops automatically on dismiss)
+    val arrowTransition = rememberInfiniteTransition(label = "screensaver_arrow_float")
+    val arrowFloatFactor by arrowTransition.animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "screensaver_arrow_offset"
+    )
+    val arrowOffsetY = (arrowFloatFactor * (if (isLhs) -2.2f else 2.2f)).dp
+
+    Surface(
+        shape = CircleShape,
+        color = glassBg,
+        border = BorderStroke(1.dp, glassBorder),
+        shadowElevation = 0.dp,
+        modifier = modifier
+    ) {
+        AnimatedContent(
+            targetState = side,
+            transitionSpec = {
+                (fadeIn(tween(220)) + scaleIn(initialScale = 0.9f, animationSpec = tween(220))) togetherWith
+                    (fadeOut(tween(150)) + scaleOut(targetScale = 0.9f, animationSpec = tween(150)))
+            },
+            label = "screensaver_direction_switch"
+        ) { targetSide ->
+            val targetIsLhs = targetSide == "LHS"
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 9.dp)
+            ) {
+                Icon(
+                    imageVector = if (targetIsLhs) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                    contentDescription = if (targetIsLhs) "Increasing" else "Decreasing",
+                    tint = accentColor,
+                    modifier = Modifier
+                        .size(arrowSize)
+                        .offset(y = arrowOffsetY)
+                )
+                Text(
+                    text = targetSide,
+                    color = accentColor,
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 3.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverGlassMapBackground(
+    location: GeoPoint?,
+    bearing: Float?,
+    compassHeading: Float,
+    routeData: RouteData?,
+    isDarkMap: Boolean,
+    useDarkGlass: Boolean,
+    mapTypePreference: String,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
+    val mapTheme = com.example.ui.map.rememberMapThemeColors(isDarkMap)
+    val reusableRoutePath = remember { Path() }
+    val zoom = 16
+
+    // Retain last known coordinate when GPS drops briefly so the map stays calm and anchored
+    var lastValidLocation by remember { mutableStateOf(location) }
+    LaunchedEffect(location) {
+        if (location != null) {
+            lastValidLocation = location
+        }
+    }
+
+    val targetAnchor = location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+
+    // Precision Double glide interpolation so GPS camera follow never micro-jitters
+    var startAnchor by remember { mutableStateOf(targetAnchor) }
+    var endAnchor by remember { mutableStateOf(targetAnchor) }
+    val glideAnim = remember { Animatable(1f) }
+    LaunchedEffect(targetAnchor.latitude, targetAnchor.longitude) {
+        if (targetAnchor.latitude != endAnchor.latitude || targetAnchor.longitude != endAnchor.longitude) {
+            val frac = glideAnim.value.toDouble()
+            val curLat = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * frac
+            val curLng = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * frac
+            startAnchor = GeoPoint(curLat, curLng)
+            endAnchor = targetAnchor
+            glideAnim.snapTo(0f)
+            glideAnim.animateTo(1f, animationSpec = tween(650, easing = FastOutSlowInEasing))
+        }
+    }
+    val interpolatedAnchor = GeoPoint(
+        latitude = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * glideAnim.value.toDouble(),
+        longitude = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * glideAnim.value.toDouble()
+    )
+
+    val navTransition = rememberInfiniteTransition(label = "screensaver_nav_beacon")
+    val navPulse by navTransition.animateFloat(
+        initialValue = 0.20f,
+        targetValue = 0.50f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "screensaver_nav_pulse"
+    )
+
+    val mapBlurModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        Modifier.blur(5.dp)
+    } else {
+        Modifier
+    }
+
+    val outerGlowColor = if (useDarkGlass) Color(0xFF38BDF8) else Color(0xFF0EA5E9)
+    val routeCoreColor = if (useDarkGlass) Color(0xFF7DD3FC) else Color(0xFF2563EB)
+    val navIndicatorColor = if (useDarkGlass) Color(0xFF38BDF8) else Color(0xFF2563EB)
+
+    Box(modifier = modifier) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(mapBlurModifier)
+        ) {
+            val _tick = tileUpdate
+            val w = size.width
+            val h = size.height
+
+            val osmBmp = OsmTileManager.renderMapBitmap(
+                context = context,
+                center = interpolatedAnchor,
+                widthPx = w.toInt().coerceAtLeast(1),
+                heightPx = h.toInt().coerceAtLeast(1),
+                zoom = zoom,
+                panOffsetX = 0f,
+                panOffsetY = 0f,
+                darkTheme = mapTheme.isDark,
+                mapType = mapTypePreference
+            )
+
+            if (osmBmp != null) {
+                drawImage(
+                    image = osmBmp.asImageBitmap(),
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(w.toInt(), h.toInt())
+                )
+            } else {
+                drawRect(color = mapTheme.mapBackground)
+                val gridSpacing = 76.dp.toPx()
+                var gx = 0f
+                while (gx < w) {
+                    drawLine(
+                        color = mapTheme.gridLineColor,
+                        start = Offset(gx, 0f),
+                        end = Offset(gx, h),
+                        strokeWidth = 1f
+                    )
+                    gx += gridSpacing
+                }
+                var gy = 0f
+                while (gy < h) {
+                    drawLine(
+                        color = mapTheme.gridLineColor,
+                        start = Offset(0f, gy),
+                        end = Offset(w, gy),
+                        strokeWidth = 1f
+                    )
+                    gy += gridSpacing
+                }
+            }
+
+            fun toScreen(pt: GeoPoint): Offset {
+                val (sx, sy) = OsmTileManager.geoToScreen(
+                    pt = pt,
+                    center = interpolatedAnchor,
+                    widthPx = w,
+                    heightPx = h,
+                    zoom = zoom,
+                    panOffsetX = 0f,
+                    panOffsetY = 0f
+                )
+                return Offset(sx, sy)
+            }
+
+            // Subtle Glowing Imported KMZ/KML Road Alignment
+            if (routeData != null && routeData.alignments.isNotEmpty()) {
+                for (align in routeData.alignments) {
+                    if (align.points.size < 2) continue
+                    reusableRoutePath.reset()
+                    var started = false
+                    for (pt in align.points) {
+                        val off = toScreen(pt)
+                        if (!started) {
+                            reusableRoutePath.moveTo(off.x, off.y)
+                            started = true
+                        } else {
+                            reusableRoutePath.lineTo(off.x, off.y)
+                        }
+                    }
+
+                    // Soft wide outer bloom
+                    drawPath(
+                        path = reusableRoutePath,
+                        color = outerGlowColor.copy(alpha = 0.22f),
+                        style = Stroke(width = 20.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    // Mid luminous halo
+                    drawPath(
+                        path = reusableRoutePath,
+                        color = outerGlowColor.copy(alpha = 0.36f),
+                        style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    // Subtle crisp centerline
+                    drawPath(
+                        path = reusableRoutePath,
+                        color = routeCoreColor.copy(alpha = 0.72f),
+                        style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                }
+            }
+        }
+
+        // Translucent Glass Veil + Soft Ambient Center Glow (keeps map subdued so chainage shines)
+        val glassTint = if (useDarkGlass) {
+            Color(0xFF060B16).copy(alpha = 0.64f)
+        } else {
+            Color(0xFFF8FAFC).copy(alpha = 0.62f)
+        }
+        val radialSpotlight = if (useDarkGlass) {
+            Brush.radialGradient(
+                colors = listOf(
+                    Color(0xFF0EA5E9).copy(alpha = 0.14f),
+                    Color(0xFF060B16).copy(alpha = 0.45f),
+                    Color(0xFF020617).copy(alpha = 0.78f)
+                )
+            )
+        } else {
+            Brush.radialGradient(
+                colors = listOf(
+                    Color(0xFFFFFFFF).copy(alpha = 0.54f),
+                    Color(0xFFF1F5F9).copy(alpha = 0.42f),
+                    Color(0xFFCBD5E1).copy(alpha = 0.56f)
+                )
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(glassTint)
+                .background(radialSpotlight)
+        )
+
+        // Small Crisp Live GPS Navigation Indicator drawn above the frosted glass
+        if (location != null) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val (ux, uy) = OsmTileManager.geoToScreen(
+                    pt = location,
+                    center = interpolatedAnchor,
+                    widthPx = size.width,
+                    heightPx = size.height,
+                    zoom = zoom,
+                    panOffsetX = 0f,
+                    panOffsetY = 0f
+                )
+                val userOff = Offset(ux, uy)
+                if (ux in -48f..(size.width + 48f) && uy in -48f..(size.height + 48f)) {
+                    drawCircle(
+                        color = navIndicatorColor.copy(alpha = navPulse),
+                        radius = 16.dp.toPx(),
+                        center = userOff
+                    )
+                    val activeHeading = bearing ?: compassHeading
+                    rotate(degrees = activeHeading, pivot = userOff) {
+                        reusableRoutePath.reset()
+                        reusableRoutePath.moveTo(userOff.x, userOff.y - 10.dp.toPx())
+                        reusableRoutePath.lineTo(userOff.x - 5.5.dp.toPx(), userOff.y + 5.5.dp.toPx())
+                        reusableRoutePath.lineTo(userOff.x, userOff.y + 2.dp.toPx())
+                        reusableRoutePath.lineTo(userOff.x + 5.5.dp.toPx(), userOff.y + 5.5.dp.toPx())
+                        reusableRoutePath.close()
+                        drawPath(path = reusableRoutePath, color = navIndicatorColor.copy(alpha = 0.92f))
+                    }
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.92f),
+                        radius = 4.2.dp.toPx(),
+                        center = userOff
+                    )
+                    drawCircle(
+                        color = navIndicatorColor,
+                        radius = 2.6.dp.toPx(),
+                        center = userOff
+                    )
+                }
+            }
         }
     }
 }
