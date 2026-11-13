@@ -9,7 +9,12 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import com.example.data.AppDatabase
 import com.example.data.PhotoRecordEntity
@@ -51,7 +56,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class AppTab(val label: String) {
@@ -259,12 +266,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = emptyList()
     )
 
-    // Project & Overlay Settings
-    val projectProfile: StateFlow<ProjectProfile> = preferencesManager.projectProfileFlow.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = ProjectProfile()
-    )
+    // Project & Overlay Settings (Authoritative in-memory StateFlow synced with DataStore)
+    private val _projectProfile = MutableStateFlow(ProjectProfile())
+    val projectProfile: StateFlow<ProjectProfile> = _projectProfile.asStateFlow()
 
     val definedProjects: StateFlow<List<DefinedProject>> = preferencesManager.definedProjectsFlow.stateIn(
         scope = viewModelScope,
@@ -475,16 +479,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.distinctUntilChanged()
 
-    // Automatic KMZ / Custom Correction / GPS calculation (Tiers 2, 3, 4) running on background Default dispatcher
-    private val autoMatchResultFlow: Flow<ChainageMatchResult> = combine(
-        locationState,
-        effectiveRouteFlow,
-        routeCorrectionsMap,
-        isRouteCorrectionsEnabled
-    ) { loc: LocationState, route: RouteData?, correctionsMap: Map<String, List<ChainageCorrectionPoint>>, isCorrectionsEnabled: Boolean ->
+    // Dedicated CoroutineScope for conflated GPS & alignment matching + Heartbeat Monitor
+    private val calibrationMatchingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var activeMatchingSubTaskJob: Job? = null
+    private val _autoMatchStateFlow = MutableStateFlow(ChainageMatchResult.noRoute())
+
+    val calibrationDiagnostics: StateFlow<SmartChainageCorrectionEngine.CalibrationEngineDiagnostics> =
+        SmartChainageCorrectionEngine.diagnosticsFlow
+
+    private fun computeAutoMatchForState(
+        loc: LocationState,
+        route: RouteData?,
+        correctionsMap: Map<String, List<ChainageCorrectionPoint>>,
+        isCorrectionsEnabled: Boolean
+    ): ChainageMatchResult {
         // Tier 4 fallback if no GPS fix
         if (loc.point == null) {
-            return@combine ChainageMatchResult.noRoute(loc.accuracy).copy(
+            return ChainageMatchResult.noRoute(loc.accuracy).copy(
                 detectedSide = progressionTracker.getCurrentSide(),
                 source = ChainageSource.GPS
             )
@@ -492,7 +503,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Tier 4 fallback if no route loaded
         if (route == null || (route.markers.isEmpty() && route.alignments.isEmpty())) {
-            return@combine ChainageMatchResult(
+            return ChainageMatchResult(
                 confidence = com.example.model.MatchConfidence.NO_MATCH,
                 gpsAccuracy = loc.accuracy,
                 statusMessage = "No route loaded (GPS Active)",
@@ -500,6 +511,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 source = ChainageSource.GPS
             )
         }
+
+        val startNs = System.nanoTime()
+        SmartChainageCorrectionEngine.notifyTaskStarted()
+
+        val activeAlign = route.activeAlignment ?: route.alignments.firstOrNull()
+        val cachedGeom = if (activeAlign != null && activeAlign.points.size >= 2) {
+            ChainageMatcher.getOrCreateCachedGeometry(activeAlign, route.markers)
+        } else null
 
         // Calculate original KMZ alignment match with precision nearest-segment & continuity
         val kmzMatch = ChainageMatcher.match(
@@ -515,7 +534,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (kmzMatch.confidence == com.example.model.MatchConfidence.NO_MATCH || rawKmzChainage == null) {
             val stabilized = progressionTracker.processResult(kmzMatch, route.id)
             lastCalculatedMatchResult = stabilized
-            return@combine stabilized.copy(
+            val latencyUs = (System.nanoTime() - startNs) / 1_000L
+            SmartChainageCorrectionEngine.notifyTaskCompleted(
+                latencyMicros = latencyUs,
+                alignmentName = activeAlign?.name ?: route.name,
+                segmentsCount = cachedGeom?.segmentCount ?: 0,
+                gridCellsCount = cachedGeom?.mappedMarkers?.size ?: 0,
+                matchedChainage = stabilized.displayChainage,
+                offsetMetres = stabilized.offsetMetres,
+                confidence = stabilized.confidence.name,
+                hierarchyTier = SmartChainageCorrectionEngine.CalibrationHierarchyTier.TIER_5_GPS_FALLBACK.label
+            )
+            return stabilized.copy(
                 source = ChainageSource.GPS,
                 rawUncorrectedChainage = null
             )
@@ -556,16 +586,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val stabilized = progressionTracker.processResult(finalResult, route.id)
         lastCalculatedMatchResult = stabilized
-        if (!progressionTracker.isManualOverride() && stabilized.detectedSide.isNotBlank() && stabilized.detectedSide != "Unknown") {
+
+        val latencyUs = (System.nanoTime() - startNs) / 1_000L
+        val tierLabel = smartCorrected?.hierarchyTier?.label
+            ?: SmartChainageCorrectionEngine.CalibrationHierarchyTier.TIER_2_VALIDATED_ALIGNMENT.label
+
+        SmartChainageCorrectionEngine.notifyTaskCompleted(
+            latencyMicros = latencyUs,
+            alignmentName = activeAlign?.name ?: route.name,
+            segmentsCount = cachedGeom?.segmentCount ?: 0,
+            gridCellsCount = cachedGeom?.mappedMarkers?.size ?: 0,
+            matchedChainage = stabilized.displayChainage,
+            offsetMetres = stabilized.offsetMetres,
+            confidence = stabilized.confidence.name,
+            hierarchyTier = tierLabel
+        )
+
+        if (!progressionTracker.isManualOverride() &&
+            stabilized.detectedSide.isNotBlank() &&
+            stabilized.detectedSide != "Unknown" &&
+            _projectProfile.value.roadSide != com.example.model.RoadSide.NONE
+        ) {
             val detectedEnum = com.example.model.RoadSide.fromString(stabilized.detectedSide)
-            if (projectProfile.value.roadSide != detectedEnum) {
+            if (_projectProfile.value.roadSide != detectedEnum) {
+                _projectProfile.update { it.copy(roadSide = detectedEnum) }
                 viewModelScope.launch(Dispatchers.IO) {
-                    preferencesManager.updateProjectProfile(projectProfile.value.copy(roadSide = detectedEnum))
+                    preferencesManager.editProjectProfile { it.copy(roadSide = detectedEnum) }
                 }
             }
         }
-        stabilized
-    }.flowOn(Dispatchers.Default)
+        return stabilized
+    }
+
+    /**
+     * Starts or restarts the dedicated conflated GPS alignment matching sub-task without requiring
+     * a full application refresh or screen navigation.
+     */
+    fun restartCalibrationMatchingSubTask(reason: String = "Manual diagnostic restart") {
+        activeMatchingSubTaskJob?.cancel()
+        if (reason != "Initial startup") {
+            SmartChainageCorrectionEngine.recordSubTaskRestarted(reason)
+        }
+        activeMatchingSubTaskJob = calibrationMatchingScope.launch {
+            val conflatedGpsFlow = locationState
+                .onEach { SmartChainageCorrectionEngine.recordGpsUpdateReceived() }
+                .conflate()
+
+            combine(
+                conflatedGpsFlow,
+                effectiveRouteFlow,
+                routeCorrectionsMap,
+                isRouteCorrectionsEnabled
+            ) { loc, route, correctionsMap, isCorrectionsEnabled ->
+                computeAutoMatchForState(loc, route, correctionsMap, isCorrectionsEnabled)
+            }.conflate().collect { result ->
+                _autoMatchStateFlow.value = result
+            }
+        }
+    }
 
     // Unified live match result with strict 4-tier priority across Home Page, Camera, and Media Watermarks:
     // 1. MANUAL override (highest priority, preserving LHS/RHS detection & underlying KMZ reference)
@@ -573,7 +651,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // 3. KMZ (original imported KMZ chainage)
     // 4. GPS (unmatched fallback)
     val liveMatchResult: StateFlow<ChainageMatchResult> = combine(
-        autoMatchResultFlow,
+        _autoMatchStateFlow,
         manualChainage,
         manualChainageText
     ) { autoResult, manual, manualText ->
@@ -633,6 +711,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isImportingRoute: StateFlow<Boolean> = _isImportingRoute.asStateFlow()
 
     init {
+        // Synchronize authoritative in-memory ProjectProfile with persisted DataStore preferences
+        viewModelScope.launch {
+            preferencesManager.projectProfileFlow.collect { savedProfile ->
+                _projectProfile.value = savedProfile
+            }
+        }
+
+        // Start dedicated conflated GPS + Alignment matching sub-task
+        restartCalibrationMatchingSubTask("Initial startup")
+
+        // Heartbeat-based monitor that detects stalls in chainage calculation tasks and automatically restarts affected sub-tasks
+        calibrationMatchingScope.launch {
+            while (isActive) {
+                kotlinx.coroutines.delay(SmartChainageCorrectionEngine.DEFAULT_HEARTBEAT_INTERVAL_MS)
+                val stallDetected = SmartChainageCorrectionEngine.checkHeartbeatAndDetectStall(
+                    stallThresholdMs = SmartChainageCorrectionEngine.DEFAULT_STALL_TIMEOUT_MS
+                )
+                val subTaskDead = activeMatchingSubTaskJob?.isActive != true
+                if (stallDetected || subTaskDead) {
+                    val reason = if (stallDetected) {
+                        "Heartbeat watchdog detected calculation stall (>2.5s)"
+                    } else {
+                        "Heartbeat watchdog restarted inactive matching sub-task"
+                    }
+                    restartCalibrationMatchingSubTask(reason)
+                }
+            }
+        }
 
         // Restore saved manual chainage override
         viewModelScope.launch {
@@ -1396,44 +1502,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateSide(side: RoadSide) {
+        progressionTracker.setManualSide(side.label)
+        _projectProfile.update { it.copy(roadSide = side) }
         viewModelScope.launch {
-            progressionTracker.setManualSide(side.name)
-            preferencesManager.updateProjectProfile(projectProfile.value.copy(roadSide = side))
+            preferencesManager.editProjectProfile { it.copy(roadSide = side) }
         }
     }
 
     fun resetSideToAuto() {
         viewModelScope.launch {
             progressionTracker.clearManualSide()
+            val detected = progressionTracker.getCurrentSide()
+            if (detected.isNotBlank() && detected != "Unknown") {
+                val detectedEnum = RoadSide.fromString(detected)
+                _projectProfile.update { it.copy(roadSide = detectedEnum) }
+                preferencesManager.editProjectProfile { it.copy(roadSide = detectedEnum) }
+            }
             _uiMessages.emit(UiMessage.Info("Side set to Auto-Detection"))
         }
     }
 
     fun updateLane(lane: String) {
+        val clean = lane.trim()
+        _projectProfile.update { it.copy(lane = clean) }
         viewModelScope.launch {
-            preferencesManager.updateProjectProfile(projectProfile.value.copy(lane = lane))
+            preferencesManager.editProjectProfile { it.copy(lane = clean) }
         }
     }
 
     fun updateActivity(activity: String) {
+        val clean = activity.trim()
+        _projectProfile.update { it.copy(activity = clean) }
         viewModelScope.launch {
-            preferencesManager.updateProjectProfile(projectProfile.value.copy(activity = activity))
+            preferencesManager.editProjectProfile { it.copy(activity = clean) }
+        }
+    }
+
+    fun updateSubActivity(subActivity: String) {
+        val clean = subActivity.trim()
+        _projectProfile.update { it.copy(subActivity = clean) }
+        viewModelScope.launch {
+            preferencesManager.editProjectProfile { it.copy(subActivity = clean) }
         }
     }
 
     fun updateCustomDescription(description: String) {
+        val clean = description.trim()
+        _projectProfile.update { it.copy(customDescription = clean) }
         viewModelScope.launch {
-            preferencesManager.updateProjectProfile(projectProfile.value.copy(customDescription = description))
+            preferencesManager.editProjectProfile { it.copy(customDescription = clean) }
         }
     }
 
     fun updateWorkType(workType: String) {
+        val clean = workType.trim()
+        _projectProfile.update { it.copy(workType = clean) }
         viewModelScope.launch {
-            preferencesManager.updateProjectProfile(projectProfile.value.copy(workType = workType))
+            preferencesManager.editProjectProfile { it.copy(workType = clean) }
         }
     }
 
     fun saveProjectProfile(profile: ProjectProfile) {
+        _projectProfile.value = profile
         viewModelScope.launch {
             preferencesManager.updateProjectProfile(profile)
             syncProjectToRepository(profile)
@@ -1442,6 +1572,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveProjectProfileSilent(profile: ProjectProfile) {
+        _projectProfile.value = profile
         viewModelScope.launch {
             preferencesManager.updateProjectProfile(profile)
             syncProjectToRepository(profile)
@@ -1729,6 +1860,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 lane = defaultSnapshot.projectProfile.lane,
                 workType = defaultSnapshot.projectProfile.workType,
                 activity = defaultSnapshot.projectProfile.activity,
+                subActivity = defaultSnapshot.projectProfile.subActivity,
                 isVideo = true
             )
 
@@ -1849,6 +1981,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         roadSide = defaultSnapshot.projectProfile.roadSide.label,
                         lane = defaultSnapshot.projectProfile.lane,
                         activity = defaultSnapshot.projectProfile.activity,
+                        subActivity = defaultSnapshot.projectProfile.subActivity,
                         customDescription = defaultSnapshot.projectProfile.customDescription,
                         inspectorName = defaultSnapshot.projectProfile.inspectorName,
                         formattedOverlayText = defaultSnapshot.projectProfile.buildHighwayText(defaultSnapshot.displayChainage)
@@ -2028,20 +2161,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isCapturing.value = true
             try {
-                val snapshot = CaptureSnapshot(
-                    timestamp = System.currentTimeMillis(),
-                    location = locationState.value.point,
-                    gpsAccuracy = locationState.value.accuracy,
-                    bearing = locationState.value.bearing,
-                    matchResult = cameraMatchResult.value,
-                    projectProfile = projectProfile.value,
-                    overlayConfig = overlayConfig.value,
-                    activeRoute = activeRouteData.value,
-                    deviceRotationDegrees = rotationDegrees.value.toInt(),
-                    compassHeading = compassState.value.displayHeading,
-                    compassAzimuth = compassState.value.azimuthDegrees,
-                    isDarkTheme = themeMode.value != "light"
-                )
+                val snapshot = createCurrentSnapshot()
 
                 val result = photoRepository.saveCapturedPhoto(bitmap, snapshot)
                 if (result.isSuccess) {
@@ -2104,5 +2224,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Error(message))
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        calibrationMatchingScope.cancel()
     }
 }

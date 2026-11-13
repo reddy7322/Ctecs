@@ -37,6 +37,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_ROAD_SIDE = stringPreferencesKey("road_side")
         val KEY_LANE = stringPreferencesKey("lane")
         val KEY_ACTIVITY = stringPreferencesKey("activity")
+        val KEY_SUB_ACTIVITY = stringPreferencesKey("sub_activity")
         val KEY_DESCRIPTION = stringPreferencesKey("description")
         val KEY_INSPECTOR = stringPreferencesKey("inspector")
         val KEY_SEPARATOR = stringPreferencesKey("separator")
@@ -266,9 +267,20 @@ class PreferencesManager(private val context: Context) {
     }
 
     val projectProfileFlow: Flow<ProjectProfile> = context.dataStore.data.map { prefs ->
-        val rawWorkType = prefs[KEY_WORK_TYPE] ?: if (prefs[KEY_ACTIVITY] == "MM" || prefs[KEY_ACTIVITY] == "RM" || prefs[KEY_ACTIVITY] == "LIE" || prefs[KEY_ACTIVITY] == "None") prefs[KEY_ACTIVITY] ?: "" else ""
-        val rawActivity = if (prefs[KEY_ACTIVITY] == "MM" || prefs[KEY_ACTIVITY] == "RM" || prefs[KEY_ACTIVITY] == "LIE" || prefs[KEY_ACTIVITY] == "None") "DBM" else prefs[KEY_ACTIVITY] ?: "DBM"
-        ProjectProfile(
+        parseProjectProfileFromPrefs(prefs)
+    }
+
+    private fun parseProjectProfileFromPrefs(prefs: androidx.datastore.preferences.core.Preferences): ProjectProfile {
+        val savedActivity = prefs[KEY_ACTIVITY]
+        val rawWorkType = prefs[KEY_WORK_TYPE] ?: if (
+            savedActivity == "MM" || savedActivity == "RM" || savedActivity == "LIE"
+        ) savedActivity else ""
+        val rawActivity = when {
+            savedActivity == null -> "DBM"
+            savedActivity == "MM" || savedActivity == "RM" || savedActivity == "LIE" -> "DBM"
+            else -> savedActivity
+        }
+        return ProjectProfile(
             highwayId = prefs[KEY_HIGHWAY_ID] ?: "",
             packageSection = prefs[KEY_PACKAGE_SECTION] ?: "",
             startChainage = prefs[KEY_PROJECT_START_CHAINAGE] ?: "0+000",
@@ -277,6 +289,7 @@ class PreferencesManager(private val context: Context) {
             roadSide = RoadSide.fromString(prefs[KEY_ROAD_SIDE]),
             lane = prefs[KEY_LANE] ?: "I/L",
             activity = rawActivity,
+            subActivity = prefs[KEY_SUB_ACTIVITY] ?: "",
             customDescription = prefs[KEY_DESCRIPTION] ?: "",
             inspectorName = prefs[KEY_INSPECTOR] ?: "",
             separator = prefs[KEY_SEPARATOR] ?: "||"
@@ -414,18 +427,36 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun updateProjectProfile(profile: ProjectProfile) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_HIGHWAY_ID] = profile.highwayId
-            prefs[KEY_PACKAGE_SECTION] = profile.packageSection
-            prefs[KEY_PROJECT_START_CHAINAGE] = profile.startChainage
-            prefs[KEY_PROJECT_END_CHAINAGE] = profile.endChainage
-            prefs[KEY_WORK_TYPE] = profile.workType
-            prefs[KEY_ROAD_SIDE] = profile.roadSide.name
-            prefs[KEY_LANE] = profile.lane
-            prefs[KEY_ACTIVITY] = profile.activity
-            prefs[KEY_DESCRIPTION] = profile.customDescription
-            prefs[KEY_INSPECTOR] = profile.inspectorName
-            prefs[KEY_SEPARATOR] = profile.separator
+            writeProjectProfileToPrefs(prefs, profile)
         }
+    }
+
+    suspend fun editProjectProfile(transform: (ProjectProfile) -> ProjectProfile): ProjectProfile {
+        var updated = ProjectProfile()
+        context.dataStore.edit { prefs ->
+            val current = parseProjectProfileFromPrefs(prefs)
+            updated = transform(current)
+            writeProjectProfileToPrefs(prefs, updated)
+        }
+        return updated
+    }
+
+    private fun writeProjectProfileToPrefs(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        profile: ProjectProfile
+    ) {
+        prefs[KEY_HIGHWAY_ID] = profile.highwayId
+        prefs[KEY_PACKAGE_SECTION] = profile.packageSection
+        prefs[KEY_PROJECT_START_CHAINAGE] = profile.startChainage
+        prefs[KEY_PROJECT_END_CHAINAGE] = profile.endChainage
+        prefs[KEY_WORK_TYPE] = profile.workType
+        prefs[KEY_ROAD_SIDE] = profile.roadSide.label
+        prefs[KEY_LANE] = profile.lane
+        prefs[KEY_ACTIVITY] = profile.activity
+        prefs[KEY_SUB_ACTIVITY] = profile.subActivity
+        prefs[KEY_DESCRIPTION] = profile.customDescription
+        prefs[KEY_INSPECTOR] = profile.inspectorName
+        prefs[KEY_SEPARATOR] = profile.separator
     }
 
     suspend fun updateOverlayConfig(config: OverlayConfig) {

@@ -793,12 +793,13 @@ object OverlayRenderer {
                 }
 
                 val userComment = listOfNotNull(
-                    snapshot.projectProfile.highwayId.takeIf { it.isNotBlank() },
-                    snapshot.projectProfile.packageSection.takeIf { it.isNotBlank() },
-                    snapshot.displayChainage.takeIf { it.isNotBlank() },
-                    snapshot.projectProfile.roadSide.name.takeIf { it.isNotBlank() },
-                    snapshot.projectProfile.lane.takeIf { it.isNotBlank() },
-                    snapshot.projectProfile.activity.takeIf { it.isNotBlank() },
+                    snapshot.projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                    snapshot.projectProfile.packageSection.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                    snapshot.displayChainage.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                    snapshot.projectProfile.roadSide.label.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                    snapshot.projectProfile.lane.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                    snapshot.projectProfile.activity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                    snapshot.projectProfile.subActivity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { "($it)" },
                     if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) locName else null
                 ).joinToString(" ")
                 exif.setAttribute(ExifInterface.TAG_USER_COMMENT, userComment)

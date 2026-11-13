@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -18,11 +19,14 @@ interface PhotoRecordDao {
     @Query("SELECT * FROM photo_records WHERE id = :id")
     suspend fun getPhotoById(id: Long): PhotoRecordEntity?
 
-    @Query("SELECT * FROM photo_records WHERE chainageLabel LIKE '%' || :query || '%' OR activity LIKE '%' || :query || '%' ORDER BY timestamp DESC")
+    @Query("SELECT * FROM photo_records WHERE chainageLabel LIKE '%' || :query || '%' OR activity LIKE '%' || :query || '%' OR subActivity LIKE '%' || :query || '%' OR fileName LIKE '%' || :query || '%' OR highwayId LIKE '%' || :query || '%' ORDER BY timestamp DESC")
     fun searchPhotos(query: String): Flow<List<PhotoRecordEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPhoto(photo: PhotoRecordEntity): Long
+
+    @Update
+    suspend fun updatePhoto(photo: PhotoRecordEntity)
 
     @Delete
     suspend fun deletePhoto(photo: PhotoRecordEntity)

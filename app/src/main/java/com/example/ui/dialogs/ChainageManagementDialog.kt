@@ -169,6 +169,7 @@ fun ChainageManagementDialog(
     val routeImportError by viewModel.routeImportError.collectAsStateWithLifecycle()
     val savedProfiles by viewModel.calibrationProfiles.collectAsStateWithLifecycle()
     val profileCompatibility by viewModel.activeProfileCompatibility.collectAsStateWithLifecycle()
+    val calibrationDiagnostics by viewModel.calibrationDiagnostics.collectAsStateWithLifecycle()
 
     var showResetCalibrationConfirm by remember { mutableStateOf(false) }
     var showRemoveAlignmentConfirm by remember { mutableStateOf(false) }
@@ -379,6 +380,20 @@ fun ChainageManagementDialog(
                             coroutineScope.launch {
                                 scrollState.animateScrollTo(0)
                             }
+                        }
+                    )
+
+                    // 4. REAL-TIME CALIBRATION ENGINE & GPS DIAGNOSTIC MONITOR PANEL
+                    CalibrationEngineDiagnosticMonitorCard(
+                        diagnostics = calibrationDiagnostics,
+                        primaryAccent = primaryAccent,
+                        greenAccent = greenAccent,
+                        amberAccent = amberAccent,
+                        redAccent = redAccent,
+                        dialogColors = dialogColors,
+                        onRestartMatchingSubTask = {
+                            viewModel.restartCalibrationMatchingSubTask("User triggered diagnostic sub-task restart")
+                            viewModel.showToast("Calibration matching sub-task restarted", com.example.ui.ToastType.INFO)
                         }
                     )
                 }
@@ -2652,4 +2667,237 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
         }
     }
 }
+
+@Composable
+private fun CalibrationEngineDiagnosticMonitorCard(
+    diagnostics: SmartChainageCorrectionEngine.CalibrationEngineDiagnostics,
+    primaryAccent: Color,
+    greenAccent: Color,
+    amberAccent: Color,
+    redAccent: Color,
+    dialogColors: DialogThemeTokens,
+    onRestartMatchingSubTask: () -> Unit
+) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+
+    val statusColor = when (diagnostics.engineStatus) {
+        SmartChainageCorrectionEngine.EngineHealthStatus.HEALTHY -> greenAccent
+        SmartChainageCorrectionEngine.EngineHealthStatus.RECOVERED -> primaryAccent
+        SmartChainageCorrectionEngine.EngineHealthStatus.STALL_DETECTED -> redAccent
+        SmartChainageCorrectionEngine.EngineHealthStatus.IDLE -> amberAccent
+    }
+    val cardBgColor = if (dialogColors.isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)
+    val surfaceSubtleColor = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("calibration_diagnostic_monitor_panel"),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = cardBgColor),
+        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.35f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(statusColor)
+                    )
+                    Column {
+                        Text(
+                            text = "CALIBRATION ENGINE & GPS DIAGNOSTIC MONITOR",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = primaryAccent,
+                            letterSpacing = 0.6.sp
+                        )
+                        Text(
+                            text = "${diagnostics.engineStatus.label} • ${diagnostics.throughputHz} Hz • ${diagnostics.lastMatchLatencyMicros} µs",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = statusColor
+                        )
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onRestartMatchingSubTask,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, primaryAccent.copy(alpha = 0.5f)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .height(32.dp)
+                        .testTag("restart_calibration_subtask_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Restart Matching Sub-Task",
+                        tint = primaryAccent,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Restart Task",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = primaryAccent
+                    )
+                }
+            }
+
+            if (expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HorizontalDivider(color = dialogColors.borderColor)
+
+                    // Row 1: Engine Heartbeat & Watchdog Metrics
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        DiagnosticMetricTile(
+                            modifier = Modifier.weight(1f),
+                            label = "WATCHDOG",
+                            value = if (diagnostics.isCalculationInProgress) "Running" else "Heartbeat OK",
+                            subValue = "Stalls: ${diagnostics.stallDetectedCount} • Restarts: ${diagnostics.autoRestartCount}",
+                            accentColor = statusColor,
+                            dialogColors = dialogColors
+                        )
+                        DiagnosticMetricTile(
+                            modifier = Modifier.weight(1f),
+                            label = "MATCH LATENCY",
+                            value = "${diagnostics.lastMatchLatencyMicros} µs",
+                            subValue = "Avg: ${diagnostics.averageMatchLatencyMicros} µs • Calib: ${diagnostics.lastCalibrationLatencyMicros} µs",
+                            accentColor = primaryAccent,
+                            dialogColors = dialogColors
+                        )
+                    }
+
+                    // Row 2: Conflated GPS Throughput & Alignment Spatial Cache Metrics
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        DiagnosticMetricTile(
+                            modifier = Modifier.weight(1f),
+                            label = "GPS CONFLATION",
+                            value = "${diagnostics.totalMatchesCompleted} / ${diagnostics.totalGpsUpdatesReceived} fixes",
+                            subValue = "Coalesced: ${diagnostics.conflatedSkippedUpdates} • ${diagnostics.throughputHz} fixes/s",
+                            accentColor = greenAccent,
+                            dialogColors = dialogColors
+                        )
+                        DiagnosticMetricTile(
+                            modifier = Modifier.weight(1f),
+                            label = "ALIGNMENT CACHE",
+                            value = "${diagnostics.activeAlignmentSegmentsCount} segs",
+                            subValue = "Markers: ${diagnostics.spatialGridCellsCount} • Offset: ${String.format(java.util.Locale.US, "%.1fm", diagnostics.activeMatchOffsetMetres)}",
+                            accentColor = amberAccent,
+                            dialogColors = dialogColors
+                        )
+                    }
+
+                    // Active Tier & Alignment Summary
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = surfaceSubtleColor,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "Active Tier: ${diagnostics.activeHierarchyTier}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = dialogColors.titleColor
+                            )
+                            Text(
+                                text = "Alignment: ${diagnostics.activeAlignmentName} • Matched: ${diagnostics.activeMatchedChainageText} (${diagnostics.activeMatchConfidence})",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = dialogColors.textSecondaryColor
+                            )
+                            if (diagnostics.lastRecoveryReason.isNotBlank()) {
+                                Text(
+                                    text = "Last Recovery: ${diagnostics.lastRecoveryReason}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = primaryAccent
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticMetricTile(
+    modifier: Modifier = Modifier,
+    label: String,
+    value: String,
+    subValue: String,
+    accentColor: Color,
+    dialogColors: DialogThemeTokens
+) {
+    val surfaceSubtleColor = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = surfaceSubtleColor,
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.22f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = accentColor
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = dialogColors.titleColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = subValue,
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 10.sp,
+                color = dialogColors.textSecondaryColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
 

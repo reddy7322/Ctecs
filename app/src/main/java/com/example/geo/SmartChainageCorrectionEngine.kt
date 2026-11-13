@@ -18,6 +18,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -25,6 +26,10 @@ import java.util.zip.ZipOutputStream
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * CTECS Unified Permanent Chainage Calibration Engine.
@@ -47,13 +52,239 @@ object SmartChainageCorrectionEngine {
     private const val MAX_INTERPOLATION_SCALE_DEVIATION = 0.35 // 35% tolerance before flagging chainage equation/warning
     private const val CONFLICT_SCALE_THRESHOLD = 0.65 // >65% discrepancy without chainage equation flags conflict
     const val DEFAULT_CALIBRATION_MARKER_INTERVAL_METRES = 2000L // 2 km (2,000 m)
+    const val DEFAULT_HEARTBEAT_INTERVAL_MS = 1000L
+    const val DEFAULT_STALL_TIMEOUT_MS = 2500L
 
-    // Lightweight internal performance telemetry
+    // Lightweight internal performance & heartbeat telemetry
     private val lastCalibrationLatencyMicros = AtomicLong(0L)
     private val totalCalibrationsComputed = AtomicLong(0L)
+    private val cumulativeLatencyMicros = AtomicLong(0L)
+    private val totalGpsReceivedCounter = AtomicLong(0L)
+    private val totalMatchesCompletedCounter = AtomicLong(0L)
+    private val conflatedSkippedCounter = AtomicLong(0L)
+    private val stallDetectedCounter = AtomicLong(0L)
+    private val autoRestartCounter = AtomicLong(0L)
+    private val activeTaskStartEpochMs = AtomicLong(0L)
+    private val lastHeartbeatMs = AtomicLong(System.currentTimeMillis())
+    private val isTaskRunning = AtomicBoolean(false)
+    private val throughputWindowStartMs = AtomicLong(System.currentTimeMillis())
+    private val throughputWindowMatches = AtomicLong(0L)
+
+    enum class EngineHealthStatus(val label: String) {
+        HEALTHY("Healthy (Active)"),
+        IDLE("Standby (Idle)"),
+        STALL_DETECTED("Stall Detected — Restarting"),
+        RECOVERED("Auto-Recovered")
+    }
+
+    data class CalibrationEngineDiagnostics(
+        val engineStatus: EngineHealthStatus = EngineHealthStatus.IDLE,
+        val lastHeartbeatEpochMs: Long = System.currentTimeMillis(),
+        val activeTaskStartedAtEpochMs: Long = 0L,
+        val isCalculationInProgress: Boolean = false,
+        val totalGpsUpdatesReceived: Long = 0L,
+        val totalMatchesCompleted: Long = 0L,
+        val conflatedSkippedUpdates: Long = 0L,
+        val lastMatchLatencyMicros: Long = 0L,
+        val averageMatchLatencyMicros: Long = 0L,
+        val lastCalibrationLatencyMicros: Long = 0L,
+        val totalCalibrationsComputed: Long = 0L,
+        val throughputHz: Double = 0.0,
+        val stallDetectedCount: Long = 0L,
+        val autoRestartCount: Long = 0L,
+        val activeAlignmentName: String = "None",
+        val activeAlignmentSegmentsCount: Int = 0,
+        val spatialGridCellsCount: Int = 0,
+        val activeMatchedChainageText: String = "---",
+        val activeMatchOffsetMetres: Double = 0.0,
+        val activeMatchConfidence: String = "NO_MATCH",
+        val activeHierarchyTier: String = "Standby",
+        val lastRecoveryReason: String = ""
+    )
+
+    private val _diagnosticsFlow = MutableStateFlow(CalibrationEngineDiagnostics())
+    val diagnosticsFlow: StateFlow<CalibrationEngineDiagnostics> = _diagnosticsFlow.asStateFlow()
 
     fun getLastCalibrationLatencyMicros(): Long = lastCalibrationLatencyMicros.get()
     fun getTotalCalibrationsComputed(): Long = totalCalibrationsComputed.get()
+
+    fun recordGpsUpdateReceived(nowMs: Long = System.currentTimeMillis()) {
+        val total = totalGpsReceivedCounter.incrementAndGet()
+        // If a task is currently running when a new GPS update arrives, the conflated channel will coalesce intermediate updates
+        if (isTaskRunning.get()) {
+            val skipped = conflatedSkippedCounter.incrementAndGet()
+            _diagnosticsFlow.update {
+                it.copy(
+                    totalGpsUpdatesReceived = total,
+                    conflatedSkippedUpdates = skipped,
+                    lastHeartbeatEpochMs = nowMs
+                )
+            }
+        } else {
+            _diagnosticsFlow.update {
+                it.copy(
+                    totalGpsUpdatesReceived = total,
+                    lastHeartbeatEpochMs = nowMs
+                )
+            }
+        }
+    }
+
+    fun recordGpsUpdateConflated(skippedCount: Long = 1L) {
+        if (skippedCount <= 0L) return
+        val skipped = conflatedSkippedCounter.addAndGet(skippedCount)
+        _diagnosticsFlow.update {
+            it.copy(conflatedSkippedUpdates = skipped)
+        }
+    }
+
+    fun notifyTaskStarted(nowMs: Long = System.currentTimeMillis()): Long {
+        activeTaskStartEpochMs.set(nowMs)
+        lastHeartbeatMs.set(nowMs)
+        isTaskRunning.set(true)
+        _diagnosticsFlow.update {
+            it.copy(
+                isCalculationInProgress = true,
+                activeTaskStartedAtEpochMs = nowMs,
+                lastHeartbeatEpochMs = nowMs,
+                engineStatus = if (it.engineStatus == EngineHealthStatus.IDLE) EngineHealthStatus.HEALTHY else it.engineStatus
+            )
+        }
+        return nowMs
+    }
+
+    fun notifyTaskCompleted(
+        latencyMicros: Long,
+        alignmentName: String,
+        segmentsCount: Int,
+        gridCellsCount: Int,
+        matchedChainage: String,
+        offsetMetres: Double,
+        confidence: String,
+        hierarchyTier: String,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        isTaskRunning.set(false)
+        activeTaskStartEpochMs.set(0L)
+        lastHeartbeatMs.set(nowMs)
+        val completed = totalMatchesCompletedCounter.incrementAndGet()
+        val totalLat = cumulativeLatencyMicros.addAndGet(latencyMicros.coerceAtLeast(1L))
+        val avgLat = (totalLat / completed.coerceAtLeast(1L))
+
+        val winStart = throughputWindowStartMs.get()
+        val winMatches = throughputWindowMatches.incrementAndGet()
+        val elapsedSec = ((nowMs - winStart).coerceAtLeast(250L)) / 1000.0
+        val hz = ((winMatches / elapsedSec) * 10.0).roundToInt() / 10.0
+        if (nowMs - winStart > 10_000L) {
+            throughputWindowStartMs.set(nowMs)
+            throughputWindowMatches.set(0L)
+        }
+
+        _diagnosticsFlow.update { current ->
+            val nextStatus = if (current.autoRestartCount > 0L) {
+                EngineHealthStatus.RECOVERED
+            } else {
+                EngineHealthStatus.HEALTHY
+            }
+            current.copy(
+                engineStatus = nextStatus,
+                lastHeartbeatEpochMs = nowMs,
+                activeTaskStartedAtEpochMs = 0L,
+                isCalculationInProgress = false,
+                totalGpsUpdatesReceived = totalGpsReceivedCounter.get(),
+                totalMatchesCompleted = completed,
+                conflatedSkippedUpdates = conflatedSkippedCounter.get(),
+                lastMatchLatencyMicros = latencyMicros,
+                averageMatchLatencyMicros = avgLat,
+                lastCalibrationLatencyMicros = lastCalibrationLatencyMicros.get(),
+                totalCalibrationsComputed = totalCalibrationsComputed.get(),
+                throughputHz = hz,
+                activeAlignmentName = alignmentName.ifBlank { "Active Route" },
+                activeAlignmentSegmentsCount = segmentsCount,
+                spatialGridCellsCount = gridCellsCount,
+                activeMatchedChainageText = matchedChainage,
+                activeMatchOffsetMetres = offsetMetres,
+                activeMatchConfidence = confidence,
+                activeHierarchyTier = hierarchyTier
+            )
+        }
+    }
+
+    /**
+     * Called periodically by the Calibration Engine Heartbeat Monitor coroutine.
+     * Returns true if an active calculation task has stalled beyond [stallThresholdMs],
+     * automatically recording the stall so the caller can cancel and restart the affected sub-task.
+     */
+    fun checkHeartbeatAndDetectStall(
+        nowMs: Long = System.currentTimeMillis(),
+        stallThresholdMs: Long = DEFAULT_STALL_TIMEOUT_MS
+    ): Boolean {
+        lastHeartbeatMs.set(nowMs)
+        val running = isTaskRunning.get()
+        val startedAt = activeTaskStartEpochMs.get()
+        if (running && startedAt > 0L && (nowMs - startedAt) >= stallThresholdMs) {
+            val stalls = stallDetectedCounter.incrementAndGet()
+            isTaskRunning.set(false)
+            activeTaskStartEpochMs.set(0L)
+            _diagnosticsFlow.update {
+                it.copy(
+                    engineStatus = EngineHealthStatus.STALL_DETECTED,
+                    lastHeartbeatEpochMs = nowMs,
+                    isCalculationInProgress = false,
+                    activeTaskStartedAtEpochMs = 0L,
+                    stallDetectedCount = stalls,
+                    lastRecoveryReason = "Calculation exceeded ${stallThresholdMs}ms threshold (${nowMs - startedAt}ms)"
+                )
+            }
+            return true
+        }
+
+        _diagnosticsFlow.update {
+            it.copy(
+                lastHeartbeatEpochMs = nowMs,
+                lastCalibrationLatencyMicros = lastCalibrationLatencyMicros.get(),
+                totalCalibrationsComputed = totalCalibrationsComputed.get()
+            )
+        }
+        return false
+    }
+
+    fun recordSubTaskRestarted(
+        reason: String = "Heartbeat watchdog auto-restart",
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        val restarts = autoRestartCounter.incrementAndGet()
+        isTaskRunning.set(false)
+        activeTaskStartEpochMs.set(0L)
+        lastHeartbeatMs.set(nowMs)
+        _diagnosticsFlow.update {
+            it.copy(
+                engineStatus = EngineHealthStatus.RECOVERED,
+                lastHeartbeatEpochMs = nowMs,
+                isCalculationInProgress = false,
+                activeTaskStartedAtEpochMs = 0L,
+                autoRestartCount = restarts,
+                lastRecoveryReason = reason
+            )
+        }
+    }
+
+    fun resetDiagnostics(nowMs: Long = System.currentTimeMillis()) {
+        lastCalibrationLatencyMicros.set(0L)
+        totalCalibrationsComputed.set(0L)
+        cumulativeLatencyMicros.set(0L)
+        totalGpsReceivedCounter.set(0L)
+        totalMatchesCompletedCounter.set(0L)
+        conflatedSkippedCounter.set(0L)
+        stallDetectedCounter.set(0L)
+        autoRestartCounter.set(0L)
+        activeTaskStartEpochMs.set(0L)
+        lastHeartbeatMs.set(nowMs)
+        isTaskRunning.set(false)
+        throughputWindowStartMs.set(nowMs)
+        throughputWindowMatches.set(0L)
+        _diagnosticsFlow.value = CalibrationEngineDiagnostics(lastHeartbeatEpochMs = nowMs)
+    }
 
     enum class CalibrationHierarchyTier(val rank: Int, val label: String) {
         TIER_1_VERIFIED_CONTROL_POINT(1, "Verified Permanent Control Point"),

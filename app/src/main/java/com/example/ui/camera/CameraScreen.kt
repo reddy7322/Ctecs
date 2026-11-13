@@ -342,9 +342,14 @@ fun CameraScreen(
         label = "icon_rotation"
     )
 
+    val definedProjects by viewModel.definedProjects.collectAsStateWithLifecycle()
+
     var showSimDialog by remember { mutableStateOf(false) }
     var showActivityMenu by remember { mutableStateOf(false) }
+    var showSubActivityMenu by remember { mutableStateOf(false) }
+    var showSideMenu by remember { mutableStateOf(false) }
     var showManualActivityDialog by remember { mutableStateOf(false) }
+    var showHighwayCustomisationDialog by remember { mutableStateOf(false) }
     var showExposureSlider by remember { mutableStateOf(false) }
     var showZoomSlider by remember { mutableStateOf(false) }
     var showQuickSettingsPopup by remember { mutableStateOf(false) }
@@ -1000,88 +1005,137 @@ fun CameraScreen(
                         .testTag("landscape_minimap_preview")
                 )
 
-                // Control 2: LHS / RHS Segmented Pill (Full Transparent Glass)
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(33.dp)
-                        .testTag("landscape_side_pill")
-                ) {
-                    Row(modifier = Modifier.fillMaxSize()) {
-                        val isLhs = projectProfile.roadSide == RoadSide.LHS
-                        val isRhs = projectProfile.roadSide == RoadSide.RHS
+                // Control 2: LHS / RHS / BHS / Median / None Segmented Pill (Full Transparent Glass)
+                Box {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color.Transparent,
+                        border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(33.dp)
+                            .testTag("landscape_side_pill")
+                    ) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            val isLhs = projectProfile.roadSide == RoadSide.LHS
+                            val isRhs = projectProfile.roadSide == RoadSide.RHS
+                            val isOtherSide = !isLhs && !isRhs
 
-                        // LHS Segment
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
-                                .background(Color.Transparent)
-                                .clickable { viewModel.updateSide(RoadSide.LHS) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            // LHS Segment
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
+                                    .background(Color.Transparent)
+                                    .clickable { viewModel.updateSide(RoadSide.LHS) },
+                                contentAlignment = Alignment.Center
                             ) {
-                                if (isLhs) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(HighlightYellow)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    if (isLhs) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(5.dp)
+                                                .clip(CircleShape)
+                                                .background(HighlightYellow)
+                                        )
+                                    }
+                                    Text(
+                                        text = "LHS",
+                                        color = if (isLhs) HighlightYellow else PrimaryText,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isLhs) FontWeight.Black else FontWeight.Medium
                                     )
                                 }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .width(0.8.dp)
+                                    .fillMaxHeight()
+                                    .background(Color.White.copy(alpha = 0.25f))
+                            )
+
+                            // RHS Segment
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxSize()
+                                    .background(Color.Transparent)
+                                    .clickable { viewModel.updateSide(RoadSide.RHS) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    if (isRhs) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(5.dp)
+                                                .clip(CircleShape)
+                                                .background(HighlightYellow)
+                                        )
+                                    }
+                                    Text(
+                                        text = "RHS",
+                                        color = if (isRhs) HighlightYellow else PrimaryText,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isRhs) FontWeight.Black else FontWeight.Medium
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .width(0.8.dp)
+                                    .fillMaxHeight()
+                                    .background(Color.White.copy(alpha = 0.25f))
+                            )
+
+                            // BHS / Median / None Dropdown Segment
+                            Box(
+                                modifier = Modifier
+                                    .weight(1.1f)
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp))
+                                    .background(Color.Transparent)
+                                    .clickable { showSideMenu = true },
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    text = "LHS",
-                                    color = if (isLhs) HighlightYellow else PrimaryText,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = if (isLhs) FontWeight.Black else FontWeight.Medium
+                                    text = if (isOtherSide) projectProfile.roadSide.label else "BHS▾",
+                                    color = if (isOtherSide) HighlightYellow else PrimaryText,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = if (isOtherSide) FontWeight.Black else FontWeight.Medium,
+                                    maxLines = 1
                                 )
                             }
                         }
+                    }
 
-                        // Subtle Glass Divider line
-                        Box(
-                            modifier = Modifier
-                                .width(0.8.dp)
-                                .fillMaxHeight()
-                                .background(Color.White.copy(alpha = 0.25f))
-                        )
-
-                        // RHS Segment
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp))
-                                .background(Color.Transparent)
-                                .clickable { viewModel.updateSide(RoadSide.RHS) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (isRhs) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(HighlightYellow)
+                    DropdownMenu(
+                        expanded = showSideMenu,
+                        onDismissRequest = { showSideMenu = false }
+                    ) {
+                        RoadSide.entries.forEach { sideOption ->
+                            val isSel = projectProfile.roadSide == sideOption
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = sideOption.label,
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSel) HighlightYellow else Color.Unspecified
                                     )
+                                },
+                                onClick = {
+                                    viewModel.updateSide(sideOption)
+                                    showSideMenu = false
                                 }
-                                Text(
-                                    text = "RHS",
-                                    color = if (isRhs) HighlightYellow else PrimaryText,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = if (isRhs) FontWeight.Black else FontWeight.Medium
-                                )
-                            }
+                            )
                         }
                     }
                 }
@@ -1111,7 +1165,7 @@ fun CameraScreen(
                             ) {
                                 RoadMarkingIcon(tint = PrimaryText)
                                 Text(
-                                    text = projectProfile.lane.ifBlank { "Main CW" },
+                                    text = projectProfile.lane.ifBlank { "None" },
                                     color = PrimaryText,
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Bold,
@@ -1130,12 +1184,7 @@ fun CameraScreen(
 
                     DropdownMenu(
                         expanded = showLaneMenu,
-                        onDismissRequest = { showLaneMenu = false },
-                        containerColor = Color.Transparent,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 0.dp,
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                        modifier = Modifier.background(Color.Transparent)
+                        onDismissRequest = { showLaneMenu = false }
                     ) {
                         ProjectProfile.LANE_PRESETS.forEach { l ->
                             val isSel = projectProfile.lane.equals(l, ignoreCase = true)
@@ -1143,7 +1192,7 @@ fun CameraScreen(
                                 text = {
                                     Text(
                                         text = l,
-                                        color = if (isSel) HighlightYellow else PrimaryText,
+                                        color = if (isSel) HighlightYellow else Color.Unspecified,
                                         fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
                                     )
                                 },
@@ -1156,8 +1205,12 @@ fun CameraScreen(
                     }
                 }
 
-                // Control 4: Activity Selector Dropdown Pill (Full Transparent Glass)
+                // Control 4: Activity & Sub-Activity Selector Dropdown Pill (Full Transparent Glass)
                 Box {
+                    val actLabel = projectProfile.activity.ifBlank { "None" }
+                    val subSuffix = if (projectProfile.hasActiveSubActivity()) " (${projectProfile.subActivity})" else ""
+                    val displayActivityPill = if (actLabel.equals("None", ignoreCase = true)) "None" else "$actLabel$subSuffix"
+
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = Color.Transparent,
@@ -1186,7 +1239,7 @@ fun CameraScreen(
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Text(
-                                    text = projectProfile.activity.ifBlank { "BC" },
+                                    text = displayActivityPill,
                                     color = PrimaryText,
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Bold,
@@ -1205,20 +1258,16 @@ fun CameraScreen(
 
                     DropdownMenu(
                         expanded = showActivityMenu,
-                        onDismissRequest = { showActivityMenu = false },
-                        containerColor = Color.Transparent,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 0.dp,
-                        border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                        modifier = Modifier.background(Color.Transparent)
+                        onDismissRequest = { showActivityMenu = false }
                     ) {
                         ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
-                            val isSel = projectProfile.activity.equals(act, ignoreCase = true)
+                            val isSel = projectProfile.activity.equals(act, ignoreCase = true) ||
+                                (act == "None" && projectProfile.activity.isBlank())
                             DropdownMenuItem(
                                 text = {
                                     Text(
                                         text = act,
-                                        color = if (isSel) HighlightYellow else PrimaryText,
+                                        color = if (isSel) HighlightYellow else Color.Unspecified,
                                         fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
                                     )
                                 },
@@ -1230,11 +1279,52 @@ fun CameraScreen(
                         }
                         HorizontalDivider(color = glassBorderIdle)
                         DropdownMenuItem(
-                            text = { Text("Custom / Manual...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                            text = { Text("Custom Activity / Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
                             onClick = {
                                 showActivityMenu = false
                                 showManualActivityDialog = true
                             }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Highway Customisation...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                            onClick = {
+                                showActivityMenu = false
+                                showHighwayCustomisationDialog = true
+                            }
+                        )
+                    }
+                }
+
+                // Control 5: Highway Customisation Pill (Project / Stretch / Sub-Activity / Custom)
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color.Transparent,
+                    border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(33.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable { showHighwayCustomisationDialog = true }
+                        .testTag("landscape_highway_customisation_pill")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Highway Customisation",
+                            tint = HighlightYellow,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) } ?: "Highway Setup",
+                            color = PrimaryText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -2153,11 +2243,22 @@ fun CameraScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
-                            // Highlight Line: Side + Activity in Yellow
+                            // Highlight Line: Side + Lane + Activity + Sub-Activity in Yellow
                             val highlightTokens = mutableListOf<String>()
-                            highlightTokens.add(projectProfile.roadSide.name)
-                            if (projectProfile.activity.isNotBlank() && !projectProfile.activity.equals("None", ignoreCase = true)) {
+                            if (projectProfile.roadSide != RoadSide.NONE &&
+                                projectProfile.roadSide.label.isNotBlank() &&
+                                !projectProfile.roadSide.label.equals("None", ignoreCase = true)
+                            ) {
+                                highlightTokens.add(projectProfile.roadSide.label)
+                            }
+                            if (projectProfile.hasActiveLane()) {
+                                highlightTokens.add(projectProfile.lane)
+                            }
+                            if (projectProfile.hasActiveActivity()) {
                                 highlightTokens.add(projectProfile.activity)
+                            }
+                            if (projectProfile.hasActiveSubActivity()) {
+                                highlightTokens.add("(${projectProfile.subActivity})")
                             }
                             if (highlightTokens.isNotEmpty() && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
                                 Text(
@@ -2165,6 +2266,17 @@ fun CameraScreen(
                                     color = HighlightYellow,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
+                                )
+                            }
+                            if (projectProfile.customDescription.isNotBlank() &&
+                                !projectProfile.customDescription.equals("None", ignoreCase = true) &&
+                                overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP
+                            ) {
+                                Text(
+                                    text = projectProfile.customDescription,
+                                    color = Color.White.copy(alpha = 0.92f),
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
                             }
                         }
@@ -2189,7 +2301,45 @@ fun CameraScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Side chip (LHS / RHS / MEDIAN / BOTH)
+                    // Project / Highway Customisation Chip
+                    item {
+                        val hwLabel = projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) } ?: "Highway"
+                        val stretchSuffix = projectProfile.packageSection.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { " • $it" } ?: ""
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x35FFFFFF),
+                            onClick = { showHighwayCustomisationDialog = true },
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .wrapContentHeight()
+                                .testTag("highway_customisation_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Highway Customisation",
+                                    tint = HighlightYellow,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = "$hwLabel$stretchSuffix",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 150.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Side chip (RHS / LHS / BHS / Median / None)
                     item {
                         FloatingGlassCard(
                             shape = RoundedCornerShape(14.dp),
@@ -2198,9 +2348,10 @@ fun CameraScreen(
                             onClick = {
                                 val nextSide = when (projectProfile.roadSide) {
                                     RoadSide.RHS -> RoadSide.LHS
-                                    RoadSide.LHS -> RoadSide.MEDIAN
-                                    RoadSide.MEDIAN -> RoadSide.BOTH
-                                    RoadSide.BOTH -> RoadSide.RHS
+                                    RoadSide.LHS -> RoadSide.BOTH
+                                    RoadSide.BOTH -> RoadSide.MEDIAN
+                                    RoadSide.MEDIAN -> RoadSide.NONE
+                                    RoadSide.NONE -> RoadSide.RHS
                                 }
                                 viewModel.updateSide(nextSide)
                             },
@@ -2218,11 +2369,11 @@ fun CameraScreen(
                                     modifier = Modifier
                                         .size(5.dp)
                                         .clip(CircleShape)
-                                        .background(HighlightYellow)
+                                        .background(if (projectProfile.roadSide == RoadSide.NONE) Color.Gray else HighlightYellow)
                                 )
                                 Text(
-                                    text = projectProfile.roadSide.name,
-                                    color = HighlightYellow,
+                                    text = projectProfile.roadSide.label,
+                                    color = if (projectProfile.roadSide == RoadSide.NONE) Color.White.copy(alpha = 0.75f) else HighlightYellow,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -2238,7 +2389,8 @@ fun CameraScreen(
                             borderColor = Color(0x35FFFFFF),
                             onClick = {
                                 val lanes = ProjectProfile.LANE_PRESETS
-                                val nextIndex = (lanes.indexOf(projectProfile.lane) + 1) % lanes.size
+                                val currentIdx = lanes.indexOfFirst { it.equals(projectProfile.lane, ignoreCase = true) }
+                                val nextIndex = if (currentIdx >= 0) (currentIdx + 1) % lanes.size else 0
                                 viewModel.updateLane(lanes[nextIndex])
                             },
                             modifier = Modifier
@@ -2258,7 +2410,7 @@ fun CameraScreen(
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Text(
-                                    text = projectProfile.lane,
+                                    text = projectProfile.lane.ifBlank { "None" },
                                     color = Color.White,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
@@ -2270,6 +2422,10 @@ fun CameraScreen(
                     // Activity chip
                     item {
                         Box {
+                            val actText = projectProfile.activity.ifBlank { "None" }
+                            val subText = if (projectProfile.hasActiveSubActivity()) " (${projectProfile.subActivity})" else ""
+                            val chipDisplay = if (actText.equals("None", ignoreCase = true)) "None" else "$actText$subText"
+
                             FloatingGlassCard(
                                 shape = RoundedCornerShape(14.dp),
                                 backgroundColor = Color(0x1A101726),
@@ -2292,7 +2448,7 @@ fun CameraScreen(
                                         modifier = Modifier.size(12.dp)
                                     )
                                     Text(
-                                        text = projectProfile.activity.ifBlank { "Activity" },
+                                        text = chipDisplay,
                                         color = Color.White,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
@@ -2305,8 +2461,16 @@ fun CameraScreen(
                                 onDismissRequest = { showActivityMenu = false }
                             ) {
                                 ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
+                                    val isSel = projectProfile.activity.equals(act, ignoreCase = true) ||
+                                        (act == "None" && projectProfile.activity.isBlank())
                                     DropdownMenuItem(
-                                        text = { Text(act) },
+                                        text = {
+                                            Text(
+                                                text = act,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSel) HighlightYellow else Color.Unspecified
+                                            )
+                                        },
                                         onClick = {
                                             viewModel.updateActivity(act)
                                             showActivityMenu = false
@@ -2315,9 +2479,83 @@ fun CameraScreen(
                                 }
                                 HorizontalDivider(color = BorderColor)
                                 DropdownMenuItem(
-                                    text = { Text("Custom / Manual...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                                    text = { Text("Custom Activity & Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
                                     onClick = {
                                         showActivityMenu = false
+                                        showManualActivityDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Full Highway Customisation...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                                    onClick = {
+                                        showActivityMenu = false
+                                        showHighwayCustomisationDialog = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Sub-Activity chip
+                    item {
+                        Box {
+                            val hasSub = projectProfile.hasActiveSubActivity()
+                            FloatingGlassCard(
+                                shape = RoundedCornerShape(14.dp),
+                                backgroundColor = if (hasSub) Color(0x2510B981) else Color(0x1A101726),
+                                borderColor = if (hasSub) Color(0xFF10B981) else Color(0x35FFFFFF),
+                                onClick = { showSubActivityMenu = true },
+                                modifier = Modifier
+                                    .wrapContentWidth()
+                                    .wrapContentHeight()
+                                    .testTag("sub_activity_chip")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Layers,
+                                        contentDescription = "Sub-Activity",
+                                        tint = if (hasSub) Color(0xFF10B981) else Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        text = if (hasSub) projectProfile.subActivity else "Sub: None",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = showSubActivityMenu,
+                                onDismissRequest = { showSubActivityMenu = false }
+                            ) {
+                                ProjectProfile.SUB_ACTIVITY_PRESETS.forEach { sub ->
+                                    val isSel = projectProfile.subActivity.equals(sub, ignoreCase = true) ||
+                                        (sub == "None" && !projectProfile.hasActiveSubActivity())
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = sub,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSel) HighlightYellow else Color.Unspecified
+                                            )
+                                        },
+                                        onClick = {
+                                            viewModel.updateSubActivity(if (sub == "None") "" else sub)
+                                            showSubActivityMenu = false
+                                        }
+                                    )
+                                }
+                                HorizontalDivider(color = BorderColor)
+                                DropdownMenuItem(
+                                    text = { Text("Custom Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                                    onClick = {
+                                        showSubActivityMenu = false
                                         showManualActivityDialog = true
                                     }
                                 )
@@ -3290,10 +3528,15 @@ fun CameraScreen(
             )
         }
 
-        // Manual Activity / Layer Dialog
+        // Manual Activity & Sub-Activity Dialog
         if (showManualActivityDialog) {
             val dialogColors = com.example.ui.theme.rememberDialogColors()
-            var activityInput by remember { mutableStateOf(projectProfile.activity) }
+            var activityInput by remember(projectProfile.activity, showManualActivityDialog) {
+                mutableStateOf(if (projectProfile.activity.equals("None", ignoreCase = true)) "" else projectProfile.activity)
+            }
+            var subActivityInput by remember(projectProfile.subActivity, showManualActivityDialog) {
+                mutableStateOf(if (projectProfile.subActivity.equals("None", ignoreCase = true)) "" else projectProfile.subActivity)
+            }
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
             val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
@@ -3303,34 +3546,23 @@ fun CameraScreen(
                 onDismissRequest = { showManualActivityDialog = false },
                 shape = dialogColors.shape,
                 containerColor = dialogColors.containerColor,
-                title = { Text("Custom Activity / Pavement Layer", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
+                title = { Text("Activity & Sub-Activity", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            "Type custom activity or pavement layer (e.g. Main CW to MCW):",
-                            fontSize = 13.sp,
+                            "Select a preset or type a custom activity and optional sub-activity (or choose 'None' to leave blank):",
+                            fontSize = 12.sp,
                             color = dialogColors.textSecondaryColor
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
                         OutlinedTextField(
                             value = activityInput,
                             onValueChange = { activityInput = it },
-                            label = { Text("Activity / Layer Name") },
+                            label = { Text("Activity / Layer Name (Blank = None)") },
+                            placeholder = { Text("e.g. DBM, BC, WMM, GSB, Tack Coat") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
                                 capitalization = KeyboardCapitalization.Words,
-                                imeAction = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    keyboardController?.hide()
-                                    focusManager.clearFocus()
-                                    if (activityInput.isNotBlank()) {
-                                        viewModel.updateActivity(activityInput.trim())
-                                        viewModel.showToast("Activity updated: ${activityInput.trim()}", ToastType.SUCCESS)
-                                    }
-                                    showManualActivityDialog = false
-                                }
+                                imeAction = ImeAction.Next
                             ),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = dialogColors.textColor,
@@ -3343,15 +3575,56 @@ fun CameraScreen(
                             ),
                             modifier = Modifier.fillMaxWidth().testTag("manual_activity_input")
                         )
+
+                        OutlinedTextField(
+                            value = subActivityInput,
+                            onValueChange = { subActivityInput = it },
+                            label = { Text("Sub-Activity / Stage (Optional)") },
+                            placeholder = { Text("e.g. Layer 1, Final Layer, Core Cutting") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Words,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    val finalAct = activityInput.trim().ifBlank { "None" }
+                                    val finalSub = subActivityInput.trim()
+                                    viewModel.updateActivity(finalAct)
+                                    viewModel.updateSubActivity(finalSub)
+                                    viewModel.showToast(
+                                        if (finalAct == "None") "Activity set to None" else "Activity updated: $finalAct",
+                                        ToastType.SUCCESS
+                                    )
+                                    showManualActivityDialog = false
+                                }
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = dialogColors.textColor,
+                                unfocusedTextColor = dialogColors.textColor,
+                                focusedBorderColor = primaryAccent,
+                                unfocusedBorderColor = dialogColors.inputBorder,
+                                focusedLabelColor = primaryAccent,
+                                unfocusedLabelColor = dialogColors.textSecondaryColor,
+                                cursorColor = primaryAccent
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("manual_sub_activity_input")
+                        )
                     }
                 },
                 confirmButton = {
                     Button(
                         onClick = {
-                            if (activityInput.isNotBlank()) {
-                                viewModel.updateActivity(activityInput.trim())
-                                viewModel.showToast("Activity updated: ${activityInput.trim()}", ToastType.SUCCESS)
-                            }
+                            val finalAct = activityInput.trim().ifBlank { "None" }
+                            val finalSub = subActivityInput.trim()
+                            viewModel.updateActivity(finalAct)
+                            viewModel.updateSubActivity(finalSub)
+                            viewModel.showToast(
+                                if (finalAct == "None") "Activity set to None" else "Activity updated: $finalAct",
+                                ToastType.SUCCESS
+                            )
                             showManualActivityDialog = false
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
@@ -3362,7 +3635,350 @@ fun CameraScreen(
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showManualActivityDialog = false }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                viewModel.updateActivity("None")
+                                viewModel.updateSubActivity("")
+                                viewModel.showToast("Activity cleared (None)", ToastType.INFO)
+                                showManualActivityDialog = false
+                            }
+                        ) {
+                            Text("Set None", color = AccentRed, fontWeight = FontWeight.Bold)
+                        }
+                        TextButton(onClick = { showManualActivityDialog = false }) {
+                            Text("Cancel", color = dialogColors.textSecondaryColor)
+                        }
+                    }
+                }
+            )
+        }
+
+        // Complete Camera Highway Customisation Dialog
+        if (showHighwayCustomisationDialog) {
+            val dialogColors = com.example.ui.theme.rememberDialogColors()
+            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
+            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+
+            var hwId by remember(projectProfile.highwayId, showHighwayCustomisationDialog) {
+                mutableStateOf(if (projectProfile.highwayId.equals("None", ignoreCase = true)) "" else projectProfile.highwayId)
+            }
+            var stretch by remember(projectProfile.packageSection, showHighwayCustomisationDialog) {
+                mutableStateOf(if (projectProfile.packageSection.equals("None", ignoreCase = true)) "" else projectProfile.packageSection)
+            }
+            var workType by remember(projectProfile.workType, showHighwayCustomisationDialog) {
+                mutableStateOf(projectProfile.workType)
+            }
+            var selectedSide by remember(projectProfile.roadSide, showHighwayCustomisationDialog) {
+                mutableStateOf(projectProfile.roadSide)
+            }
+            var selectedLane by remember(projectProfile.lane, showHighwayCustomisationDialog) {
+                mutableStateOf(projectProfile.lane.ifBlank { "None" })
+            }
+            var selectedActivity by remember(projectProfile.activity, showHighwayCustomisationDialog) {
+                mutableStateOf(projectProfile.activity.ifBlank { "None" })
+            }
+            var selectedSubActivity by remember(projectProfile.subActivity, showHighwayCustomisationDialog) {
+                mutableStateOf(if (projectProfile.subActivity.equals("None", ignoreCase = true)) "" else projectProfile.subActivity)
+            }
+            var customDesc by remember(projectProfile.customDescription, showHighwayCustomisationDialog) {
+                mutableStateOf(if (projectProfile.customDescription.equals("None", ignoreCase = true)) "" else projectProfile.customDescription)
+            }
+
+            AlertDialog(
+                onDismissRequest = { showHighwayCustomisationDialog = false },
+                shape = dialogColors.shape,
+                containerColor = dialogColors.containerColor,
+                modifier = Modifier.testTag("highway_customisation_dialog"),
+                title = {
+                    Text(
+                        text = "Highway Customisation",
+                        color = dialogColors.titleColor,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 460.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (definedProjects.isNotEmpty()) {
+                            Text(
+                                text = "SAVED PROJECTS",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = primaryAccent
+                            )
+                            androidx.compose.foundation.lazy.LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(definedProjects.size) { idx ->
+                                    val defProj = definedProjects[idx]
+                                    val isCurrent = hwId.equals(defProj.name, ignoreCase = true)
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isCurrent) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (isCurrent) primaryAccent else dialogColors.inputBorder
+                                        ),
+                                        modifier = Modifier.clickable {
+                                            hwId = defProj.name
+                                            stretch = defProj.stretch
+                                            workType = defProj.workType
+                                        }
+                                    ) {
+                                        Text(
+                                            text = if (defProj.stretch.isNotBlank()) "${defProj.name} (${defProj.stretch})" else defProj.name,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isCurrent) primaryAccent else dialogColors.textColor,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = hwId,
+                            onValueChange = { hwId = it },
+                            label = { Text("Project / Highway Name (Blank = None)") },
+                            placeholder = { Text("e.g. NH-58, NH-44") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("hc_highway_input")
+                        )
+
+                        OutlinedTextField(
+                            value = stretch,
+                            onValueChange = { stretch = it },
+                            label = { Text("Stretch / Package Section (Blank = None)") },
+                            placeholder = { Text("e.g. Muzzafarnagar-Haridwar, Pkg-3") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("hc_stretch_input")
+                        )
+
+                        // Work Type Quick Selector
+                        Text(
+                            text = "WORK TYPE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = primaryAccent
+                        )
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(ProjectProfile.WORK_TYPE_PRESETS.size) { idx ->
+                                val wt = ProjectProfile.WORK_TYPE_PRESETS[idx]
+                                val isSel = workType.equals(wt.code, ignoreCase = true) || (wt.code == "None" && workType.isBlank())
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isSel) primaryAccent else dialogColors.inputBorder
+                                    ),
+                                    modifier = Modifier.clickable { workType = wt.code }
+                                ) {
+                                    Text(
+                                        text = wt.code,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) primaryAccent else dialogColors.textColor,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Road Side Selector (LHS / RHS / BHS / Median / None)
+                        Text(
+                            text = "ROAD SIDE (LHS / RHS / BHS / NONE)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = primaryAccent
+                        )
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(RoadSide.entries.size) { idx ->
+                                val sideOpt = RoadSide.entries[idx]
+                                val isSel = selectedSide == sideOpt
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isSel) primaryAccent else dialogColors.inputBorder
+                                    ),
+                                    modifier = Modifier.clickable { selectedSide = sideOpt }
+                                ) {
+                                    Text(
+                                        text = sideOpt.label,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) primaryAccent else dialogColors.textColor,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Lane Selector
+                        Text(
+                            text = "LANE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = primaryAccent
+                        )
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(ProjectProfile.LANE_PRESETS.size) { idx ->
+                                val l = ProjectProfile.LANE_PRESETS[idx]
+                                val isSel = selectedLane.equals(l, ignoreCase = true) || (l == "None" && selectedLane.isBlank())
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isSel) primaryAccent else dialogColors.inputBorder
+                                    ),
+                                    modifier = Modifier.clickable { selectedLane = l }
+                                ) {
+                                    Text(
+                                        text = l,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) primaryAccent else dialogColors.textColor,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Activity Selector + Custom Input
+                        Text(
+                            text = "ACTIVITY / LAYER",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = primaryAccent
+                        )
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(ProjectProfile.ACTIVITY_PRESETS.size) { idx ->
+                                val act = ProjectProfile.ACTIVITY_PRESETS[idx]
+                                val isSel = selectedActivity.equals(act, ignoreCase = true) || (act == "None" && selectedActivity.isBlank())
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isSel) primaryAccent else dialogColors.inputBorder
+                                    ),
+                                    modifier = Modifier.clickable { selectedActivity = act }
+                                ) {
+                                    Text(
+                                        text = act,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) primaryAccent else dialogColors.textColor,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = if (selectedActivity.equals("None", ignoreCase = true)) "" else selectedActivity,
+                            onValueChange = { selectedActivity = it.ifBlank { "None" } },
+                            label = { Text("Custom Activity (or leave blank for None)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("hc_activity_input")
+                        )
+
+                        // Sub-Activity Selector + Custom Input
+                        Text(
+                            text = "SUB-ACTIVITY / STAGE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = primaryAccent
+                        )
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(ProjectProfile.SUB_ACTIVITY_PRESETS.size) { idx ->
+                                val sub = ProjectProfile.SUB_ACTIVITY_PRESETS[idx]
+                                val isSel = selectedSubActivity.equals(sub, ignoreCase = true) || (sub == "None" && selectedSubActivity.isBlank())
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSel) primaryAccent.copy(alpha = 0.2f) else dialogColors.surfaceColor,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isSel) primaryAccent else dialogColors.inputBorder
+                                    ),
+                                    modifier = Modifier.clickable {
+                                        selectedSubActivity = if (sub == "None") "" else sub
+                                    }
+                                ) {
+                                    Text(
+                                        text = sub,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) primaryAccent else dialogColors.textColor,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = selectedSubActivity,
+                            onValueChange = { selectedSubActivity = it },
+                            label = { Text("Custom Sub-Activity (Optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("hc_sub_activity_input")
+                        )
+
+                        OutlinedTextField(
+                            value = customDesc,
+                            onValueChange = { customDesc = it },
+                            label = { Text("Custom Text / Comment Watermark") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("hc_custom_desc_input")
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val updatedProfile = projectProfile.copy(
+                                highwayId = hwId.trim(),
+                                packageSection = stretch.trim(),
+                                workType = workType.trim().ifBlank { "None" },
+                                roadSide = selectedSide,
+                                lane = selectedLane.trim().ifBlank { "None" },
+                                activity = selectedActivity.trim().ifBlank { "None" },
+                                subActivity = selectedSubActivity.trim(),
+                                customDescription = customDesc.trim()
+                            )
+                            viewModel.updateSide(selectedSide)
+                            viewModel.saveProjectProfile(updatedProfile)
+                            viewModel.showToast("Highway customisation saved", ToastType.SUCCESS)
+                            showHighwayCustomisationDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("save_highway_customisation_button")
+                    ) {
+                        Text("Save & Apply", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showHighwayCustomisationDialog = false }) {
                         Text("Cancel", color = dialogColors.textSecondaryColor)
                     }
                 }

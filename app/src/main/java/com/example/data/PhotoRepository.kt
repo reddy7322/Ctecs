@@ -24,10 +24,14 @@ class PhotoRepository(
 ) {
     val allPhotos: Flow<List<PhotoRecordEntity>> = photoRecordDao.getAllPhotos().map { list ->
         list.distinctBy { it.fileName.ifBlank { it.filePath } }
+            .map { applyRecoveredMetadata(it) }
     }
 
     fun searchPhotos(query: String): Flow<List<PhotoRecordEntity>> =
-        photoRecordDao.searchPhotos(query)
+        photoRecordDao.searchPhotos(query).map { list ->
+            list.distinctBy { it.fileName.ifBlank { it.filePath } }
+                .map { applyRecoveredMetadata(it) }
+        }
 
     companion object {
         fun buildCustomFileName(
@@ -44,6 +48,7 @@ class PhotoRepository(
             lane: String = "",
             workType: String = "",
             activity: String = "",
+            subActivity: String = "",
             isVideo: Boolean = false
         ): String {
             val dateFmtUnder = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
@@ -63,13 +68,15 @@ class PhotoRepository(
             val cleanChain = clean(chainage).ifBlank { "189+320" }
             val cleanSide = clean(side)
             val cleanLane = clean(lane)
-            val cleanAct = clean(activity).ifBlank { clean(workType) }
+            val cleanAct = clean(activity)
+            val cleanSubAct = clean(subActivity)
 
             val roadParts = mutableListOf<String>()
             if (cleanChain.isNotBlank()) roadParts.add(cleanChain)
             if (cleanSide.isNotBlank()) roadParts.add(cleanSide)
             if (cleanLane.isNotBlank()) roadParts.add(cleanLane)
             if (cleanAct.isNotBlank()) roadParts.add(cleanAct)
+            if (cleanSubAct.isNotBlank()) roadParts.add(cleanSubAct)
             val roadDetails = roadParts.joinToString("-")
 
             val projParts = mutableListOf<String>()
@@ -109,6 +116,137 @@ class PhotoRepository(
             val ext = if (isVideo) ".mp4" else ".jpg"
             return "$finalBase$ext"
         }
+
+        /**
+         * Recovers the true capture-time (activity, subActivity) from a PhotoRecordEntity
+         * when an older build saved the fallback default "DBM" or "Photo" instead of the
+         * snapshot's actual activity.
+         *
+         * Returns a Pair(recoveredActivity, recoveredSubActivity) if recovery found a different
+         * value, or null if the record already has an accurate activity.
+         */
+        fun recoverTrueActivityForRecord(record: PhotoRecordEntity): Pair<String, String>? {
+            val currentAct = record.activity.trim()
+            val currentSub = record.subActivity.trim()
+            // Only attempt recovery on legacy records where activity was defaulted to "DBM" or "Photo"
+            if (currentAct != "DBM" && currentAct != "Photo") return null
+
+            // 1. Inspect formattedOverlayText built by ProjectProfile.buildHighwayText(displayChainage)
+            val overlayFirstLine = record.formattedOverlayText.lineSequence().firstOrNull()?.trim() ?: ""
+            val fileBase = record.fileName.substringBeforeLast(".")
+            if (overlayFirstLine.isNotBlank() && !overlayFirstLine.equals(fileBase, ignoreCase = true)) {
+                val pipeSegments = overlayFirstLine.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+                val chLabel = record.chainageLabel?.trim().orEmpty()
+                val sideLabel = record.roadSide.trim()
+                val laneLabel = record.lane.trim()
+
+                // Locate the road details segment (starts with chainage or contains chainage/side)
+                val locSeg = pipeSegments.firstOrNull { seg ->
+                    (chLabel.isNotBlank() && !chLabel.equals("None", ignoreCase = true) && seg.startsWith(chLabel, ignoreCase = true)) ||
+                        Regex("""^\d+\+\d+""").containsMatchIn(seg)
+                } ?: pipeSegments.firstOrNull { seg ->
+                    sideLabel.isNotBlank() && !sideLabel.equals("None", ignoreCase = true) &&
+                        (seg.equals(sideLabel, ignoreCase = true) || seg.startsWith("$sideLabel ", ignoreCase = true))
+                }
+
+                if (locSeg != null) {
+                    var rem = locSeg.trim()
+                    if (chLabel.isNotBlank() && !chLabel.equals("None", ignoreCase = true) && rem.startsWith(chLabel, ignoreCase = true)) {
+                        rem = rem.substring(chLabel.length).trim()
+                    } else {
+                        rem = rem.replaceFirst(Regex("""^\d+\+\d+(?:\.\d+)?\s*"""), "").trim()
+                    }
+
+                    if (sideLabel.isNotBlank() && !sideLabel.equals("None", ignoreCase = true) &&
+                        (rem.equals(sideLabel, ignoreCase = true) || rem.startsWith("$sideLabel ", ignoreCase = true))
+                    ) {
+                        rem = rem.substring(sideLabel.length).trim()
+                    } else {
+                        rem = rem.replaceFirst(Regex("""^(?:LHS|RHS|BHS|Median|MEDIAN|BOTH)\b\s*""", RegexOption.IGNORE_CASE), "").trim()
+                    }
+
+                    if (laneLabel.isNotBlank() && !laneLabel.equals("None", ignoreCase = true) &&
+                        (rem.equals(laneLabel, ignoreCase = true) || rem.startsWith("$laneLabel ", ignoreCase = true))
+                    ) {
+                        rem = rem.substring(laneLabel.length).trim()
+                    } else {
+                        rem = rem.replaceFirst(
+                            Regex("""^(?:Main Carriage|Service Rd|Shoulder|I/L|M/L|O/L|MCW)\b\s*""", RegexOption.IGNORE_CASE),
+                            ""
+                        ).trim()
+                    }
+
+                    // Extract optional (subActivity) at the end
+                    var extractedSub = currentSub
+                    val subMatch = Regex("""^(.*?)\s*\(([^()]+)\)$""").find(rem)
+                    val extractedAct = if (subMatch != null) {
+                        extractedSub = subMatch.groupValues[2].trim()
+                        subMatch.groupValues[1].trim()
+                    } else {
+                        rem.trim()
+                    }
+
+                    // If nothing remained in locSeg after chainage/side/lane, the user had selected "None" (blank)
+                    val normalizedAct = if (extractedAct.isEmpty() || extractedAct.equals("None", ignoreCase = true)) {
+                        "None"
+                    } else {
+                        extractedAct
+                    }
+
+                    if (normalizedAct != currentAct || extractedSub != currentSub) {
+                        return Pair(normalizedAct, extractedSub)
+                    }
+                    return null
+                }
+            }
+
+            // 2. Fallback: inspect structured filename (e.g., Proj--Stretch--189+320-RHS-IL-BC_20260328_120000.jpg)
+            val roadPartMatch = Regex("""(\d+\+\d+(?:-[A-Za-z0-9+]+)++)""").find(fileBase)
+            if (roadPartMatch != null) {
+                val rawGroup = roadPartMatch.groupValues[1].substringBefore("_")
+                val tokens = rawGroup.split("-").filter { it.isNotBlank() }
+                if (tokens.isNotEmpty()) {
+                    var idx = 1 // skip chainage token at index 0
+                    val cleanSide = record.roadSide.replace("[^a-zA-Z0-9_+]".toRegex(), "")
+                    if (idx < tokens.size && (
+                            (cleanSide.isNotBlank() && tokens[idx].equals(cleanSide, ignoreCase = true)) ||
+                                tokens[idx].uppercase(Locale.US) in setOf("LHS", "RHS", "BHS", "MEDIAN", "BOTH")
+                            )
+                    ) {
+                        idx++
+                    }
+                    val cleanLane = record.lane.replace("[^a-zA-Z0-9_+]".toRegex(), "")
+                    if (idx < tokens.size && (
+                            (cleanLane.isNotBlank() && tokens[idx].equals(cleanLane, ignoreCase = true)) ||
+                                tokens[idx].uppercase(Locale.US) in setOf("IL", "ML", "OL", "SHOULDER", "SERVICERD", "MCW", "MAINCARRIAGE")
+                            )
+                    ) {
+                        idx++
+                    }
+                    val remainingTokens = if (idx < tokens.size) tokens.subList(idx, tokens.size) else emptyList()
+                    val recoveredFromName = if (remainingTokens.isEmpty()) "None" else remainingTokens.first()
+                    val recoveredSubFromName = if (remainingTokens.size > 1) remainingTokens.drop(1).joinToString(" ") else currentSub
+                    if (recoveredFromName != currentAct || recoveredSubFromName != currentSub) {
+                        return Pair(recoveredFromName, recoveredSubFromName)
+                    }
+                }
+            }
+
+            // 3. If currentAct was "Photo" from legacy storage scan and no activity was encoded, clear it so we don't invent an activity
+            if (currentAct == "Photo") {
+                return Pair("", currentSub)
+            }
+
+            return null
+        }
+
+        fun applyRecoveredMetadata(record: PhotoRecordEntity): PhotoRecordEntity {
+            val recovered = recoverTrueActivityForRecord(record) ?: return record
+            return record.copy(
+                activity = recovered.first,
+                subActivity = recovered.second
+            )
+        }
     }
 
     suspend fun saveCapturedPhoto(
@@ -136,6 +274,7 @@ class PhotoRepository(
                 lane = snapshot.projectProfile.lane,
                 workType = snapshot.projectProfile.workType,
                 activity = snapshot.projectProfile.activity,
+                subActivity = snapshot.projectProfile.subActivity,
                 isVideo = false
             )
 
@@ -250,7 +389,7 @@ class PhotoRepository(
                 } catch (ignored: Exception) {}
             }
 
-            // 6. Save record in Room Database
+            // 6. Save record in Room Database with exact capture-time activity & subActivity
             val entity = PhotoRecordEntity(
                 filePath = recordedPath,
                 fileName = fileName,
@@ -268,6 +407,8 @@ class PhotoRepository(
                 packageSection = snapshot.projectProfile.packageSection,
                 roadSide = snapshot.projectProfile.roadSide.label,
                 lane = snapshot.projectProfile.lane,
+                activity = snapshot.projectProfile.activity,
+                subActivity = snapshot.projectProfile.subActivity,
                 customDescription = run {
                     val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
                     if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
@@ -327,7 +468,7 @@ class PhotoRepository(
 
     /**
      * Scans storage directories for any recorded videos or photos that are not yet indexed in Room,
-     * ensuring all media files appear in the gallery.
+     * and permanently repairs any legacy database records where activity was defaulted to "DBM".
      */
     suspend fun syncMediaFilesFromStorage(): Int = withContext(Dispatchers.IO) {
         var addedCount = 0
@@ -336,7 +477,7 @@ class PhotoRepository(
             val existingPaths = existingList.map { it.filePath }.toSet()
             val existingNames = mutableSetOf<String>()
 
-            // Clean up existing duplicates in database
+            // Clean up existing duplicates and permanently repair legacy "DBM" records in database
             val seenKeys = mutableSetOf<String>()
             for (record in existingList) {
                 val key = record.fileName.ifBlank { record.filePath }
@@ -345,6 +486,15 @@ class PhotoRepository(
                 } else {
                     seenKeys.add(key)
                     existingNames.add(record.fileName)
+                    val recovered = recoverTrueActivityForRecord(record)
+                    if (recovered != null) {
+                        photoRecordDao.updatePhoto(
+                            record.copy(
+                                activity = recovered.first,
+                                subActivity = recovered.second
+                            )
+                        )
+                    }
                 }
             }
 
@@ -379,7 +529,7 @@ class PhotoRepository(
                         } catch (ignored: Exception) {}
                     }
 
-                    val entity = PhotoRecordEntity(
+                    val baseEntity = PhotoRecordEntity(
                         filePath = path,
                         fileName = name,
                         timestamp = timestamp,
@@ -394,15 +544,17 @@ class PhotoRepository(
                         chainageConfidence = "MANUAL",
                         isManualChainage = true,
                         offsetMetres = 0f,
-                        highwayId = "Highway",
+                        highwayId = "",
                         packageSection = "",
-                        roadSide = "RHS",
-                        lane = "Main Carriage",
-                        activity = if (isVideo) "Video Recording" else "Photo",
+                        roadSide = "",
+                        lane = "",
+                        activity = if (isVideo) "Video Recording" else "",
+                        subActivity = "",
                         customDescription = "",
                         inspectorName = "",
                         formattedOverlayText = name.substringBeforeLast(".")
                     )
+                    val entity = applyRecoveredMetadata(baseEntity)
                     photoRecordDao.insertPhoto(entity)
                     addedCount++
                 }

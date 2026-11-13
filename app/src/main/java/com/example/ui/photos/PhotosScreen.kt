@@ -226,21 +226,19 @@ fun PhotosScreen(
 
             val matchesQuery = if (searchQuery.isBlank()) true else {
                 p.chainageLabel?.contains(searchQuery, ignoreCase = true) == true ||
-                        p.activity.contains(searchQuery, ignoreCase = true) ||
-                        p.fileName.contains(searchQuery, ignoreCase = true) ||
-                        p.highwayId.contains(searchQuery, ignoreCase = true)
+                    p.cleanActivity().contains(searchQuery, ignoreCase = true) ||
+                    p.cleanSubActivity().contains(searchQuery, ignoreCase = true) ||
+                    p.fileName.contains(searchQuery, ignoreCase = true) ||
+                    p.cleanHighwayId().contains(searchQuery, ignoreCase = true) ||
+                    p.cleanPackageSection().contains(searchQuery, ignoreCase = true) ||
+                    p.formattedOverlayText.contains(searchQuery, ignoreCase = true)
             }
+            val cleanAct = p.cleanActivity()
             val matchesFilter = when (selectedFilter) {
                 "All" -> true
-                "DBM" -> p.activity.equals("DBM", ignoreCase = true)
-                "BC" -> p.activity.equals("BC", ignoreCase = true)
-                "GSB" -> p.activity.equals("GSB", ignoreCase = true)
-                "WMM" -> p.activity.equals("WMM", ignoreCase = true)
-                "Milling" -> p.activity.equals("Milling", ignoreCase = true)
-                "Subgrade" -> p.activity.equals("Subgrade", ignoreCase = true)
-                "PQC" -> p.activity.equals("PQC", ignoreCase = true)
-                "None" -> p.activity.equals("None", ignoreCase = true)
-                else -> true
+                "None" -> cleanAct.isEmpty()
+                else -> cleanAct.equals(selectedFilter, ignoreCase = true) ||
+                    p.cleanSubActivity().equals(selectedFilter, ignoreCase = true)
             }
             matchesQuery && matchesFilter
         }
@@ -275,10 +273,10 @@ fun PhotosScreen(
                 filteredSortedPhotos.groupBy { sdf.format(Date(it.timestamp)) }.toList()
             }
             "Highway" -> {
-                filteredSortedPhotos.groupBy { it.highwayId.ifBlank { "Unassigned Highway" } }.toList()
+                filteredSortedPhotos.groupBy { it.cleanHighwayId().ifBlank { "Unassigned Highway" } }.toList()
             }
             "Activity" -> {
-                filteredSortedPhotos.groupBy { it.activity.ifBlank { "Unassigned Activity" } }.toList()
+                filteredSortedPhotos.groupBy { it.displayActivityWithSub().ifBlank { "No Activity (None)" } }.toList()
             }
             else -> {
                 listOf("All Photos" to filteredSortedPhotos)
@@ -785,27 +783,35 @@ fun PhotosScreen(
                     .testTag("photo_search_input")
             )
 
-            // Activity Filter Chips
-            Row(
+            // Dynamic Activity Filter Chips (includes presets + any custom captured activities + None)
+            val filterChips = remember(photos) {
+                val basePresets = listOf("DBM", "BC", "GSB", "WMM", "EMB", "PQC", "Milling", "Subgrade")
+                val dynamicActivities = photos.mapNotNull { p ->
+                    p.cleanActivity().takeIf { it.isNotBlank() }
+                }
+                val combined = mutableListOf("All")
+                for (item in (dynamicActivities + basePresets)) {
+                    if (combined.none { it.equals(item, ignoreCase = true) }) {
+                        combined.add(item)
+                    }
+                }
+                combined.add("None")
+                combined
+            }
+
+            androidx.compose.foundation.lazy.LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                val filterChips = listOf("All", "DBM", "BC", "GSB", "WMM", "Milling", "Subgrade", "PQC", "None")
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        filterChips.take(5).forEach { chip ->
-                            FilterChip(
-                                selected = selectedFilter == chip,
-                                onClick = { selectedFilter = chip },
-                                label = { Text(chip, fontSize = 11.sp) }
-                            )
-                        }
-                    }
+                items(filterChips.size) { index ->
+                    val chip = filterChips[index]
+                    FilterChip(
+                        selected = selectedFilter.equals(chip, ignoreCase = true),
+                        onClick = { selectedFilter = chip },
+                        label = { Text(chip, fontSize = 11.sp) }
+                    )
                 }
             }
 
@@ -1315,14 +1321,17 @@ fun PhotoUncroppedGridCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = "${photo.highwayId} ${photo.roadSide} ${photo.activity}".trim(),
-                        color = Color(0xFF38BDF8),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    val cardSummary = photo.displayHighwaySummary()
+                    if (cardSummary.isNotBlank()) {
+                        Text(
+                            text = cardSummary,
+                            color = Color(0xFF38BDF8),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -1454,14 +1463,17 @@ fun PhotoUncroppedListItem(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Text(
-                    text = "${photo.highwayId} ${photo.roadSide} ${photo.activity}".trim(),
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                val listSummary = photo.displayHighwaySummary()
+                if (listSummary.isNotBlank()) {
+                    Text(
+                        text = listSummary,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Text(
                     text = sdf.format(Date(photo.timestamp)),
@@ -1659,14 +1671,17 @@ fun PhotoLongPressOptionsDialog(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Text(
-                                text = "${photo.highwayId} ${photo.roadSide} ${photo.activity}".trim(),
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            val dialogSummary = photo.displayHighwaySummary()
+                            if (dialogSummary.isNotBlank()) {
+                                Text(
+                                    text = dialogSummary,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Text(
                                 text = "${sdf.format(Date(photo.timestamp))} • $fileSizeMb • $resolution",
                                 fontSize = 11.sp,
@@ -1765,7 +1780,12 @@ fun PhotoLongPressOptionsDialog(
                             subtitle = "Copy chainage, road and GPS to clipboard",
                             onClick = {
                                 val text = photo.formattedOverlayText.ifBlank {
-                                    "${photo.highwayId} | ${photo.chainageLabel ?: ""} | ${photo.roadSide} | ${photo.activity}".trim()
+                                    listOfNotNull(
+                                        photo.cleanHighwayId().takeIf { it.isNotBlank() },
+                                        photo.chainageLabel?.takeIf { it.isNotBlank() },
+                                        photo.cleanRoadSide().takeIf { it.isNotBlank() },
+                                        photo.displayActivityWithSub().takeIf { it.isNotBlank() }
+                                    ).joinToString(" | ")
                                 }
                                 onCopyText(text)
                             }
@@ -1896,19 +1916,25 @@ fun FullScreenPhotoViewer(
                             .padding(horizontal = 8.dp)
                     ) {
                         Text(
-                            text = photo.chainageLabel ?: photo.fileName,
+                            text = photo.chainageLabel?.takeIf { it.isNotBlank() } ?: photo.fileName,
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (photosList.size > 1 && currentIndex >= 0) {
+                        val headerSub = listOfNotNull(
+                            photo.displayHighwaySummary().takeIf { it.isNotBlank() },
+                            if (photosList.size > 1 && currentIndex >= 0) "Photo ${currentIndex + 1} of ${photosList.size}" else null
+                        ).joinToString(" • ")
+                        if (headerSub.isNotBlank()) {
                             Text(
-                                text = "Photo ${currentIndex + 1} of ${photosList.size}",
+                                text = headerSub,
                                 color = Color(0xFF38BDF8),
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -2058,13 +2084,27 @@ fun FullScreenPhotoViewer(
                                 .verticalScroll(rememberScrollState())
                         ) {
                             Text(
-                                text = photo.formattedOverlayText.ifBlank { "${photo.highwayId} ${photo.chainageLabel}" },
+                                text = photo.formattedOverlayText.ifBlank {
+                                    listOfNotNull(
+                                        photo.displayHighwaySummary().takeIf { it.isNotBlank() },
+                                        photo.chainageLabel?.takeIf { it.isNotBlank() }
+                                    ).joinToString(" • ").ifBlank { photo.fileName }
+                                },
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
                             )
                             Spacer(modifier = Modifier.height(8.dp))
 
+                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                Text("Activity:", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                                Text(
+                                    text = photo.displayActivityWithSub().ifBlank { "None" },
+                                    color = Color(0xFFFACC15),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                                 Text("Captured Date:", color = Color(0xFF94A3B8), fontSize = 12.sp)
                                 Text(sdf.format(Date(photo.timestamp)), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -2281,13 +2321,19 @@ fun FullScreenVideoPlayer(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Text(
-                                text = "${video.highwayId} ${video.chainageLabel ?: ""}".trim(),
-                                color = Color(0xFF38BDF8),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            val videoSummary = listOfNotNull(
+                                video.displayHighwaySummary().takeIf { it.isNotBlank() },
+                                video.chainageLabel?.takeIf { it.isNotBlank() }
+                            ).joinToString(" • ")
+                            if (videoSummary.isNotBlank()) {
+                                Text(
+                                    text = videoSummary,
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
 
                         Row {
@@ -2498,9 +2544,20 @@ fun PhotoDetailsDialog(
                 DetailRow("Captured Time", sdf.format(Date(photo.timestamp)), dialogColors)
                 DetailRow("Resolution", resolution, dialogColors)
                 DetailRow("File Size", fileSizeMb, dialogColors)
-                DetailRow("Highway / Project", photo.highwayId, dialogColors)
-                DetailRow("Road Side / Lane", "${photo.roadSide} / ${photo.lane}", dialogColors)
-                DetailRow("Activity / Desc", "${photo.activity}${if (photo.customDescription.isNotBlank()) " / " + photo.customDescription else ""}", dialogColors)
+                DetailRow("Highway / Project", photo.cleanHighwayId().ifBlank { "None" }, dialogColors)
+                if (photo.cleanPackageSection().isNotBlank()) {
+                    DetailRow("Stretch / Section", photo.cleanPackageSection(), dialogColors)
+                }
+                val cleanSideLane = listOf(photo.cleanRoadSide(), photo.cleanLane())
+                    .filter { it.isNotBlank() }
+                    .joinToString(" / ")
+                    .ifBlank { "None" }
+                DetailRow("Road Side / Lane", cleanSideLane, dialogColors)
+                val cleanActDesc = listOf(
+                    photo.displayActivityWithSub(),
+                    photo.customDescription.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }.orEmpty()
+                ).filter { it.isNotBlank() }.joinToString(" / ").ifBlank { "None" }
+                DetailRow("Activity / Desc", cleanActDesc, dialogColors)
                 DetailRow("GPS Coordinates", "%.6f, %.6f".format(Locale.US, photo.latitude, photo.longitude), dialogColors)
                 DetailRow("GPS Accuracy", "±%.1f meters".format(Locale.US, photo.accuracy), dialogColors)
                 DetailRow("Match Offset", "%.1f meters".format(Locale.US, photo.offsetMetres), dialogColors)

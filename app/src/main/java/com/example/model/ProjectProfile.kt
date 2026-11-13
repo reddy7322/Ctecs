@@ -4,11 +4,20 @@ enum class RoadSide(val label: String) {
     RHS("RHS"),
     LHS("LHS"),
     MEDIAN("MEDIAN"),
-    BOTH("BOTH");
+    BOTH("BOTH"),
+    NONE("None");
 
     companion object {
-        fun fromString(s: String?): RoadSide =
-            values().firstOrNull { it.label.equals(s, ignoreCase = true) } ?: RHS
+        fun fromString(s: String?): RoadSide {
+            if (s == null) return RHS
+            val trimmed = s.trim()
+            if (trimmed.isEmpty()) return RHS
+            if (trimmed.equals("BHS", ignoreCase = true)) return BOTH
+            if (trimmed.equals("None", ignoreCase = true)) return NONE
+            return values().firstOrNull {
+                it.label.equals(trimmed, ignoreCase = true) || it.name.equals(trimmed, ignoreCase = true)
+            } ?: RHS
+        }
     }
 }
 
@@ -21,16 +30,17 @@ data class ProjectProfile(
     val startChainage: String = "0+000",      // Project Start Chainage e.g. "0+000"
     val endChainage: String = "50+000",        // Project End Chainage e.g. "50+000"
     val workType: String = "",               // Work Type: MM, RM, LIE, or "None"/""
-    val roadSide: RoadSide = RoadSide.RHS,      // RHS / LHS / MEDIAN
-    val lane: String = "I/L",                  // I/L (Inner), M/L (Middle), O/L (Outer), Shoulder
-    val activity: String = "DBM",              // Activity / Layer: DBM, BC, GSB, etc.
+    val roadSide: RoadSide = RoadSide.RHS,      // RHS / LHS / MEDIAN / BOTH / NONE
+    val lane: String = "I/L",                  // I/L (Inner), M/L (Middle), O/L (Outer), Shoulder, None
+    val activity: String = "DBM",              // Activity / Layer: DBM, BC, GSB, None, or custom
+    val subActivity: String = "",              // Sub-Activity / Layer detail: Layer 1, Tack Coat, None, or custom
     val customDescription: String = "",        // Custom Comment (shown on next line)
     val inspectorName: String = "",            // Optional site supervisor / engineer
     val separator: String = "||"               // Default "||" separator
 ) {
     /**
      * Builds the structured highway text line:
-     * Line 1: Project Name | Stretch | Work Type | {Chainage} { RHS } { I/L} {DBM}
+     * Line 1: Project Name | Stretch | Work Type | {Chainage} { RHS } { I/L} {Activity} {SubActivity}
      * Line 2: { Custom Comment } (handled via getCustomCommentLine())
      */
     fun buildHighwayText(chainageFormatted: String, includeProjectName: Boolean = true): String {
@@ -59,7 +69,7 @@ data class ProjectProfile(
             parts.add(effectiveWorkType)
         }
 
-        // Road segment telemetry: {Chainage} { RHS } { I/L} {DBM}
+        // Road segment telemetry: {Chainage} { RHS } { I/L} {Activity} {SubActivity}
         val roadDetails = mutableListOf<String>()
         if (isValid(chainageFormatted)) roadDetails.add(chainageFormatted.trim())
         if (isValid(roadSide.label)) roadDetails.add(roadSide.label.trim())
@@ -68,7 +78,13 @@ data class ProjectProfile(
         // Activity / Layer: e.g. DBM (ignore if it matches workType or is None)
         val effectiveActivity = if (!activity.equals("MM", true) && !activity.equals("RM", true) && !activity.equals("LIE", true)) activity else ""
         if (isValid(effectiveActivity)) {
-            roadDetails.add(effectiveActivity.trim())
+            if (isValid(subActivity)) {
+                roadDetails.add("${effectiveActivity.trim()} (${subActivity.trim()})")
+            } else {
+                roadDetails.add(effectiveActivity.trim())
+            }
+        } else if (isValid(subActivity)) {
+            roadDetails.add(subActivity.trim())
         }
 
         val roadDetailsStr = roadDetails.joinToString(" ")
@@ -87,6 +103,21 @@ data class ProjectProfile(
         if (comment.equals("None", ignoreCase = true)) return null
         if (comment.equals("Null", ignoreCase = true)) return null
         return comment
+    }
+
+    fun hasActiveActivity(): Boolean {
+        val t = activity.trim()
+        return t.isNotEmpty() && !t.equals("None", ignoreCase = true) && !t.equals("null", ignoreCase = true)
+    }
+
+    fun hasActiveSubActivity(): Boolean {
+        val t = subActivity.trim()
+        return t.isNotEmpty() && !t.equals("None", ignoreCase = true) && !t.equals("null", ignoreCase = true)
+    }
+
+    fun hasActiveLane(): Boolean {
+        val t = lane.trim()
+        return t.isNotEmpty() && !t.equals("None", ignoreCase = true) && !t.equals("null", ignoreCase = true)
     }
 
     companion object {
@@ -127,6 +158,26 @@ data class ProjectProfile(
             "Safety",
             "Site Inspection",
             "General Progress"
+        )
+        val SUB_ACTIVITY_PRESETS = listOf(
+            "None",
+            "Layer 1",
+            "Layer 2",
+            "Prime Coat",
+            "Tack Coat",
+            "Trial Stretch",
+            "Core Cutting",
+            "FDD / Compaction",
+            "Level Checking",
+            "Rolling",
+            "Laying",
+            "Excavation",
+            "Reinforcement",
+            "Shuttering",
+            "Concreting",
+            "Curing",
+            "Joint Cutting",
+            "Rectification"
         )
     }
 }
