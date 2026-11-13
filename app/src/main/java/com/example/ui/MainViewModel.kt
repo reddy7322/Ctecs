@@ -21,6 +21,7 @@ import com.example.geo.ChainageMatcher
 import com.example.location.LocationState
 import com.example.location.LocationStatus
 import com.example.location.LocationTracker
+import com.example.model.CalibrationValidationStatus
 import com.example.model.CaptureSnapshot
 import com.example.model.Chainage
 import com.example.model.ChainageCorrectionPoint
@@ -29,7 +30,10 @@ import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.CameraMode
 import com.example.model.DefinedProject
+import com.example.model.GeneratedChainageMarker
+import com.example.model.KmzReplacementPreview
 import com.example.model.OverlayConfig
+import com.example.model.PermanentCalibrationProfile
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.RouteData
@@ -44,6 +48,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -429,11 +436,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             emptyList()
         }
-    }.stateIn(
+    }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    val calibrationProfiles: StateFlow<List<PermanentCalibrationProfile>> = preferencesManager.calibrationProfilesFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    private val _activeProfileCompatibility = MutableStateFlow<SmartChainageCorrectionEngine.ProfileCompatibilityResult?>(null)
+    val activeProfileCompatibility: StateFlow<SmartChainageCorrectionEngine.ProfileCompatibilityResult?> = _activeProfileCompatibility.asStateFlow()
 
     val chainageAuditLog: StateFlow<List<ChainageLogEntry>> = preferencesManager.chainageAuditLogFlow.stateIn(
         scope = viewModelScope,
@@ -444,6 +460,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val progressionTracker = com.example.geo.ChainageProgressionTracker()
 
     val selectedAlignmentId = MutableStateFlow<String?>(null)
+    @Volatile
     private var lastCalculatedMatchResult: ChainageMatchResult? = null
 
     fun selectAlignment(alignmentId: String?) {
@@ -456,9 +473,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             route
         }
-    }
+    }.distinctUntilChanged()
 
-    // Automatic KMZ / Custom Correction / GPS calculation (Tiers 2, 3, 4)
+    // Automatic KMZ / Custom Correction / GPS calculation (Tiers 2, 3, 4) running on background Default dispatcher
     private val autoMatchResultFlow: Flow<ChainageMatchResult> = combine(
         locationState,
         effectiveRouteFlow,
@@ -542,13 +559,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!progressionTracker.isManualOverride() && stabilized.detectedSide.isNotBlank() && stabilized.detectedSide != "Unknown") {
             val detectedEnum = com.example.model.RoadSide.fromString(stabilized.detectedSide)
             if (projectProfile.value.roadSide != detectedEnum) {
-                viewModelScope.launch {
+                viewModelScope.launch(Dispatchers.IO) {
                     preferencesManager.updateProjectProfile(projectProfile.value.copy(roadSide = detectedEnum))
                 }
             }
         }
         stabilized
-    }
+    }.flowOn(Dispatchers.Default)
 
     // Unified live match result with strict 4-tier priority across Home Page, Camera, and Media Watermarks:
     // 1. MANUAL override (highest priority, preserving LHS/RHS detection & underlying KMZ reference)
@@ -634,23 +651,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Fast non-blocking location update collector for Survey & Chainage
         viewModelScope.launch {
             locationTracker.locationState.collect { state ->
                 val pt = state.point
                 if (pt != null) {
                     surveyManager.processLocationUpdate(pt, state.accuracy, state.speed ?: 0f, state.bearing ?: 0f)
-                    if (overlayConfig.value.showLocationName) {
-                        val name = com.example.location.LocationNameResolver.resolveLocationName(
-                            context = getApplication(),
-                            latitude = pt.latitude,
-                            longitude = pt.longitude
-                        )
-                        if (name.isNotBlank() && name != _currentLocationName.value) {
-                            _currentLocationName.value = name
-                            saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
-                        }
+                }
+            }
+        }
+
+        // Isolated, throttled reverse-geocoding collector on Dispatchers.IO so network I/O never stalls GPS/chainage
+        viewModelScope.launch(Dispatchers.IO) {
+            var lastGeocodedPt: com.example.model.GeoPoint? = null
+            var lastGeocodedTimeMs = 0L
+            locationTracker.locationState.collect { state ->
+                val pt = state.point ?: return@collect
+                if (!overlayConfig.value.showLocationName) return@collect
+                val now = System.currentTimeMillis()
+                val moved = lastGeocodedPt?.let { com.example.geo.GeoUtils.distanceMetres(it, pt) } ?: Double.MAX_VALUE
+                if (moved < 45.0 && (now - lastGeocodedTimeMs) < 15_000L && _currentLocationName.value.isNotBlank()) {
+                    return@collect
+                }
+                lastGeocodedPt = pt
+                lastGeocodedTimeMs = now
+                val name = com.example.location.LocationNameResolver.resolveLocationName(
+                    context = getApplication(),
+                    latitude = pt.latitude,
+                    longitude = pt.longitude
+                )
+                if (name.isNotBlank() && name != _currentLocationName.value) {
+                    _currentLocationName.value = name
+                    saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
+                }
+            }
+        }
+
+        // Automatic Permanent Calibration Profile Recognition & Reuse when alignment is loaded/imported
+        viewModelScope.launch(Dispatchers.Default) {
+            combine(activeRouteData, calibrationProfiles) { route, profiles ->
+                Pair(route, profiles)
+            }.collect { (route, profiles) ->
+                if (route == null || profiles.isEmpty()) {
+                    _activeProfileCompatibility.value = null
+                    return@collect
+                }
+                val fingerprint = SmartChainageCorrectionEngine.computeAlignmentFingerprint(route)
+                val exactMatch = profiles.firstOrNull { it.alignmentFingerprint == fingerprint }
+                val sameNameOrIdMatch = profiles.firstOrNull {
+                    it.originalFileName.equals(route.fileName, ignoreCase = true) || it.routeId == route.id
+                }
+                val candidate = exactMatch ?: sameNameOrIdMatch
+                if (candidate == null) {
+                    _activeProfileCompatibility.value = null
+                    return@collect
+                }
+                val compat = SmartChainageCorrectionEngine.evaluateProfileCompatibility(candidate, route)
+                _activeProfileCompatibility.value = compat
+
+                val currentPoints = routeCorrectionsMap.value[route.id].orEmpty()
+                if (compat.isExactGeometryMatch && currentPoints.isEmpty() && compat.revalidatedPoints.isNotEmpty()) {
+                    progressionTracker.resetChainageFilter()
+                    preferencesManager.saveRouteCorrectionPointsList(route.id, compat.revalidatedPoints)
+                    preferencesManager.setRouteCorrectionsEnabled(true)
+                } else if (!compat.isExactGeometryMatch && compat.isCompatible && currentPoints.isNotEmpty()) {
+                    // Mark existing points as Needs Review if geometry changed
+                    val anyNeedsUpdate = currentPoints.any { it.verificationStatus == CalibrationValidationStatus.VERIFIED }
+                    if (anyNeedsUpdate && compat.revalidatedPoints.isNotEmpty()) {
+                        preferencesManager.saveRouteCorrectionPointsList(route.id, compat.revalidatedPoints)
                     }
                 }
+            }
+        }
+
+        // Periodic Location & Chainage Stream Health Watchdog (recovers stalled GPS callbacks without app restart)
+        viewModelScope.launch(Dispatchers.Default) {
+            while (true) {
+                kotlinx.coroutines.delay(5_000L)
+                locationTracker.checkAndRecoverIfStale(8_000L)
             }
         }
 
@@ -1025,6 +1103,295 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             preferencesManager.clearChainageAuditLog()
             _uiMessages.emit(UiMessage.Info("Correction history log cleared"))
+        }
+    }
+
+    /**
+     * Imports verified permanent reference points from the active KMZ/KML alignment markers.
+     */
+    fun importReferencePointsFromActiveRoute(stepMetres: Long = 2000L) {
+        val route = activeRouteData.value ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            val extracted = SmartChainageCorrectionEngine.extractReferencePointsFromRoute(
+                routeData = route,
+                projectId = projectProfile.value.highwayId,
+                stepMetres = stepMetres
+            )
+            if (extracted.isEmpty()) {
+                showToast("No reference markers found in active alignment", ToastType.WARNING)
+                return@launch
+            }
+            val existing = routeCorrectionsMap.value[route.id].orEmpty().toMutableList()
+            var addedCount = 0
+            for (pt in extracted) {
+                val isDup = existing.any {
+                    kotlin.math.abs(it.originalKmzMetres - pt.originalKmzMetres) <= 1L ||
+                        (it.routeDistanceMetres > 0.01 && pt.routeDistanceMetres > 0.01 &&
+                            kotlin.math.abs(it.routeDistanceMetres - pt.routeDistanceMetres) < 1.0)
+                }
+                if (!isDup) {
+                    existing.add(pt)
+                    addedCount++
+                }
+            }
+            progressionTracker.resetChainageFilter()
+            preferencesManager.saveRouteCorrectionPointsList(route.id, existing)
+            preferencesManager.setRouteCorrectionsEnabled(true)
+            preferencesManager.addChainageLogEntry(
+                ChainageLogEntry(
+                    actionType = "KMZ_REFS_IMPORTED",
+                    routeId = route.id,
+                    routeName = route.name,
+                    summary = "Imported $addedCount KMZ reference points",
+                    details = "Interval: ${stepMetres}m"
+                )
+            )
+            showToast("Imported $addedCount verified reference points from KMZ", ToastType.SUCCESS)
+        }
+    }
+
+    /**
+     * Saves or updates a Permanent Calibration Profile for the active route and project.
+     */
+    fun saveCurrentCalibrationProfile(profileNameInput: String = "") {
+        val route = activeRouteData.value ?: return
+        val points = activeRouteCorrections.value
+        if (points.isEmpty()) {
+            showToast("Add at least 1 verified reference point before saving a profile", ToastType.WARNING)
+            return
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            val fingerprint = SmartChainageCorrectionEngine.computeAlignmentFingerprint(route)
+            val conflictReport = SmartChainageCorrectionEngine.detectReferenceConflicts(points, route)
+            val cleanName = profileNameInput.trim().ifBlank { "${route.name} Profile" }
+            val profileId = java.util.UUID.randomUUID().toString()
+            val linkedPoints = points.map {
+                it.copy(
+                    calibrationProfileId = profileId,
+                    verificationStatus = if (conflictReport.hasConflict) {
+                        CalibrationValidationStatus.INVALID
+                    } else {
+                        CalibrationValidationStatus.VERIFIED
+                    }
+                )
+            }
+            val firstOff = linkedPoints.first().displayOffset
+            val lastOff = linkedPoints.last().displayOffset
+            val offsetSummary = if (linkedPoints.size == 1 || firstOff == lastOff) {
+                "Shift $firstOff (${linkedPoints.size} pts)"
+            } else {
+                "Shift $firstOff .. $lastOff (${linkedPoints.size} pts)"
+            }
+
+            val profile = PermanentCalibrationProfile(
+                profileId = profileId,
+                profileName = cleanName,
+                projectId = projectProfile.value.highwayId,
+                routeId = route.id,
+                originalFileName = route.fileName,
+                alignmentFingerprint = fingerprint,
+                controlPoints = linkedPoints,
+                chainageDirection = if (route.diagnostics?.isChainageIncreasing == false) "DECREASING" else "INCREASING",
+                chainageEquations = route.diagnostics?.chainageEquations.orEmpty(),
+                markerIntervalMetres = SmartChainageCorrectionEngine.DEFAULT_CALIBRATION_MARKER_INTERVAL_METRES,
+                calibrationOffsetSummary = offsetSummary,
+                lastValidatedAt = System.currentTimeMillis(),
+                validationStatus = conflictReport.validationStatus,
+                statusDetailMessage = if (conflictReport.hasConflict) {
+                    conflictReport.conflicts.first()
+                } else {
+                    "Validated Permanent Profile (${linkedPoints.size} Verified Refs)"
+                }
+            )
+            preferencesManager.saveRouteCorrectionPointsList(route.id, linkedPoints)
+            preferencesManager.saveCalibrationProfile(profile)
+            preferencesManager.addChainageLogEntry(
+                ChainageLogEntry(
+                    actionType = "PROFILE_SAVED",
+                    routeId = route.id,
+                    routeName = route.name,
+                    summary = "Saved Profile: $cleanName",
+                    details = offsetSummary
+                )
+            )
+            showToast("Saved permanent profile '$cleanName'", ToastType.SUCCESS)
+        }
+    }
+
+    /**
+     * Loads and applies a saved Permanent Calibration Profile to the active route.
+     */
+    fun applySavedCalibrationProfile(profile: PermanentCalibrationProfile) {
+        val route = activeRouteData.value ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            val compat = SmartChainageCorrectionEngine.evaluateProfileCompatibility(profile, route)
+            if (!compat.isCompatible) {
+                showToast(compat.statusMessage, ToastType.ERROR)
+                return@launch
+            }
+            val validatedPts = compat.revalidatedPoints.map {
+                it.copy(verificationStatus = CalibrationValidationStatus.VERIFIED)
+            }
+            progressionTracker.resetChainageFilter()
+            preferencesManager.saveRouteCorrectionPointsList(route.id, validatedPts)
+            preferencesManager.setRouteCorrectionsEnabled(true)
+            // Update profile fingerprint if revalidated by user on modified alignment
+            val newFingerprint = SmartChainageCorrectionEngine.computeAlignmentFingerprint(route)
+            preferencesManager.saveCalibrationProfile(
+                profile.copy(
+                    routeId = route.id,
+                    alignmentFingerprint = newFingerprint,
+                    controlPoints = validatedPts,
+                    lastValidatedAt = System.currentTimeMillis(),
+                    validationStatus = CalibrationValidationStatus.VERIFIED,
+                    statusDetailMessage = "Revalidated & Active on ${route.fileName}"
+                )
+            )
+            preferencesManager.addChainageLogEntry(
+                ChainageLogEntry(
+                    actionType = "PROFILE_APPLIED",
+                    routeId = route.id,
+                    routeName = route.name,
+                    summary = "Applied Profile: ${profile.profileName}",
+                    details = "${validatedPts.size} verified control points loaded"
+                )
+            )
+            showToast("Applied calibration profile '${profile.profileName}'", ToastType.SUCCESS)
+        }
+    }
+
+    fun deleteCalibrationProfile(profileId: String) {
+        viewModelScope.launch {
+            preferencesManager.deleteCalibrationProfile(profileId)
+            showToast("Calibration profile removed", ToastType.INFO)
+        }
+    }
+
+    /**
+     * Previews the minimal-change KMZ/KML replacement with 2 km calibration markers.
+     */
+    fun previewKmzCalibrationReplacement(
+        rangeStartMetres: Long? = null,
+        rangeEndMetres: Long? = null,
+        intervalMetres: Long = SmartChainageCorrectionEngine.DEFAULT_CALIBRATION_MARKER_INTERVAL_METRES,
+        onResult: (Result<KmzReplacementPreview>) -> Unit
+    ) {
+        val route = activeRouteData.value
+        if (route == null) {
+            onResult(Result.failure(Exception("No active KMZ/KML alignment loaded")))
+            return
+        }
+        val points = activeRouteCorrections.value
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val exportData = routeRepository.getActiveRouteBytes()
+                val (fileName, sourceBytes) = if (exportData != null) {
+                    exportData
+                } else {
+                    val synth = SmartChainageCorrectionEngine.generateCorrectedKmlContent(route, emptyList())
+                    Pair(route.fileName.ifBlank { "${route.name}.kml" }, synth.toByteArray(Charsets.UTF_8))
+                }
+                val preview = SmartChainageCorrectionEngine.previewKmzReplacement(
+                    sourceBytes = sourceBytes,
+                    sourceFileName = fileName,
+                    routeData = route,
+                    correctionPoints = points,
+                    rangeStartMetres = rangeStartMetres,
+                    rangeEndMetres = rangeEndMetres,
+                    intervalMetres = intervalMetres
+                )
+                withContext(Dispatchers.Main) {
+                    onResult(Result.success(preview))
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(Result.failure(e))
+                }
+            }
+        }
+    }
+
+    /**
+     * Executes Final Apply — replaces old chainage-only markers within the selected range with
+     * calibrated 2 km markers while preserving 100% of unrelated KMZ/KML data, exports to targetUri
+     * (if provided), and optionally activates the calibrated alignment in the app.
+     */
+    fun applyCalibrationToKmzAndExport(
+        targetUri: Uri? = null,
+        activateInApp: Boolean = false,
+        rangeStartMetres: Long? = null,
+        rangeEndMetres: Long? = null,
+        intervalMetres: Long = SmartChainageCorrectionEngine.DEFAULT_CALIBRATION_MARKER_INTERVAL_METRES,
+        onComplete: ((Boolean, String) -> Unit)? = null
+    ) {
+        val route = activeRouteData.value
+        if (route == null) {
+            onComplete?.invoke(false, "No active KMZ/KML alignment loaded")
+            return
+        }
+        val points = activeRouteCorrections.value
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val exportData = routeRepository.getActiveRouteBytes()
+                val (fileName, sourceBytes) = if (exportData != null) {
+                    exportData
+                } else {
+                    val synth = SmartChainageCorrectionEngine.generateCorrectedKmlContent(route, emptyList())
+                    Pair(route.fileName.ifBlank { "${route.name}.kml" }, synth.toByteArray(Charsets.UTF_8))
+                }
+
+                val (calibratedBytes, preview) = SmartChainageCorrectionEngine.applyCalibrationToExistingKmzOrKml(
+                    sourceBytes = sourceBytes,
+                    sourceFileName = fileName,
+                    routeData = route,
+                    correctionPoints = points,
+                    rangeStartMetres = rangeStartMetres,
+                    rangeEndMetres = rangeEndMetres,
+                    intervalMetres = intervalMetres,
+                    profileName = "${route.name} Calibrated"
+                )
+
+                if (targetUri != null) {
+                    getApplication<Application>().contentResolver.openOutputStream(targetUri)?.use { out ->
+                        out.write(calibratedBytes)
+                        out.flush()
+                    } ?: throw Exception("Could not open output destination for writing")
+                }
+
+                if (activateInApp) {
+                    val importRes = routeRepository.importRouteFromBytes(
+                        bytes = calibratedBytes,
+                        fileName = preview.suggestedOutputFileName,
+                        displayName = "${route.name} (Calibrated 2km)"
+                    )
+                    if (importRes.isFailure) {
+                        throw importRes.exceptionOrNull() ?: Exception("Failed to activate calibrated alignment")
+                    }
+                    progressionTracker.resetChainageFilter()
+                }
+
+                preferencesManager.addChainageLogEntry(
+                    ChainageLogEntry(
+                        actionType = "KMZ_FINAL_APPLIED",
+                        routeId = route.id,
+                        routeName = route.name,
+                        summary = "Applied 2km Calibration (${preview.rangeStart.format()}..${preview.rangeEnd.format()})",
+                        details = "Removed ${preview.removedOldMarkersCount} old markers, inserted ${preview.inserted2KmMarkers.size} 2km markers"
+                    )
+                )
+
+                val summaryMsg = "Replaced ${preview.removedOldMarkersCount} old markers with ${preview.inserted2KmMarkers.size} calibrated 2 km markers"
+                withContext(Dispatchers.Main) {
+                    showToast(summaryMsg, ToastType.SUCCESS)
+                    onComplete?.invoke(true, summaryMsg)
+                }
+            } catch (e: Exception) {
+                val errMsg = e.message ?: "Failed to apply KMZ calibration"
+                withContext(Dispatchers.Main) {
+                    showToast(errMsg, ToastType.ERROR)
+                    onComplete?.invoke(false, errMsg)
+                }
+            }
         }
     }
 

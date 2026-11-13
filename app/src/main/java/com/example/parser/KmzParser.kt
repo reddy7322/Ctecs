@@ -197,6 +197,32 @@ object KmzParser {
     }
 
     /**
+     * Parses raw KMZ or KML bytes directly into [RouteData].
+     */
+    @Throws(RouteParseException::class)
+    fun parseBytes(bytes: ByteArray, originalFileName: String): RouteData {
+        return parse(ByteArrayInputStream(bytes), originalFileName)
+    }
+
+    /**
+     * Selects the primary KML entry name from a list of archive entry names:
+     * 1. Case-insensitive match for "doc.kml" at root.
+     * 2. Case-insensitive match for "doc.kml" inside any subfolder.
+     * 3. First ".kml" entry in the archive.
+     */
+    fun findBestKmlEntryName(entryNames: List<String>): String? {
+        val kmlNames = entryNames.filter { it.endsWith(".kml", ignoreCase = true) }
+        if (kmlNames.isEmpty()) return null
+        val rootDocKml = kmlNames.firstOrNull { it.equals("doc.kml", ignoreCase = true) }
+        if (rootDocKml != null) return rootDocKml
+        val nestedDocKml = kmlNames.firstOrNull {
+            it.substringAfterLast('/').equals("doc.kml", ignoreCase = true)
+        }
+        if (nestedDocKml != null) return nestedDocKml
+        return kmlNames.first()
+    }
+
+    /**
      * Selects the primary KML entry from extracted candidate entries:
      * 1. Case-insensitive match for "doc.kml" at root.
      * 2. Case-insensitive match for "doc.kml" inside any subfolder.

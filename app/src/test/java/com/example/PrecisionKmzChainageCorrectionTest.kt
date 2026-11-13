@@ -840,6 +840,336 @@ class PrecisionKmzChainageCorrectionTest {
             assertTrue(e.message.orEmpty().contains("no supported route geometry", ignoreCase = true))
         }
     }
+
+    @Test
+    fun testAutomatic2KmCalibrationMarkers_198To202WithRef200050() {
+        val baseLat = 29.500000
+        val baseLng = 77.700000
+        val degPerMetre = 1.0 / 111_132.0
+
+        // Build alignment from 196+000 to 204+000 (8,000 m total length)
+        val alignPts = (0..160).map { idx ->
+            val distM = idx * 50.0
+            GeoPoint(baseLat + distM * degPerMetre, baseLng, 250.0)
+        }
+        val markers = (0..160).map { idx ->
+            val chM = 196000L + idx * 50L
+            val pt = alignPts[idx]
+            com.example.model.RouteMarker("m-$idx", Chainage(chM).format(), Chainage(chM), pt)
+        }
+        val route = com.example.model.RouteData(
+            id = "nh58-test",
+            name = "NH-58 Alignment",
+            fileName = "Muzzafarnagar-Haridwar-NH-58-50m.kmz",
+            markers = markers,
+            alignments = listOf(com.example.model.RouteAlignment("a1", "NH-58 Main", alignPts, "INCREASING", "MAIN")),
+            bounds = com.example.model.GeoBounds(baseLat, baseLat + 8000 * degPerMetre, baseLng - 0.01, baseLng + 0.01),
+            startChainage = Chainage(196000L),
+            endChainage = Chainage(204000L)
+        )
+
+        // Verified reference point: KMZ 200+000 calibrated to 200+050 (+50m shift)
+        val refPt = ChainageCorrectionPoint(
+            id = "ref-200050",
+            routeId = route.id,
+            projectId = "NH-58",
+            latitude = baseLat + 4000.0 * degPerMetre,
+            longitude = baseLng,
+            altitude = 250.0,
+            originalKmzMetres = 200000L,
+            correctedMetres = 200050L,
+            routeDistanceMetres = 4000.0,
+            referenceSource = com.example.model.ReferencePointSource.GPS_VERIFIED,
+            gpsAccuracyAtCapture = 3.2f,
+            verificationStatus = com.example.model.CalibrationValidationStatus.VERIFIED
+        )
+
+        val generated = SmartChainageCorrectionEngine.generate2KmCalibrationMarkers(
+            routeData = route,
+            correctionPoints = listOf(refPt),
+            rangeStartMetres = 198000L,
+            rangeEndMetres = 202000L,
+            intervalMetres = 2000L
+        )
+
+        assertEquals(3, generated.size)
+        assertEquals(listOf("198+000", "200+000", "202+000"), generated.map { it.label })
+        assertTrue(generated.all { it.isGenerated2KmMarker })
+        // Since 200+050 is at alignment distance 4000m, calibrated 200+000 is at alignment distance 3950m (original KMZ 199+950)
+        assertTrue(kotlin.math.abs(generated[1].distanceAlongAlignmentMetres - 3950.0) <= 2.0)
+        assertEquals(199950L, generated[1].originalKmzChainage.metres)
+    }
+
+    @Test
+    fun testMinimalChangeKmzReplacementPreservesUnrelatedDataAndArchiveEntries() {
+        val kmlContent = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document>
+                <name>NH-58 Highway</name>
+                <Style id="chStyle"><IconStyle><scale>1.1</scale></IconStyle></Style>
+                <Folder>
+                  <name>Chainages</name>
+                  <Placemark><name>196+000</name><styleUrl>#chStyle</styleUrl><Point><coordinates>77.7000000,29.5000000,250.0</coordinates></Point></Placemark>
+                  <Placemark><name>198+050</name><styleUrl>#chStyle</styleUrl><Point><coordinates>77.7000000,29.5184465,250.0</coordinates></Point></Placemark>
+                  <Placemark><name>200+000</name><styleUrl>#chStyle</styleUrl><Point><coordinates>77.7000000,29.5359932,250.0</coordinates></Point></Placemark>
+                  <Placemark><name>201+950</name><styleUrl>#chStyle</styleUrl><Point><coordinates>77.7000000,29.5535399,250.0</coordinates></Point></Placemark>
+                  <Placemark><name>204+000</name><styleUrl>#chStyle</styleUrl><Point><coordinates>77.7000000,29.5719865,250.0</coordinates></Point></Placemark>
+                  <Placemark><name>Toll Plaza 200+100</name><Point><coordinates>77.7001000,29.5368000,250.0</coordinates></Point></Placemark>
+                  <Placemark>
+                    <name>Centerline</name>
+                    <LineString>
+                      <coordinates>77.7000000,29.5000000,250.0 77.7000000,29.5359932,250.0 77.7000000,29.5719865,250.0</coordinates>
+                    </LineString>
+                  </Placemark>
+                </Folder>
+              </Document>
+            </kml>
+        """.trimIndent()
+
+        val iconPayload = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val sourceKmzBytes = java.io.ByteArrayOutputStream().use { baos ->
+            java.util.zip.ZipOutputStream(baos).use { zos ->
+                zos.putNextEntry(java.util.zip.ZipEntry("doc.kml"))
+                zos.write(kmlContent.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+
+                zos.putNextEntry(java.util.zip.ZipEntry("files/icon.png"))
+                zos.write(iconPayload)
+                zos.closeEntry()
+            }
+            baos.toByteArray()
+        }
+
+        val parsedRoute = KmzParser.parseBytes(sourceKmzBytes, "NH58.kmz")
+        val refPoint = ChainageCorrectionPoint(
+            routeId = parsedRoute.id,
+            latitude = 29.5359932,
+            longitude = 77.7000000,
+            originalKmzMetres = 200000L,
+            correctedMetres = 200050L,
+            routeDistanceMetres = 4000.0
+        )
+
+        val (updatedKmzBytes, preview) = SmartChainageCorrectionEngine.applyCalibrationToExistingKmzOrKml(
+            sourceBytes = sourceKmzBytes,
+            sourceFileName = "NH58.kmz",
+            routeData = parsedRoute,
+            correctionPoints = listOf(refPoint),
+            rangeStartMetres = 198000L,
+            rangeEndMetres = 202000L,
+            intervalMetres = 2000L,
+            profileName = "NH-58 Calibrated Profile"
+        )
+
+        // Verify 3 old chainage markers inside 198+000..202+000 were removed (198+050, 200+000, 201+950)
+        assertEquals(3, preview.removedOldMarkersCount)
+        // Verify 3 new 2 km markers were inserted (198+000, 200+000, 202+000)
+        assertEquals(listOf("198+000", "200+000", "202+000"), preview.inserted2KmMarkers.map { it.label })
+        // Verify 2 chainage markers outside range were preserved (196+000 and 204+000)
+        assertEquals(2, preview.preservedChainageMarkersOutsideRangeCount)
+        // Verify non-chainage feature (Toll Plaza) and LineString were preserved
+        assertEquals(2, preview.preservedNonChainagePlacemarksCount)
+        assertEquals(1, preview.preservedArchiveEntriesCount)
+
+        // Re-parse the updated KMZ archive and verify contents
+        val reparsed = KmzParser.parseBytes(updatedKmzBytes, "NH58_calibrated_2km.kmz")
+        val markerLabels = reparsed.markers.map { it.label }
+        assertTrue(markerLabels.contains("196+000"))
+        assertTrue(markerLabels.contains("198+000"))
+        assertTrue(markerLabels.contains("200+000"))
+        assertTrue(markerLabels.contains("202+000"))
+        assertTrue(markerLabels.contains("204+000"))
+        assertFalse(markerLabels.contains("198+050"))
+        assertFalse(markerLabels.contains("201+950"))
+    }
+
+    @Test
+    fun testPermanentCalibrationProfileAutoReuseAndModifiedGeometryDetection() {
+        val pts1 = listOf(
+            GeoPoint(29.5000, 77.7000, 250.0),
+            GeoPoint(29.5100, 77.7000, 250.0),
+            GeoPoint(29.5200, 77.7000, 250.0)
+        )
+        val markers = listOf(
+            com.example.model.RouteMarker("m1", "130+000", Chainage(130000L), pts1[0]),
+            com.example.model.RouteMarker("m2", "132+000", Chainage(132000L), pts1[2])
+        )
+        val route1 = com.example.model.RouteData(
+            id = "r1",
+            name = "NH-58",
+            fileName = "Muzzafarnagar-Haridwar-NH-58-50m.kmz",
+            markers = markers,
+            alignments = listOf(com.example.model.RouteAlignment("a1", "Main", pts1)),
+            bounds = com.example.model.GeoBounds(29.5000, 29.5200, 77.7000, 77.7000),
+            startChainage = Chainage(130000L),
+            endChainage = Chainage(132000L)
+        )
+
+        val fp1 = SmartChainageCorrectionEngine.computeAlignmentFingerprint(route1)
+        val refPt = ChainageCorrectionPoint(
+            routeId = route1.id,
+            latitude = 29.5000,
+            longitude = 77.7000,
+            originalKmzMetres = 130000L,
+            correctedMetres = 130040L,
+            routeDistanceMetres = 0.0
+        )
+        val profile = com.example.model.PermanentCalibrationProfile(
+            profileName = "NH-58 Verified Profile",
+            projectId = "NH-58",
+            routeId = route1.id,
+            originalFileName = route1.fileName,
+            alignmentFingerprint = fp1,
+            controlPoints = listOf(refPt)
+        )
+
+        // 1. Exact geometry match -> VERIFIED and auto-reused
+        val compatExact = SmartChainageCorrectionEngine.evaluateProfileCompatibility(profile, route1)
+        assertTrue(compatExact.isCompatible)
+        assertTrue(compatExact.isExactGeometryMatch)
+        assertEquals(com.example.model.CalibrationValidationStatus.VERIFIED, compatExact.validationStatus)
+
+        // 2. Modified alignment geometry with same filename -> NEEDS_REVIEW (never blindly trusted)
+        val ptsModified = listOf(
+            GeoPoint(29.5000, 77.7050, 250.0),
+            GeoPoint(29.5250, 77.7050, 250.0)
+        )
+        val routeModified = route1.copy(
+            alignments = listOf(com.example.model.RouteAlignment("a1", "Main", ptsModified)),
+            bounds = com.example.model.GeoBounds(29.5000, 29.5250, 77.7050, 77.7050)
+        )
+        val compatModified = SmartChainageCorrectionEngine.evaluateProfileCompatibility(profile, routeModified)
+        assertTrue(compatModified.isCompatible)
+        assertFalse(compatModified.isExactGeometryMatch)
+        assertEquals(com.example.model.CalibrationValidationStatus.NEEDS_REVIEW, compatModified.validationStatus)
+
+        // 3. Conflict detection: reversed chainages on increasing alignment -> INVALID / hasConflict = true
+        val conflictingPt2 = ChainageCorrectionPoint(
+            routeId = route1.id,
+            latitude = 29.5200,
+            longitude = 77.7000,
+            originalKmzMetres = 132000L,
+            correctedMetres = 129500L, // Reversed! < 130040L on an increasing alignment
+            routeDistanceMetres = 2220.0
+        )
+        val conflictReport = SmartChainageCorrectionEngine.detectReferenceConflicts(
+            listOf(refPt, conflictingPt2),
+            route1
+        )
+        assertTrue(conflictReport.hasConflict)
+        assertEquals(com.example.model.CalibrationValidationStatus.INVALID, conflictReport.validationStatus)
+    }
+
+    @Test
+    fun testContinuousLiveAndCalibratedChainageNeverFreezesOrStalls() {
+        val baseLat = 29.500000
+        val baseLng = 77.700000
+        val degPerMetre = 1.0 / 111_132.0
+
+        val alignPts = (0..100).map { idx ->
+            GeoPoint(baseLat + (idx * 50.0) * degPerMetre, baseLng, 250.0)
+        }
+        val markers = (0..100).map { idx ->
+            val chM = 130000L + idx * 50L
+            com.example.model.RouteMarker("m-$idx", Chainage(chM).format(), Chainage(chM), alignPts[idx])
+        }
+        val route = com.example.model.RouteData(
+            id = "route-live-freeze-test",
+            name = "NH-58 Live Test",
+            fileName = "NH-58.kmz",
+            markers = markers,
+            alignments = listOf(com.example.model.RouteAlignment("a1", "Main", alignPts, "INCREASING", "MAIN")),
+            bounds = com.example.model.GeoBounds(baseLat, baseLat + 5000 * degPerMetre, baseLng - 0.01, baseLng + 0.01),
+            startChainage = Chainage(130000L),
+            endChainage = Chainage(135000L)
+        )
+
+        // Apply a LARGE calibration offset (+400m, which exceeds the 250m SUDDEN_JUMP_THRESHOLD_METRES!)
+        val largeOffsetCalPt = ChainageCorrectionPoint(
+            routeId = route.id,
+            latitude = baseLat,
+            longitude = baseLng,
+            originalKmzMetres = 130000L,
+            correctedMetres = 130400L, // +400m shift!
+            routeDistanceMetres = 0.0
+        )
+
+        val tracker = com.example.geo.ChainageProgressionTracker()
+        var lastResult: com.example.model.ChainageMatchResult? = null
+
+        // Simulate 20 continuous GPS updates moving along the alignment
+        for (step in 0..20) {
+            val trueGroundDist = step * 20.0 // 20m per second
+            val gpsPt = GeoPoint(baseLat + trueGroundDist * degPerMetre, baseLng + 0.00001)
+
+            val kmzMatch = ChainageMatcher.match(
+                gpsPoint = gpsPt,
+                gpsAccuracy = 4.0f,
+                routeData = route,
+                previousResult = lastResult
+            )
+            // Must NEVER trigger a false sudden jump due to the +400m calibration offset!
+            assertFalse("Step $step falsely flagged as uncertain jump!", kmzMatch.isUncertain)
+
+            val smartCorr = SmartChainageCorrectionEngine.applyCorrection(
+                rawChainage = kmzMatch.chainage!!,
+                routeData = route,
+                correctionPoints = listOf(largeOffsetCalPt),
+                gpsPoint = gpsPt,
+                gpsAccuracy = 4.0f,
+                confidence = kmzMatch.confidence,
+                distanceAlongAlignmentMetres = kmzMatch.distanceAlongAlignmentMetres,
+                isUncertainJump = kmzMatch.isUncertain
+            )
+            assertNotNull("Calibration dropped at step $step!", smartCorr)
+
+            val combined = kmzMatch.copy(
+                chainage = smartCorr!!.correctedChainage,
+                source = com.example.model.ChainageSource.CUSTOM_CORRECTION,
+                rawUncorrectedChainage = kmzMatch.chainage
+            )
+            val stabilized = tracker.processResult(combined, route.id)
+            lastResult = stabilized
+
+            val expectedCalibratedMetres = 130400L + trueGroundDist.toLong()
+            val actualMetres = stabilized.chainage?.metres ?: 0L
+            assertTrue(
+                "At step $step, expected ~$expectedCalibratedMetres but got $actualMetres",
+                kotlin.math.abs(actualMetres - expectedCalibratedMetres) <= 15L
+            )
+        }
+
+        // Now test stationary calibration change (user parked at 400m along alignment, changes calibration from +400m to +650m):
+        // Must update immediately on the very next tick even with 0.0m GPS movement!
+        val updatedCalPt = largeOffsetCalPt.copy(correctedMetres = 130650L)
+        val stationaryGps = GeoPoint(baseLat + 400.0 * degPerMetre, baseLng + 0.00001)
+        val stationaryKmz = ChainageMatcher.match(
+            gpsPoint = stationaryGps,
+            gpsAccuracy = 4.0f,
+            routeData = route,
+            previousResult = lastResult
+        )
+        val stationaryCorr = SmartChainageCorrectionEngine.applyCorrection(
+            rawChainage = stationaryKmz.chainage!!,
+            routeData = route,
+            correctionPoints = listOf(updatedCalPt),
+            gpsPoint = stationaryGps,
+            gpsAccuracy = 4.0f,
+            confidence = stationaryKmz.confidence,
+            distanceAlongAlignmentMetres = stationaryKmz.distanceAlongAlignmentMetres
+        )!!
+        val stationaryStabilized = tracker.processResult(
+            stationaryKmz.copy(
+                chainage = stationaryCorr.correctedChainage,
+                source = com.example.model.ChainageSource.CUSTOM_CORRECTION,
+                rawUncorrectedChainage = stationaryKmz.chainage
+            ),
+            route.id
+        )
+        assertEquals(131050L, stationaryStabilized.chainage?.metres)
+    }
 }
+
 
 

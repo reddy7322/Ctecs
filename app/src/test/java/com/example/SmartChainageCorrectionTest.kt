@@ -250,7 +250,7 @@ class SmartChainageCorrectionTest {
             isEnabled = true
         )
 
-        // Match outside coverage beyond max bounds (e.g. at raw 202+000 / routeDist 12000m)
+        // Match beyond last control point (at raw 202+000 / routeDist 12000m) propagates along alignment
         val outsideResult = SmartChainageCorrectionEngine.applyCorrection(
             rawChainage = Chainage(202000L),
             routeData = route1,
@@ -258,7 +258,9 @@ class SmartChainageCorrectionTest {
             confidence = MatchConfidence.HIGH,
             distanceAlongAlignmentMetres = 12000.0
         )
-        assertNull("Should not extrapolate outside correction coverage", outsideResult)
+        assertNotNull("Should propagate calibration beyond last control point along alignment", outsideResult)
+        assertEquals(202200L, outsideResult?.correctedChainage?.metres)
+        assertEquals(SmartChainageCorrectionEngine.CorrectionMode.EXTRAPOLATED_POST_END, outsideResult?.mode)
 
         // Match on unrelated route-2 at same chainage 199+000
         val unrelatedRouteResult = SmartChainageCorrectionEngine.applyCorrection(
@@ -272,7 +274,7 @@ class SmartChainageCorrectionTest {
     }
 
     @Test
-    fun testSmartCorrection_lowGpsConfidenceGating() {
+    fun testSmartCorrection_lowGpsConfidenceDoesNotFreezeAndNoMatchGating() {
         val route = createSampleRoute()
         val p1 = ChainageCorrectionPoint(
             id = "p1",
@@ -285,16 +287,25 @@ class SmartChainageCorrectionTest {
         )
 
         val rawChainage = Chainage(198500L)
-        // LOW confidence (degraded GPS fix or off-alignment)
-        val result = SmartChainageCorrectionEngine.applyCorrection(
+        // LOW confidence (degraded GPS fix) must NOT freeze or drop calibration when matched to alignment
+        val lowConfResult = SmartChainageCorrectionEngine.applyCorrection(
             rawChainage = rawChainage,
             routeData = route,
             correctionPoints = listOf(p1),
             confidence = MatchConfidence.LOW
         )
+        assertNotNull(lowConfResult)
+        assertEquals(198700L, lowConfResult?.correctedChainage?.metres)
+        assertEquals(com.example.model.CalibrationValidationStatus.LOW_CONFIDENCE, lowConfResult?.validationStatus)
 
-        // Should NOT apply custom correction when GPS fix is unreliable
-        assertNull(result)
+        // NO_MATCH (off-route) should return null
+        val noMatchResult = SmartChainageCorrectionEngine.applyCorrection(
+            rawChainage = rawChainage,
+            routeData = route,
+            correctionPoints = listOf(p1),
+            confidence = MatchConfidence.NO_MATCH
+        )
+        assertNull(noMatchResult)
     }
 
     @Test

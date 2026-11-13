@@ -9,6 +9,7 @@ import com.example.model.RouteData
 import com.example.model.RouteMarker
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -21,7 +22,8 @@ import kotlin.math.roundToLong
  * - Spatial indexing and segment caching for high performance on large alignments.
  * - Bracketing reference marker interpolation with support for increasing & decreasing chainage.
  * - Segment continuity checks & parallel carriageway (LHS/RHS/Service) hysteresis.
- * - Sudden chainage jump detection with graceful fallback to last reliable reading.
+ * - Single-spike jump filtering with automatic next-fix recovery (never locks or freezes chainage).
+ * - Baseline uncalibrated jump comparison so large calibration offsets (> 250m) never trigger false jump locks.
  * - Four-tier quality classification (High, Medium, Low, No Match).
  */
 object ChainageMatcher {
@@ -31,6 +33,18 @@ object ChainageMatcher {
     const val DEFAULT_MAX_GPS_ACCURACY_METRES = 12.0
     const val MAXIMUM_OFF_ROUTE_DISTANCE_METRES = 100.0
     const val SUDDEN_JUMP_THRESHOLD_METRES = 250.0
+    private const val MAX_SPIKE_HOLD_WINDOW_MS = 8_000L
+
+    // Lightweight internal performance telemetry
+    private val cacheHits = AtomicLong(0L)
+    private val cacheMisses = AtomicLong(0L)
+    private val lastMatchLatencyMicros = AtomicLong(0L)
+    private val automaticJumpRecoveries = AtomicLong(0L)
+
+    fun getCacheHits(): Long = cacheHits.get()
+    fun getCacheMisses(): Long = cacheMisses.get()
+    fun getLastMatchLatencyMicros(): Long = lastMatchLatencyMicros.get()
+    fun getAutomaticJumpRecoveries(): Long = automaticJumpRecoveries.get()
 
     /**
      * Precomputed spatial index and geometry cache for a single alignment polyline.
@@ -55,7 +69,7 @@ object ChainageMatcher {
         val chainageMetres: Long
     )
 
-    // Thread-safe spatial geometry cache keyed by "routeId:alignmentId:markerCount"
+    // Thread-safe spatial geometry cache keyed by alignment geometry signature
     private val geometryCache = ConcurrentHashMap<String, CachedAlignmentGeometry>()
 
     /**
@@ -64,9 +78,15 @@ object ChainageMatcher {
     fun getOrCreateCachedGeometry(alignment: RouteAlignment, allMarkers: List<RouteMarker>): CachedAlignmentGeometry {
         val firstPt = alignment.points.firstOrNull()
         val lastPt = alignment.points.lastOrNull()
-        val cacheKey = "${alignment.id}:${alignment.points.size}:${allMarkers.size}:${firstPt?.latitude},${firstPt?.longitude}:${lastPt?.latitude},${lastPt?.longitude}"
+        val firstMCh = allMarkers.firstOrNull()?.chainage?.metres ?: -1L
+        val lastMCh = allMarkers.lastOrNull()?.chainage?.metres ?: -1L
+        val cacheKey = "${alignment.id}:${alignment.direction}:${alignment.points.size}:${allMarkers.size}:$firstMCh:$lastMCh:${firstPt?.latitude},${firstPt?.longitude}:${lastPt?.latitude},${lastPt?.longitude}"
         val existing = geometryCache[cacheKey]
-        if (existing != null) return existing
+        if (existing != null) {
+            cacheHits.incrementAndGet()
+            return existing
+        }
+        cacheMisses.incrementAndGet()
 
         val pts = alignment.points
         val n = pts.size
@@ -189,6 +209,47 @@ object ChainageMatcher {
     }
 
     /**
+     * Interpolates exact geographical coordinate along the cached alignment at a target alignment distance.
+     */
+    fun interpolatePointAtDistanceAlongAlignment(
+        cached: CachedAlignmentGeometry,
+        distanceAlongMetres: Double
+    ): GeoPoint {
+        val pts = cached.points
+        if (pts.isEmpty()) return GeoPoint(0.0, 0.0)
+        if (pts.size == 1 || cached.totalLengthM <= 0.0) return pts.first()
+
+        val clampedDist = distanceAlongMetres.coerceIn(0.0, cached.totalLengthM)
+        if (clampedDist <= 0.0) return pts.first()
+        if (clampedDist >= cached.totalLengthM) return pts.last()
+
+        // Binary search or linear scan over cumulativeDistances
+        var segIdx = 0
+        for (i in 0 until cached.segmentCount) {
+            val segStart = cached.cumulativeDistances[i]
+            val segEnd = cached.cumulativeDistances[i + 1]
+            if (clampedDist in segStart..segEnd) {
+                segIdx = i
+                break
+            }
+        }
+        val segLen = cached.segmentLengths[segIdx]
+        if (segLen <= 1e-6) return pts[segIdx]
+
+        val fraction = ((clampedDist - cached.cumulativeDistances[segIdx]) / segLen).coerceIn(0.0, 1.0)
+        val p1 = pts[segIdx]
+        val p2 = pts[segIdx + 1]
+        val lat = p1.latitude + fraction * (p2.latitude - p1.latitude)
+        val lng = p1.longitude + fraction * (p2.longitude - p1.longitude)
+        val alt = if (p1.altitude != null && p2.altitude != null) {
+            p1.altitude + fraction * (p2.altitude - p1.altitude)
+        } else {
+            p1.altitude ?: p2.altitude
+        }
+        return GeoPoint(lat, lng, alt)
+    }
+
+    /**
      * Matches a GPS coordinate to the active route with high geometric precision.
      */
     fun match(
@@ -200,232 +261,241 @@ object ChainageMatcher {
         maxMatchOffsetMetres: Double = DEFAULT_MAX_MATCH_OFFSET_METRES,
         highConfidenceOffsetMetres: Double = DEFAULT_HIGH_CONFIDENCE_OFFSET_METRES
     ): ChainageMatchResult {
-        if (routeData == null || (routeData.markers.isEmpty() && routeData.alignments.isEmpty())) {
-            return ChainageMatchResult.noRoute(gpsAccuracy)
-        }
-
-        val prevAlignmentName = previousResult?.matchedAlignmentName.orEmpty()
-
-        // 1. Determine candidate alignments to match against
-        // If route has user-selected alignment, prioritize it
-        val alignments = if (routeData.selectedAlignmentId != null) {
-            val selected = routeData.alignments.filter { it.id == routeData.selectedAlignmentId }
-            if (selected.isNotEmpty()) selected else routeData.alignments
-        } else {
-            routeData.alignments
-        }
-
-        if (alignments.isEmpty()) {
-            return matchToMarkersDirectly(gpsPoint, gpsAccuracy, routeData.markers)
-        }
-
-        // 2. Perform nearest-segment projection across alignments with spatial bounding filter
-        var bestProj: SegmentProjection? = null
-        var bestAlignment: CachedAlignmentGeometry? = null
-        var bestSegIdx = -1
-        var bestDistanceAlongM = 0.0
-        var minScore = Double.MAX_VALUE
-
-        for (align in alignments) {
-            if (align.points.size < 2) continue
-            val cached = getOrCreateCachedGeometry(align, routeData.markers)
-            val pts = cached.points
-
-            for (i in 0 until cached.segmentCount) {
-                val p1 = pts[i]
-                val p2 = pts[i + 1]
-
-                // Fast spatial bounding box rejection (with ~500m / 0.005° margin)
-                val minLat = minOf(p1.latitude, p2.latitude) - 0.005
-                val maxLat = maxOf(p1.latitude, p2.latitude) + 0.005
-                val minLng = minOf(p1.longitude, p2.longitude) - 0.005
-                val maxLng = maxOf(p1.longitude, p2.longitude) + 0.005
-
-                if (gpsPoint.latitude !in minLat..maxLat || gpsPoint.longitude !in minLng..maxLng) {
-                    continue
-                }
-
-                val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
-
-                // Parallel carriageway & continuity bonus:
-                // Give previously matched alignment a 5.0m hysteresis advantage
-                // to prevent rapid fluttering between LHS/RHS or Service road across median
-                val isPrevAlignment = prevAlignmentName.isNotBlank() && align.name == prevAlignmentName
-                val continuityBonus = if (isPrevAlignment) 5.0 else 0.0
-                val score = proj.perpendicularDistance - continuityBonus
-
-                if (score < minScore) {
-                    minScore = score
-                    bestProj = proj
-                    bestAlignment = cached
-                    bestSegIdx = i
-                    bestDistanceAlongM = cached.cumulativeDistances[i] + proj.t * cached.segmentLengths[i]
-                }
+        val startNs = System.nanoTime()
+        try {
+            if (routeData == null || (routeData.markers.isEmpty() && routeData.alignments.isEmpty())) {
+                return ChainageMatchResult.noRoute(gpsAccuracy)
             }
-        }
 
-        // Fallback to direct marker matching if no alignment polyline matched closely
-        if (bestProj == null || bestAlignment == null) {
-            return matchToMarkersDirectly(gpsPoint, gpsAccuracy, routeData.markers)
-        }
+            val prevAlignmentName = previousResult?.matchedAlignmentName.orEmpty()
 
-        val effectiveOffset = bestProj.perpendicularDistance
-        val finalProjectionPoint = bestProj.projectedPoint
-        val segLength = if (bestSegIdx in bestAlignment.segmentLengths.indices) bestAlignment.segmentLengths[bestSegIdx] else 0.0
-
-        // 3. Interpolate Chainage along polyline using mapped reference markers
-        val mappedMarkers = bestAlignment.mappedMarkers.ifEmpty {
-            // If alignment had no mapped markers, use global markers
-            routeData.markers.map { MappedMarkerRef(it, 0.0, it.chainage.metres) }
-        }
-
-        var estimatedChainageMetres: Long
-        var bracketingInfo: String? = null
-        var nearestMarkerLabel: String? = null
-        var referenceStatus = "Valid"
-
-        if (mappedMarkers.isEmpty()) {
-            estimatedChainageMetres = 0L
-            referenceStatus = "No references found"
-        } else if (mappedMarkers.size == 1) {
-            val single = mappedMarkers[0]
-            val deltaDist = bestDistanceAlongM - single.distanceAlongAlignmentM
-            val sign = if (bestAlignment.direction == "DECREASING") -1 else 1
-            estimatedChainageMetres = (single.chainageMetres + sign * deltaDist).roundToLong()
-            nearestMarkerLabel = single.marker.label
-            bracketingInfo = "Single Ref: ${single.marker.label}"
-        } else {
-            // Find bracketing reference markers: mA <= bestDistanceAlongM <= mB
-            val first = mappedMarkers.first()
-            val last = mappedMarkers.last()
-
-            if (bestDistanceAlongM <= first.distanceAlongAlignmentM) {
-                // Before first marker: extrapolate along polyline
-                val distFromFirst = bestDistanceAlongM - first.distanceAlongAlignmentM
-                val sign = if (first.chainageMetres <= last.chainageMetres) 1 else -1
-                estimatedChainageMetres = (first.chainageMetres + sign * distFromFirst).roundToLong()
-                nearestMarkerLabel = first.marker.label
-                bracketingInfo = "Pre-start: Extrapolated from ${first.marker.label}"
-                referenceStatus = "Extrapolated (Pre-Start)"
-            } else if (bestDistanceAlongM >= last.distanceAlongAlignmentM) {
-                // Past last marker: extrapolate along polyline
-                val distFromLast = bestDistanceAlongM - last.distanceAlongAlignmentM
-                val sign = if (first.chainageMetres <= last.chainageMetres) 1 else -1
-                estimatedChainageMetres = (last.chainageMetres + sign * distFromLast).roundToLong()
-                nearestMarkerLabel = last.marker.label
-                bracketingInfo = "Post-end: Extrapolated from ${last.marker.label}"
-                referenceStatus = "Extrapolated (Post-End)"
+            // 1. Determine candidate alignments to match against
+            val alignments = if (routeData.selectedAlignmentId != null) {
+                val selected = routeData.alignments.filter { it.id == routeData.selectedAlignmentId }
+                if (selected.isNotEmpty()) selected else routeData.alignments
             } else {
-                // Interpolate between bracketing markers along the polyline
-                var mA = first
-                var mB = last
-                for (k in 0 until mappedMarkers.size - 1) {
-                    val curr = mappedMarkers[k]
-                    val next = mappedMarkers[k + 1]
-                    if (bestDistanceAlongM in curr.distanceAlongAlignmentM..next.distanceAlongAlignmentM) {
-                        mA = curr
-                        mB = next
-                        break
+                routeData.alignments
+            }
+
+            if (alignments.isEmpty()) {
+                return matchToMarkersDirectly(gpsPoint, gpsAccuracy, routeData.markers)
+            }
+
+            // 2. Perform nearest-segment projection across alignments with spatial bounding filter
+            var bestProj: SegmentProjection? = null
+            var bestAlignment: CachedAlignmentGeometry? = null
+            var bestSegIdx = -1
+            var bestDistanceAlongM = 0.0
+            var minScore = Double.MAX_VALUE
+
+            for (align in alignments) {
+                if (align.points.size < 2) continue
+                val cached = getOrCreateCachedGeometry(align, routeData.markers)
+                val pts = cached.points
+
+                for (i in 0 until cached.segmentCount) {
+                    val p1 = pts[i]
+                    val p2 = pts[i + 1]
+
+                    // Fast spatial bounding box rejection (with ~500m / 0.005° margin)
+                    val minLat = minOf(p1.latitude, p2.latitude) - 0.005
+                    val maxLat = maxOf(p1.latitude, p2.latitude) + 0.005
+                    val minLng = minOf(p1.longitude, p2.longitude) - 0.005
+                    val maxLng = maxOf(p1.longitude, p2.longitude) + 0.005
+
+                    if (gpsPoint.latitude !in minLat..maxLat || gpsPoint.longitude !in minLng..maxLng) {
+                        continue
+                    }
+
+                    val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
+
+                    // Parallel carriageway & continuity bonus:
+                    // Give previously matched alignment a 5.0m hysteresis advantage
+                    val isPrevAlignment = prevAlignmentName.isNotBlank() && align.name == prevAlignmentName
+                    val continuityBonus = if (isPrevAlignment) 5.0 else 0.0
+                    val score = proj.perpendicularDistance - continuityBonus
+
+                    if (score < minScore) {
+                        minScore = score
+                        bestProj = proj
+                        bestAlignment = cached
+                        bestSegIdx = i
+                        bestDistanceAlongM = cached.cumulativeDistances[i] + proj.t * cached.segmentLengths[i]
                     }
                 }
-
-                val spanDistanceM = mB.distanceAlongAlignmentM - mA.distanceAlongAlignmentM
-                val fraction = if (spanDistanceM > 0.01) {
-                    ((bestDistanceAlongM - mA.distanceAlongAlignmentM) / spanDistanceM).coerceIn(0.0, 1.0)
-                } else 0.0
-
-                val deltaChainage = mB.chainageMetres - mA.chainageMetres
-                estimatedChainageMetres = (mA.chainageMetres + fraction * deltaChainage).roundToLong()
-                nearestMarkerLabel = if (fraction < 0.5) mA.marker.label else mB.marker.label
-                bracketingInfo = "${mA.marker.label} ↔ ${mB.marker.label}"
             }
-        }
 
-        // 4. Continuity check: Detect sudden chainage jumps
-        var isUncertain = false
-        var lastReliableChainage: Chainage? = previousResult?.chainage
+            // Fallback to direct marker matching if no alignment polyline matched closely
+            if (bestProj == null || bestAlignment == null) {
+                return matchToMarkersDirectly(gpsPoint, gpsAccuracy, routeData.markers)
+            }
 
-        if (previousResult != null && previousResult.chainage != null && previousResult.confidence != MatchConfidence.NO_MATCH) {
-            val chainageJump = abs(estimatedChainageMetres - previousResult.chainage.metres)
-            // If jump exceeds threshold (> 250m) in a short interval, flag as uncertain
-            if (chainageJump > SUDDEN_JUMP_THRESHOLD_METRES) {
-                isUncertain = true
-                // Retain last reliable chainage when uncertain jump occurs
-                lastReliableChainage = previousResult.chainage
-            }
-        }
+            val effectiveOffset = bestProj.perpendicularDistance
+            val finalProjectionPoint = bestProj.projectedPoint
+            val segLength = if (bestSegIdx in bestAlignment.segmentLengths.indices) bestAlignment.segmentLengths[bestSegIdx] else 0.0
 
-        // 5. Four-Tier Confidence Scoring
-        val isAccuracyAcceptable = gpsAccuracy <= DEFAULT_MAX_GPS_ACCURACY_METRES
-        val confidence: MatchConfidence
-        val statusMessage: String
+            // 3. Interpolate Chainage along polyline using mapped reference markers
+            val mappedMarkers = bestAlignment.mappedMarkers.ifEmpty {
+                routeData.markers.map { MappedMarkerRef(it, 0.0, it.chainage.metres) }
+            }
 
-        when {
-            effectiveOffset > MAXIMUM_OFF_ROUTE_DISTANCE_METRES -> {
-                confidence = MatchConfidence.NO_MATCH
-                statusMessage = String.format(Locale.US, "Off Route (%.0fm from %s)", effectiveOffset, bestAlignment.alignmentName)
-            }
-            isUncertain -> {
-                confidence = MatchConfidence.LOW
-                statusMessage = String.format(Locale.US, "Sudden Jump (Offset: %.1fm, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
-            }
-            effectiveOffset <= highConfidenceOffsetMetres && isAccuracyAcceptable -> {
-                confidence = MatchConfidence.HIGH
-                statusMessage = String.format(Locale.US, "High Precision Match (Offset: %.1fm, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
-            }
-            effectiveOffset <= maxMatchOffsetMetres && gpsAccuracy <= 25.0f -> {
-                confidence = MatchConfidence.MEDIUM
-                statusMessage = String.format(Locale.US, "Medium Confidence (Offset: %.1fm, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
-            }
-            else -> {
-                confidence = MatchConfidence.LOW
-                statusMessage = String.format(Locale.US, "Low Confidence (Offset: %.1fm > 35m, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
-            }
-        }
+            var estimatedChainageMetres: Long
+            var bracketingInfo: String? = null
+            var nearestMarkerLabel: String? = null
+            var referenceStatus = "Valid"
 
-        // 6. Direction & Carriageway Side (LHS / RHS) Detection
-        var detectedSide = bestAlignment.carriagewayType
-        if (detectedSide == "MAIN" || detectedSide == "UNKNOWN") {
-            // Determine side relative to nearest segment direction
-            if (bestProj.p1 != null && bestProj.p2 != null) {
-                val lateral = calculateSignedLateralOffsetMetres(gpsPoint, bestProj.p1!!, bestProj.p2!!)
-                detectedSide = when {
-                    abs(lateral) < 1.0 -> previousResult?.detectedSide ?: "RHS"
-                    lateral > 0.0 -> if (bestAlignment.direction == "DECREASING") "RHS" else "LHS"
-                    else -> if (bestAlignment.direction == "DECREASING") "LHS" else "RHS"
-                }
+            if (mappedMarkers.isEmpty()) {
+                estimatedChainageMetres = 0L
+                referenceStatus = "No references found"
+            } else if (mappedMarkers.size == 1) {
+                val single = mappedMarkers[0]
+                val deltaDist = bestDistanceAlongM - single.distanceAlongAlignmentM
+                val sign = if (bestAlignment.direction == "DECREASING") -1 else 1
+                estimatedChainageMetres = (single.chainageMetres + sign * deltaDist).roundToLong()
+                nearestMarkerLabel = single.marker.label
+                bracketingInfo = "Single Ref: ${single.marker.label}"
             } else {
-                detectedSide = previousResult?.detectedSide ?: "RHS"
+                val first = mappedMarkers.first()
+                val last = mappedMarkers.last()
+
+                if (bestDistanceAlongM <= first.distanceAlongAlignmentM) {
+                    val distFromFirst = bestDistanceAlongM - first.distanceAlongAlignmentM
+                    val sign = if (first.chainageMetres <= last.chainageMetres) 1 else -1
+                    estimatedChainageMetres = (first.chainageMetres + sign * distFromFirst).roundToLong()
+                    nearestMarkerLabel = first.marker.label
+                    bracketingInfo = "Pre-start: Extrapolated from ${first.marker.label}"
+                    referenceStatus = "Extrapolated (Pre-Start)"
+                } else if (bestDistanceAlongM >= last.distanceAlongAlignmentM) {
+                    val distFromLast = bestDistanceAlongM - last.distanceAlongAlignmentM
+                    val sign = if (first.chainageMetres <= last.chainageMetres) 1 else -1
+                    estimatedChainageMetres = (last.chainageMetres + sign * distFromLast).roundToLong()
+                    nearestMarkerLabel = last.marker.label
+                    bracketingInfo = "Post-end: Extrapolated from ${last.marker.label}"
+                    referenceStatus = "Extrapolated (Post-End)"
+                } else {
+                    var mA = first
+                    var mB = last
+                    for (k in 0 until mappedMarkers.size - 1) {
+                        val curr = mappedMarkers[k]
+                        val next = mappedMarkers[k + 1]
+                        if (bestDistanceAlongM in curr.distanceAlongAlignmentM..next.distanceAlongAlignmentM) {
+                            mA = curr
+                            mB = next
+                            break
+                        }
+                    }
+
+                    val spanDistanceM = mB.distanceAlongAlignmentM - mA.distanceAlongAlignmentM
+                    val fraction = if (spanDistanceM > 0.01) {
+                        ((bestDistanceAlongM - mA.distanceAlongAlignmentM) / spanDistanceM).coerceIn(0.0, 1.0)
+                    } else 0.0
+
+                    val deltaChainage = mB.chainageMetres - mA.chainageMetres
+                    estimatedChainageMetres = (mA.chainageMetres + fraction * deltaChainage).roundToLong()
+                    nearestMarkerLabel = if (fraction < 0.5) mA.marker.label else mB.marker.label
+                    bracketingInfo = "${mA.marker.label} ↔ ${mB.marker.label}"
+                }
             }
-        }
 
-        val finalChainage = if (isUncertain && lastReliableChainage != null) {
-            lastReliableChainage
-        } else {
-            Chainage(estimatedChainageMetres)
-        }
+            // 4. Continuity check: Detect single-spike chainage jumps without ever locking permanently.
+            // CRITICAL: Always compare against the UNCALIBRATED baseline chainage of previousResult
+            // so that a calibration shift > 250m never triggers a false jump lock!
+            var isUncertain = false
+            val prevBaselineChainage = previousResult?.rawUncorrectedChainage ?: previousResult?.chainage
+            var lastReliableChainage: Chainage? = prevBaselineChainage
 
-        return ChainageMatchResult(
-            chainage = finalChainage,
-            projectedPoint = finalProjectionPoint,
-            offsetMetres = effectiveOffset,
-            gpsAccuracy = gpsAccuracy,
-            confidence = confidence,
-            statusMessage = statusMessage,
-            isManual = false,
-            matchedAlignmentName = bestAlignment.alignmentName,
-            detectedSide = detectedSide,
-            matchedSegmentIndex = bestSegIdx,
-            matchedSegmentLengthM = segLength,
-            segmentProjectionT = bestProj.t,
-            alignmentDirection = bestAlignment.direction,
-            isUncertain = isUncertain,
-            lastReliableChainage = lastReliableChainage,
-            distanceAlongAlignmentMetres = bestDistanceAlongM,
-            nearestReferenceMarkerLabel = nearestMarkerLabel,
-            bracketingMarkersInfo = bracketingInfo,
-            sourceKmzReferenceStatus = referenceStatus
-        )
+            if (previousResult != null && prevBaselineChainage != null && previousResult.confidence != MatchConfidence.NO_MATCH) {
+                val chainageJump = abs(estimatedChainageMetres - prevBaselineChainage.metres)
+                if (chainageJump > SUDDEN_JUMP_THRESHOLD_METRES) {
+                    val elapsedMs = abs(System.currentTimeMillis() - previousResult.timestamp)
+                    if (previousResult.isUncertain || elapsedMs > MAX_SPIKE_HOLD_WINDOW_MS) {
+                        // Previous reading already held a spike once, or > 8s elapsed:
+                        // Automatically recover and snap to the new position so chainage never freezes!
+                        isUncertain = false
+                        lastReliableChainage = Chainage(estimatedChainageMetres)
+                        automaticJumpRecoveries.incrementAndGet()
+                    } else {
+                        // Single transient GPS spike: hold previous baseline chainage for this 1 reading
+                        isUncertain = true
+                        lastReliableChainage = prevBaselineChainage
+                    }
+                }
+            }
+
+            // 5. Four-Tier Confidence Scoring
+            val isAccuracyAcceptable = gpsAccuracy <= DEFAULT_MAX_GPS_ACCURACY_METRES
+            val confidence: MatchConfidence
+            val statusMessage: String
+
+            when {
+                effectiveOffset > MAXIMUM_OFF_ROUTE_DISTANCE_METRES -> {
+                    confidence = MatchConfidence.NO_MATCH
+                    statusMessage = String.format(Locale.US, "Off Route (%.0fm from %s)", effectiveOffset, bestAlignment.alignmentName)
+                }
+                isUncertain -> {
+                    confidence = MatchConfidence.LOW
+                    statusMessage = String.format(Locale.US, "Sudden Jump (Offset: %.1fm, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
+                }
+                effectiveOffset <= highConfidenceOffsetMetres && isAccuracyAcceptable -> {
+                    confidence = MatchConfidence.HIGH
+                    statusMessage = String.format(Locale.US, "High Precision Match (Offset: %.1fm, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
+                }
+                effectiveOffset <= maxMatchOffsetMetres && gpsAccuracy <= 25.0f -> {
+                    confidence = MatchConfidence.MEDIUM
+                    statusMessage = String.format(Locale.US, "Medium Confidence (Offset: %.1fm, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
+                }
+                else -> {
+                    confidence = MatchConfidence.LOW
+                    statusMessage = String.format(Locale.US, "Low Confidence (Offset: %.1fm > 35m, GPS: ±%.1fm)", effectiveOffset, gpsAccuracy)
+                }
+            }
+
+            // 6. Direction & Carriageway Side (LHS / RHS) Detection
+            var detectedSide = bestAlignment.carriagewayType
+            if (detectedSide == "MAIN" || detectedSide == "UNKNOWN") {
+                if (bestProj.p1 != null && bestProj.p2 != null) {
+                    val lateral = calculateSignedLateralOffsetMetres(gpsPoint, bestProj.p1!!, bestProj.p2!!)
+                    detectedSide = when {
+                        abs(lateral) < 1.0 -> previousResult?.detectedSide ?: "RHS"
+                        lateral > 0.0 -> if (bestAlignment.direction == "DECREASING") "RHS" else "LHS"
+                        else -> if (bestAlignment.direction == "DECREASING") "LHS" else "RHS"
+                    }
+                } else {
+                    detectedSide = previousResult?.detectedSide ?: "RHS"
+                }
+            }
+
+            val finalChainage = if (isUncertain && lastReliableChainage != null) {
+                lastReliableChainage
+            } else {
+                Chainage(estimatedChainageMetres)
+            }
+
+            return ChainageMatchResult(
+                chainage = finalChainage,
+                rawUncorrectedChainage = finalChainage,
+                projectedPoint = finalProjectionPoint,
+                offsetMetres = effectiveOffset,
+                gpsAccuracy = gpsAccuracy,
+                confidence = confidence,
+                statusMessage = statusMessage,
+                isManual = false,
+                matchedAlignmentName = bestAlignment.alignmentName,
+                detectedSide = detectedSide,
+                matchedSegmentIndex = bestSegIdx,
+                matchedSegmentLengthM = segLength,
+                segmentProjectionT = bestProj.t,
+                alignmentDirection = bestAlignment.direction,
+                isUncertain = isUncertain,
+                lastReliableChainage = lastReliableChainage,
+                distanceAlongAlignmentMetres = bestDistanceAlongM,
+                nearestReferenceMarkerLabel = nearestMarkerLabel,
+                bracketingMarkersInfo = bracketingInfo,
+                sourceKmzReferenceStatus = referenceStatus
+            )
+        } finally {
+            lastMatchLatencyMicros.set((System.nanoTime() - startNs) / 1_000L)
+        }
     }
 
     private fun matchToMarkersDirectly(
@@ -449,6 +519,7 @@ object ChainageMatcher {
 
         return ChainageMatchResult(
             chainage = nearest.chainage,
+            rawUncorrectedChainage = nearest.chainage,
             projectedPoint = nearest.point,
             offsetMetres = dist,
             gpsAccuracy = gpsAccuracy,

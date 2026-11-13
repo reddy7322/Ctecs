@@ -15,9 +15,11 @@ import com.example.model.LogoPosition
 import com.example.model.LogoShape
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
+import com.example.model.PermanentCalibrationProfile
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -169,6 +171,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_MANUAL_CHAINAGE_CUSTOM_TEXT = stringPreferencesKey("manual_chainage_custom_text")
         val KEY_SAVED_CUSTOM_CHAINAGES = stringPreferencesKey("saved_custom_chainages")
         val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
+        val KEY_CALIBRATION_PROFILES_JSON = stringPreferencesKey("permanent_calibration_profiles_json")
     }
 
     val galleryViewModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -356,7 +359,7 @@ class PreferencesManager(private val context: Context) {
 
     val activeRouteIdFlow: Flow<String?> = context.dataStore.data.map { prefs ->
         prefs[KEY_ACTIVE_ROUTE_ID]
-    }
+    }.distinctUntilChanged()
 
     val definedProjectsFlow: Flow<List<DefinedProject>> = context.dataStore.data.map { prefs ->
         val jsonStr = prefs[KEY_DEFINED_PROJECTS]
@@ -568,17 +571,19 @@ class PreferencesManager(private val context: Context) {
     }
 
     val routeCorrectionsFlow: Flow<Map<String, List<ChainageCorrectionPoint>>> = context.dataStore.data.map { prefs ->
-        parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON])
+        prefs[KEY_ROUTE_CORRECTIONS_JSON]
+    }.distinctUntilChanged().map { rawJson ->
+        parseRouteCorrections(rawJson)
     }
 
     val routeCorrectionsEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_ROUTE_CORRECTIONS_ENABLED] ?: true
-    }
+    }.distinctUntilChanged()
 
     val manualChainageOverrideFlow: Flow<Chainage?> = context.dataStore.data.map { prefs ->
         val raw = prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]
         if (!raw.isNullOrBlank()) Chainage.parse(raw) else null
-    }
+    }.distinctUntilChanged()
 
     val manualChainageTextFlow: Flow<String?> = context.dataStore.data.map { prefs ->
         val custom = prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT]
@@ -588,12 +593,66 @@ class PreferencesManager(private val context: Context) {
             !raw.isNullOrBlank() -> raw
             else -> null
         }
-    }
+    }.distinctUntilChanged()
 
     val savedCustomChainagesFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
-        val raw = prefs[KEY_SAVED_CUSTOM_CHAINAGES].orEmpty()
+        prefs[KEY_SAVED_CUSTOM_CHAINAGES].orEmpty()
+    }.distinctUntilChanged().map { raw ->
         if (raw.isBlank()) emptyList()
         else raw.split("||").map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    val calibrationProfilesFlow: Flow<List<PermanentCalibrationProfile>> = context.dataStore.data.map { prefs ->
+        prefs[KEY_CALIBRATION_PROFILES_JSON]
+    }.distinctUntilChanged().map { rawJson ->
+        parseCalibrationProfiles(rawJson)
+    }
+
+    suspend fun saveCalibrationProfile(profile: PermanentCalibrationProfile) {
+        context.dataStore.edit { prefs ->
+            val current = parseCalibrationProfiles(prefs[KEY_CALIBRATION_PROFILES_JSON]).toMutableList()
+            val existingIdx = current.indexOfFirst {
+                it.profileId == profile.profileId ||
+                    (it.alignmentFingerprint.isNotBlank() && it.alignmentFingerprint == profile.alignmentFingerprint)
+            }
+            if (existingIdx != -1) {
+                val prev = current[existingIdx]
+                current[existingIdx] = profile.copy(
+                    profileId = prev.profileId,
+                    version = maxOf(prev.version + 1, profile.version)
+                )
+            } else {
+                current.add(0, profile)
+            }
+            prefs[KEY_CALIBRATION_PROFILES_JSON] = serializeCalibrationProfiles(current)
+        }
+    }
+
+    suspend fun deleteCalibrationProfile(profileId: String) {
+        context.dataStore.edit { prefs ->
+            val current = parseCalibrationProfiles(prefs[KEY_CALIBRATION_PROFILES_JSON])
+                .filterNot { it.profileId == profileId }
+            prefs[KEY_CALIBRATION_PROFILES_JSON] = serializeCalibrationProfiles(current)
+        }
+    }
+
+    private fun parseCalibrationProfiles(rawJson: String?): List<PermanentCalibrationProfile> {
+        if (rawJson.isNullOrBlank()) return emptyList()
+        val result = mutableListOf<PermanentCalibrationProfile>()
+        try {
+            val arr = JSONArray(rawJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                result.add(PermanentCalibrationProfile.fromJson(obj))
+            }
+        } catch (_: Exception) {}
+        return result
+    }
+
+    private fun serializeCalibrationProfiles(profiles: List<PermanentCalibrationProfile>): String {
+        val arr = JSONArray()
+        profiles.forEach { arr.put(it.toJson()) }
+        return arr.toString()
     }
 
     suspend fun setManualChainageOverride(chainage: Chainage?, customText: String? = null) {
@@ -642,6 +701,18 @@ class PreferencesManager(private val context: Context) {
             }
             list.sortBy { it.originalKmzMetres }
             currentMap[point.routeId] = list
+            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
+        }
+    }
+
+    suspend fun saveRouteCorrectionPointsList(routeId: String, points: List<ChainageCorrectionPoint>) {
+        context.dataStore.edit { prefs ->
+            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
+            if (points.isEmpty()) {
+                currentMap.remove(routeId)
+            } else {
+                currentMap[routeId] = points.sortedBy { it.originalKmzMetres }
+            }
             prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
         }
     }
@@ -710,7 +781,9 @@ class PreferencesManager(private val context: Context) {
     }
 
     val chainageAuditLogFlow: Flow<List<ChainageLogEntry>> = context.dataStore.data.map { prefs ->
-        parseChainageLogs(prefs[KEY_CHAINAGE_AUDIT_LOG_JSON])
+        prefs[KEY_CHAINAGE_AUDIT_LOG_JSON]
+    }.distinctUntilChanged().map { raw ->
+        parseChainageLogs(raw)
     }
 
     suspend fun addChainageLogEntry(entry: ChainageLogEntry) {
