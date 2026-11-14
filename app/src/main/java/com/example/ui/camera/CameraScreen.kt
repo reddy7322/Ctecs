@@ -28,6 +28,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -172,6 +174,7 @@ import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.LogoPosition
 import com.example.model.MatchConfidence
+import com.example.model.MiniMapPosition
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.ProjectProfile
@@ -329,6 +332,7 @@ fun CameraScreen(
     }
 
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
+    val lastValidLocation by viewModel.lastValidLocation.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val matchResult by viewModel.cameraMatchResult.collectAsStateWithLifecycle()
     val manualChainageText by viewModel.manualChainageText.collectAsStateWithLifecycle()
@@ -339,6 +343,33 @@ fun CameraScreen(
     val currentLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
     val lastPhoto by viewModel.lastCapturedPhoto.collectAsStateWithLifecycle()
     val showManualDialog by viewModel.showManualChainageDialog.collectAsStateWithLifecycle()
+
+    val isVideoCaptureMode = (captureMode == CaptureMode.VIDEO || isRecording)
+    val activeMiniMapConfig = overlayConfig.getEffectiveMiniMapConfig(isVideo = isVideoCaptureMode)
+    val showMiniMapOverlay = overlayConfig.isMiniMapActive(isVideo = isVideoCaptureMode)
+    val effectiveMiniMapLocation = locationState.point ?: lastValidLocation
+    val isMiniMapGpsRetained = (locationState.point == null && lastValidLocation != null)
+    val reliableMiniMapChainage = remember(matchResult) {
+        if (!matchResult.isUncertain &&
+            (matchResult.isManual ||
+                matchResult.confidence == com.example.model.MatchConfidence.HIGH ||
+                matchResult.confidence == com.example.model.MatchConfidence.MEDIUM) &&
+            matchResult.chainage != null
+        ) {
+            matchResult.displayChainage
+        } else {
+            ""
+        }
+    }
+    val reliableMiniMapSide = remember(matchResult.detectedSide, projectProfile.roadSide) {
+        matchResult.detectedSide
+            .takeIf { it.equals("LHS", ignoreCase = true) || it.equals("RHS", ignoreCase = true) }
+            ?.uppercase(Locale.US)
+            ?: projectProfile.roadSide
+                .takeIf { it == RoadSide.LHS || it == RoadSide.RHS }
+                ?.label
+            ?: ""
+    }
 
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
     val isCameraScreenVisible = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
@@ -612,6 +643,67 @@ fun CameraScreen(
                     .align(alignment)
                     .padding(start = padStart, end = padEnd, top = padTop, bottom = padBottom)
             )
+        }
+
+        // 4b. Configurable Dynamic Mini Map Overlay Preview (Photo & Video independent settings)
+        if (showMiniMapOverlay) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(
+                        start = if (isLandscape) 172.dp else 10.dp,
+                        end = if (isLandscape) 104.dp else 10.dp,
+                        top = if (isLandscape) 56.dp else 104.dp,
+                        bottom = if (isLandscape) 14.dp else 232.dp
+                    )
+            ) {
+                val safeW = maxWidth
+                val safeH = maxHeight
+                val mapW = activeMiniMapConfig.resolveWidthDp().dp
+                    .coerceIn(40.dp, (safeW * 0.48f).coerceAtLeast(40.dp))
+                val mapH = activeMiniMapConfig.resolveHeightDp().dp
+                    .coerceIn(40.dp, (safeH * 0.48f).coerceAtLeast(40.dp))
+
+                val maxX = (safeW - mapW).coerceAtLeast(0.dp)
+                val maxY = (safeH - mapH).coerceAtLeast(0.dp)
+
+                val (offsetX, offsetY) = when (activeMiniMapConfig.position) {
+                    MiniMapPosition.TOP_LEFT -> Pair(0.dp, 0.dp)
+                    MiniMapPosition.TOP_RIGHT -> {
+                        // Keep clear of top-right Portrait timestamp card when anchored Top Right
+                        val topClearance = if (!isLandscape) 106.dp.coerceAtMost(maxY) else 0.dp
+                        Pair(maxX, topClearance)
+                    }
+                    MiniMapPosition.BOTTOM_LEFT -> Pair(0.dp, maxY)
+                    MiniMapPosition.BOTTOM_RIGHT -> Pair(maxX, maxY)
+                    MiniMapPosition.CUSTOM -> Pair(
+                        maxX * activeMiniMapConfig.customPosXFraction.coerceIn(0f, 1f),
+                        maxY * activeMiniMapConfig.customPosYFraction.coerceIn(0f, 1f)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .offset(x = offsetX, y = offsetY)
+                        .size(width = mapW, height = mapH)
+                        .clickable { showSimDialog = true }
+                        .testTag(if (isLandscape) "landscape_minimap_preview" else "portrait_minimap_preview")
+                ) {
+                    MiniMapPreview(
+                        location = effectiveMiniMapLocation,
+                        bearing = locationState.bearing,
+                        routeData = activeRoute,
+                        highwayTag = projectProfile.highwayId,
+                        miniMapConfig = activeMiniMapConfig,
+                        chainageLabel = reliableMiniMapChainage,
+                        sideLabel = reliableMiniMapSide,
+                        isGpsRetained = isMiniMapGpsRetained,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
         }
 
         // 5. Center Countdown Timer Overlay
@@ -1005,24 +1097,6 @@ fun CameraScreen(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Control 1: Minimalist Transparent Glass MiniMap Preview Card
-                MiniMapPreview(
-                    location = locationState.point,
-                    bearing = locationState.bearing,
-                    routeData = activeRoute,
-                    highwayTag = "",
-                    gpsAccuracy = null,
-                    showGpsBadge = false,
-                    showProjectTag = false,
-                    showAttribution = false,
-                    transparentBackground = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(66.dp)
-                        .clickable { showSimDialog = true }
-                        .testTag("landscape_minimap_preview")
-                )
-
                 // Control 2: LHS / RHS / BHS / Median / None Segmented Pill (Full Transparent Glass)
                 Box {
                     Surface(
@@ -2080,43 +2154,14 @@ fun CameraScreen(
                     }
                 }
 
-                // Top Viewfinder HUD: Tiny Standard Photo Mini Map (Top-Left) & Minimalist Timestamp Card (Top-Right)
-                // 8dp consistent margin from screen edges and each other, dynamic in height, strictly compact in width
+                // Top Viewfinder HUD: Minimalist Timestamp Card (Top-Right; Mini Map sits in configurable safe layer)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp, start = 8.dp, end = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.Top
                 ) {
-                    // Top-Left: Tiny Standard Photo Mini Map Preview (8dp margin, 4dp blur & 10% opacity glass container)
-                    if (overlayConfig.showMapInset && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
-                        FloatingGlassCard(
-                            shape = RoundedCornerShape(10.dp),
-                            backgroundColor = Color(0x1A101726),
-                            borderColor = Color(0x38FFFFFF),
-                            borderWidth = 0.6.dp,
-                            onClick = { showSimDialog = true },
-                            modifier = Modifier
-                                .size(64.dp)
-                                .testTag("portrait_minimap_preview")
-                        ) {
-                            MiniMapPreview(
-                                location = locationState.point,
-                                bearing = locationState.bearing,
-                                routeData = activeRoute,
-                                highwayTag = "",
-                                gpsAccuracy = null,
-                                showGpsBadge = false,
-                                showProjectTag = false,
-                                showAttribution = false,
-                                modifier = Modifier.fillMaxSize(),
-                                mapType = "satellite"
-                            )
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.width(1.dp))
-                    }
 
                     // Top-Right: Minimal & Tiny Size Glass Timestamp & Project Info Card
                     // Dynamic in height, strictly compact in width, 4dp blur and 10% opacity

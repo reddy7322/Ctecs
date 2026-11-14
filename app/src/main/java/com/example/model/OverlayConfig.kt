@@ -127,7 +127,11 @@ data class OverlayConfig(
     val videoPaddingTopDp: Int = 16,
     val videoPaddingBottomDp: Int = 20,
     val videoPaddingLeftDp: Int = 16,
-    val videoPaddingRightDp: Int = 16
+    val videoPaddingRightDp: Int = 16,
+
+    // Independent Photo & Video Mini Map Overlay Settings
+    val photoMiniMap: MiniMapStyleConfig = MiniMapStyleConfig(),
+    val videoMiniMap: MiniMapStyleConfig = MiniMapStyleConfig()
 ) {
     fun getEffectivePadding(isVideo: Boolean): OverlayPadding {
         return if (isVideo && !useSamePaddingForPhotoAndVideo) {
@@ -145,6 +149,16 @@ data class OverlayConfig(
                 right = photoPaddingRightDp
             )
         }
+    }
+
+    fun getEffectiveMiniMapConfig(isVideo: Boolean): MiniMapStyleConfig {
+        return if (isVideo) videoMiniMap else photoMiniMap
+    }
+
+    fun isMiniMapActive(isVideo: Boolean): Boolean {
+        return showMapInset &&
+            template != OverlayTemplate.MINIMAL_TIMESTAMP &&
+            getEffectiveMiniMapConfig(isVideo).enabled
     }
 }
 
@@ -174,8 +188,18 @@ data class CaptureSnapshot(
     val speedMps: Float? = null,
     val filenameFormatPreset: String = "highway_YYYYMMDD_HHMMSS",
     val customFilenamePrefix: String = "",
-    val isDarkTheme: Boolean = true
+    val isDarkTheme: Boolean = true,
+    val lastValidLocation: GeoPoint? = null,
+    val lastValidBearing: Float? = null,
+    val isGpsRetained: Boolean = false,
+    val isVideoCapture: Boolean = false
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage
+
+    val effectiveMiniMapLocation: GeoPoint?
+        get() = location ?: lastValidLocation
+
+    val effectiveMiniMapBearing: Float?
+        get() = bearing ?: lastValidBearing
 }

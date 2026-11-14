@@ -66,6 +66,19 @@ class RealtimeVideoOverlayManager(
     private var lastRenderedWidth: Int = -1
     @Volatile
     private var lastRenderedHeight: Int = -1
+    @Volatile
+    private var lastRenderedBearing: Int = Int.MIN_VALUE
+    @Volatile
+    private var lastRenderedRouteKey: String = ""
+    @Volatile
+    private var lastRenderedMiniMapSig: Int = 0
+    @Volatile
+    private var lastRenderedRetained: Boolean = false
+
+    @Volatile
+    private var sessionLastValidLocation: com.example.model.GeoPoint? = null
+    @Volatile
+    private var sessionLastValidBearing: Float? = null
 
     @Volatile
     private var isRecordingActive: Boolean = false
@@ -126,14 +139,34 @@ class RealtimeVideoOverlayManager(
             val currentSecond = nowMs / 1000L
             val currentRotation = ((rotationProvider() % 360) + 360) % 360
             val frameRotation = ((frame.rotationDegrees % 360) + 360) % 360
+
+            // Retain last valid location/bearing smoothly if GPS is temporarily lost during recording
+            if (baseSnapshot.location != null) {
+                sessionLastValidLocation = baseSnapshot.location
+            }
+            if (baseSnapshot.bearing != null) {
+                sessionLastValidBearing = baseSnapshot.bearing
+            }
+            val effectiveLastLoc = baseSnapshot.lastValidLocation ?: sessionLastValidLocation
+            val effectiveLastBearing = baseSnapshot.lastValidBearing ?: sessionLastValidBearing
+            val isRetained = baseSnapshot.location == null && effectiveLastLoc != null
+            val effectiveBearingVal = baseSnapshot.bearing ?: effectiveLastBearing
+
             val currentChainage = baseSnapshot.displayChainage
-            val currentCoords = baseSnapshot.location?.let { String.format(java.util.Locale.US, "%.5f_%.5f", it.latitude, it.longitude) } ?: ""
+            val locForCoords = baseSnapshot.location ?: effectiveLastLoc
+            val currentCoords = locForCoords?.let {
+                String.format(java.util.Locale.US, "%.5f_%.5f", it.latitude, it.longitude)
+            } ?: ""
             val currentAccuracy = baseSnapshot.gpsAccuracy.toInt()
             val currentSpeed = (baseSnapshot.speedMps ?: -1f).toInt()
             val currentHeading = baseSnapshot.compassHeading
-            val currentSide = baseSnapshot.projectProfile.roadSide.name
+            val currentSide = baseSnapshot.projectProfile.roadSide.name + "_" + baseSnapshot.matchResult.detectedSide
             val currentActivity = baseSnapshot.projectProfile.activity
             val currentLane = baseSnapshot.projectProfile.lane
+            val currentBearingInt = effectiveBearingVal?.toInt() ?: Int.MIN_VALUE
+            val currentRouteKey = baseSnapshot.activeRoute?.let { "${it.name}_${it.alignments.size}_${it.markers.size}" } ?: ""
+            val currentMiniMapSig = 31 * baseSnapshot.overlayConfig.showMapInset.hashCode() +
+                baseSnapshot.overlayConfig.getEffectiveMiniMapConfig(isVideo = true).hashCode()
 
             val cropRect = try { frame.cropRect } catch (e: Throwable) { null }
             val hasCrop = cropRect != null && cropRect.width() > 0 && cropRect.height() > 0
@@ -160,17 +193,25 @@ class RealtimeVideoOverlayManager(
                     (currentActivity != lastRenderedActivity) ||
                     (currentLane != lastRenderedLane) ||
                     (renderWidth != lastRenderedWidth) ||
-                    (renderHeight != lastRenderedHeight)
+                    (renderHeight != lastRenderedHeight) ||
+                    (currentBearingInt != lastRenderedBearing) ||
+                    (currentRouteKey != lastRenderedRouteKey) ||
+                    (currentMiniMapSig != lastRenderedMiniMapSig) ||
+                    (isRetained != lastRenderedRetained)
 
             if (isDirty) {
                 val canvas = frame.overlayCanvas
                 // 1. Clear previous canvas buffer
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-                // 2. Build updated snapshot with wall-clock millisecond timestamp
+                // 2. Build updated snapshot with wall-clock millisecond timestamp and retained GPS
                 val liveSnapshot = baseSnapshot.copy(
                     timestamp = nowMs,
-                    deviceRotationDegrees = currentRotation
+                    deviceRotationDegrees = currentRotation,
+                    lastValidLocation = effectiveLastLoc,
+                    lastValidBearing = effectiveLastBearing,
+                    isGpsRetained = isRetained,
+                    isVideoCapture = true
                 )
 
                 // 3. Render upright overlay adjusted for current dynamic orientation
@@ -197,6 +238,10 @@ class RealtimeVideoOverlayManager(
                 lastRenderedLane = currentLane
                 lastRenderedWidth = renderWidth
                 lastRenderedHeight = renderHeight
+                lastRenderedBearing = currentBearingInt
+                lastRenderedRouteKey = currentRouteKey
+                lastRenderedMiniMapSig = currentMiniMapSig
+                lastRenderedRetained = isRetained
             }
             return true
         } catch (e: Throwable) {

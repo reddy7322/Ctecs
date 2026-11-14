@@ -14,11 +14,14 @@ import android.media.ExifInterface
 import android.net.Uri
 import com.example.geo.GeoUtils
 import com.example.model.CaptureSnapshot
+import com.example.model.CoordinateFormat
 import com.example.model.GeoPoint
 import com.example.model.LogoPosition
-import com.example.model.CoordinateFormat
+import com.example.model.MiniMapPosition
+import com.example.model.MiniMapStyleConfig
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
+import com.example.model.RoadSide
 import com.example.model.RouteData
 import java.io.File
 import java.io.FileOutputStream
@@ -76,40 +79,23 @@ object OverlayRenderer {
         val padTopPx = (padding.top * pxPerDp).coerceAtLeast(6f * scale)
         val padBottomPx = (padding.bottom * pxPerDp).coerceAtLeast(6f * scale)
 
-        // 1. Calculate and Render Lower-Left Mini-Map Inset (if enabled)
-        val showMiniMap = config.showMapInset && config.template != OverlayTemplate.MINIMAL_TIMESTAMP
-        val mapSize = if (showMiniMap) {
-            if (isLandscape) {
-                (height * 0.13f).coerceIn(60f * scale, 120f * scale)
-            } else {
-                (min(width, height) * 0.12f).coerceIn(65f * scale, 130f * scale)
-            }
-        } else 0f
-
-        val mapRect: RectF? = if (showMiniMap) {
-            RectF(
-                padLeftPx,
-                height - padBottomPx - mapSize,
-                padLeftPx + mapSize,
-                height - padBottomPx
+        // 1. Determine Mini-Map layout rect (independent Photo vs Video settings)
+        val showMiniMap = config.isMiniMapActive(isVideo = isVideoFrame)
+        val miniMapCfg = config.getEffectiveMiniMapConfig(isVideo = isVideoFrame)
+        val initialMapRect: RectF? = if (showMiniMap) {
+            computeMiniMapRect(
+                width = width,
+                height = height,
+                padLeftPx = padLeftPx,
+                padRightPx = padRightPx,
+                padTopPx = padTopPx,
+                padBottomPx = padBottomPx,
+                miniMapConfig = miniMapCfg
             )
         } else null
 
-        if (mapRect != null) {
-            renderMiniMap(
-                context = context,
-                canvas = canvas,
-                rect = mapRect,
-                scale = scale,
-                location = location,
-                bearing = snapshot.bearing,
-                routeData = snapshot.activeRoute,
-                roadName = project.highwayId.ifBlank { "NH-58" },
-                isDark = snapshot.isDarkTheme
-            )
-        }
-
-        // 2. Render Information Block (passing 4-side padding and mapRect)
+        // 2. Render Information Block (passing 4-side padding and side-by-side map rect hint)
+        val infoBounds = RectF()
         val infoBlockTopY = renderInformationBlock(
             canvas = canvas,
             width = width,
@@ -120,10 +106,58 @@ object OverlayRenderer {
             padTopPx = padTopPx,
             padBottomPx = padBottomPx,
             snapshot = snapshot,
-            mapInsetRect = mapRect
+            mapInsetRect = if (miniMapCfg.position == MiniMapPosition.BOTTOM_LEFT) initialMapRect else null,
+            outBounds = infoBounds
         )
 
-        // 3. Render Custom Logo / Image Overlay with 4-side padding boundaries
+        // 3. Adjust Mini-Map position if a corner preset collides with the rendered text block
+        val mapRect: RectF? = if (initialMapRect != null) {
+            adjustMiniMapRectForInfoBlock(
+                mapRect = initialMapRect,
+                infoBounds = infoBounds,
+                miniMapConfig = miniMapCfg,
+                height = height,
+                padTopPx = padTopPx,
+                padBottomPx = padBottomPx,
+                gapPx = 12f * scale
+            )
+        } else null
+
+        if (mapRect != null) {
+            val reliableChainage = if (
+                !snapshot.matchResult.isUncertain &&
+                (snapshot.matchResult.isManual ||
+                    snapshot.matchResult.confidence == com.example.model.MatchConfidence.HIGH ||
+                    snapshot.matchResult.confidence == com.example.model.MatchConfidence.MEDIUM) &&
+                snapshot.matchResult.chainage != null
+            ) {
+                snapshot.displayChainage
+            } else {
+                null
+            }
+            val reliableSide = snapshot.matchResult.detectedSide
+                .takeIf { it.equals("LHS", ignoreCase = true) || it.equals("RHS", ignoreCase = true) }
+                ?.uppercase(Locale.US)
+                ?: snapshot.projectProfile.roadSide
+                    .takeIf { it == RoadSide.LHS || it == RoadSide.RHS }
+                    ?.label
+
+            MiniMapRenderer.drawMiniMap(
+                context = context,
+                canvas = canvas,
+                bounds = mapRect,
+                config = miniMapCfg,
+                location = snapshot.effectiveMiniMapLocation,
+                isGpsRetained = snapshot.isGpsRetained,
+                bearing = snapshot.effectiveMiniMapBearing,
+                routeData = snapshot.activeRoute,
+                chainageLabel = reliableChainage,
+                sideLabel = reliableSide,
+                dpScale = pxPerDp
+            )
+        }
+
+        // 4. Render Custom Logo / Image Overlay with 4-side padding boundaries
         if (config.showLogo) {
             renderLogo(
                 context = context,
@@ -140,6 +174,76 @@ object OverlayRenderer {
                 mapInsetRect = mapRect
             )
         }
+    }
+
+    fun computeMiniMapRect(
+        width: Int,
+        height: Int,
+        padLeftPx: Float,
+        padRightPx: Float,
+        padTopPx: Float,
+        padBottomPx: Float,
+        miniMapConfig: MiniMapStyleConfig
+    ): RectF {
+        val pxPerDp = min(width, height) / 390f
+        val safeWidth = (width - padLeftPx - padRightPx).coerceAtLeast(48f)
+        val safeHeight = (height - padTopPx - padBottomPx).coerceAtLeast(48f)
+
+        val mapW = (miniMapConfig.resolveWidthDp() * pxPerDp)
+            .coerceIn(40f * pxPerDp, min(safeWidth, width * 0.48f))
+        val mapH = (miniMapConfig.resolveHeightDp() * pxPerDp)
+            .coerceIn(40f * pxPerDp, min(safeHeight, height * 0.48f))
+
+        val maxLeft = (width - padRightPx - mapW).coerceAtLeast(padLeftPx)
+        val maxTop = (height - padBottomPx - mapH).coerceAtLeast(padTopPx)
+
+        val (left, top) = when (miniMapConfig.position) {
+            MiniMapPosition.TOP_LEFT -> Pair(padLeftPx, padTopPx)
+            MiniMapPosition.TOP_RIGHT -> Pair(maxLeft, padTopPx)
+            MiniMapPosition.BOTTOM_LEFT -> Pair(padLeftPx, maxTop)
+            MiniMapPosition.BOTTOM_RIGHT -> Pair(maxLeft, maxTop)
+            MiniMapPosition.CUSTOM -> {
+                val fx = miniMapConfig.customPosXFraction.coerceIn(0f, 1f)
+                val fy = miniMapConfig.customPosYFraction.coerceIn(0f, 1f)
+                Pair(
+                    padLeftPx + fx * (maxLeft - padLeftPx),
+                    padTopPx + fy * (maxTop - padTopPx)
+                )
+            }
+        }
+        return RectF(left, top, left + mapW, top + mapH)
+    }
+
+    fun adjustMiniMapRectForInfoBlock(
+        mapRect: RectF,
+        infoBounds: RectF,
+        miniMapConfig: MiniMapStyleConfig,
+        height: Int,
+        padTopPx: Float,
+        padBottomPx: Float,
+        gapPx: Float
+    ): RectF {
+        if (infoBounds.isEmpty || miniMapConfig.position == MiniMapPosition.CUSTOM) {
+            return mapRect
+        }
+        val expandedInfo = RectF(
+            infoBounds.left - gapPx * 0.5f,
+            infoBounds.top - gapPx * 0.5f,
+            infoBounds.right + gapPx * 0.5f,
+            infoBounds.bottom + gapPx * 0.5f
+        )
+        if (!RectF.intersects(mapRect, expandedInfo)) {
+            return mapRect
+        }
+        val mapH = mapRect.height()
+        val isBottomPreset = miniMapConfig.position == MiniMapPosition.BOTTOM_LEFT ||
+            miniMapConfig.position == MiniMapPosition.BOTTOM_RIGHT
+        val adjustedTop = if (isBottomPreset) {
+            (infoBounds.top - gapPx - mapH).coerceAtLeast(padTopPx)
+        } else {
+            (infoBounds.bottom + gapPx).coerceAtMost((height - padBottomPx - mapH).coerceAtLeast(padTopPx))
+        }
+        return RectF(mapRect.left, adjustedTop, mapRect.right, adjustedTop + mapH)
     }
 
     private fun resolveTypeface(fontFamily: String, fontStyle: String, customFontPath: String? = null): Typeface {
@@ -194,7 +298,8 @@ object OverlayRenderer {
         padTopPx: Float,
         padBottomPx: Float,
         snapshot: CaptureSnapshot,
-        mapInsetRect: RectF? = null
+        mapInsetRect: RectF? = null,
+        outBounds: RectF? = null
     ): Float {
         val config = snapshot.overlayConfig
         val project = snapshot.projectProfile
@@ -382,6 +487,14 @@ object OverlayRenderer {
             canvas.drawRoundRect(bgRect, 10f * scale, 10f * scale, bgPaint)
         }
 
+        val blockLeft = when {
+            isLeft -> padLeftPx
+            isCenterHoriz -> padLeftPx + (width - padLeftPx - padRightPx - actualMaxLineWidth) / 2f
+            else -> width - padRightPx - actualMaxLineWidth - currentStrokeWidth - 4f * scale
+        }
+        val blockRight = blockLeft + actualMaxLineWidth + currentStrokeWidth + 4f * scale
+        outBounds?.set(blockLeft, blockTopY, blockRight, blockTopY + totalBlockHeight)
+
         val fontMetrics = textPaint.fontMetrics
         val textDescent = fontMetrics.descent
 
@@ -479,193 +592,7 @@ object OverlayRenderer {
         return if (result.isEmpty()) listOf(text) else result
     }
 
-    private fun renderMiniMap(
-        context: Context,
-        canvas: Canvas,
-        rect: RectF,
-        scale: Float,
-        location: GeoPoint?,
-        bearing: Float?,
-        routeData: RouteData?,
-        roadName: String,
-        isDark: Boolean = true
-    ) {
-        val cornerRadius = 8f * scale
-        val mapColors = com.example.ui.map.MapThemeConfig.getColors(isDark)
 
-        // Background
-        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = mapColors.mapBackgroundArgb
-            style = Paint.Style.FILL
-        }
-        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
-
-        // Border
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (isDark) Color.parseColor("#475569") else Color.parseColor("#CBD5E1")
-            style = Paint.Style.STROKE
-            strokeWidth = 1f * scale
-        }
-        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
-
-        // Clip to rounded rect for inner map contents
-        canvas.save()
-        val clipPath = Path()
-        clipPath.addRoundRect(rect, cornerRadius, cornerRadius, Path.Direction.CW)
-        canvas.clipPath(clipPath)
-
-        val centerPoint = location ?: routeData?.bounds?.center
-        var hasOsmTiles = false
-
-        if (centerPoint != null) {
-            val osmBmp = com.example.geo.OsmTileManager.renderMapBitmap(
-                context = context,
-                center = centerPoint,
-                widthPx = rect.width().toInt().coerceAtLeast(1),
-                heightPx = rect.height().toInt().coerceAtLeast(1),
-                zoom = 15,
-                darkTheme = isDark
-            )
-            if (osmBmp != null) {
-                canvas.drawBitmap(osmBmp, rect.left, rect.top, Paint(Paint.FILTER_BITMAP_FLAG))
-                if (isDark) {
-                    val dimPaint = Paint().apply { color = Color.argb(45, 0, 0, 0) }
-                    canvas.drawRect(rect, dimPaint)
-                }
-                hasOsmTiles = true
-            }
-        }
-
-        // Subtle grid lines if OSM tiles not available
-        if (!hasOsmTiles) {
-            val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = if (isDark) Color.argb(40, 255, 255, 255) else Color.argb(35, 100, 116, 139)
-                strokeWidth = 1f * scale
-            }
-            val step = rect.width() / 4f
-            for (i in 1..3) {
-                val gx = rect.left + i * step
-                canvas.drawLine(gx, rect.top, gx, rect.bottom, gridPaint)
-                val gy = rect.top + i * step
-                canvas.drawLine(rect.left, gy, rect.right, gy, gridPaint)
-            }
-        }
-
-        // Draw road alignment if available
-        if (centerPoint != null) {
-            fun geoToScreen(pt: GeoPoint): Pair<Float, Float> {
-                val (sx, sy) = com.example.geo.OsmTileManager.geoToScreen(
-                    pt = pt,
-                    center = centerPoint,
-                    widthPx = rect.width(),
-                    heightPx = rect.height(),
-                    zoom = 15
-                )
-                return Pair(rect.left + sx, rect.top + sy)
-            }
-
-            // Route alignments
-            val roadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = mapColors.routeCenterArgb
-                strokeWidth = 5f * scale
-                style = Paint.Style.STROKE
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-            }
-
-            val roadOuterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = mapColors.routeCasingArgb
-                strokeWidth = 9f * scale
-                style = Paint.Style.STROKE
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-            }
-
-            if (routeData != null && routeData.alignments.isNotEmpty()) {
-                for (align in routeData.alignments) {
-                    if (align.points.size < 2) continue
-                    val path = Path()
-                    var started = false
-                    for (pt in align.points) {
-                        val (sx, sy) = geoToScreen(pt)
-                        if (!started) {
-                            path.moveTo(sx, sy)
-                            started = true
-                        } else {
-                            path.lineTo(sx, sy)
-                        }
-                    }
-                    canvas.drawPath(path, roadOuterPaint)
-                    canvas.drawPath(path, roadPaint)
-                }
-
-                // Nearby chainage marker dots
-                val markerDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = mapColors.markerDotArgb
-                    style = Paint.Style.FILL
-                }
-                for (m in routeData.markers) {
-                    val (sx, sy) = geoToScreen(m.point)
-                    if (sx in rect.left..rect.right && sy in rect.top..rect.bottom) {
-                        canvas.drawCircle(sx, sy, 3f * scale, markerDotPaint)
-                    }
-                }
-            } else if (!hasOsmTiles) {
-                // Draw a stylized curved highway representation when no route and no tile is loaded
-                val genericPath = Path()
-                genericPath.moveTo(rect.left, rect.bottom - 20f * scale)
-                genericPath.cubicTo(
-                    rect.left + rect.width() * 0.4f, rect.bottom - 40f * scale,
-                    rect.left + rect.width() * 0.6f, rect.top + 50f * scale,
-                    rect.right, rect.top + 30f * scale
-                )
-                canvas.drawPath(genericPath, roadOuterPaint)
-                canvas.drawPath(genericPath, roadPaint)
-            }
-
-            // Draw GPS pin at center
-            val pinRadius = 6f * scale
-            val pulseRadius = 14f * scale
-
-            val pulsePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = mapColors.userPulseArgb
-                style = Paint.Style.FILL
-            }
-            canvas.drawCircle(rect.centerX(), rect.centerY(), pulseRadius, pulsePaint)
-
-            val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = mapColors.userPinArgb
-                style = Paint.Style.FILL
-            }
-            canvas.drawCircle(rect.centerX(), rect.centerY(), pinRadius, pinPaint)
-
-            val innerPinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = mapColors.userPinInnerArgb
-                style = Paint.Style.FILL
-            }
-            canvas.drawCircle(rect.centerX(), rect.centerY(), pinRadius * 0.4f, innerPinPaint)
-
-            // Bearing arrow
-            if (bearing != null) {
-                canvas.save()
-                canvas.rotate(bearing, rect.centerX(), rect.centerY())
-                val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = mapColors.userBearingArgb
-                    style = Paint.Style.FILL
-                }
-                val arrowPath = Path().apply {
-                    moveTo(rect.centerX(), rect.centerY() - pulseRadius - 4f * scale)
-                    lineTo(rect.centerX() - 5f * scale, rect.centerY() - pulseRadius + 6f * scale)
-                    lineTo(rect.centerX() + 5f * scale, rect.centerY() - pulseRadius + 6f * scale)
-                    close()
-                }
-                canvas.drawPath(arrowPath, arrowPaint)
-                canvas.restore()
-            }
-        }
-
-        canvas.restore()
-    }
 
     private fun renderLogo(
         context: Context,

@@ -1,6 +1,6 @@
 package com.example.ui.camera
 
-import android.graphics.Bitmap
+import android.graphics.RectF
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,7 +16,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,7 +27,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -36,10 +37,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.geo.GeoUtils
 import com.example.geo.OsmTileManager
 import com.example.model.GeoPoint
+import com.example.model.MiniMapStyleConfig
 import com.example.model.RouteData
+import com.example.overlay.MiniMapRenderer
 import java.util.Locale
 
 @Composable
@@ -56,20 +58,69 @@ fun MiniMapPreview(
     mapType: String = "standard",
     mapThemePreference: String = "system",
     showAttribution: Boolean = false,
-    transparentBackground: Boolean = false
+    transparentBackground: Boolean = false,
+    miniMapConfig: MiniMapStyleConfig? = null,
+    chainageLabel: String? = null,
+    sideLabel: String? = null,
+    isGpsRetained: Boolean = false
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsState()
-    val isAppDark = com.example.ui.theme.isAppDarkTheme()
-    val isDark = overrideIsDark ?: com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
-    val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
     val appliedModifier = if (modifier == Modifier) {
-        Modifier.size(width = 68.dp, height = 68.dp)
+        if (miniMapConfig != null) {
+            Modifier.size(
+                width = miniMapConfig.resolveWidthDp().dp,
+                height = miniMapConfig.resolveHeightDp().dp
+            )
+        } else {
+            Modifier.size(width = 68.dp, height = 68.dp)
+        }
     } else {
         modifier
     }
+
+    // Configurable Mini Map Pipeline (pixel-matched with Photo & Video Output Renderer)
+    if (miniMapConfig != null) {
+        val cornerRadius = miniMapConfig.resolveCornerRadiusDp().dp
+        val shape = RoundedCornerShape(cornerRadius)
+        Box(
+            modifier = appliedModifier.clip(shape)
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                // Observe tile updates cleanly
+                @Suppress("UNUSED_VARIABLE")
+                val triggerTileRedraw = tileUpdate
+                val w = size.width
+                val h = size.height
+                if (w > 2f && h > 2f) {
+                    val dpScale = density.density.coerceAtLeast(1f)
+                    drawIntoCanvas { composeCanvas ->
+                        MiniMapRenderer.drawMiniMap(
+                            context = context,
+                            canvas = composeCanvas.nativeCanvas,
+                            bounds = RectF(0f, 0f, w, h),
+                            config = miniMapConfig,
+                            location = location,
+                            isGpsRetained = isGpsRetained,
+                            bearing = bearing,
+                            routeData = routeData,
+                            chainageLabel = chainageLabel,
+                            sideLabel = sideLabel,
+                            dpScale = dpScale
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    // Legacy / RoutesScreen / PhotosScreen compact inset mode (real geometry only)
+    val isAppDark = com.example.ui.theme.isAppDarkTheme()
+    val isDark = overrideIsDark ?: com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
+    val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
     val shape = RoundedCornerShape(12.dp)
     Box(
@@ -85,11 +136,12 @@ fun MiniMapPreview(
         val centerGeo = location ?: routeData?.bounds?.center
 
         Canvas(modifier = Modifier.fillMaxSize()) {
+            @Suppress("UNUSED_VARIABLE")
+            val triggerTileRedraw = tileUpdate
             val w = size.width
             val h = size.height
             val center = Offset(w / 2f, h / 2f)
 
-            // 1. OpenStreetMap or Satellite Tile Background (Real geographic map data)
             var hasOsmTiles = false
             if (centerGeo != null && !transparentBackground) {
                 val osmBmp = OsmTileManager.renderMapBitmap(
@@ -108,14 +160,12 @@ fun MiniMapPreview(
                         dstSize = IntSize(w.toInt(), h.toInt())
                     )
                     if (mapTheme.isDark) {
-                        // Subtle dimming for minimalist dark Glass UI look
                         drawRect(color = Color(0x22000000))
                     }
                     hasOsmTiles = true
                 }
             }
 
-            // Fallback grid when tiles are loading, offline, or in full transparent glass HUD mode
             if (!hasOsmTiles) {
                 if (!transparentBackground) {
                     drawRect(color = mapTheme.mapBackground)
@@ -143,13 +193,11 @@ fun MiniMapPreview(
             }
 
             if (centerGeo != null) {
-                // Projection conversion
                 fun toScreen(pt: GeoPoint): Offset {
                     val (sx, sy) = OsmTileManager.geoToScreen(pt, centerGeo, w, h, zoom = 15)
                     return Offset(sx, sy)
                 }
 
-                // 2. KMZ/KML Route Alignments
                 if (routeData != null && routeData.alignments.isNotEmpty()) {
                     for (align in routeData.alignments) {
                         if (align.points.size < 2) continue
@@ -164,13 +212,11 @@ fun MiniMapPreview(
                                 path.lineTo(off.x, off.y)
                             }
                         }
-                        // Outer casing
                         drawPath(
                             path = path,
                             color = mapTheme.routeCasingColor,
                             style = Stroke(width = 5.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
-                        // Inner centerline
                         drawPath(
                             path = path,
                             color = mapTheme.routeCenterColor,
@@ -178,7 +224,6 @@ fun MiniMapPreview(
                         )
                     }
 
-                    // Nearby chainage marker dots
                     for (m in routeData.markers) {
                         val off = toScreen(m.point)
                         if (off.x in 0f..w && off.y in 0f..h) {
@@ -189,70 +234,58 @@ fun MiniMapPreview(
                             )
                         }
                     }
-                } else if (!hasOsmTiles) {
-                    // Stylized road curve fallback only when neither route nor OSM tile is loaded
-                    val genericPath = Path().apply {
-                        moveTo(0f, h - 16f)
-                        cubicTo(w * 0.4f, h - 30f, w * 0.6f, 30f, w, 20f)
-                    }
-                    drawPath(genericPath, mapTheme.routeCasingColor, style = Stroke(width = 5f))
-                    drawPath(genericPath, mapTheme.routeCenterColor, style = Stroke(width = 3f))
                 }
 
-                // 3. Current GPS Location Pin (Red marker with drop shadow)
-                val pinHeadR = 7.5f
-                val pinTip = center
-                val pinCenter = Offset(center.x, center.y - 9f)
+                if (location != null) {
+                    val pinHeadR = 7.5f
+                    val pinTip = center
+                    val pinCenter = Offset(center.x, center.y - 9f)
 
-                // Shadow under pin tip
-                drawCircle(
-                    color = Color(0x66000000),
-                    radius = 3.5f,
-                    center = Offset(pinTip.x, pinTip.y + 1f)
-                )
-
-                // Pin shape
-                val pinPath = Path().apply {
-                    moveTo(pinTip.x, pinTip.y)
-                    lineTo(pinCenter.x - pinHeadR * 0.85f, pinCenter.y + 1f)
-                    arcTo(
-                        rect = Rect(
-                            pinCenter.x - pinHeadR,
-                            pinCenter.y - pinHeadR,
-                            pinCenter.x + pinHeadR,
-                            pinCenter.y + pinHeadR
-                        ),
-                        startAngleDegrees = 145f,
-                        sweepAngleDegrees = 250f,
-                        forceMoveTo = false
+                    drawCircle(
+                        color = Color(0x66000000),
+                        radius = 3.5f,
+                        center = Offset(pinTip.x, pinTip.y + 1f)
                     )
-                    close()
-                }
-                drawPath(pinPath, color = mapTheme.userPinColor)
 
-                // Inner white dot
-                drawCircle(
-                    color = mapTheme.userPinInnerColor,
-                    radius = 2.5f,
-                    center = pinCenter
-                )
+                    val pinPath = Path().apply {
+                        moveTo(pinTip.x, pinTip.y)
+                        lineTo(pinCenter.x - pinHeadR * 0.85f, pinCenter.y + 1f)
+                        arcTo(
+                            rect = Rect(
+                                pinCenter.x - pinHeadR,
+                                pinCenter.y - pinHeadR,
+                                pinCenter.x + pinHeadR,
+                                pinCenter.y + pinHeadR
+                            ),
+                            startAngleDegrees = 145f,
+                            sweepAngleDegrees = 250f,
+                            forceMoveTo = false
+                        )
+                        close()
+                    }
+                    drawPath(pinPath, color = mapTheme.userPinColor)
 
-                // Heading / Bearing direction arrow
-                if (bearing != null) {
-                    rotate(degrees = bearing, pivot = center) {
-                        val arrowPath = Path().apply {
-                            moveTo(center.x, center.y - 17f)
-                            lineTo(center.x - 3.5f, center.y - 11f)
-                            lineTo(center.x + 3.5f, center.y - 11f)
-                            close()
+                    drawCircle(
+                        color = mapTheme.userPinInnerColor,
+                        radius = 2.5f,
+                        center = pinCenter
+                    )
+
+                    if (bearing != null) {
+                        rotate(degrees = bearing, pivot = center) {
+                            val arrowPath = Path().apply {
+                                moveTo(center.x, center.y - 17f)
+                                lineTo(center.x - 3.5f, center.y - 11f)
+                                lineTo(center.x + 3.5f, center.y - 11f)
+                                close()
+                            }
+                            drawPath(arrowPath, color = mapTheme.userBearingColor)
                         }
-                        drawPath(arrowPath, color = mapTheme.userBearingColor)
                     }
                 }
             }
         }
 
-        // Top-left GPS Accuracy pill (only shown when showGpsBadge is explicitly true)
         if (showGpsBadge && gpsAccuracy != null) {
             val isGood = gpsAccuracy <= 10f
             Row(
@@ -280,7 +313,6 @@ fun MiniMapPreview(
             }
         }
 
-        // Top-right Attribution (omitted when showAttribution is false for clean standard photo view)
         if (showAttribution) {
             Text(
                 text = if (mapType.equals("satellite", ignoreCase = true)) "© Esri" else "© OSM",
@@ -293,7 +325,6 @@ fun MiniMapPreview(
             )
         }
 
-        // Bottom Center Highway / Project tag pill (only shown when showProjectTag is explicitly true)
         if (showProjectTag && highwayTag.isNotBlank()) {
             Box(
                 modifier = Modifier

@@ -36,6 +36,7 @@ import com.example.model.ChainageSource
 import com.example.model.CameraMode
 import com.example.model.DefinedProject
 import com.example.model.GeneratedChainageMarker
+import com.example.model.GeoPoint
 import com.example.model.KmzReplacementPreview
 import com.example.model.OverlayConfig
 import com.example.model.PermanentCalibrationProfile
@@ -257,6 +258,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Location State
     val locationState: StateFlow<LocationState> = locationTracker.locationState
+
+    private val _lastValidLocation = MutableStateFlow<GeoPoint?>(null)
+    val lastValidLocation: StateFlow<GeoPoint?> = _lastValidLocation.asStateFlow()
+
+    @Volatile
+    private var lastValidGpsBearing: Float? = null
 
     // Route State
     val activeRouteData: StateFlow<RouteData?> = routeRepository.activeRouteData
@@ -715,6 +722,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             preferencesManager.projectProfileFlow.collect { savedProfile ->
                 _projectProfile.value = savedProfile
+            }
+        }
+
+        // Retain last valid GPS coordinate/bearing seamlessly across temporary signal drops
+        viewModelScope.launch {
+            locationTracker.locationState.collect { loc ->
+                if (loc.point != null) {
+                    _lastValidLocation.value = loc.point
+                }
+                if (loc.bearing != null) {
+                    lastValidGpsBearing = loc.bearing
+                }
             }
         }
 
@@ -1657,6 +1676,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun resetMiniMapDefaults() {
+        viewModelScope.launch {
+            val reset = overlayConfig.value.copy(
+                showMapInset = true,
+                photoMiniMap = com.example.model.MiniMapStyleConfig(),
+                videoMiniMap = com.example.model.MiniMapStyleConfig()
+            )
+            preferencesManager.updateOverlayConfig(reset)
+            _uiMessages.emit(UiMessage.Info("Mini Map settings reset to default"))
+        }
+    }
+
     fun saveCameraSettings(settings: com.example.model.CameraSettings) {
         viewModelScope.launch {
             preferencesManager.updateCameraSettings(settings)
@@ -1778,12 +1809,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val locName = if (overlayConfig.value.showLocationName) {
             currentLocationName.value.ifBlank { overlayConfig.value.lastDetectedLocationName }.trim()
         } else ""
+        val liveLoc = locationState.value.point
+        val liveBearing = locationState.value.bearing
+        if (liveLoc != null) {
+            _lastValidLocation.value = liveLoc
+        }
+        if (liveBearing != null) {
+            lastValidGpsBearing = liveBearing
+        }
+        val retainedLoc = liveLoc ?: _lastValidLocation.value
+        val retainedBearing = liveBearing ?: lastValidGpsBearing
         return CaptureSnapshot(
             timestamp = System.currentTimeMillis(),
-            location = locationState.value.point,
+            location = liveLoc,
             locationName = locName,
             gpsAccuracy = locationState.value.accuracy,
-            bearing = locationState.value.bearing,
+            bearing = liveBearing,
             matchResult = cameraMatchResult.value,
             projectProfile = projectProfile.value,
             overlayConfig = overlayConfig.value,
@@ -1793,7 +1834,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             compassAzimuth = compassState.value.azimuthDegrees,
             filenameFormatPreset = cameraSettings.value.filenameFormatPreset,
             customFilenamePrefix = cameraSettings.value.customFilenamePrefix,
-            isDarkTheme = themeMode.value != "light"
+            isDarkTheme = themeMode.value != "light",
+            lastValidLocation = retainedLoc,
+            lastValidBearing = retainedBearing,
+            isGpsRetained = (liveLoc == null && retainedLoc != null),
+            isVideoCapture = (_captureMode.value == com.example.model.CaptureMode.VIDEO || _isRecording.value)
         )
     }
 

@@ -181,6 +181,9 @@ fun SettingsScreen(
     val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val manualChainage by viewModel.manualChainage.collectAsStateWithLifecycle()
+    val locationState by viewModel.locationState.collectAsStateWithLifecycle()
+    val lastValidLocation by viewModel.lastValidLocation.collectAsStateWithLifecycle()
+    val liveMatchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
 
     // In-App Update States
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
@@ -271,6 +274,7 @@ fun SettingsScreen(
             "project" to false,
             "camera" to false,
             "timestamp" to false,
+            "mini_map" to false,
             "gps" to false,
             "chainage" to false,
             "logo" to false,
@@ -808,7 +812,7 @@ fun SettingsScreen(
                     TextButton(
                         onClick = {
                             listOf(
-                                "project", "camera", "timestamp", "gps", "chainage",
+                                "project", "camera", "timestamp", "mini_map", "gps", "chainage",
                                 "logo", "storage", "display", "permissions_about"
                             ).forEach { expandedSections[it] = true }
                         }
@@ -818,7 +822,7 @@ fun SettingsScreen(
                     TextButton(
                         onClick = {
                             listOf(
-                                "project", "camera", "timestamp", "gps", "chainage",
+                                "project", "camera", "timestamp", "mini_map", "gps", "chainage",
                                 "logo", "storage", "display", "permissions_about"
                             ).forEach { expandedSections[it] = false }
                         }
@@ -1566,7 +1570,7 @@ fun SettingsScreen(
             // ====================================================
             // 6. TIMESTAMP (MERGED WITH METADATA & WATERMARK)
             // ====================================================
-            if (matchesSearch("timestamp date time format precision 24-hour placement pattern metadata watermark font size color opacity shadow background alignment spacing", searchQuery)) {
+            if (matchesSearch("photo video stamp mini map minimap map inset overlay orientation zoom alignment lhs rhs timestamp date time format precision 24-hour placement pattern metadata watermark font size color opacity shadow background spacing", searchQuery)) {
                 var isFormatDropdownOpen by remember { mutableStateOf(false) }
                 var isPositionDropdownOpen by remember { mutableStateOf(false) }
                 var isFontDropdownOpen by remember { mutableStateOf(false) }
@@ -1575,8 +1579,8 @@ fun SettingsScreen(
                 var showCustomFormatInput by remember { mutableStateOf(false) }
 
                 SmartDropdownSection(
-                    title = "Timestamp",
-                    subtitle = "${currentOverlay.timestampFormat} • ${currentOverlay.watermarkPosition} • ${currentOverlay.fontFamily} • ${currentOverlay.fontSizeSp.toInt()}sp",
+                    title = "Photo & Video Stamp",
+                    subtitle = "Mini Map ${if (currentOverlay.showMapInset) "ON" else "OFF"} • ${currentOverlay.timestampFormat} • ${currentOverlay.watermarkPosition} • ${currentOverlay.fontSizeSp.toInt()}sp",
                     icon = Icons.Default.BrandingWatermark,
                     accentColor = timestampAccent,
                     isExpanded = expandedSections["timestamp"] ?: false,
@@ -1647,6 +1651,29 @@ fun SettingsScreen(
                             }
                         }
                     }
+
+                    // ----------------------------------------------------
+                    // MINI MAP SETTINGS (PHOTO & VIDEO OVERLAYS)
+                    // ----------------------------------------------------
+                    MiniMapSettingsSection(
+                        savedOverlay = currentOverlay,
+                        liveLocation = locationState.point ?: lastValidLocation,
+                        liveBearing = locationState.bearing,
+                        activeRoute = activeRoute,
+                        currentChainage = liveMatchResult.displayChainage.takeIf { it != "---" } ?: "",
+                        currentSide = liveMatchResult.detectedSide,
+                        accentColor = timestampAccent,
+                        accentContentColor = timestampAccentContent,
+                        isExpanded = expandedSections["mini_map"] ?: false,
+                        onToggleExpand = { expandedSections["mini_map"] = !(expandedSections["mini_map"] ?: false) },
+                        onSaveConfig = { updated -> viewModel.saveOverlayConfig(updated) },
+                        onResetMiniMapDefaults = { viewModel.resetMiniMapDefaults() },
+                        onShowMessage = { msg -> viewModel.showToast(msg, ToastType.INFO) }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // ----------------------------------------------------
                     // SUBSECTION 1: DISPLAY & OVERLAY TOGGLES

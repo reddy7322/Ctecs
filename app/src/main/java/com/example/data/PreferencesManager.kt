@@ -13,6 +13,7 @@ import com.example.model.ChainageLogEntry
 import com.example.model.DefinedProject
 import com.example.model.LogoPosition
 import com.example.model.LogoShape
+import com.example.model.MiniMapStyleConfig
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.PermanentCalibrationProfile
@@ -116,6 +117,10 @@ class PreferencesManager(private val context: Context) {
         val KEY_VIDEO_PADDING_BOTTOM_DP = intPreferencesKey("video_padding_bottom_dp")
         val KEY_VIDEO_PADDING_LEFT_DP = intPreferencesKey("video_padding_left_dp")
         val KEY_VIDEO_PADDING_RIGHT_DP = intPreferencesKey("video_padding_right_dp")
+
+        // Independent Photo & Video Mini Map Overlay JSON keys
+        val KEY_PHOTO_MINI_MAP_JSON = stringPreferencesKey("photo_mini_map_config_json")
+        val KEY_VIDEO_MINI_MAP_JSON = stringPreferencesKey("video_mini_map_config_json")
 
         val KEY_ACTIVE_ROUTE_ID = stringPreferencesKey("active_route_id")
 
@@ -366,7 +371,9 @@ class PreferencesManager(private val context: Context) {
             videoPaddingTopDp = prefs[KEY_VIDEO_PADDING_TOP_DP] ?: 16,
             videoPaddingBottomDp = prefs[KEY_VIDEO_PADDING_BOTTOM_DP] ?: 20,
             videoPaddingLeftDp = prefs[KEY_VIDEO_PADDING_LEFT_DP] ?: 16,
-            videoPaddingRightDp = prefs[KEY_VIDEO_PADDING_RIGHT_DP] ?: 16
+            videoPaddingRightDp = prefs[KEY_VIDEO_PADDING_RIGHT_DP] ?: 16,
+            photoMiniMap = MiniMapStyleConfig.fromJsonString(prefs[KEY_PHOTO_MINI_MAP_JSON]),
+            videoMiniMap = MiniMapStyleConfig.fromJsonString(prefs[KEY_VIDEO_MINI_MAP_JSON])
         )
     }
 
@@ -540,6 +547,8 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_VIDEO_PADDING_BOTTOM_DP] = config.videoPaddingBottomDp
             prefs[KEY_VIDEO_PADDING_LEFT_DP] = config.videoPaddingLeftDp
             prefs[KEY_VIDEO_PADDING_RIGHT_DP] = config.videoPaddingRightDp
+            prefs[KEY_PHOTO_MINI_MAP_JSON] = config.photoMiniMap.toJsonString()
+            prefs[KEY_VIDEO_MINI_MAP_JSON] = config.videoMiniMap.toJsonString()
         }
     }
 
