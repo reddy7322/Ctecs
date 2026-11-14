@@ -114,6 +114,8 @@ import com.example.geo.SmartChainageCorrectionEngine
 import com.example.model.AlignmentDiagnostics
 import com.example.model.CalibrationValidationStatus
 import com.example.model.Chainage
+import com.example.model.ChainageAccuracyReport
+import com.example.model.ChainageAccuracyStatus
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
@@ -123,6 +125,7 @@ import com.example.model.KmzReplacementPreview
 import com.example.model.MatchConfidence
 import com.example.model.PermanentCalibrationProfile
 import com.example.model.ReferencePointSource
+import com.example.model.RefreshMode
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
 import com.example.ui.theme.DialogThemeTokens
@@ -170,6 +173,8 @@ fun ChainageManagementDialog(
     val savedProfiles by viewModel.calibrationProfiles.collectAsStateWithLifecycle()
     val profileCompatibility by viewModel.activeProfileCompatibility.collectAsStateWithLifecycle()
     val calibrationDiagnostics by viewModel.calibrationDiagnostics.collectAsStateWithLifecycle()
+    val isRefreshingAccuracy by viewModel.isRefreshingChainageAccuracy.collectAsStateWithLifecycle()
+    val accuracyReport by viewModel.chainageAccuracyReport.collectAsStateWithLifecycle()
 
     var showResetCalibrationConfirm by remember { mutableStateOf(false) }
     var showRemoveAlignmentConfirm by remember { mutableStateOf(false) }
@@ -329,15 +334,18 @@ fun ChainageManagementDialog(
                         matchResult = matchResult,
                         correctionPoints = correctionPoints,
                         isCorrectionsEnabled = isCorrectionsEnabled,
+                        isRefreshingAccuracy = isRefreshingAccuracy,
+                        accuracyReport = accuracyReport,
                         primaryAccent = primaryAccent,
                         greenAccent = greenAccent,
                         amberAccent = amberAccent,
+                        redAccent = redAccent,
                         dialogColors = dialogColors,
                         onToggleEnabled = { enabled ->
                             viewModel.setRouteCorrectionsEnabled(enabled)
                         },
-                        onRefreshGps = {
-                            viewModel.refreshLocation()
+                        onForceRefreshAll = {
+                            viewModel.forceRefreshAllChainageAccuracy(RefreshMode.FORCE_ALL)
                         }
                     )
 
@@ -945,17 +953,20 @@ private fun KmzAlignmentFileSection(
 // SECTION 2: LIVE CHAINAGE & CALIBRATION STATUS
 // -----------------------------------------------------------------------------
 @Composable
-private fun LiveCalibrationStatusSection(
+internal fun LiveCalibrationStatusSection(
     activeRoute: RouteData?,
     matchResult: ChainageMatchResult,
     correctionPoints: List<ChainageCorrectionPoint>,
     isCorrectionsEnabled: Boolean,
+    isRefreshingAccuracy: Boolean,
+    accuracyReport: ChainageAccuracyReport?,
     primaryAccent: Color,
     greenAccent: Color,
     amberAccent: Color,
+    redAccent: Color,
     dialogColors: DialogThemeTokens,
     onToggleEnabled: (Boolean) -> Unit,
-    onRefreshGps: () -> Unit
+    onForceRefreshAll: () -> Unit
 ) {
     val rawKmzChainage = matchResult.rawUncorrectedChainage ?: matchResult.chainage
     val calibratedChainage = matchResult.chainage
@@ -1099,9 +1110,9 @@ private fun LiveCalibrationStatusSection(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // GPS Accuracy, Perpendicular Offset, and Refresh Action
+            // GPS Accuracy, Perpendicular Offset, and Compact Flat Force Refresh All Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1110,27 +1121,122 @@ private fun LiveCalibrationStatusSection(
                 Text(
                     text = String.format(
                         Locale.US,
-                        "GPS: ±%.1fm • Alignment Offset: %.1fm",
+                        "GPS: ±%.1fm • Offset: %.1fm",
                         matchResult.gpsAccuracy,
                         matchResult.offsetMetres
                     ),
                     fontSize = 10.5.sp,
-                    color = dialogColors.textSecondaryColor
+                    color = dialogColors.textSecondaryColor,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
 
-                TextButton(
-                    onClick = onRefreshGps,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    modifier = Modifier.height(28.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Button(
+                    onClick = onForceRefreshAll,
+                    enabled = !isRefreshingAccuracy,
+                    shape = RoundedCornerShape(8.dp),
+                    elevation = ButtonDefaults.buttonElevation(
+                        defaultElevation = 0.dp,
+                        pressedElevation = 0.dp,
+                        disabledElevation = 0.dp
+                    ),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (dialogColors.isDark) primaryAccent.copy(alpha = 0.18f) else primaryAccent.copy(alpha = 0.12f),
+                        contentColor = primaryAccent,
+                        disabledContainerColor = dialogColors.borderColor.copy(alpha = 0.25f),
+                        disabledContentColor = primaryAccent.copy(alpha = 0.65f)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .height(34.dp)
+                        .testTag("force_refresh_all_chainage_button")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh GPS",
-                        tint = primaryAccent,
-                        modifier = Modifier.size(13.dp)
+                    if (isRefreshingAccuracy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(13.dp),
+                            strokeWidth = 1.8.dp,
+                            color = primaryAccent
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Refreshing...",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Force Refresh All Chainage Accuracy",
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Force Refresh All",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            if (isRefreshingAccuracy) {
+                Spacer(modifier = Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.5.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .testTag("force_refresh_all_progress"),
+                    color = primaryAccent,
+                    trackColor = dialogColors.borderColor.copy(alpha = 0.3f)
+                )
+            }
+
+            if (accuracyReport != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                val statusAccent = when (accuracyReport.status) {
+                    ChainageAccuracyStatus.VERIFIED -> greenAccent
+                    ChainageAccuracyStatus.UPDATED -> primaryAccent
+                    ChainageAccuracyStatus.NEEDS_GPS -> amberAccent
+                    ChainageAccuracyStatus.ALIGNMENT_MISMATCH,
+                    ChainageAccuracyStatus.CALIBRATION_NEEDS_REVIEW -> redAccent
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(statusAccent.copy(alpha = if (dialogColors.isDark) 0.14f else 0.10f))
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                        .testTag("chainage_accuracy_status_badge"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(statusAccent)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Refresh GPS", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = primaryAccent)
+                    Text(
+                        text = accuracyReport.summaryMessage.ifBlank { accuracyReport.status.label },
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (dialogColors.isDark) statusAccent else dialogColors.titleColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (accuracyReport.isStaleFallback) {
+                        Text(
+                            text = "STALE",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = amberAccent
+                        )
+                    }
                 }
             }
         }
@@ -2833,6 +2939,12 @@ private fun CalibrationEngineDiagnosticMonitorCard(
                                 text = "Alignment: ${diagnostics.activeAlignmentName} • Matched: ${diagnostics.activeMatchedChainageText} (${diagnostics.activeMatchConfidence})",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 11.sp,
+                                color = dialogColors.textSecondaryColor
+                            )
+                            Text(
+                                text = "Accuracy Status: ${diagnostics.lastAccuracyStatusLabel} • Force Refreshes: ${diagnostics.forceRefreshCount} • Auto-Recoveries: ${diagnostics.stuckRecoveryCount}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 10.5.sp,
                                 color = dialogColors.textSecondaryColor
                             )
                             if (diagnostics.lastRecoveryReason.isNotBlank()) {

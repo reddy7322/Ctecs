@@ -26,6 +26,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.compose.ui.unit.dp
+import com.example.location.LocationState
+import com.example.location.LocationStatus
 import com.example.model.Chainage
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
@@ -210,6 +212,9 @@ class HomeScreensaverTest {
             )
         )
         var gpsPointState by mutableStateOf<GeoPoint?>(GeoPoint(29.502, 77.701))
+        var locationNameState by mutableStateOf("Roorkee, Uttarakhand")
+        var gpsSpeedMpsState by mutableStateOf<Float?>(12.5f) // 45 km/h
+        var gpsFixTimeState by mutableStateOf(System.currentTimeMillis())
         var isBlockingDialogOpen by mutableStateOf(false)
         var isScreensaverVisible by mutableStateOf(false)
         var showTriggerCount by mutableIntStateOf(0)
@@ -227,12 +232,28 @@ class HomeScreensaverTest {
                 }
             }
 
-            val displayState = remember(matchState, gpsPointState != null) {
+            val locState = if (gpsPointState != null) {
+                LocationState(
+                    point = gpsPointState,
+                    accuracy = 3.0f,
+                    bearing = 45f,
+                    speed = gpsSpeedMpsState,
+                    status = LocationStatus.READY,
+                    lastFixTime = gpsFixTimeState
+                )
+            } else {
+                LocationState(point = null, status = LocationStatus.ACQUIRING)
+            }
+
+            val displayState = remember(matchState, locState, locationNameState, gpsFixTimeState) {
                 holder.resolve(
                     matchResult = matchState,
                     route = route,
                     hasGpsFix = gpsPointState != null,
-                    projectRoadSide = RoadSide.NONE
+                    projectRoadSide = RoadSide.NONE,
+                    locationState = locState,
+                    locationName = locationNameState,
+                    nowMs = gpsFixTimeState
                 )
             }
 
@@ -305,11 +326,13 @@ class HomeScreensaverTest {
         composeTestRule.onNodeWithTag("home_chainage_screensaver").assertIsDisplayed()
         assertEquals(1, showTriggerCount)
 
-        // Verify ONLY the three required elements exist (NO forbidden labels/buttons/telemetry)
+        // Verify ONLY the five required elements exist (NO forbidden labels/buttons/telemetry)
         composeTestRule.onNodeWithTag("screensaver_glass_map").assertIsDisplayed()
         composeTestRule.onNodeWithTag("screensaver_chainage_text").assertIsDisplayed()
         composeTestRule.onNodeWithTag("screensaver_chainage_text").assertTextEquals("200+050")
         composeTestRule.onNodeWithTag("screensaver_direction_badge").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("screensaver_location_name").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("screensaver_speed_text").assertIsDisplayed()
 
         val screensaverRoot = composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode()
         fun collectTexts(node: androidx.compose.ui.semantics.SemanticsNode): List<String> {
@@ -325,11 +348,13 @@ class HomeScreensaverTest {
         val renderedTexts = collectTexts(screensaverRoot).joinToString(" ")
         assertTrue(renderedTexts.contains("200+050"))
         assertTrue(renderedTexts.contains("LHS"))
+        assertTrue(renderedTexts.contains("Roorkee, Uttarakhand"))
+        assertTrue(renderedTexts.contains("45 km/h"))
         listOf("NH-58", "Stretch", "NEXT KM", "Away", "KMZ", "CUSTOM", "MANUAL", "GPS", "Survey", "Tap").forEach { forbidden ->
             assertFalse("Screensaver must not contain '$forbidden'", renderedTexts.contains(forbidden, ignoreCase = true))
         }
 
-        // Verify live chainage & direction update dynamically while screensaver is open
+        // Verify live chainage, direction, and location update dynamically while screensaver is open
         composeTestRule.runOnIdle {
             matchState = ChainageMatchResult(
                 chainage = Chainage(200_180L),
@@ -337,6 +362,7 @@ class HomeScreensaverTest {
                 detectedSide = "RHS",
                 source = ChainageSource.KMZ
             )
+            locationNameState = "Haridwar, Uttarakhand"
         }
         composeTestRule.mainClock.advanceTimeBy(400L)
         composeTestRule.waitForIdle()
@@ -345,10 +371,12 @@ class HomeScreensaverTest {
             composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode()
         ).joinToString(" ")
         assertTrue(updatedTexts.contains("RHS"))
+        assertTrue(updatedTexts.contains("Haridwar, Uttarakhand"))
 
-        // Verify GPS loss retains last valid chainage ("200+180") and hides direction indicator
+        // Verify GPS loss retains last valid chainage ("200+180") & last location, hides direction indicator, and shows "-- km/h"
         composeTestRule.runOnIdle {
             gpsPointState = null
+            gpsSpeedMpsState = null
             matchState = ChainageMatchResult(
                 chainage = null,
                 confidence = MatchConfidence.NO_MATCH,
@@ -359,6 +387,10 @@ class HomeScreensaverTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("screensaver_chainage_text").assertTextEquals("200+180")
         composeTestRule.onNodeWithTag("screensaver_direction_badge").assertDoesNotExist()
+        val gpsLossTexts = collectTexts(
+            composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode()
+        ).joinToString(" ")
+        assertTrue("Expected '-- km/h' on GPS loss, got $gpsLossTexts", gpsLossTexts.contains("-- km/h"))
 
         // Single touch anywhere on screensaver closes it immediately AND preserves Home scroll position
         composeTestRule.onNodeWithTag("home_chainage_screensaver").performTouchInput { click() }
@@ -369,6 +401,7 @@ class HomeScreensaverTest {
         // Restore GPS & verify continuous second cycle: < 20s stays closed, >= 20s re-opens
         composeTestRule.runOnIdle {
             gpsPointState = GeoPoint(29.504, 77.702)
+            gpsSpeedMpsState = 0.0f // Valid stationary reading -> "0 km/h"
             matchState = ChainageMatchResult(
                 chainage = Chainage(200_250L),
                 confidence = MatchConfidence.HIGH,
@@ -393,5 +426,75 @@ class HomeScreensaverTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("home_chainage_screensaver").assertDoesNotExist()
         assertEquals(2, showTriggerCount)
+    }
+
+    @Test
+    fun `screensaver filters speed smoothly, shows zero only on stationary valid GPS, and shows placeholder when unavailable or stale`() {
+        val holder = ScreensaverChainageStateHolder()
+        val route = sampleRoute()
+        val baseMatch = ChainageMatchResult(
+            chainage = Chainage(200_500L),
+            confidence = MatchConfidence.HIGH,
+            detectedSide = "LHS",
+            source = ChainageSource.KMZ
+        )
+        val pt = GeoPoint(29.505, 77.702)
+        val t0 = 1_000_000L
+
+        // 1. Speed null on usable fix -> "-- km/h" (never fabricated 0 km/h)
+        val noSpeedState = holder.resolve(
+            matchResult = baseMatch,
+            route = route,
+            hasGpsFix = true,
+            projectRoadSide = RoadSide.NONE,
+            locationState = LocationState(point = pt, accuracy = 3.0f, speed = null, status = LocationStatus.READY, lastFixTime = t0),
+            locationName = "",
+            nowMs = t0
+        )
+        assertNull(noSpeedState.speedKmh)
+        assertEquals("-- km/h", noSpeedState.speedText)
+        assertEquals("", noSpeedState.locationName)
+
+        // 2. Valid stationary speed (0.2 m/s = 0.72 km/h) -> "0 km/h"
+        val stationaryState = holder.resolve(
+            matchResult = baseMatch,
+            route = route,
+            hasGpsFix = true,
+            projectRoadSide = RoadSide.NONE,
+            locationState = LocationState(point = pt, accuracy = 3.0f, speed = 0.2f, status = LocationStatus.READY, lastFixTime = t0 + 1000L),
+            locationName = "Unknown",
+            nowMs = t0 + 1000L
+        )
+        assertEquals(0, stationaryState.speedKmh)
+        assertEquals("0 km/h", stationaryState.speedText)
+        // Must reject "Unknown" and never fabricate a location name
+        assertEquals("", stationaryState.locationName)
+
+        // 3. Valid moving speed (12.5 m/s = 45.0 km/h) & locality resolved
+        val movingState = holder.resolve(
+            matchResult = baseMatch,
+            route = route,
+            hasGpsFix = true,
+            projectRoadSide = RoadSide.NONE,
+            locationState = LocationState(point = pt, accuracy = 3.0f, speed = 12.5f, status = LocationStatus.READY, lastFixTime = t0 + 2000L),
+            locationName = "Muzaffarnagar, Uttar Pradesh",
+            nowMs = t0 + 2000L
+        )
+        assertTrue((movingState.speedKmh ?: 0) in 20..45)
+        assertEquals("Muzaffarnagar, Uttar Pradesh", movingState.locationName)
+
+        // 4. Stale GPS reading (> 15s old) -> "-- km/h", while retaining last valid location name smoothly
+        val staleState = holder.resolve(
+            matchResult = baseMatch,
+            route = route,
+            hasGpsFix = true,
+            projectRoadSide = RoadSide.NONE,
+            locationState = LocationState(point = pt, accuracy = 3.0f, speed = 12.5f, status = LocationStatus.READY, lastFixTime = t0 + 2000L),
+            locationName = "",
+            nowMs = t0 + 25_000L
+        )
+        assertNull(staleState.speedKmh)
+        assertEquals("-- km/h", staleState.speedText)
+        assertEquals("Muzaffarnagar, Uttar Pradesh", staleState.locationName)
     }
 }

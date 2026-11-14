@@ -64,6 +64,9 @@ object SmartChainageCorrectionEngine {
     private val conflatedSkippedCounter = AtomicLong(0L)
     private val stallDetectedCounter = AtomicLong(0L)
     private val autoRestartCounter = AtomicLong(0L)
+    private val forceRefreshCounter = AtomicLong(0L)
+    private val smartRefreshCounter = AtomicLong(0L)
+    private val stuckRecoveryCounter = AtomicLong(0L)
     private val activeTaskStartEpochMs = AtomicLong(0L)
     private val lastHeartbeatMs = AtomicLong(System.currentTimeMillis())
     private val isTaskRunning = AtomicBoolean(false)
@@ -92,6 +95,11 @@ object SmartChainageCorrectionEngine {
         val throughputHz: Double = 0.0,
         val stallDetectedCount: Long = 0L,
         val autoRestartCount: Long = 0L,
+        val forceRefreshCount: Long = 0L,
+        val smartRefreshCount: Long = 0L,
+        val stuckRecoveryCount: Long = 0L,
+        val lastAccuracyStatusLabel: String = "Standby",
+        val lastRefreshEpochMs: Long = 0L,
         val activeAlignmentName: String = "None",
         val activeAlignmentSegmentsCount: Int = 0,
         val spatialGridCellsCount: Int = 0,
@@ -269,6 +277,50 @@ object SmartChainageCorrectionEngine {
         }
     }
 
+    fun recordRefreshExecuted(
+        isForceAll: Boolean,
+        accuracyStatusLabel: String,
+        summaryMessage: String,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        val forceCount = if (isForceAll) forceRefreshCounter.incrementAndGet() else forceRefreshCounter.get()
+        val smartCount = if (!isForceAll) smartRefreshCounter.incrementAndGet() else smartRefreshCounter.get()
+        lastHeartbeatMs.set(nowMs)
+        _diagnosticsFlow.update {
+            it.copy(
+                lastHeartbeatEpochMs = nowMs,
+                forceRefreshCount = forceCount,
+                smartRefreshCount = smartCount,
+                lastAccuracyStatusLabel = accuracyStatusLabel,
+                lastRefreshEpochMs = nowMs,
+                lastRecoveryReason = summaryMessage
+            )
+        }
+    }
+
+    fun recordStuckChainageRecovery(
+        component: String,
+        reason: String,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        val recoveries = stuckRecoveryCounter.incrementAndGet()
+        val restarts = autoRestartCounter.incrementAndGet()
+        isTaskRunning.set(false)
+        activeTaskStartEpochMs.set(0L)
+        lastHeartbeatMs.set(nowMs)
+        _diagnosticsFlow.update {
+            it.copy(
+                engineStatus = EngineHealthStatus.RECOVERED,
+                lastHeartbeatEpochMs = nowMs,
+                isCalculationInProgress = false,
+                activeTaskStartedAtEpochMs = 0L,
+                autoRestartCount = restarts,
+                stuckRecoveryCount = recoveries,
+                lastRecoveryReason = "$component: $reason"
+            )
+        }
+    }
+
     fun resetDiagnostics(nowMs: Long = System.currentTimeMillis()) {
         lastCalibrationLatencyMicros.set(0L)
         totalCalibrationsComputed.set(0L)
@@ -278,6 +330,9 @@ object SmartChainageCorrectionEngine {
         conflatedSkippedCounter.set(0L)
         stallDetectedCounter.set(0L)
         autoRestartCounter.set(0L)
+        forceRefreshCounter.set(0L)
+        smartRefreshCounter.set(0L)
+        stuckRecoveryCounter.set(0L)
         activeTaskStartEpochMs.set(0L)
         lastHeartbeatMs.set(nowMs)
         isTaskRunning.set(false)

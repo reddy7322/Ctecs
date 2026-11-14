@@ -22,13 +22,18 @@ import com.example.data.PhotoRepository
 import com.example.data.PreferencesManager
 import com.example.data.RouteEntity
 import com.example.data.RouteRepository
+import com.example.geo.ChainageAccuracyRefreshCoordinator
 import com.example.geo.ChainageMatcher
+import com.example.geo.SmartChainageCorrectionEngine
+import com.example.geo.StuckChainageMonitor
 import com.example.location.LocationState
 import com.example.location.LocationStatus
 import com.example.location.LocationTracker
 import com.example.model.CalibrationValidationStatus
 import com.example.model.CaptureSnapshot
 import com.example.model.Chainage
+import com.example.model.ChainageAccuracyReport
+import com.example.model.ChainageAccuracyStatus
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageLogEntry
 import com.example.model.ChainageMatchResult
@@ -41,10 +46,10 @@ import com.example.model.KmzReplacementPreview
 import com.example.model.OverlayConfig
 import com.example.model.PermanentCalibrationProfile
 import com.example.model.ProjectProfile
+import com.example.model.RefreshMode
 import com.example.model.RoadSide
 import com.example.model.RouteData
 import com.example.model.SpeedUnit
-import com.example.geo.SmartChainageCorrectionEngine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -469,6 +474,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private val progressionTracker = com.example.geo.ChainageProgressionTracker()
+    private val refreshCoordinator = ChainageAccuracyRefreshCoordinator()
+    private val stuckChainageMonitor = StuckChainageMonitor()
 
     val selectedAlignmentId = MutableStateFlow<String?>(null)
     @Volatile
@@ -490,6 +497,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val calibrationMatchingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var activeMatchingSubTaskJob: Job? = null
     private val _autoMatchStateFlow = MutableStateFlow(ChainageMatchResult.noRoute())
+
+    private val _isRefreshingChainageAccuracy = MutableStateFlow(false)
+    val isRefreshingChainageAccuracy: StateFlow<Boolean> = _isRefreshingChainageAccuracy.asStateFlow()
+
+    private val _chainageAccuracyReport = MutableStateFlow<ChainageAccuracyReport?>(null)
+    val chainageAccuracyReport: StateFlow<ChainageAccuracyReport?> = _chainageAccuracyReport.asStateFlow()
 
     val calibrationDiagnostics: StateFlow<SmartChainageCorrectionEngine.CalibrationEngineDiagnostics> =
         SmartChainageCorrectionEngine.diagnosticsFlow
@@ -593,6 +606,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val stabilized = progressionTracker.processResult(finalResult, route.id)
         lastCalculatedMatchResult = stabilized
+
+        // Smart stuck-chainage detection: detect valid displaced GPS updates >= 12m with unchanged chainage
+        // without triggering false positives when device is legitimately stationary (< 4.5m).
+        val isManualActive = _manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()
+        val stuckDecision = stuckChainageMonitor.evaluate(
+            gpsPoint = loc.point,
+            fixTimeMs = loc.lastFixTime,
+            matchResult = stabilized,
+            routeId = route.id,
+            isManualOverride = isManualActive
+        )
+        if (stuckDecision.isStuck) {
+            progressionTracker.resetChainageFilter()
+            lastCalculatedMatchResult = null
+            val recoveredKmz = ChainageMatcher.match(
+                gpsPoint = loc.point,
+                gpsAccuracy = loc.accuracy,
+                bearing = loc.bearing,
+                routeData = route,
+                previousResult = null
+            )
+            val recoveredRaw = recoveredKmz.chainage
+            val recoveredSmart = if (isCorrectionsEnabled && routeCorrections.isNotEmpty() &&
+                recoveredKmz.confidence != com.example.model.MatchConfidence.NO_MATCH && recoveredRaw != null
+            ) {
+                SmartChainageCorrectionEngine.applyCorrection(
+                    rawChainage = recoveredRaw,
+                    routeData = route,
+                    correctionPoints = routeCorrections,
+                    gpsPoint = loc.point,
+                    gpsAccuracy = loc.accuracy,
+                    confidence = recoveredKmz.confidence,
+                    distanceAlongAlignmentMetres = recoveredKmz.distanceAlongAlignmentMetres,
+                    isUncertainJump = recoveredKmz.isUncertain
+                )
+            } else {
+                null
+            }
+            val preRecovered = when {
+                recoveredSmart != null -> recoveredKmz.copy(
+                    chainage = recoveredSmart.correctedChainage,
+                    source = ChainageSource.CUSTOM_CORRECTION,
+                    rawUncorrectedChainage = recoveredRaw,
+                    correctionPointInfo = recoveredSmart.infoMessage,
+                    statusMessage = "Auto-Recovered (${recoveredSmart.infoMessage})"
+                )
+                recoveredRaw != null -> recoveredKmz.copy(
+                    source = ChainageSource.KMZ,
+                    rawUncorrectedChainage = recoveredRaw,
+                    statusMessage = "Auto-Recovered KMZ Match"
+                )
+                else -> recoveredKmz.copy(
+                    source = ChainageSource.GPS,
+                    rawUncorrectedChainage = null
+                )
+            }
+            val recoveredStabilized = progressionTracker.processResult(preRecovered, route.id)
+            lastCalculatedMatchResult = recoveredStabilized
+            _autoMatchStateFlow.value = recoveredStabilized
+            SmartChainageCorrectionEngine.recordStuckChainageRecovery(
+                component = stuckDecision.affectedComponent,
+                reason = stuckDecision.reason
+            )
+            calibrationMatchingScope.launch {
+                restartCalibrationMatchingSubTask("Auto-recovery: ${stuckDecision.affectedComponent}")
+            }
+            return recoveredStabilized
+        }
 
         val latencyUs = (System.nanoTime() - startNs) / 1_000L
         val tierLabel = smartCorrected?.hierarchyTier?.label
@@ -2225,21 +2306,161 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refreshLocation() {
-        viewModelScope.launch {
-            _uiMessages.emit(UiMessage.Info("Refreshing GPS location & chainage..."))
-            locationTracker.forceRefreshLocation { success ->
-                viewModelScope.launch {
-                    if (success) {
-                        _uiMessages.emit(UiMessage.Success("GPS location & chainage refreshed"))
-                        showToast("GPS location & chainage refreshed", ToastType.SUCCESS)
+    /**
+     * Unified Force Refresh All / Smart Refresh action for Chainage Accuracy.
+     * Synchronizes GPS, validates/rebuilds KMZ alignment caches without losing files,
+     * preserves permanent control points & profiles, preserves manual chainage overrides,
+     * recalculates KMZ + calibration + LHS/RHS side, and updates Home/Camera/Chainage Control immediately.
+     */
+    fun forceRefreshAllChainageAccuracy(
+        mode: RefreshMode = RefreshMode.FORCE_ALL,
+        onComplete: ((ChainageAccuracyReport) -> Unit)? = null
+    ) {
+        val generation = refreshCoordinator.tryBeginRefresh() ?: return
+        _isRefreshingChainageAccuracy.value = true
+        val previousMatched = lastCalculatedMatchResult ?: _autoMatchStateFlow.value.takeIf { it.chainage != null }
+
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                // Step A: Request latest GPS location & validate coordinates/freshness/accuracy
+                val gpsOk = locationTracker.refreshGpsAsync(forceNewFix = (mode == RefreshMode.FORCE_ALL))
+                val locState = locationTracker.locationState.value
+                val gpsValidation = locationTracker.validateLocationState(locState)
+
+                // Step B: Validate active KMZ/KML alignment & rebuild spatial index when needed
+                val routeOutcome = routeRepository.validateAndRefreshActiveRoute(
+                    forceRebuildCache = (mode == RefreshMode.FORCE_ALL)
+                )
+                val selAlignId = selectedAlignmentId.value
+                val effectiveRoute = routeOutcome.route?.let { route ->
+                    if (selAlignId != null && route.alignments.any { it.id == selAlignId }) {
+                        route.copy(selectedAlignmentId = selAlignId)
                     } else {
-                        _uiMessages.emit(UiMessage.Error("Failed to refresh GPS location"))
-                        showToast("Failed to refresh GPS location", ToastType.ERROR)
+                        route
                     }
                 }
+
+                // Step C: Reload & revalidate permanent calibration control points and profiles cleanly
+                val currentRawPoints = if (effectiveRoute != null) {
+                    routeCorrectionsMap.value[effectiveRoute.id].orEmpty()
+                } else {
+                    emptyList()
+                }
+                val calibrationSync = refreshCoordinator.synchronizeCalibrationData(
+                    route = effectiveRoute,
+                    rawPoints = currentRawPoints,
+                    profiles = calibrationProfiles.value,
+                    forceRevalidate = (mode == RefreshMode.FORCE_ALL)
+                )
+                _activeProfileCompatibility.value = calibrationSync.compatibility
+
+                if (effectiveRoute != null &&
+                    calibrationSync.syncedPoints.isNotEmpty() &&
+                    calibrationSync.syncedPoints != currentRawPoints
+                ) {
+                    preferencesManager.saveRouteCorrectionPointsList(effectiveRoute.id, calibrationSync.syncedPoints)
+                }
+
+                // Steps D, E, F: Recalculate chainage, calibrated offset, LHS/RHS side & run 9 accuracy checks
+                val output = refreshCoordinator.recalculateAndValidate(
+                    generation = generation,
+                    mode = mode,
+                    locationState = locState,
+                    gpsValidation = gpsValidation,
+                    route = effectiveRoute,
+                    routeValidGeometry = routeOutcome.isValidGeometry,
+                    calibrationSync = calibrationSync,
+                    isCorrectionsEnabled = isRouteCorrectionsEnabled.value,
+                    previousResult = previousMatched,
+                    progressionTracker = progressionTracker,
+                    manualChainage = _manualChainage.value,
+                    manualChainageText = _manualChainageText.value,
+                    gpsRefreshSucceeded = gpsOk
+                )
+
+                val latestLocTime = locationTracker.locationState.value.lastFixTime
+                if (generation == refreshCoordinator.currentGeneration() && latestLocTime <= locState.lastFixTime) {
+                    if (mode == RefreshMode.FORCE_ALL) {
+                        stuckChainageMonitor.reset()
+                    }
+                    lastCalculatedMatchResult = output.matchResult
+                    _autoMatchStateFlow.value = output.matchResult
+                }
+
+                if (!progressionTracker.isManualOverride() &&
+                    output.matchResult.detectedSide.isNotBlank() &&
+                    output.matchResult.detectedSide != "Unknown" &&
+                    _projectProfile.value.roadSide != RoadSide.NONE
+                ) {
+                    val detectedEnum = RoadSide.fromString(output.matchResult.detectedSide)
+                    if (_projectProfile.value.roadSide != detectedEnum) {
+                        _projectProfile.update { it.copy(roadSide = detectedEnum) }
+                        preferencesManager.editProjectProfile { it.copy(roadSide = detectedEnum) }
+                    }
+                }
+
+                SmartChainageCorrectionEngine.recordRefreshExecuted(
+                    isForceAll = (mode == RefreshMode.FORCE_ALL),
+                    accuracyStatusLabel = output.report.status.label,
+                    summaryMessage = output.report.summaryMessage
+                )
+                _chainageAccuracyReport.value = output.report
+
+                if (effectiveRoute != null && mode == RefreshMode.FORCE_ALL) {
+                    preferencesManager.addChainageLogEntry(
+                        ChainageLogEntry(
+                            actionType = "FORCE_REFRESH_ALL",
+                            routeId = effectiveRoute.id,
+                            routeName = effectiveRoute.name,
+                            summary = "${output.report.status.label} (${output.matchResult.displayChainage})",
+                            details = output.report.summaryMessage
+                        )
+                    )
+                }
+
+                val toastType = when (output.report.status) {
+                    ChainageAccuracyStatus.VERIFIED, ChainageAccuracyStatus.UPDATED -> ToastType.SUCCESS
+                    ChainageAccuracyStatus.NEEDS_GPS, ChainageAccuracyStatus.CALIBRATION_NEEDS_REVIEW -> ToastType.WARNING
+                    ChainageAccuracyStatus.ALIGNMENT_MISMATCH -> ToastType.ERROR
+                }
+                _uiMessages.emit(
+                    if (toastType == ToastType.ERROR) UiMessage.Error(output.report.summaryMessage)
+                    else UiMessage.Success(output.report.summaryMessage)
+                )
+                showToast(output.report.summaryMessage, toastType)
+
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(output.report)
+                }
+            } catch (e: Exception) {
+                val hasPrevious = previousMatched?.chainage != null
+                val fallbackReport = ChainageAccuracyReport(
+                    status = if (hasPrevious) ChainageAccuracyStatus.NEEDS_GPS else ChainageAccuracyStatus.CALIBRATION_NEEDS_REVIEW,
+                    mode = mode,
+                    isRefreshing = false,
+                    isStaleFallback = hasPrevious,
+                    summaryMessage = if (hasPrevious) {
+                        "Refresh interrupted • Retained ${previousMatched?.displayChainage} (Stale)"
+                    } else {
+                        "Refresh failed: ${e.message ?: "Unknown error"}"
+                    },
+                    lastRefreshedEpochMs = System.currentTimeMillis(),
+                    isManualOverrideActive = _manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()
+                )
+                _chainageAccuracyReport.value = fallbackReport
+                showToast(fallbackReport.summaryMessage, ToastType.WARNING)
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(fallbackReport)
+                }
+            } finally {
+                refreshCoordinator.endRefresh()
+                _isRefreshingChainageAccuracy.value = false
             }
         }
+    }
+
+    fun refreshLocation() {
+        forceRefreshAllChainageAccuracy(RefreshMode.SMART)
     }
 
     // Injection for testing location

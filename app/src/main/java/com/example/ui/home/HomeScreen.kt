@@ -64,11 +64,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AltRoute
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CompassCalibration
 import androidx.compose.material.icons.filled.DarkMode
@@ -79,6 +79,7 @@ import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SatelliteAlt
@@ -159,7 +160,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.geo.GeoUtils
 import com.example.geo.OsmTileManager
+import com.example.location.LocationNameResolver
+import com.example.location.LocationState
+import com.example.location.LocationTracker
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.GeoPoint
@@ -253,17 +258,69 @@ fun HomeScreen(
         label = "gps_dot_pulse"
     )
 
+    val vmLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
+    val screensaverContext = LocalContext.current
+    var screensaverResolvedLocationName by remember { mutableStateOf("") }
+    var lastScreensaverGeocodePoint by remember { mutableStateOf<GeoPoint?>(null) }
+    var lastScreensaverGeocodeAttemptMs by remember { mutableLongStateOf(0L) }
+    var screensaverClockMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    // Throttled cached reverse-geocoding for active screensaver only (never blocks UI or calls Geocoder on every GPS tick)
+    LaunchedEffect(isScreensaverVisible, locationState.point, vmLocationName) {
+        if (vmLocationName.isNotBlank()) {
+            screensaverResolvedLocationName = vmLocationName
+        }
+        val pt = locationState.point
+        if (isScreensaverVisible && pt != null && LocationTracker.isValidCoordinate(pt.latitude, pt.longitude)) {
+            val nowMs = System.currentTimeMillis()
+            val movedMetres = lastScreensaverGeocodePoint?.let { GeoUtils.distanceMetres(it, pt) } ?: Double.MAX_VALUE
+            val currentName = screensaverResolvedLocationName.ifBlank { vmLocationName }
+            val shouldResolve = (currentName.isBlank() || movedMetres >= 120.0) &&
+                (nowMs - lastScreensaverGeocodeAttemptMs >= 15_000L)
+            if (shouldResolve) {
+                lastScreensaverGeocodePoint = pt
+                lastScreensaverGeocodeAttemptMs = nowMs
+                val resolved = LocationNameResolver.resolveLocationName(
+                    context = screensaverContext,
+                    latitude = pt.latitude,
+                    longitude = pt.longitude
+                )
+                if (resolved.isNotBlank()) {
+                    screensaverResolvedLocationName = resolved
+                }
+            }
+        }
+    }
+
+    // Staleness expiry check while screensaver is open so stale GPS speed reverts to "-- km/h" cleanly
+    LaunchedEffect(isScreensaverVisible, locationState.lastFixTime, locationState.speed) {
+        screensaverClockMs = System.currentTimeMillis()
+        if (isScreensaverVisible && locationState.speed != null && locationState.lastFixTime > 0L) {
+            val ageMs = (System.currentTimeMillis() - locationState.lastFixTime).coerceAtLeast(0L)
+            val remainingMs = (ScreensaverChainageStateHolder.SCREENSAVER_SPEED_STALE_MS - ageMs).coerceAtLeast(0L)
+            delay(remainingMs + 50L)
+            screensaverClockMs = System.currentTimeMillis()
+        }
+    }
+
+    val effectiveScreensaverLocationName = screensaverResolvedLocationName.ifBlank { vmLocationName }
+
     val screensaverDisplayState = remember(
         matchResult,
         activeRoute?.id,
-        locationState.point != null,
-        projectProfile.roadSide
+        locationState,
+        projectProfile.roadSide,
+        effectiveScreensaverLocationName,
+        screensaverClockMs
     ) {
         screensaverStateHolder.resolve(
             matchResult = matchResult,
             route = activeRoute,
             hasGpsFix = locationState.point != null,
-            projectRoadSide = projectProfile.roadSide
+            projectRoadSide = projectProfile.roadSide,
+            locationState = locationState,
+            locationName = effectiveScreensaverLocationName,
+            nowMs = screensaverClockMs
         )
     }
 
@@ -3347,7 +3404,10 @@ data class ScreensaverDisplayState(
     val reliableSide: String?, // Strictly "LHS", "RHS", or null when unreliable or GPS is lost
     val directionArrow: String, // "↑" for LHS, "↓" for RHS, "" when null
     val isLiveGpsValid: Boolean,
-    val isIncreasingTrend: Boolean = true
+    val isIncreasingTrend: Boolean = true,
+    val locationName: String = "",
+    val speedText: String = "-- km/h",
+    val speedKmh: Int? = null
 )
 
 /**
@@ -3367,30 +3427,113 @@ fun shouldAllowScreensaver(
  * Stateful holder for Screensaver display data that:
  * - Retains the last valid chainage across temporary GPS loss without inventing values.
  * - Strictly suppresses LHS/RHS when GPS is unavailable or side detection is unreliable.
+ * - Filters and smooths live GPS speed in km/h, displaying "0 km/h" only on valid stationary fixes
+ *   and "-- km/h" whenever speed is unavailable or stale.
+ * - Retains last valid resolved location name smoothly without flickering or fabricating names.
  * - Clears retained route chainage when unloading/switching routes.
  */
 class ScreensaverChainageStateHolder {
     private var lastValidChainageText: String? = null
     private var lastValidChainageMetres: Long? = null
     private var lastRouteId: String? = null
+    private var smoothedSpeedKmh: Double? = null
+    private var displayedSpeedKmh: Int? = null
+    private var lastValidLocationName: String = ""
 
     fun reset() {
         lastValidChainageText = null
         lastValidChainageMetres = null
         lastRouteId = null
+        smoothedSpeedKmh = null
+        displayedSpeedKmh = null
+        lastValidLocationName = ""
+    }
+
+    fun resolveSpeedKmh(
+        locationState: LocationState?,
+        nowMs: Long = System.currentTimeMillis()
+    ): Int? {
+        if (locationState == null || locationState.point == null || !locationState.isUsable) {
+            smoothedSpeedKmh = null
+            displayedSpeedKmh = null
+            return null
+        }
+        val rawMps = locationState.speed
+        if (rawMps == null || rawMps.isNaN() || rawMps < 0f) {
+            smoothedSpeedKmh = null
+            displayedSpeedKmh = null
+            return null
+        }
+        val fixTime = locationState.lastFixTime
+        if (fixTime <= 0L || (nowMs - fixTime) > SCREENSAVER_SPEED_STALE_MS) {
+            smoothedSpeedKmh = null
+            displayedSpeedKmh = null
+            return null
+        }
+
+        val rawKmh = (rawMps.toDouble() * 3.6).coerceIn(0.0, 260.0)
+        // Valid stationary GPS speed reading (< 0.5 m/s) converges cleanly to 0 km/h
+        if (rawKmh < 1.8) {
+            val prev = smoothedSpeedKmh
+            if (prev == null || prev < 3.5) {
+                smoothedSpeedKmh = 0.0
+                displayedSpeedKmh = 0
+                return 0
+            }
+        }
+
+        val prev = smoothedSpeedKmh
+        val smoothed = if (prev == null) {
+            rawKmh
+        } else {
+            val alpha = if (kotlin.math.abs(rawKmh - prev) >= 12.0) 0.48 else 0.32
+            prev + alpha * (rawKmh - prev)
+        }
+        smoothedSpeedKmh = smoothed
+
+        val candidateRounded = kotlin.math.round(smoothed).toInt().coerceIn(0, 260)
+        val currentShown = displayedSpeedKmh
+        if (currentShown == null || kotlin.math.abs(smoothed - currentShown.toDouble()) >= 0.65) {
+            displayedSpeedKmh = candidateRounded
+        }
+        return displayedSpeedKmh
+    }
+
+    fun resolveLocationName(rawLocationName: String?): String {
+        val cleaned = rawLocationName?.trim()?.takeIf { candidate ->
+            if (candidate.isBlank()) return@takeIf false
+            val lower = candidate.lowercase(Locale.ROOT)
+            lower != "null" &&
+                lower != "none" &&
+                lower != "unknown" &&
+                lower != "n/a" &&
+                lower != "unnamed road" &&
+                candidate.any { it.isLetter() }
+        }
+        if (cleaned != null) {
+            lastValidLocationName = cleaned
+        }
+        return lastValidLocationName
     }
 
     fun resolve(
         matchResult: ChainageMatchResult,
         route: RouteData?,
         hasGpsFix: Boolean,
-        projectRoadSide: RoadSide
+        projectRoadSide: RoadSide,
+        locationState: LocationState? = null,
+        locationName: String? = null,
+        nowMs: Long = System.currentTimeMillis()
     ): ScreensaverDisplayState {
         if (route?.id != lastRouteId) {
             lastValidChainageText = null
             lastValidChainageMetres = null
             lastRouteId = route?.id
         }
+
+        val resolvedSpeed = resolveSpeedKmh(locationState, nowMs)
+        val formattedSpeed = resolvedSpeed?.let { "$it km/h" } ?: "-- km/h"
+        val resolvedLocationName = resolveLocationName(locationName)
 
         val isManualActive = matchResult.source == ChainageSource.MANUAL || matchResult.isManual
         if (isManualActive) {
@@ -3424,7 +3567,10 @@ class ScreensaverChainageStateHolder {
                 reliableSide = sideIfReliable,
                 directionArrow = sideArrowFor(sideIfReliable),
                 isLiveGpsValid = hasGpsFix && route != null,
-                isIncreasingTrend = increasing
+                isIncreasingTrend = increasing,
+                locationName = resolvedLocationName,
+                speedText = formattedSpeed,
+                speedKmh = resolvedSpeed
             )
         }
 
@@ -3450,7 +3596,10 @@ class ScreensaverChainageStateHolder {
                 reliableSide = reliableSide,
                 directionArrow = sideArrowFor(reliableSide),
                 isLiveGpsValid = true,
-                isIncreasingTrend = increasing
+                isIncreasingTrend = increasing,
+                locationName = resolvedLocationName,
+                speedText = formattedSpeed,
+                speedKmh = resolvedSpeed
             )
         }
 
@@ -3462,11 +3611,16 @@ class ScreensaverChainageStateHolder {
             reliableSide = null,
             directionArrow = "",
             isLiveGpsValid = false,
-            isIncreasingTrend = true
+            isIncreasingTrend = true,
+            locationName = resolvedLocationName,
+            speedText = formattedSpeed,
+            speedKmh = resolvedSpeed
         )
     }
 
     companion object {
+        const val SCREENSAVER_SPEED_STALE_MS = 15_000L
+
         internal fun normalizeBinarySide(raw: String?): String? {
             return when (raw?.trim()?.uppercase(Locale.ROOT)) {
                 "LHS" -> "LHS"
@@ -3621,11 +3775,13 @@ fun HomeScreensaverCoordinator(
 }
 
 /**
- * Extremely Minimal Full-Screen Chainage Screensaver UI.
- * Displays ONLY three elements:
- * 1. Transparent Glassy KMZ/KML Map Background with glowing route & small GPS indicator.
+ * Minimal Full-Screen Chainage Screensaver UI.
+ * Displays ONLY five elements:
+ * 1. Transparent Glassy KMZ/KML Map Background with glowing route & subtle live navigation marker.
  * 2. Very Large, Bold, Centrally Aligned Dynamic Chainage.
- * 3. Reliable LHS / RHS Direction with subtle directional arrow (omitted when unreliable).
+ * 3. Reliable LHS / RHS Direction with directional arrow ("← LHS" or "RHS →", hidden when unreliable).
+ * 4. Dynamically resolved Current Location Name (via cached reverse geocoding).
+ * 5. Live Speed in km/h (actual GPS speed, or "-- km/h" when unavailable/stale).
  */
 @Composable
 fun ChainageScreensaverOverlay(
@@ -3646,6 +3802,11 @@ fun ChainageScreensaverOverlay(
         targetValue = if (useDarkGlass) Color(0xFFF8FAFC) else Color(0xFF0F172A),
         animationSpec = tween(300),
         label = "screensaver_chainage_color"
+    )
+    val secondaryTextColor by animateColorAsState(
+        targetValue = if (useDarkGlass) Color(0xFFE2E8F0) else Color(0xFF1E293B),
+        animationSpec = tween(260),
+        label = "screensaver_secondary_text_color"
     )
     val chainageShadowColor = if (useDarkGlass) {
         Color(0xFF38BDF8).copy(alpha = 0.28f)
@@ -3684,7 +3845,7 @@ fun ChainageScreensaverOverlay(
                 .testTag("screensaver_glass_map")
         )
 
-        // 2 & 3. Centre Dynamic Chainage + LHS/RHS Direction (Respects display cutouts & insets)
+        // 2, 3, 4 & 5. Centre Chainage + LHS/RHS + Current Location Name + Live Speed
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -3700,16 +3861,19 @@ fun ChainageScreensaverOverlay(
             val chainageFontSize = maxByWidth.coerceIn(36f, maxByViewport.coerceAtLeast(38f)).sp
             val lineHeightSp = (chainageFontSize.value * 1.06f).sp
 
-            val spacingBetweenElements = (maxHeight * 0.032f).coerceIn(12.dp, 28.dp)
-            val sideFontSize = (chainageFontSize.value * 0.27f).coerceIn(16f, 25f).sp
-            val arrowSize = (sideFontSize.value * 1.1f).dp
+            val spacingMain = (maxHeight * 0.026f).coerceIn(10.dp, 22.dp)
+            val spacingSecondary = (maxHeight * 0.018f).coerceIn(8.dp, 16.dp)
+            val sideFontSize = (chainageFontSize.value * 0.25f).coerceIn(15f, 23f).sp
+            val arrowSize = (sideFontSize.value * 1.05f).dp
+            val locationFontSize = (chainageFontSize.value * 0.20f).coerceIn(13f, 17f).sp
+            val speedFontSize = (chainageFontSize.value * 0.24f).coerceIn(15f, 20f).sp
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Element A: Centre – Very Large, Bold, Smoothly Animated Dynamic Chainage
+                // Element 2: Centre – Very Large, Bold, Smoothly Animated Dynamic Chainage
                 ScreensaverAnimatedChainage(
                     chainageText = displayState.chainageText,
                     isIncreasing = displayState.isIncreasingTrend,
@@ -3725,9 +3889,9 @@ fun ChainageScreensaverOverlay(
                         }
                 )
 
-                Spacer(modifier = Modifier.height(spacingBetweenElements))
+                Spacer(modifier = Modifier.height(spacingMain))
 
-                // Element B: Direction – Only LHS or RHS + Directional Arrow (hidden when unreliable)
+                // Element 3: Direction – Small "← LHS" or "RHS →" (hidden when unreliable)
                 AnimatedVisibility(
                     visible = displayState.reliableSide != null,
                     enter = fadeIn(tween(240)) + scaleIn(initialScale = 0.92f, animationSpec = tween(240)),
@@ -3744,6 +3908,35 @@ fun ChainageScreensaverOverlay(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(spacingSecondary))
+
+                // Element 4: Below Chainage – Current Location Name (hidden when unavailable)
+                AnimatedVisibility(
+                    visible = displayState.locationName.isNotBlank(),
+                    enter = fadeIn(tween(260)),
+                    exit = fadeOut(tween(200))
+                ) {
+                    ScreensaverLocationLabel(
+                        locationName = displayState.locationName,
+                        textColor = secondaryTextColor,
+                        shadowColor = chainageShadowColor,
+                        fontSize = locationFontSize,
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .testTag("screensaver_location_name")
+                    )
+                }
+
+                // Element 5: Below Chainage – Live Speed in km/h (or "-- km/h" when unavailable/stale)
+                ScreensaverSpeedReadout(
+                    speedText = displayState.speedText,
+                    isLiveAvailable = displayState.speedKmh != null,
+                    useDarkGlass = useDarkGlass,
+                    textColor = secondaryTextColor,
+                    fontSize = speedFontSize,
+                    modifier = Modifier.testTag("screensaver_speed_text")
+                )
             }
         }
     }
@@ -3847,7 +4040,7 @@ private fun ScreensaverDirectionIndicator(
         ),
         label = "screensaver_arrow_offset"
     )
-    val arrowOffsetY = (arrowFloatFactor * (if (isLhs) -2.2f else 2.2f)).dp
+    val arrowOffsetX = (arrowFloatFactor * (if (isLhs) -2.2f else 2.2f)).dp
 
     Surface(
         shape = CircleShape,
@@ -3868,26 +4061,150 @@ private fun ScreensaverDirectionIndicator(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(horizontal = 22.dp, vertical = 9.dp)
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
             ) {
-                Icon(
-                    imageVector = if (targetIsLhs) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                    contentDescription = if (targetIsLhs) "Increasing" else "Decreasing",
-                    tint = accentColor,
-                    modifier = Modifier
-                        .size(arrowSize)
-                        .offset(y = arrowOffsetY)
-                )
-                Text(
-                    text = targetSide,
-                    color = accentColor,
-                    fontSize = fontSize,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 3.sp,
-                    maxLines = 1,
-                    softWrap = false
-                )
+                if (targetIsLhs) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Increasing",
+                        tint = accentColor,
+                        modifier = Modifier
+                            .size(arrowSize)
+                            .offset(x = arrowOffsetX)
+                    )
+                    Text(
+                        text = targetSide,
+                        color = accentColor,
+                        fontSize = fontSize,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 2.8.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                } else {
+                    Text(
+                        text = targetSide,
+                        color = accentColor,
+                        fontSize = fontSize,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 2.8.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Decreasing",
+                        tint = accentColor,
+                        modifier = Modifier
+                            .size(arrowSize)
+                            .offset(x = arrowOffsetX)
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverLocationLabel(
+    locationName: String,
+    textColor: Color,
+    shadowColor: Color,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier
+) {
+    AnimatedContent(
+        targetState = locationName,
+        transitionSpec = {
+            fadeIn(tween(280)) togetherWith fadeOut(tween(200))
+        },
+        label = "screensaver_location_transition",
+        modifier = modifier
+    ) { targetLocation ->
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.padding(horizontal = 16.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Place,
+                contentDescription = null,
+                tint = textColor.copy(alpha = 0.85f),
+                modifier = Modifier.size((fontSize.value * 1.08f).dp)
+            )
+            Text(
+                text = targetLocation,
+                style = TextStyle(
+                    color = textColor.copy(alpha = 0.92f),
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.3.sp,
+                    shadow = Shadow(
+                        color = shadowColor,
+                        offset = Offset.Zero,
+                        blurRadius = 12f
+                    )
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverSpeedReadout(
+    speedText: String,
+    isLiveAvailable: Boolean,
+    useDarkGlass: Boolean,
+    textColor: Color,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier
+) {
+    val speedAccent = when {
+        !isLiveAvailable -> textColor.copy(alpha = 0.65f)
+        useDarkGlass -> Color(0xFF7DD3FC)
+        else -> Color(0xFF0369A1)
+    }
+    val glassBg = if (useDarkGlass) {
+        Color(0xFF0F172A).copy(alpha = 0.44f)
+    } else {
+        Color(0xFFFFFFFF).copy(alpha = 0.62f)
+    }
+    val glassBorder = if (useDarkGlass) {
+        Color(0xFF38BDF8).copy(alpha = if (isLiveAvailable) 0.28f else 0.14f)
+    } else {
+        Color(0xFF0284C7).copy(alpha = if (isLiveAvailable) 0.24f else 0.14f)
+    }
+
+    Surface(
+        shape = CircleShape,
+        color = glassBg,
+        border = BorderStroke(1.dp, glassBorder),
+        shadowElevation = 0.dp,
+        modifier = modifier
+    ) {
+        AnimatedContent(
+            targetState = speedText,
+            transitionSpec = {
+                (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 4 }) togetherWith
+                    (fadeOut(tween(160)) + slideOutVertically(tween(160)) { -it / 4 })
+            },
+            label = "screensaver_speed_transition"
+        ) { targetSpeed ->
+            Text(
+                text = targetSpeed,
+                style = TextStyle(
+                    color = speedAccent,
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFeatureSettings = "tnum",
+                    letterSpacing = 0.4.sp
+                ),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
         }
     }
 }

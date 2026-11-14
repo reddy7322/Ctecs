@@ -36,6 +36,21 @@ class RouteRepository(
     // Mutex to prevent duplicate concurrent import jobs when user taps import rapidly
     private val importMutex = Mutex()
 
+    @Volatile
+    private var loadedSourcePath: String? = null
+    @Volatile
+    private var loadedSourceLength: Long = -1L
+    @Volatile
+    private var loadedSourceLastModified: Long = -1L
+
+    data class RouteRefreshOutcome(
+        val route: RouteData?,
+        val reparsedFromFile: Boolean,
+        val rebuiltSpatialCache: Boolean,
+        val isValidGeometry: Boolean,
+        val message: String
+    )
+
     init {
         scope.launch {
             preferencesManager.activeRouteIdFlow.collect { activeId ->
@@ -84,6 +99,9 @@ class RouteRepository(
                         fileName = entity.fileName.ifBlank { parsed.fileName }
                     )
                     ChainageMatcher.clearCache()
+                    loadedSourcePath = file.absolutePath
+                    loadedSourceLength = file.length()
+                    loadedSourceLastModified = file.lastModified()
                     _activeRouteData.value = data
                     logInfo("Loaded active route '${data.name}' (${data.fileName}) with ${data.markers.size} markers")
                     return@withContext data
@@ -93,6 +111,97 @@ class RouteRepository(
             }
         }
         null
+    }
+
+    /**
+     * Validates active KMZ/KML alignment without deleting files or needlessly re-parsing unchanged XML.
+     * Re-parses ONLY if route is missing, geometry is invalid, or the local source file changed on disk.
+     * Rebuilds ChainageMatcher spatial index when [forceRebuildCache] is true or cache is missing/stale.
+     */
+    suspend fun validateAndRefreshActiveRoute(
+        forceRebuildCache: Boolean = false
+    ): RouteRefreshOutcome = withContext(Dispatchers.IO) {
+        importMutex.withLock {
+            val activeId = _activeRouteData.value?.id ?: preferencesManager.activeRouteIdFlow.firstOrNull()
+            val currentRoute = _activeRouteData.value
+            val entity = if (activeId != null) routeDao.getRouteById(activeId) else null
+            val sourceFile = entity?.localFilePath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0L }
+
+            val fileUnchanged = sourceFile != null &&
+                loadedSourcePath == sourceFile.absolutePath &&
+                loadedSourceLength == sourceFile.length() &&
+                loadedSourceLastModified == sourceFile.lastModified()
+
+            val currentGeometryValid = currentRoute != null && (
+                currentRoute.alignments.any { align ->
+                    align.points.size >= 2 && align.points.all {
+                        !it.latitude.isNaN() && !it.longitude.isNaN()
+                    }
+                } || currentRoute.markers.isNotEmpty()
+            )
+
+            var reparsed = false
+            var workingRoute = currentRoute
+
+            if ((workingRoute == null || !currentGeometryValid || (sourceFile != null && !fileUnchanged)) && activeId != null && sourceFile != null) {
+                try {
+                    val parsed = KmzParser.parse(sourceFile, entity.fileName)
+                    val preservedAlignId = workingRoute?.selectedAlignmentId
+                    workingRoute = parsed.copy(
+                        id = entity.id,
+                        name = entity.name.ifBlank { parsed.name },
+                        fileName = entity.fileName.ifBlank { parsed.fileName },
+                        selectedAlignmentId = preservedAlignId?.takeIf { sel ->
+                            parsed.alignments.any { it.id == sel }
+                        }
+                    )
+                    loadedSourcePath = sourceFile.absolutePath
+                    loadedSourceLength = sourceFile.length()
+                    loadedSourceLastModified = sourceFile.lastModified()
+                    _activeRouteData.value = workingRoute
+                    reparsed = true
+                } catch (e: Exception) {
+                    logError("KMZ/KML validation re-parse failed (retaining last valid route): ${e.message}", e)
+                }
+            }
+
+            if (workingRoute == null) {
+                return@withContext RouteRefreshOutcome(
+                    route = null,
+                    reparsedFromFile = false,
+                    rebuiltSpatialCache = false,
+                    isValidGeometry = false,
+                    message = "No active KMZ/KML alignment"
+                )
+            }
+
+            val validAfterCheck = workingRoute.alignments.any { it.points.size >= 2 } || workingRoute.markers.isNotEmpty()
+            val activeAlign = workingRoute.activeAlignment ?: workingRoute.alignments.firstOrNull()
+            var rebuiltCache = false
+            if (validAfterCheck && activeAlign != null && activeAlign.points.size >= 2) {
+                val cacheValid = ChainageMatcher.isCacheValidFor(activeAlign, workingRoute.markers)
+                if (forceRebuildCache || reparsed || !cacheValid) {
+                    if (forceRebuildCache || reparsed) {
+                        ChainageMatcher.clearCache()
+                    }
+                    ChainageMatcher.getOrCreateCachedGeometry(activeAlign, workingRoute.markers)
+                    rebuiltCache = true
+                }
+            }
+
+            RouteRefreshOutcome(
+                route = workingRoute,
+                reparsedFromFile = reparsed,
+                rebuiltSpatialCache = rebuiltCache,
+                isValidGeometry = validAfterCheck,
+                message = when {
+                    !validAfterCheck -> "Alignment geometry empty or invalid"
+                    reparsed -> "Alignment reloaded & spatial cache rebuilt"
+                    rebuiltCache -> "Alignment verified & spatial index refreshed"
+                    else -> "Cached alignment & spatial index valid"
+                }
+            )
+        }
     }
 
     suspend fun importRouteFromUri(uri: Uri, displayName: String): Result<RouteData> = withContext(Dispatchers.IO) {
@@ -236,6 +345,9 @@ class RouteRepository(
                 ChainageMatcher.clearCache()
                 routeDao.deactivateAllRoutes()
                 routeDao.insertRoute(entity)
+                loadedSourcePath = targetFile.absolutePath
+                loadedSourceLength = targetFile.length()
+                loadedSourceLastModified = targetFile.lastModified()
                 _activeRouteData.value = finalRoute
                 preferencesManager.setActiveRouteId(finalRoute.id)
 
@@ -309,6 +421,9 @@ class RouteRepository(
         routeDao.deleteRouteById(routeId)
         ChainageMatcher.clearCache()
         if (_activeRouteData.value?.id == routeId) {
+            loadedSourcePath = null
+            loadedSourceLength = -1L
+            loadedSourceLastModified = -1L
             _activeRouteData.value = null
             preferencesManager.setActiveRouteId(null)
         }
@@ -394,6 +509,9 @@ class RouteRepository(
                 ChainageMatcher.clearCache()
                 routeDao.deactivateAllRoutes()
                 routeDao.insertRoute(entity)
+                loadedSourcePath = targetFile.absolutePath
+                loadedSourceLength = targetFile.length()
+                loadedSourceLastModified = targetFile.lastModified()
                 _activeRouteData.value = finalRoute
                 preferencesManager.setActiveRouteId(finalRoute.id)
 

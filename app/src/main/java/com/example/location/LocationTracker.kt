@@ -14,10 +14,22 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.resume
+
+data class GpsValidationResult(
+    val isValid: Boolean,
+    val isFresh: Boolean,
+    val fixAgeMs: Long,
+    val reason: String
+)
 
 enum class LocationStatus {
     IDLE,
@@ -57,7 +69,65 @@ class LocationTracker(private val context: Context) {
     private val lastCallbackMillis = AtomicLong(0L)
     private val stallRecoveries = AtomicLong(0L)
 
+    companion object {
+        const val DEFAULT_GPS_FRESH_AGE_MS = 20_000L
+
+        fun isValidCoordinate(lat: Double, lng: Double): Boolean {
+            if (lat.isNaN() || lng.isNaN() || lat.isInfinite() || lng.isInfinite()) return false
+            if (lat !in -90.0..90.0 || lng !in -180.0..180.0) return false
+            if (lat == 0.0 && lng == 0.0) return false
+            return true
+        }
+    }
+
     fun getStallRecoveriesCount(): Long = stallRecoveries.get()
+
+    fun validateLocationState(
+        state: LocationState = _locationState.value,
+        maxFreshAgeMs: Long = DEFAULT_GPS_FRESH_AGE_MS,
+        nowMs: Long = System.currentTimeMillis()
+    ): GpsValidationResult {
+        val pt = state.point
+        if (pt == null) {
+            return GpsValidationResult(
+                isValid = false,
+                isFresh = false,
+                fixAgeMs = -1L,
+                reason = "No GPS fix available"
+            )
+        }
+        if (!isValidCoordinate(pt.latitude, pt.longitude)) {
+            return GpsValidationResult(
+                isValid = false,
+                isFresh = false,
+                fixAgeMs = -1L,
+                reason = "Invalid GPS coordinates"
+            )
+        }
+        if (state.accuracy.isNaN() || state.accuracy < 0f) {
+            return GpsValidationResult(
+                isValid = false,
+                isFresh = false,
+                fixAgeMs = -1L,
+                reason = "Invalid GPS accuracy"
+            )
+        }
+        val fixAgeMs = if (state.lastFixTime > 0L) (nowMs - state.lastFixTime).coerceAtLeast(0L) else Long.MAX_VALUE
+        val isFresh = state.lastFixTime > 0L && fixAgeMs <= maxFreshAgeMs
+        val statusReason = when {
+            state.status == LocationStatus.PERMISSION_DENIED -> "Location permission denied"
+            state.status == LocationStatus.DISABLED -> "GPS provider disabled"
+            !isFresh -> "Stale GPS fix (${fixAgeMs / 1000L}s old)"
+            state.accuracy > 25f -> "Low GPS accuracy (±${state.accuracy.toInt()}m)"
+            else -> "GPS fix valid (±${state.accuracy.toInt()}m)"
+        }
+        return GpsValidationResult(
+            isValid = true,
+            isFresh = isFresh && state.status != LocationStatus.PERMISSION_DENIED && state.status != LocationStatus.DISABLED,
+            fixAgeMs = fixAgeMs,
+            reason = statusReason
+        )
+    }
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -182,17 +252,20 @@ class LocationTracker(private val context: Context) {
     }
 
     private fun handleNewLocation(loc: Location) {
+        if (!isValidCoordinate(loc.latitude, loc.longitude)) return
         val now = System.currentTimeMillis()
         lastCallbackMillis.set(now)
-        val accuracy = loc.accuracy
+        val accuracy = if (loc.accuracy.isNaN() || loc.accuracy < 0f) 0f else loc.accuracy
         val status = if (accuracy <= 15.0f) LocationStatus.READY else LocationStatus.POOR_ACCURACY
         val point = GeoPoint(loc.latitude, loc.longitude, loc.altitude)
+        val validBearing = if (loc.hasBearing() && !loc.bearing.isNaN()) loc.bearing else null
+        val validSpeed = if (loc.hasSpeed() && !loc.speed.isNaN() && loc.speed >= 0f) loc.speed else null
 
         _locationState.value = LocationState(
             point = point,
             accuracy = accuracy,
-            bearing = if (loc.hasBearing()) loc.bearing else null,
-            speed = if (loc.hasSpeed()) loc.speed else null,
+            bearing = validBearing,
+            speed = validSpeed,
             altitude = loc.altitude,
             status = status,
             lastFixTime = now
@@ -205,14 +278,15 @@ class LocationTracker(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun forceRefreshLocation(onComplete: ((Boolean) -> Unit)? = null) {
         try {
-            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            val cts = CancellationTokenSource()
+            fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
                 .addOnSuccessListener { loc ->
-                    if (loc != null) {
+                    if (loc != null && isValidCoordinate(loc.latitude, loc.longitude)) {
                         handleNewLocation(loc)
                         onComplete?.invoke(true)
                     } else {
                         fusedClient.lastLocation.addOnSuccessListener { lastLoc ->
-                            if (lastLoc != null) {
+                            if (lastLoc != null && isValidCoordinate(lastLoc.latitude, lastLoc.longitude)) {
                                 handleNewLocation(lastLoc)
                                 onComplete?.invoke(true)
                             } else {
@@ -229,6 +303,74 @@ class LocationTracker(private val context: Context) {
         } catch (e: Exception) {
             onComplete?.invoke(false)
         }
+    }
+
+    /**
+     * Coroutine-friendly GPS refresh with bounded timeout and stale-listener recovery.
+     * Returns true if a valid fresh fix was obtained or confirmed, false otherwise.
+     * Never fabricates GPS coordinates on failure or timeout.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun refreshGpsAsync(
+        forceNewFix: Boolean = true,
+        timeoutMs: Long = 3_500L,
+        maxFreshAgeMs: Long = DEFAULT_GPS_FRESH_AGE_MS
+    ): Boolean {
+        val currentValidation = validateLocationState(maxFreshAgeMs = maxFreshAgeMs)
+        if (!forceNewFix && currentValidation.isValid && currentValidation.isFresh) {
+            return true
+        }
+
+        // If tracking is active and listener looks stale, rebind cleanly without creating duplicate listeners
+        if (isTracking) {
+            val lastCb = lastCallbackMillis.get()
+            if (lastCb > 0L && (System.currentTimeMillis() - lastCb) > maxFreshAgeMs) {
+                try {
+                    fusedClient.removeLocationUpdates(locationCallback)
+                } catch (_: Exception) {}
+                registerLocationCallbacks()
+            }
+        }
+
+        val freshFixObtained = withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine<Boolean> { cont: CancellableContinuation<Boolean> ->
+                val cts = CancellationTokenSource()
+                cont.invokeOnCancellation {
+                    try { cts.cancel() } catch (_: Exception) {}
+                }
+                try {
+                    fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+                        .addOnSuccessListener { loc ->
+                            if (loc != null && isValidCoordinate(loc.latitude, loc.longitude)) {
+                                handleNewLocation(loc)
+                                if (cont.isActive) cont.resume(true)
+                            } else {
+                                fusedClient.lastLocation.addOnSuccessListener { lastLoc ->
+                                    if (lastLoc != null && isValidCoordinate(lastLoc.latitude, lastLoc.longitude)) {
+                                        handleNewLocation(lastLoc)
+                                        if (cont.isActive) cont.resume(true)
+                                    } else {
+                                        if (cont.isActive) cont.resume(false)
+                                    }
+                                }.addOnFailureListener {
+                                    if (cont.isActive) cont.resume(false)
+                                }
+                            }
+                        }
+                        .addOnFailureListener {
+                            if (cont.isActive) cont.resume(false)
+                        }
+                } catch (_: Exception) {
+                    if (cont.isActive) cont.resume(false)
+                }
+            }
+        }
+
+        if (freshFixObtained == true) return true
+
+        // If getCurrentLocation timed out (e.g. unit tests or indoor sensor), accept existing valid fresh fix if available
+        val postValidation = validateLocationState(maxFreshAgeMs = maxFreshAgeMs)
+        return postValidation.isValid && postValidation.isFresh
     }
 
     /**

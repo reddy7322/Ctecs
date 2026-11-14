@@ -553,6 +553,20 @@ object ChainageMatcher {
     }
 
     /**
+     * Validates whether a non-stale spatial cache entry already exists for [alignment] & [allMarkers].
+     */
+    fun isCacheValidFor(alignment: RouteAlignment, allMarkers: List<RouteMarker>): Boolean {
+        if (alignment.points.size < 2) return false
+        val firstPt = alignment.points.firstOrNull()
+        val lastPt = alignment.points.lastOrNull()
+        val firstMCh = allMarkers.firstOrNull()?.chainage?.metres ?: -1L
+        val lastMCh = allMarkers.lastOrNull()?.chainage?.metres ?: -1L
+        val cacheKey = "${alignment.id}:${alignment.direction}:${alignment.points.size}:${allMarkers.size}:$firstMCh:$lastMCh:${firstPt?.latitude},${firstPt?.longitude}:${lastPt?.latitude},${lastPt?.longitude}"
+        val cached = geometryCache[cacheKey] ?: return false
+        return cached.segmentCount == alignment.points.size - 1 && cached.totalLengthM > 0.0
+    }
+
+    /**
      * Clears spatial geometry caches when route data is updated or unmounted.
      */
     fun clearCache() {
