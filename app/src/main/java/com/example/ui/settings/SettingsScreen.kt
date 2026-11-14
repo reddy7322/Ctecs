@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.BrandingWatermark
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
@@ -280,6 +281,7 @@ fun SettingsScreen(
             "logo" to false,
             "storage" to false,
             "display" to false,
+            "backup_restore" to false,
             "permissions_about" to false
         )
     }
@@ -813,7 +815,7 @@ fun SettingsScreen(
                         onClick = {
                             listOf(
                                 "project", "camera", "timestamp", "mini_map", "gps", "chainage",
-                                "logo", "storage", "display", "permissions_about"
+                                "logo", "storage", "display", "backup_restore", "permissions_about"
                             ).forEach { expandedSections[it] = true }
                         }
                     ) {
@@ -823,7 +825,7 @@ fun SettingsScreen(
                         onClick = {
                             listOf(
                                 "project", "camera", "timestamp", "mini_map", "gps", "chainage",
-                                "logo", "storage", "display", "permissions_about"
+                                "logo", "storage", "display", "backup_restore", "permissions_about"
                             ).forEach { expandedSections[it] = false }
                         }
                     ) {
@@ -3698,6 +3700,36 @@ fun SettingsScreen(
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // BACKUP & RESTORE
+            // ====================================================
+            if (matchesSearch("backup restore export import zip transfer settings history calibration", searchQuery)) {
+                val backupHistoryCount by viewModel.backupHistory.collectAsStateWithLifecycle()
+                LaunchedEffect(Unit) {
+                    viewModel.refreshBackupHistory()
+                }
+                SmartDropdownSection(
+                    title = "Backup & Restore",
+                    subtitle = if (backupHistoryCount.isNotEmpty()) {
+                        "${backupHistoryCount.size} backup(s) • Export & restore all CTECS settings"
+                    } else {
+                        "Export, validate & restore all settings across devices"
+                    },
+                    icon = Icons.Default.Backup,
+                    accentColor = primaryAccent,
+                    isExpanded = expandedSections["backup_restore"] ?: false,
+                    onToggleExpand = { expandedSections["backup_restore"] = !(expandedSections["backup_restore"] ?: false) }
+                ) {
+                    BackupRestoreContent(
+                        viewModel = viewModel,
+                        accentColor = primaryAccent,
+                        accentContentColor = primaryAccentContent
+                    )
                 }
             }
 

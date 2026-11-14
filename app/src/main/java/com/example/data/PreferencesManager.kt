@@ -2,11 +2,16 @@ package com.example.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.backup.PrefValueType
+import com.example.backup.TypedPrefEntry
 import com.example.model.Chainage
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageLogEntry
@@ -21,6 +26,7 @@ import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -121,6 +127,13 @@ class PreferencesManager(private val context: Context) {
         // Independent Photo & Video Mini Map Overlay JSON keys
         val KEY_PHOTO_MINI_MAP_JSON = stringPreferencesKey("photo_mini_map_config_json")
         val KEY_VIDEO_MINI_MAP_JSON = stringPreferencesKey("video_mini_map_config_json")
+
+        // DPR PDF Default Logo & Signature keys
+        val KEY_PDF_LOGO_URI = stringPreferencesKey("pdf_logo_uri")
+        val KEY_INCLUDE_PDF_LOGO_DEFAULT = booleanPreferencesKey("include_pdf_logo_default")
+        val KEY_PDF_SIGNATURE_URI = stringPreferencesKey("pdf_signature_uri")
+        val KEY_INCLUDE_PDF_SIGNATURE_DEFAULT = booleanPreferencesKey("include_pdf_signature_default")
+        val KEY_PDF_DEFAULT_PREPARED_BY = stringPreferencesKey("pdf_default_prepared_by")
 
         val KEY_ACTIVE_ROUTE_ID = stringPreferencesKey("active_route_id")
 
@@ -372,6 +385,11 @@ class PreferencesManager(private val context: Context) {
             videoPaddingBottomDp = prefs[KEY_VIDEO_PADDING_BOTTOM_DP] ?: 20,
             videoPaddingLeftDp = prefs[KEY_VIDEO_PADDING_LEFT_DP] ?: 16,
             videoPaddingRightDp = prefs[KEY_VIDEO_PADDING_RIGHT_DP] ?: 16,
+            pdfLogoUri = prefs[KEY_PDF_LOGO_URI],
+            includePdfLogoDefault = prefs[KEY_INCLUDE_PDF_LOGO_DEFAULT] ?: true,
+            pdfSignatureUri = prefs[KEY_PDF_SIGNATURE_URI],
+            includePdfSignatureDefault = prefs[KEY_INCLUDE_PDF_SIGNATURE_DEFAULT] ?: true,
+            pdfDefaultPreparedBy = prefs[KEY_PDF_DEFAULT_PREPARED_BY] ?: "Site Engineer",
             photoMiniMap = MiniMapStyleConfig.fromJsonString(prefs[KEY_PHOTO_MINI_MAP_JSON]),
             videoMiniMap = MiniMapStyleConfig.fromJsonString(prefs[KEY_VIDEO_MINI_MAP_JSON])
         )
@@ -547,6 +565,19 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_VIDEO_PADDING_BOTTOM_DP] = config.videoPaddingBottomDp
             prefs[KEY_VIDEO_PADDING_LEFT_DP] = config.videoPaddingLeftDp
             prefs[KEY_VIDEO_PADDING_RIGHT_DP] = config.videoPaddingRightDp
+            if (config.pdfLogoUri != null) {
+                prefs[KEY_PDF_LOGO_URI] = config.pdfLogoUri
+            } else {
+                prefs.remove(KEY_PDF_LOGO_URI)
+            }
+            prefs[KEY_INCLUDE_PDF_LOGO_DEFAULT] = config.includePdfLogoDefault
+            if (config.pdfSignatureUri != null) {
+                prefs[KEY_PDF_SIGNATURE_URI] = config.pdfSignatureUri
+            } else {
+                prefs.remove(KEY_PDF_SIGNATURE_URI)
+            }
+            prefs[KEY_INCLUDE_PDF_SIGNATURE_DEFAULT] = config.includePdfSignatureDefault
+            prefs[KEY_PDF_DEFAULT_PREPARED_BY] = config.pdfDefaultPreparedBy
             prefs[KEY_PHOTO_MINI_MAP_JSON] = config.photoMiniMap.toJsonString()
             prefs[KEY_VIDEO_MINI_MAP_JSON] = config.videoMiniMap.toJsonString()
         }
@@ -855,5 +886,101 @@ class PreferencesManager(private val context: Context) {
             }
         } catch (ignored: Exception) {}
         return result
+    }
+
+    /**
+     * Reads every persisted entry from ctecs_user_preferences DataStore dynamically with runtime type.
+     */
+    suspend fun readRawPreferencesSnapshot(): Map<String, Pair<PrefValueType, Any>> {
+        val rawMap = context.dataStore.data.first().asMap()
+        val snapshot = linkedMapOf<String, Pair<PrefValueType, Any>>()
+        rawMap.forEach { (key, value) ->
+            val name = key.name
+            when (value) {
+                is String -> snapshot[name] = PrefValueType.STRING to value
+                is Boolean -> snapshot[name] = PrefValueType.BOOLEAN to value
+                is Int -> snapshot[name] = PrefValueType.INT to value
+                is Float -> snapshot[name] = PrefValueType.FLOAT to value
+                is Long -> snapshot[name] = PrefValueType.LONG to value
+                is Double -> snapshot[name] = PrefValueType.DOUBLE to value
+                is Set<*> -> {
+                    val strSet = value.mapNotNull { it?.toString() }.toSet()
+                    snapshot[name] = PrefValueType.STRING_SET to strSet
+                }
+            }
+        }
+        return snapshot
+    }
+
+    /**
+     * Atomically rolls back ctecs_user_preferences to a previously captured raw snapshot.
+     */
+    suspend fun restoreRawPreferencesSnapshot(snapshot: Map<String, Pair<PrefValueType, Any>>) {
+        context.dataStore.edit { prefs ->
+            prefs.clear()
+            snapshot.forEach { (keyName, typedPair) ->
+                val (type, value) = typedPair
+                writeTypedEntry(prefs, keyName, type, value)
+            }
+        }
+    }
+
+    /**
+     * Atomically applies restored backup mutations in a single DataStore transaction.
+     */
+    suspend fun applyBackupEntriesTransaction(
+        entries: List<TypedPrefEntry>,
+        keysToRemove: Set<String> = emptySet(),
+        beforeCommitHook: (() -> Unit)? = null
+    ) {
+        context.dataStore.edit { prefs ->
+            keysToRemove.forEach { keyName ->
+                removeAnyTypedKey(prefs, keyName)
+            }
+            entries.forEach { entry ->
+                removeAnyTypedKey(prefs, entry.key)
+                writeTypedEntry(prefs, entry.key, entry.type, entry.value)
+            }
+            beforeCommitHook?.invoke()
+        }
+    }
+
+    private fun removeAnyTypedKey(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        keyName: String
+    ) {
+        prefs.remove(stringPreferencesKey(keyName))
+        prefs.remove(booleanPreferencesKey(keyName))
+        prefs.remove(intPreferencesKey(keyName))
+        prefs.remove(floatPreferencesKey(keyName))
+        prefs.remove(longPreferencesKey(keyName))
+        prefs.remove(doublePreferencesKey(keyName))
+        prefs.remove(stringSetPreferencesKey(keyName))
+    }
+
+    private fun writeTypedEntry(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        keyName: String,
+        type: PrefValueType,
+        value: Any
+    ) {
+        when (type) {
+            PrefValueType.STRING -> prefs[stringPreferencesKey(keyName)] = value.toString()
+            PrefValueType.BOOLEAN -> prefs[booleanPreferencesKey(keyName)] =
+                value as? Boolean ?: value.toString().toBoolean()
+            PrefValueType.INT -> prefs[intPreferencesKey(keyName)] =
+                (value as? Number)?.toInt() ?: value.toString().toIntOrNull() ?: 0
+            PrefValueType.FLOAT -> prefs[floatPreferencesKey(keyName)] =
+                (value as? Number)?.toFloat() ?: value.toString().toFloatOrNull() ?: 0f
+            PrefValueType.LONG -> prefs[longPreferencesKey(keyName)] =
+                (value as? Number)?.toLong() ?: value.toString().toLongOrNull() ?: 0L
+            PrefValueType.DOUBLE -> prefs[doublePreferencesKey(keyName)] =
+                (value as? Number)?.toDouble() ?: value.toString().toDoubleOrNull() ?: 0.0
+            PrefValueType.STRING_SET -> {
+                @Suppress("UNCHECKED_CAST")
+                val setVal = (value as? Set<*>)?.mapNotNull { it?.toString() }?.toSet() ?: emptySet()
+                prefs[stringSetPreferencesKey(keyName)] = setVal
+            }
+        }
     }
 }

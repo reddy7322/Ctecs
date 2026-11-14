@@ -7,4 +7,5 @@
     <external-files-path name="downloads" path="Download" />
     <cache-path name="apk_cache" path="updates" />
     <files-path name="survey_exports" path="survey_exports" />
+    <files-path name="backups" path="backups" />
 </paths>

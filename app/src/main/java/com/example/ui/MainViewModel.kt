@@ -16,6 +16,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import com.example.backup.BackupCategory
+import com.example.backup.BackupExportResult
+import com.example.backup.BackupHistoryItem
+import com.example.backup.BackupPreviewInfo
+import com.example.backup.BackupRestoreReport
+import com.example.backup.RestoreMode
+import com.example.backup.SettingsBackupManager
 import com.example.data.AppDatabase
 import com.example.data.PhotoRecordEntity
 import com.example.data.PhotoRepository
@@ -98,6 +105,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
     val preferencesManager = PreferencesManager(application)
+    val settingsBackupManager = SettingsBackupManager(application, preferencesManager)
     val routeRepository = RouteRepository(application, db.routeDao(), preferencesManager, viewModelScope)
     val photoRepository = PhotoRepository(application, db.photoRecordDao())
     val smartHighwayRepository = com.example.data.SmartHighwayRepository(
@@ -2490,6 +2498,173 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Error(message))
         }
+    }
+
+    // ====================================================
+    // SETTINGS BACKUP & RESTORE
+    // ====================================================
+    private val _backupHistory = MutableStateFlow<List<BackupHistoryItem>>(emptyList())
+    val backupHistory: StateFlow<List<BackupHistoryItem>> = _backupHistory.asStateFlow()
+
+    private val _isBackupBusy = MutableStateFlow(false)
+    val isBackupBusy: StateFlow<Boolean> = _isBackupBusy.asStateFlow()
+
+    private val _backupProgress = MutableStateFlow(0f)
+    val backupProgress: StateFlow<Float> = _backupProgress.asStateFlow()
+
+    private val _backupProgressMessage = MutableStateFlow<String?>(null)
+    val backupProgressMessage: StateFlow<String?> = _backupProgressMessage.asStateFlow()
+
+    private val _lastBackupExportResult = MutableStateFlow<BackupExportResult?>(null)
+    val lastBackupExportResult: StateFlow<BackupExportResult?> = _lastBackupExportResult.asStateFlow()
+
+    private val _pendingBackupPreview = MutableStateFlow<BackupPreviewInfo?>(null)
+    val pendingBackupPreview: StateFlow<BackupPreviewInfo?> = _pendingBackupPreview.asStateFlow()
+
+    private val _lastRestoreReport = MutableStateFlow<BackupRestoreReport?>(null)
+    val lastRestoreReport: StateFlow<BackupRestoreReport?> = _lastRestoreReport.asStateFlow()
+
+    fun refreshBackupHistory() {
+        viewModelScope.launch {
+            _backupHistory.value = settingsBackupManager.listBackupHistory()
+        }
+    }
+
+    fun exportSettingsBackup(destinationUri: Uri? = null) {
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            _backupProgress.value = 0.05f
+            _backupProgressMessage.value = "Preparing backup..."
+            try {
+                val result = settingsBackupManager.exportBackup(
+                    destinationUri = destinationUri,
+                    onProgress = { fraction, msg ->
+                        _backupProgress.value = fraction
+                        _backupProgressMessage.value = msg
+                    }
+                )
+                _lastBackupExportResult.value = result
+                _backupHistory.value = settingsBackupManager.listBackupHistory()
+                if (result.success) {
+                    val msg = "Backup exported: ${result.fileName} (${result.totalSettingsCount} settings)"
+                    showToast(msg, ToastType.SUCCESS)
+                    _uiMessages.emit(UiMessage.Success(msg))
+                } else {
+                    val err = result.errorMessage ?: "Backup export failed"
+                    showToast(err, ToastType.ERROR)
+                    _uiMessages.emit(UiMessage.Error(err))
+                }
+            } finally {
+                _isBackupBusy.value = false
+                _backupProgress.value = 0f
+                _backupProgressMessage.value = null
+            }
+        }
+    }
+
+    fun inspectBackupUriForRestore(uri: Uri) {
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            _backupProgress.value = 0.4f
+            _backupProgressMessage.value = "Validating backup checksums & manifest..."
+            try {
+                val preview = settingsBackupManager.inspectBackupUri(uri)
+                _pendingBackupPreview.value = preview
+                if (!preview.isRestorable) {
+                    showToast(preview.validationMessage, ToastType.ERROR)
+                }
+            } finally {
+                _isBackupBusy.value = false
+                _backupProgress.value = 0f
+                _backupProgressMessage.value = null
+            }
+        }
+    }
+
+    fun inspectHistoryItemForRestore(item: BackupHistoryItem) {
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            _backupProgress.value = 0.4f
+            _backupProgressMessage.value = "Validating backup archive..."
+            try {
+                val preview = settingsBackupManager.inspectBackupFile(java.io.File(item.filePath))
+                _pendingBackupPreview.value = preview
+                if (!preview.isRestorable) {
+                    showToast(preview.validationMessage, ToastType.ERROR)
+                }
+            } finally {
+                _isBackupBusy.value = false
+                _backupProgress.value = 0f
+                _backupProgressMessage.value = null
+            }
+        }
+    }
+
+    fun dismissBackupPreview() {
+        _pendingBackupPreview.value = null
+    }
+
+    fun dismissRestoreReport() {
+        _lastRestoreReport.value = null
+    }
+
+    fun confirmRestoreFromPreview(
+        mode: RestoreMode,
+        selectedCategories: Set<BackupCategory>
+    ) {
+        val preview = _pendingBackupPreview.value ?: return
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            _backupProgress.value = 0.2f
+            _backupProgressMessage.value = "Creating safety snapshot & restoring settings..."
+            try {
+                val report = settingsBackupManager.restoreFromPreview(
+                    preview = preview,
+                    mode = mode,
+                    selectedCategories = selectedCategories
+                )
+                _pendingBackupPreview.value = null
+                _lastRestoreReport.value = report
+                if (report.success) {
+                    val refreshedLoc = overlayConfig.value.lastDetectedLocationName
+                    if (refreshedLoc.isNotBlank()) {
+                        _currentLocationName.value = refreshedLoc
+                    }
+                    _backupHistory.value = settingsBackupManager.listBackupHistory()
+                    val msg = "Restored ${report.restoredSettingsCount} settings across ${report.restoredCategories.size} categories"
+                    showToast(msg, ToastType.SUCCESS)
+                    _uiMessages.emit(UiMessage.Success(msg))
+                } else {
+                    val msg = report.errorMessage ?: "Restore failed"
+                    showToast(msg, ToastType.ERROR)
+                    _uiMessages.emit(UiMessage.Error(msg))
+                }
+            } finally {
+                _isBackupBusy.value = false
+                _backupProgress.value = 0f
+                _backupProgressMessage.value = null
+            }
+        }
+    }
+
+    fun deleteBackupHistoryItem(item: BackupHistoryItem) {
+        viewModelScope.launch {
+            val deleted = settingsBackupManager.deleteBackupFile(item.filePath)
+            _backupHistory.value = settingsBackupManager.listBackupHistory()
+            if (deleted) {
+                showToast("Deleted backup ${item.fileName}", ToastType.INFO)
+            } else {
+                showToast("Unable to delete backup file", ToastType.WARNING)
+            }
+        }
+    }
+
+    fun getShareBackupUri(item: BackupHistoryItem): Uri? {
+        return settingsBackupManager.getShareUriForBackup(item.filePath)
     }
 
     override fun onCleared() {
