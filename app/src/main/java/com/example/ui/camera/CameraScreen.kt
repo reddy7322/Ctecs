@@ -296,9 +296,10 @@ fun CameraScreen(
         )
     }
 
-    DisposableEffect(overlayManager) {
+    DisposableEffect(overlayManager, videoManager) {
         videoManager.overlayManager = overlayManager
         onDispose {
+            videoManager.release()
             overlayManager.release()
         }
     }
@@ -309,6 +310,9 @@ fun CameraScreen(
     val captureMode by viewModel.captureMode.collectAsStateWithLifecycle()
     val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
     val isRecordingPaused by viewModel.isRecordingPaused.collectAsStateWithLifecycle()
+    val recordingSessionState by videoManager.sessionState.collectAsStateWithLifecycle()
+    val isVideoPreparing = recordingSessionState == RecordingSessionState.PREPARING ||
+        recordingSessionState == RecordingSessionState.FINALIZING
     val recordingDurationSec by viewModel.recordingDurationSeconds.collectAsStateWithLifecycle()
     val currentZoomRatio by viewModel.currentZoomRatio.collectAsStateWithLifecycle()
     val exposureCompensation by viewModel.exposureCompensation.collectAsStateWithLifecycle()
@@ -433,39 +437,55 @@ fun CameraScreen(
     }
 
     fun startVideoRecording(audioEnabled: Boolean) {
-        viewModel.onVideoRecordingStarted()
+        if (videoManager.isPreparingOrRecording()) return
         val effectiveRotation = if (isLandscape && (rotationDegrees == 0f || rotationDegrees == 180f)) 90 else rotationDegrees.toInt()
-        videoManager.startRecording(
-            controller = controller,
-            recordAudio = audioEnabled,
-            initialRotation = effectiveRotation,
-            onEvent = { event, recFile ->
-                when (event) {
-                    is androidx.camera.video.VideoRecordEvent.Start -> {
-                        viewModel.showInfo("Recording video...")
-                    }
-                    is androidx.camera.video.VideoRecordEvent.Pause -> {
-                        viewModel.onVideoRecordingPaused(true)
-                    }
-                    is androidx.camera.video.VideoRecordEvent.Resume -> {
-                        viewModel.onVideoRecordingPaused(false)
-                    }
-                    is androidx.camera.video.VideoRecordEvent.Finalize -> {
-                        viewModel.onVideoRecordingStopped()
-                        if (event.hasError()) {
-                            android.util.Log.e("CameraScreen", "Video recording finalized with error: ${event.error}, cause: ${event.cause}")
+        coroutineScope.launch {
+            videoManager.prepareAndStartRecording(
+                controller = controller,
+                videoResolution = cameraSettings.videoResolution,
+                isFrontCamera = isFrontCamera,
+                recordAudio = audioEnabled,
+                initialRotation = effectiveRotation,
+                onRecordingStarted = { viewModel.onVideoRecordingStarted() },
+                onEvent = { event, recFile, hasOverlay ->
+                    when (event) {
+                        is androidx.camera.video.VideoRecordEvent.Start -> {
+                            viewModel.showInfo("Recording video...")
                         }
-                        val finalRecFile = recFile ?: videoManager.currentRecordingFile ?: File(context.cacheDir, "temp_video/raw_video.mp4")
-                        viewModel.processRecordedVideo(context, finalRecFile, effectiveRotation)
+                        is androidx.camera.video.VideoRecordEvent.Pause -> {
+                            viewModel.onVideoRecordingPaused(true)
+                        }
+                        is androidx.camera.video.VideoRecordEvent.Resume -> {
+                            viewModel.onVideoRecordingPaused(false)
+                        }
+                        is androidx.camera.video.VideoRecordEvent.Finalize -> {
+                            viewModel.onVideoRecordingStopped()
+                            if (!isFinalizedRecordingValid(event.hasError(), event.error, recFile)) {
+                                android.util.Log.e(
+                                    "CameraScreen",
+                                    "Video recording finalized without valid camera output: error=${event.error}, fileSize=${recFile?.length() ?: 0L}",
+                                    event.cause
+                                )
+                                try { recFile?.delete() } catch (ignored: Exception) {}
+                                viewModel.showError("Video recording failed: camera could not capture video frames. Please try again.")
+                            } else {
+                                viewModel.processRecordedVideo(
+                                    context = context,
+                                    rawVideoFile = recFile!!,
+                                    forcedRotation = effectiveRotation,
+                                    hasRealtimeOverlay = hasOverlay
+                                )
+                            }
+                        }
                     }
+                },
+                onError = { throwable ->
+                    android.util.Log.e("CameraScreen", "Video recording error: ${throwable.message}", throwable)
+                    viewModel.onVideoRecordingStopped()
+                    viewModel.showError(throwable.message ?: "Failed to start video recording")
                 }
-            },
-            onError = { throwable ->
-                android.util.Log.e("CameraScreen", "Video recording error: ${throwable.message}", throwable)
-                viewModel.onVideoRecordingStopped()
-                viewModel.showError(throwable.message ?: "Failed to start video recording")
-            }
-        )
+            )
+        }
     }
 
     val audioPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -531,6 +551,7 @@ fun CameraScreen(
     // Trigger Video Recording Toggle
     fun toggleVideoRecording() {
         if (!isRecording) {
+            if (videoManager.isPreparingOrRecording()) return
             val hasAudioPerm = androidx.core.content.ContextCompat.checkSelfPermission(
                 context,
                 android.Manifest.permission.RECORD_AUDIO
@@ -564,6 +585,7 @@ fun CameraScreen(
             controller = controller,
             currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
             overlayManager = overlayManager,
+            videoManager = videoManager,
             onExposureChanged = { newEv -> viewModel.setExposureCompensation(newEv) },
             onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
             modifier = Modifier.fillMaxSize()
@@ -1742,7 +1764,7 @@ fun CameraScreen(
                                     if (captureMode == CaptureMode.VIDEO) AccentRed else glassBorderIdle,
                                     CircleShape
                                 )
-                                .clickable {
+                                .clickable(enabled = !isVideoPreparing) {
                                     if (captureMode != CaptureMode.VIDEO) {
                                         viewModel.setCaptureMode(CaptureMode.VIDEO)
                                     }

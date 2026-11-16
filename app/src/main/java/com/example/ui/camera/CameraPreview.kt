@@ -98,7 +98,15 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.model.CaptureSnapshot
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 import com.example.model.OverlayTemplate
 import com.example.overlay.OverlayRenderer
@@ -137,6 +145,7 @@ fun CameraPreview(
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
+    videoManager: VideoRecordingManager? = null,
     onExposureChanged: ((Int) -> Unit)? = null,
     onZoomChanged: ((Float) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -292,14 +301,23 @@ fun CameraPreview(
         hasCameraPermission = isGranted
     }
 
-    // Refresh permission status when activity resumes
-    DisposableEffect(lifecycleOwner) {
+    var lifecycleResumeVersion by remember { mutableIntStateOf(0) }
+
+    // Refresh permission status and invalidate stale bindings on stop/resume
+    DisposableEffect(lifecycleOwner, videoManager) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                hasCameraPermission = ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.CAMERA
-                ) == PackageManager.PERMISSION_GRANTED
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    hasCameraPermission = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.CAMERA
+                    ) == PackageManager.PERMISSION_GRANTED
+                    lifecycleResumeVersion++
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    videoManager?.invalidatePipelineConfig()
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -309,42 +327,103 @@ fun CameraPreview(
     }
 
     // Bind to Lifecycle ONLY when camera permission is granted
-    DisposableEffect(lifecycleOwner, hasCameraPermission) {
+    DisposableEffect(lifecycleOwner, hasCameraPermission, videoManager) {
         if (hasCameraPermission) {
             try {
                 controller.bindToLifecycle(lifecycleOwner)
+                lifecycleResumeVersion++
             } catch (e: Exception) {
                 Log.e("CameraPreview", "Failed to bind camera controller to lifecycle", e)
             }
         }
         onDispose {
+            videoManager?.invalidatePipelineConfig()
             try {
                 controller.unbind()
             } catch (ignored: Exception) {}
         }
     }
 
-    // Configure Use Cases: In photo mode, only IMAGE_CAPTURE is active.
-    // When isVideoMode is toggled to true, VIDEO_CAPTURE is enabled and
-    // real-time video overlay effect is attached.
-    LaunchedEffect(hasCameraPermission, isVideoMode, overlayManager) {
+    // Unified CameraX Pipeline Configuration (Camera Selector + QualitySelector + OverlayEffect + UseCases).
+    // Running sequentially in a single LaunchedEffect eliminates mid-start rebinds between separate effects.
+    // Never mutates CameraX use cases/effects while a recording session is preparing or active.
+    LaunchedEffect(
+        hasCameraPermission,
+        isVideoMode,
+        isLandscape,
+        isFrontCamera,
+        videoResolution,
+        overlayManager,
+        videoManager,
+        lifecycleResumeVersion
+    ) {
         if (!hasCameraPermission) return@LaunchedEffect
+        if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
+
         try {
             controller.isPinchToZoomEnabled = false
             controller.isTapToFocusEnabled = false
 
-            if (isVideoMode) {
-                try {
-                    controller.setEnabledUseCases(
-                        LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
-                    )
-                } catch (e: Throwable) {
-                    try {
-                        controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
-                    } catch (ignored: Exception) {}
-                }
+            val adapter = LifecycleCameraControllerVideoAdapter(
+                controller = controller,
+                previewViewProvider = { previewViewInstance },
+                context = context
+            )
 
-                // Attach real-time video overlay effect directly to CameraX pipeline
+            // Wait for initial CameraX lifecycle bind to settle before querying cameraInfo / qualities
+            adapter.awaitCameraInitialization(4000L)
+            if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
+
+            // Configure Camera Selector safely if facing changed
+            val targetSelector = if (isFrontCamera) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
+            val desiredFront = if (controller.hasCamera(targetSelector)) {
+                isFrontCamera
+            } else if (controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                false
+            } else if (controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                true
+            } else {
+                isFrontCamera
+            }
+            val effectiveSelector = if (desiredFront) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
+            if (videoManager == null || videoManager.appliedPipelineKey?.isFrontCamera != desiredFront) {
+                try {
+                    controller.cameraSelector = effectiveSelector
+                    videoManager?.invalidatePipelineConfig()
+                    adapter.awaitCameraInitialization(3000L)
+                } catch (e: Exception) {
+                    Log.w("CameraPreview", "Camera selector error", e)
+                }
+            }
+
+            if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
+
+            // In Landscape mode both Photo and Video triggers are immediately accessible without a mode toggle,
+            // so pre-warm VIDEO_CAPTURE + OverlayEffect + QualitySelector right away.
+            // In Portrait mode keep strict Photo/Video mode separation (enable video pipeline only when isVideoMode).
+            val shouldEnableVideoPipeline = isVideoMode || isLandscape
+            if (videoManager != null) {
+                videoManager.ensureVideoPipelineConfigured(
+                    adapter = adapter,
+                    videoResolution = videoResolution,
+                    isFrontCamera = desiredFront,
+                    enableVideo = shouldEnableVideoPipeline,
+                    strictVideoMode = isVideoMode,
+                    overlayManager = overlayManager
+                )
+            } else if (shouldEnableVideoPipeline) {
+                val safeSelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
+                if (safeSelector != null) {
+                    controller.videoCaptureQualitySelector = safeSelector
+                }
                 val effect = overlayManager?.getOrCreateEffect()
                 if (effect != null) {
                     try {
@@ -353,37 +432,23 @@ fun CameraPreview(
                         Log.w("CameraPreview", "Failed to attach real-time video overlay effect: ${e.message}", e)
                     }
                 }
+                try {
+                    controller.setEnabledUseCases(
+                        LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+                    )
+                } catch (e: Throwable) {
+                    if (isVideoMode) {
+                        try {
+                            controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
+                        } catch (ignored: Exception) {}
+                    }
+                }
             } else {
-                try {
-                    controller.clearEffects()
-                } catch (ignored: Exception) {}
-                try {
-                    controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
-                } catch (ignored: Exception) {}
+                try { controller.clearEffects() } catch (ignored: Exception) {}
+                try { controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE) } catch (ignored: Exception) {}
             }
         } catch (e: Exception) {
-            Log.w("CameraPreview", "Setting use cases fallback", e)
-        }
-    }
-
-    // Safe Camera Selector
-    LaunchedEffect(isFrontCamera, hasCameraPermission) {
-        if (!hasCameraPermission) return@LaunchedEffect
-        try {
-            val targetSelector = if (isFrontCamera) {
-                CameraSelector.DEFAULT_FRONT_CAMERA
-            } else {
-                CameraSelector.DEFAULT_BACK_CAMERA
-            }
-            if (controller.hasCamera(targetSelector)) {
-                controller.cameraSelector = targetSelector
-            } else if (controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
-                controller.cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-            } else if (controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
-                controller.cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-            }
-        } catch (e: Exception) {
-            Log.w("CameraPreview", "Camera selector error", e)
+            Log.w("CameraPreview", "Unified camera pipeline configuration notice: ${e.message}", e)
         }
     }
 
@@ -429,18 +494,6 @@ fun CameraPreview(
         }
     }
 
-    LaunchedEffect(videoResolution, isVideoMode, hasCameraPermission) {
-        if (!hasCameraPermission || !isVideoMode) return@LaunchedEffect
-        try {
-            val safeSelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
-            if (safeSelector != null) {
-                controller.videoCaptureQualitySelector = safeSelector
-            }
-        } catch (e: Exception) {
-            Log.w("CameraPreview", "Setting video quality error", e)
-        }
-    }
-
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         if (hasCameraPermission) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -460,11 +513,15 @@ fun CameraPreview(
                             scaleType = PreviewView.ScaleType.FILL_CENTER
                             // COMPATIBLE uses TextureView which eliminates SurfaceView EGL_BAD_ATTRIBUTE emulation errors
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        }.also { previewViewInstance = it }
+                        }.also {
+                            previewViewInstance = it
+                            videoManager?.attachPreviewView(it)
+                        }
                     },
                     update = { pv ->
                         pv.scaleType = PreviewView.ScaleType.FILL_CENTER
                         previewViewInstance = pv
+                        videoManager?.attachPreviewView(pv)
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -1153,43 +1210,416 @@ fun buildSafeQualitySelector(
 }
 
 /**
- * Manages video recording with start/pause/resume/stop lifecycle
+ * Lifecycle state for an active video recording pipeline session.
  */
-class VideoRecordingManager(private val context: Context) {
-    private var activeRecording: Recording? = null
+enum class RecordingSessionState {
+    IDLE,
+    PREPARING,
+    RECORDING,
+    PAUSED,
+    FINALIZING
+}
+
+/**
+ * Snapshot key representing the last CameraX video configuration applied to the controller,
+ * preventing duplicate use-case/effect rebinds that terminate a recording mid-start.
+ */
+data class VideoPipelineConfigKey(
+    val videoEnabled: Boolean,
+    val videoResolution: String,
+    val isFrontCamera: Boolean,
+    val overlayEffectIdentity: Int
+)
+
+/**
+ * Handle to an active recording session for pause/resume/stop lifecycle control.
+ */
+interface ActiveRecordingHandle {
+    fun pause()
+    fun resume()
+    fun stop()
+}
+
+private class CameraXActiveRecordingHandle(
+    private val recording: Recording
+) : ActiveRecordingHandle {
+    override fun pause() = recording.pause()
+    override fun resume() = recording.resume()
+    override fun stop() = recording.stop()
+}
+
+/**
+ * Determines whether a finalized CameraX recording has usable camera output.
+ * Fatal CameraX errors or empty/missing files must never trigger demo fallback footage.
+ */
+fun isFinalizedRecordingValid(
+    hasError: Boolean,
+    errorCode: Int,
+    outputFile: File?
+): Boolean {
+    if (outputFile == null || !outputFile.exists() || outputFile.length() <= 0L) {
+        return false
+    }
+    if (!hasError) return true
+    return errorCode == VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED ||
+        errorCode == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED
+}
+
+/**
+ * Abstraction over CameraX [LifecycleCameraController] + [PreviewView] readiness and recording,
+ * allowing deterministic unit testing without live camera hardware.
+ */
+interface VideoCameraAdapter {
+    val isVideoCaptureEnabled: Boolean
+    val hasCameraInfo: Boolean
+    fun applyQualitySelector(videoResolution: String)
+    fun applyOverlayEffect(effect: androidx.camera.core.CameraEffect?): Boolean
+    fun clearEffects()
+    fun enableVideoUseCases(includeImageCapture: Boolean): Boolean
+    fun enablePhotoOnlyUseCase()
+    suspend fun awaitCameraInitialization(timeoutMs: Long = 4000L): Boolean
+    suspend fun awaitPreviewStreaming(timeoutMs: Long = 2500L): Boolean
+    fun startRecording(
+        outputFile: File,
+        audioConfig: AudioConfig,
+        executor: Executor,
+        listener: androidx.core.util.Consumer<VideoRecordEvent>
+    ): ActiveRecordingHandle
+}
+
+class LifecycleCameraControllerVideoAdapter(
+    private val controller: LifecycleCameraController,
+    private val previewViewProvider: () -> PreviewView?,
+    private val context: Context
+) : VideoCameraAdapter {
+    override val isVideoCaptureEnabled: Boolean
+        get() = try { controller.isVideoCaptureEnabled } catch (ignored: Exception) { false }
+
+    override val hasCameraInfo: Boolean
+        get() = try { controller.cameraInfo != null } catch (ignored: Exception) { false }
+
+    override fun applyQualitySelector(videoResolution: String) {
+        try {
+            val safeSelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
+            if (safeSelector != null) {
+                controller.videoCaptureQualitySelector = safeSelector
+            }
+        } catch (e: Exception) {
+            Log.w("CameraPreview", "Setting video quality selector notice: ${e.message}", e)
+        }
+    }
+
+    override fun applyOverlayEffect(effect: androidx.camera.core.CameraEffect?): Boolean {
+        if (effect == null) return false
+        return try {
+            controller.setEffects(setOf(effect))
+            true
+        } catch (e: Exception) {
+            Log.w("CameraPreview", "Failed to attach real-time video overlay effect: ${e.message}", e)
+            false
+        }
+    }
+
+    override fun clearEffects() {
+        try {
+            controller.clearEffects()
+        } catch (ignored: Exception) {}
+    }
+
+    override fun enableVideoUseCases(includeImageCapture: Boolean): Boolean {
+        val targetMask = if (includeImageCapture) {
+            LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+        } else {
+            LifecycleCameraController.VIDEO_CAPTURE
+        }
+        return try {
+            controller.setEnabledUseCases(targetMask)
+            true
+        } catch (e: Throwable) {
+            Log.w("CameraPreview", "Failed to enable use-case mask $targetMask: ${e.message}")
+            false
+        }
+    }
+
+    override fun enablePhotoOnlyUseCase() {
+        try {
+            controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+        } catch (ignored: Exception) {}
+    }
+
+    override suspend fun awaitCameraInitialization(timeoutMs: Long): Boolean {
+        val future = try {
+            controller.initializationFuture
+        } catch (e: Exception) {
+            return hasCameraInfo
+        }
+        if (future.isDone) {
+            return try {
+                future.get()
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
+        val mainExecutor = ContextCompat.getMainExecutor(context)
+        val result = withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                future.addListener({
+                    if (!cont.isCompleted) {
+                        val ok = try {
+                            future.get()
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
+                        cont.resume(ok)
+                    }
+                }, mainExecutor)
+            }
+        }
+        return result == true
+    }
+
+    override suspend fun awaitPreviewStreaming(timeoutMs: Long): Boolean {
+        val pv = previewViewProvider() ?: return hasCameraInfo
+        val streamLiveData = pv.previewStreamState
+        if (streamLiveData.value == PreviewView.StreamState.STREAMING) {
+            return true
+        }
+        val result = withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                lateinit var observer: androidx.lifecycle.Observer<PreviewView.StreamState>
+                observer = androidx.lifecycle.Observer { state ->
+                    if (state == PreviewView.StreamState.STREAMING && !cont.isCompleted) {
+                        mainHandler.post {
+                            try { streamLiveData.removeObserver(observer) } catch (ignored: Exception) {}
+                        }
+                        cont.resume(true)
+                    }
+                }
+                mainHandler.post {
+                    if (streamLiveData.value == PreviewView.StreamState.STREAMING) {
+                        if (!cont.isCompleted) cont.resume(true)
+                    } else {
+                        streamLiveData.observeForever(observer)
+                    }
+                }
+                cont.invokeOnCancellation {
+                    mainHandler.post {
+                        try { streamLiveData.removeObserver(observer) } catch (ignored: Exception) {}
+                    }
+                }
+            }
+        }
+        return result == true
+    }
+
+    override fun startRecording(
+        outputFile: File,
+        audioConfig: AudioConfig,
+        executor: Executor,
+        listener: androidx.core.util.Consumer<VideoRecordEvent>
+    ): ActiveRecordingHandle {
+        val fileOptions = FileOutputOptions.Builder(outputFile).build()
+        return CameraXActiveRecordingHandle(
+            controller.startRecording(fileOptions, audioConfig, executor, listener)
+        )
+    }
+}
+
+/**
+ * Manages video recording lifecycle, CameraX pipeline readiness synchronization,
+ * duplicate-start prevention, and clean session teardown.
+ */
+class VideoRecordingManager(
+    private val context: Context,
+    private val settleDelayFn: suspend (Long) -> Unit = { ms -> delay(ms) }
+) {
+    private var activeRecording: ActiveRecordingHandle? = null
+    private var previewViewRef: PreviewView? = null
+    @Volatile
+    private var cancelPrepareRequested: Boolean = false
+
     var currentRecordingFile: File? = null
         private set
     var overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null
 
-    fun isRecordingActive(): Boolean = activeRecording != null
+    private val _sessionState = MutableStateFlow(RecordingSessionState.IDLE)
+    val sessionState: StateFlow<RecordingSessionState> = _sessionState.asStateFlow()
 
-    fun startRecording(
+    @Volatile
+    var appliedPipelineKey: VideoPipelineConfigKey? = null
+        private set
+
+    @Volatile
+    var lastOverlayEffectAttached: Boolean = false
+        private set
+
+    fun attachPreviewView(previewView: PreviewView) {
+        previewViewRef = previewView
+    }
+
+    fun invalidatePipelineConfig() {
+        appliedPipelineKey = null
+        lastOverlayEffectAttached = false
+    }
+
+    fun isRecordingActive(): Boolean = activeRecording != null ||
+        _sessionState.value == RecordingSessionState.RECORDING ||
+        _sessionState.value == RecordingSessionState.PAUSED
+
+    fun isPreparingOrRecording(): Boolean = activeRecording != null ||
+        _sessionState.value != RecordingSessionState.IDLE
+
+    /**
+     * Configures CameraX quality selector, [OverlayEffect], and enabled use cases in a single
+     * idempotent sequence so no conflicting LaunchedEffect rebinds can abort a recording start.
+     *
+     * @return true if a CameraX pipeline change/rebind was performed, false if already configured.
+     */
+    suspend fun ensureVideoPipelineConfigured(
+        adapter: VideoCameraAdapter,
+        videoResolution: String,
+        isFrontCamera: Boolean,
+        enableVideo: Boolean,
+        strictVideoMode: Boolean,
+        overlayManager: com.example.overlay.RealtimeVideoOverlayManager?
+    ): Boolean {
+        adapter.awaitCameraInitialization(4000L)
+
+        val effect = if (enableVideo) overlayManager?.getOrCreateEffect() else null
+        val targetKey = VideoPipelineConfigKey(
+            videoEnabled = enableVideo,
+            videoResolution = if (enableVideo) videoResolution else "",
+            isFrontCamera = isFrontCamera,
+            overlayEffectIdentity = if (effect != null) System.identityHashCode(effect) else 0
+        )
+
+        if (appliedPipelineKey == targetKey && (!enableVideo || adapter.isVideoCaptureEnabled)) {
+            return false
+        }
+
+        if (enableVideo) {
+            // 1. Set quality selector BEFORE binding VideoCapture + OverlayEffect
+            adapter.applyQualitySelector(videoResolution)
+
+            // 2. Attach real-time OverlayEffect cleanly
+            val overlayAttached = adapter.applyOverlayEffect(effect)
+            lastOverlayEffectAttached = overlayAttached
+
+            // 3. Enable dual IMAGE_CAPTURE | VIDEO_CAPTURE, with VIDEO_CAPTURE-only fallback in strict video mode
+            var videoBound = adapter.enableVideoUseCases(includeImageCapture = true)
+            if (!videoBound && strictVideoMode) {
+                videoBound = adapter.enableVideoUseCases(includeImageCapture = false)
+            }
+            if (!videoBound && !strictVideoMode) {
+                // Restricted hardware couldn't combine Photo + Video idle pre-warm; revert cleanly to Photo until Record click
+                adapter.clearEffects()
+                adapter.enablePhotoOnlyUseCase()
+                lastOverlayEffectAttached = false
+                appliedPipelineKey = null
+                return false
+            }
+
+            adapter.awaitCameraInitialization(4000L)
+            if (adapter.isVideoCaptureEnabled) {
+                appliedPipelineKey = targetKey
+            }
+            return true
+        } else {
+            adapter.clearEffects()
+            adapter.enablePhotoOnlyUseCase()
+            lastOverlayEffectAttached = false
+            appliedPipelineKey = targetKey
+            return true
+        }
+    }
+
+    /**
+     * Synchronizes CameraX readiness (initializationFuture + VideoCapture + OverlayEffect + live stream)
+     * before invoking [VideoCameraAdapter.startRecording], preventing first-use landscape fallback failures.
+     */
+    suspend fun prepareAndStartRecording(
         controller: LifecycleCameraController,
+        videoResolution: String,
+        isFrontCamera: Boolean,
         recordAudio: Boolean,
         initialRotation: Int = 0,
-        onEvent: (VideoRecordEvent, File?) -> Unit,
-        onError: (Throwable) -> Unit
+        onRecordingStarted: () -> Unit = {},
+        onEvent: (VideoRecordEvent, File?, Boolean) -> Unit,
+        onError: (Throwable) -> Unit,
+        adapterOverride: VideoCameraAdapter? = null
     ) {
+        if (isPreparingOrRecording()) {
+            Log.d("VideoRecordingManager", "Ignoring duplicate recording start while state=${_sessionState.value}")
+            return
+        }
+
+        _sessionState.value = RecordingSessionState.PREPARING
+        cancelPrepareRequested = false
+
+        val adapter = adapterOverride ?: LifecycleCameraControllerVideoAdapter(
+            controller = controller,
+            previewViewProvider = { previewViewRef },
+            context = context
+        )
+
         try {
-            if (!controller.isVideoCaptureEnabled) {
-                try {
-                    controller.setEnabledUseCases(
-                        LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
-                    )
-                } catch (e: Exception) {
-                    try {
-                        controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
-                    } catch (e2: Exception) {
-                        Log.w("VideoRecordingManager", "VIDEO_CAPTURE usecase enable failed: ${e2.message}")
-                    }
+            val rebound = ensureVideoPipelineConfigured(
+                adapter = adapter,
+                videoResolution = videoResolution,
+                isFrontCamera = isFrontCamera,
+                enableVideo = true,
+                strictVideoMode = true,
+                overlayManager = overlayManager
+            )
+
+            if (cancelPrepareRequested) {
+                _sessionState.value = RecordingSessionState.IDLE
+                return
+            }
+
+            val videoReady = adapter.isVideoCaptureEnabled && adapter.hasCameraInfo
+            val streaming = if (videoReady) adapter.awaitPreviewStreaming(2500L) else false
+
+            if (cancelPrepareRequested) {
+                _sessionState.value = RecordingSessionState.IDLE
+                return
+            }
+
+            if (!videoReady || !streaming) {
+                Log.e(
+                    "VideoRecordingManager",
+                    "Camera video stream not ready (videoEnabled=${adapter.isVideoCaptureEnabled}, hasCameraInfo=${adapter.hasCameraInfo}, streaming=$streaming)"
+                )
+                _sessionState.value = RecordingSessionState.IDLE
+                onError(IllegalStateException("Camera is still initializing. Please try again."))
+                return
+            }
+
+            if (rebound) {
+                // Allow SurfaceProcessor + VideoCapture surface 150ms to receive live frames before MediaCodec starts
+                settleDelayFn(150L)
+                if (cancelPrepareRequested) {
+                    _sessionState.value = RecordingSessionState.IDLE
+                    return
                 }
             }
 
-            overlayManager?.notifyRecordingStarted(initialRotation)
-
             val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
+            // Clean up any stale 0-byte temp files from prior aborted attempts
+            try {
+                tempDir.listFiles()?.forEach { f ->
+                    if (f.isFile && f.length() == 0L && f.name.startsWith("RAW_")) {
+                        f.delete()
+                    }
+                }
+            } catch (ignored: Exception) {}
+
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val tempFile = File(tempDir, "RAW_${timeStamp}.mp4")
+            val uniqueSuffix = UUID.randomUUID().toString().replace("-", "").take(6)
+            val tempFile = File(tempDir, "RAW_${timeStamp}_${uniqueSuffix}.mp4")
             currentRecordingFile = tempFile
 
             val executor = ContextCompat.getMainExecutor(context)
@@ -1208,40 +1638,55 @@ class VideoRecordingManager(private val context: Context) {
                 AudioConfig.AUDIO_DISABLED
             }
 
-            val fileOptions = FileOutputOptions.Builder(tempFile).build()
+            val sessionHasOverlay = lastOverlayEffectAttached
+            overlayManager?.notifyRecordingStarted(initialRotation)
+            onRecordingStarted()
 
             val recordListener = androidx.core.util.Consumer<VideoRecordEvent> { event ->
                 val recFile = currentRecordingFile
-                if (event is VideoRecordEvent.Finalize) {
-                    activeRecording = null
-                    overlayManager?.notifyRecordingStopped()
-                    if (event.hasError()) {
-                        Log.e("VideoRecordingManager", "Video recording finalized with error: ${event.error}, cause: ${event.cause}")
+                when (event) {
+                    is VideoRecordEvent.Pause -> {
+                        if (_sessionState.value == RecordingSessionState.RECORDING) {
+                            _sessionState.value = RecordingSessionState.PAUSED
+                        }
                     }
+                    is VideoRecordEvent.Resume -> {
+                        if (_sessionState.value == RecordingSessionState.PAUSED) {
+                            _sessionState.value = RecordingSessionState.RECORDING
+                        }
+                    }
+                    is VideoRecordEvent.Finalize -> {
+                        _sessionState.value = RecordingSessionState.FINALIZING
+                        activeRecording = null
+                        overlayManager?.notifyRecordingStopped()
+                        if (event.hasError()) {
+                            Log.e(
+                                "VideoRecordingManager",
+                                "Video recording finalized with error: ${event.error}, cause: ${event.cause}"
+                            )
+                        }
+                        onEvent(event, recFile, sessionHasOverlay)
+                        _sessionState.value = RecordingSessionState.IDLE
+                    }
+                    else -> Unit
                 }
-                onEvent(event, recFile)
             }
 
             val pendingRecording = try {
-                controller.startRecording(
-                    fileOptions,
-                    audioConfig,
-                    executor,
-                    recordListener
-                )
+                adapter.startRecording(tempFile, audioConfig, executor, recordListener)
             } catch (e: SecurityException) {
                 Log.w("VideoRecordingManager", "Audio recording permission error, retrying without audio", e)
-                controller.startRecording(
-                    fileOptions,
-                    AudioConfig.AUDIO_DISABLED,
-                    executor,
-                    recordListener
-                )
+                adapter.startRecording(tempFile, AudioConfig.AUDIO_DISABLED, executor, recordListener)
             }
             activeRecording = pendingRecording
+            if (_sessionState.value == RecordingSessionState.PREPARING) {
+                _sessionState.value = RecordingSessionState.RECORDING
+            }
         } catch (e: Throwable) {
             activeRecording = null
             overlayManager?.notifyRecordingStopped()
+            _sessionState.value = RecordingSessionState.IDLE
+            try { currentRecordingFile?.takeIf { it.exists() && it.length() == 0L }?.delete() } catch (ignored: Exception) {}
             onError(e)
         }
     }
@@ -1259,10 +1704,27 @@ class VideoRecordingManager(private val context: Context) {
     }
 
     fun stop() {
+        if (_sessionState.value == RecordingSessionState.PREPARING) {
+            cancelPrepareRequested = true
+        }
+        try {
+            activeRecording?.stop()
+        } catch (ignored: Exception) {}
+        if (activeRecording == null && _sessionState.value == RecordingSessionState.PREPARING) {
+            _sessionState.value = RecordingSessionState.IDLE
+            overlayManager?.notifyRecordingStopped()
+        }
+    }
+
+    fun release() {
+        cancelPrepareRequested = true
         try {
             activeRecording?.stop()
         } catch (ignored: Exception) {}
         activeRecording = null
+        previewViewRef = null
+        invalidatePipelineConfig()
+        _sessionState.value = RecordingSessionState.IDLE
         overlayManager?.notifyRecordingStopped()
     }
 }
