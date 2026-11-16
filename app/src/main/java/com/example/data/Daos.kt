@@ -33,6 +33,13 @@ interface PhotoRecordDao {
 
     @Query("DELETE FROM photo_records WHERE id = :id")
     suspend fun deletePhotoById(id: Long)
+
+    @Query(
+        "DELETE FROM photo_records WHERE id = :id " +
+            "OR (:filePath != '' AND filePath = :filePath) " +
+            "OR (:fileName != '' AND fileName = :fileName)"
+    )
+    suspend fun deletePhotoAndDuplicates(id: Long, filePath: String, fileName: String): Int
 }
 
 @Dao

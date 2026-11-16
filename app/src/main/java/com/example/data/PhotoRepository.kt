@@ -1,27 +1,160 @@
 package com.example.data
 
+import android.app.RecoverableSecurityException
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.content.IntentSender
 import android.graphics.Bitmap
+import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.BaseColumns
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
+import coil.annotation.ExperimentalCoilApi
+import coil.imageLoader
 import com.example.model.CaptureSnapshot
 import com.example.overlay.OverlayRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileNotFoundException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+sealed class UriDeleteOutcome {
+    data object Deleted : UriDeleteOutcome()
+    data object NotFound : UriDeleteOutcome()
+    data class RecoverableApprovalRequired(val intentSender: IntentSender?) : UriDeleteOutcome()
+    data class Failed(val reason: String) : UriDeleteOutcome()
+}
+
+interface ScopedDeleteDelegate {
+    fun deleteContentUri(uri: Uri): UriDeleteOutcome
+    fun createBatchDeleteIntentSender(uris: List<Uri>): IntentSender?
+    fun uriExists(uri: Uri): Boolean
+}
+
+class DefaultScopedDeleteDelegate(private val context: Context) : ScopedDeleteDelegate {
+    override fun deleteContentUri(uri: Uri): UriDeleteOutcome {
+        val resolver = context.contentResolver
+        return try {
+            if (DocumentsContract.isDocumentUri(context, uri)) {
+                val deleted = DocumentsContract.deleteDocument(resolver, uri)
+                if (deleted || !uriExists(uri)) {
+                    UriDeleteOutcome.Deleted
+                } else {
+                    UriDeleteOutcome.Failed("Storage provider refused to delete document")
+                }
+            } else {
+                val deletedRows = resolver.delete(uri, null, null)
+                if (deletedRows > 0) {
+                    UriDeleteOutcome.Deleted
+                } else if (!uriExists(uri)) {
+                    UriDeleteOutcome.NotFound
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    UriDeleteOutcome.RecoverableApprovalRequired(null)
+                } else {
+                    UriDeleteOutcome.Failed("MediaStore entry could not be deleted")
+                }
+            }
+        } catch (rse: RecoverableSecurityException) {
+            UriDeleteOutcome.RecoverableApprovalRequired(rse.userAction.actionIntent.intentSender)
+        } catch (se: SecurityException) {
+            if (!uriExists(uri)) {
+                UriDeleteOutcome.NotFound
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                UriDeleteOutcome.RecoverableApprovalRequired(null)
+            } else {
+                UriDeleteOutcome.Failed(se.message ?: "Permission denied while deleting media")
+            }
+        } catch (e: Exception) {
+            if (!uriExists(uri)) {
+                UriDeleteOutcome.NotFound
+            } else {
+                UriDeleteOutcome.Failed(e.message ?: "Failed to delete media URI")
+            }
+        }
+    }
+
+    override fun createBatchDeleteIntentSender(uris: List<Uri>): IntentSender? {
+        if (uris.isEmpty()) return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return try {
+                MediaStore.createDeleteRequest(context.contentResolver, uris).intentSender
+            } catch (e: Exception) {
+                Log.w("PhotoRepository", "MediaStore.createDeleteRequest failed: ${e.message}", e)
+                null
+            }
+        }
+        return null
+    }
+
+    override fun uriExists(uri: Uri): Boolean {
+        return try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(BaseColumns._ID),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                cursor.moveToFirst()
+            } ?: false
+        } catch (_: FileNotFoundException) {
+            false
+        } catch (_: IllegalArgumentException) {
+            false
+        } catch (_: SecurityException) {
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+}
+
+sealed class MediaDeleteResult {
+    data class Success(
+        val deletedPhotos: List<PhotoRecordEntity>,
+        val deletedPaths: List<String>
+    ) : MediaDeleteResult()
+
+    data class RequiresSystemApproval(
+        val intentSender: IntentSender,
+        val targetPhotos: List<PhotoRecordEntity>,
+        val pendingUris: List<Uri>,
+        val alreadyDeletedPhotos: List<PhotoRecordEntity> = emptyList(),
+        val alreadyDeletedPaths: List<String> = emptyList()
+    ) : MediaDeleteResult()
+
+    data class PartialFailure(
+        val deletedPhotos: List<PhotoRecordEntity>,
+        val failedItems: List<Pair<PhotoRecordEntity, String>>,
+        val deletedPaths: List<String>
+    ) : MediaDeleteResult()
+
+    data class Failure(
+        val reason: String,
+        val failedItems: List<Pair<PhotoRecordEntity, String>> = emptyList()
+    ) : MediaDeleteResult()
+}
+
 class PhotoRepository(
     private val context: Context,
-    private val photoRecordDao: PhotoRecordDao
+    private val photoRecordDao: PhotoRecordDao,
+    private val scopedDeleteDelegate: ScopedDeleteDelegate = DefaultScopedDeleteDelegate(context)
 ) {
+    private val mediaMutationMutex = Mutex()
+    private val pendingApprovalPaths = mutableSetOf<String>()
+    private val pendingApprovalNames = mutableSetOf<String>()
     val allPhotos: Flow<List<PhotoRecordEntity>> = photoRecordDao.getAllPhotos().map { list ->
         list.distinctBy { it.fileName.ifBlank { it.filePath } }
             .map { applyRecoveredMetadata(it) }
@@ -442,28 +575,452 @@ class PhotoRepository(
         photoRecordDao.insertPhoto(record)
     }
 
-    suspend fun deletePhoto(photo: PhotoRecordEntity) = withContext(Dispatchers.IO) {
-        try {
-            val file = File(photo.filePath)
-            if (file.exists()) {
-                file.delete()
-            }
-            if (!file.isAbsolute) {
-                val fallback = File(context.filesDir, photo.filePath)
-                if (fallback.exists()) fallback.delete()
-            }
-            try {
-                android.media.MediaScannerConnection.scanFile(
-                    context,
-                    arrayOf(photo.filePath),
-                    null,
-                    null
-                )
-            } catch (ignored: Exception) {}
-        } catch (e: Exception) {
-            Log.e("PhotoRepository", "Error deleting file ${photo.filePath}: ${e.message}", e)
+    suspend fun deletePhoto(photo: PhotoRecordEntity): MediaDeleteResult =
+        deleteMediaItems(listOf(photo))
+
+    suspend fun deleteMediaItems(photos: List<PhotoRecordEntity>): MediaDeleteResult = withContext(Dispatchers.IO) {
+        val uniqueTargets = photos.distinctBy { if (it.id != 0L) "id:${it.id}" else "path:${it.filePath}" }
+        if (uniqueTargets.isEmpty()) {
+            return@withContext MediaDeleteResult.Failure("No media items selected for deletion")
         }
-        photoRecordDao.deletePhoto(photo)
+
+        mediaMutationMutex.withLock {
+            val succeededPhotos = mutableListOf<PhotoRecordEntity>()
+            val deletedPaths = mutableListOf<String>()
+            val failedItems = mutableListOf<Pair<PhotoRecordEntity, String>>()
+
+            data class PendingApprovalItem(
+                val photo: PhotoRecordEntity,
+                val urisNeedingApproval: List<Uri>,
+                val directIntentSender: IntentSender?
+            )
+            val itemsNeedingApproval = mutableListOf<PendingApprovalItem>()
+
+            for (photo in uniqueTargets) {
+                val associatedFiles = findAssociatedFiles(photo)
+                val associatedUris = findAssociatedUris(photo, associatedFiles)
+
+                val urisNeedingApproval = mutableListOf<Uri>()
+                var directIntentSender: IntentSender? = null
+                var uriFailureReason: String? = null
+
+                // Attempt deletion on MediaStore / SAF URIs first so local copies & DB stay intact if OS consent is denied
+                for (uri in associatedUris) {
+                    when (val outcome = scopedDeleteDelegate.deleteContentUri(uri)) {
+                        is UriDeleteOutcome.Deleted,
+                        is UriDeleteOutcome.NotFound -> Unit
+                        is UriDeleteOutcome.RecoverableApprovalRequired -> {
+                            urisNeedingApproval.add(uri)
+                            if (directIntentSender == null && outcome.intentSender != null) {
+                                directIntentSender = outcome.intentSender
+                            }
+                        }
+                        is UriDeleteOutcome.Failed -> {
+                            if (uriFailureReason == null) uriFailureReason = outcome.reason
+                        }
+                    }
+                }
+
+                if (urisNeedingApproval.isNotEmpty()) {
+                    itemsNeedingApproval.add(
+                        PendingApprovalItem(
+                            photo = photo,
+                            urisNeedingApproval = urisNeedingApproval,
+                            directIntentSender = directIntentSender
+                        )
+                    )
+                    continue
+                }
+
+                if (uriFailureReason != null) {
+                    failedItems.add(photo to uriFailureReason)
+                    continue
+                }
+
+                // Delete all local and shared file copies on disk and verify complete removal
+                val itemOutcome = deleteFilesVerifyAndPurgeDb(
+                    photo = photo,
+                    associatedFiles = associatedFiles,
+                    associatedUris = associatedUris
+                )
+                if (itemOutcome == null) {
+                    succeededPhotos.add(photo)
+                    deletedPaths.addAll(associatedFiles.map { it.absolutePath })
+                } else {
+                    failedItems.add(photo to itemOutcome)
+                }
+            }
+
+            if (succeededPhotos.isNotEmpty()) {
+                val distinctPaths = deletedPaths.distinct()
+                clearMediaCaches(succeededPhotos, distinctPaths)
+                notifyMediaScannerOfDeletedPaths(distinctPaths)
+            }
+
+            if (itemsNeedingApproval.isNotEmpty()) {
+                val allPendingUris = itemsNeedingApproval.flatMap { it.urisNeedingApproval }.distinct()
+                val batchIntentSender = scopedDeleteDelegate.createBatchDeleteIntentSender(allPendingUris)
+                    ?: itemsNeedingApproval.firstNotNullOfOrNull { it.directIntentSender }
+
+                if (batchIntentSender != null) {
+                    val approvalPhotos = itemsNeedingApproval.map { it.photo }
+                    markPendingApproval(approvalPhotos)
+                    return@withLock MediaDeleteResult.RequiresSystemApproval(
+                        intentSender = batchIntentSender,
+                        targetPhotos = approvalPhotos,
+                        pendingUris = allPendingUris,
+                        alreadyDeletedPhotos = succeededPhotos,
+                        alreadyDeletedPaths = deletedPaths.distinct()
+                    )
+                } else {
+                    for (item in itemsNeedingApproval) {
+                        failedItems.add(item.photo to "System permission is required to delete this media file")
+                    }
+                }
+            }
+
+            buildFinalDeleteResult(succeededPhotos, failedItems, deletedPaths.distinct())
+        }
+    }
+
+    suspend fun completeApprovedDeletion(
+        targetPhotos: List<PhotoRecordEntity>,
+        pendingUris: List<Uri>,
+        alreadyDeletedPhotos: List<PhotoRecordEntity> = emptyList(),
+        alreadyDeletedPaths: List<String> = emptyList()
+    ): MediaDeleteResult = withContext(Dispatchers.IO) {
+        mediaMutationMutex.withLock {
+            clearPendingApproval(targetPhotos)
+
+            val succeededPhotos = alreadyDeletedPhotos.toMutableList()
+            val deletedPaths = alreadyDeletedPaths.toMutableList()
+            val failedItems = mutableListOf<Pair<PhotoRecordEntity, String>>()
+
+            // On API 29, RecoverableSecurityException approval grants permission; perform the URI delete now if still present
+            for (uri in pendingUris) {
+                if (scopedDeleteDelegate.uriExists(uri)) {
+                    scopedDeleteDelegate.deleteContentUri(uri)
+                }
+            }
+
+            for (photo in targetPhotos) {
+                val associatedFiles = findAssociatedFiles(photo)
+                val associatedUris = (findAssociatedUris(photo, associatedFiles) + pendingUrisForPhoto(photo, pendingUris)).distinct()
+
+                for (uri in associatedUris) {
+                    if (scopedDeleteDelegate.uriExists(uri)) {
+                        scopedDeleteDelegate.deleteContentUri(uri)
+                    }
+                }
+
+                val failureReason = deleteFilesVerifyAndPurgeDb(
+                    photo = photo,
+                    associatedFiles = associatedFiles,
+                    associatedUris = associatedUris
+                )
+                if (failureReason == null) {
+                    succeededPhotos.add(photo)
+                    deletedPaths.addAll(associatedFiles.map { it.absolutePath })
+                } else {
+                    failedItems.add(photo to failureReason)
+                }
+            }
+
+            val newlyDeleted = succeededPhotos.drop(alreadyDeletedPhotos.size)
+            if (newlyDeleted.isNotEmpty()) {
+                val newPaths = deletedPaths.distinct()
+                clearMediaCaches(newlyDeleted, newPaths)
+                notifyMediaScannerOfDeletedPaths(newPaths)
+            }
+
+            buildFinalDeleteResult(succeededPhotos, failedItems, deletedPaths.distinct())
+        }
+    }
+
+    suspend fun cancelPendingDeletion(targetPhotos: List<PhotoRecordEntity>) = withContext(Dispatchers.IO) {
+        mediaMutationMutex.withLock {
+            clearPendingApproval(targetPhotos)
+        }
+    }
+
+    private suspend fun deleteFilesVerifyAndPurgeDb(
+        photo: PhotoRecordEntity,
+        associatedFiles: List<File>,
+        associatedUris: List<Uri>
+    ): String? {
+        for (file in associatedFiles) {
+            try {
+                if (file.exists()) {
+                    file.delete()
+                }
+            } catch (e: Exception) {
+                Log.w("PhotoRepository", "Failed deleting file ${file.absolutePath}: ${e.message}", e)
+            }
+        }
+
+        val survivingFile = associatedFiles.firstOrNull { it.exists() }
+        if (survivingFile != null) {
+            return "File still exists on device storage (${survivingFile.name})"
+        }
+
+        val survivingUri = associatedUris.firstOrNull { scopedDeleteDelegate.uriExists(it) }
+        if (survivingUri != null) {
+            return "MediaStore entry could not be removed ($survivingUri)"
+        }
+
+        if (photo.filePath.startsWith("content://")) {
+            val primaryUri = runCatching { Uri.parse(photo.filePath) }.getOrNull()
+            if (primaryUri != null && scopedDeleteDelegate.uriExists(primaryUri)) {
+                return "Original document URI is still accessible"
+            }
+        }
+
+        // Only remove Room records once storage & MediaStore deletion is verified
+        photoRecordDao.deletePhotoAndDuplicates(
+            id = photo.id,
+            filePath = photo.filePath,
+            fileName = photo.fileName
+        )
+        return null
+    }
+
+    private fun buildFinalDeleteResult(
+        succeededPhotos: List<PhotoRecordEntity>,
+        failedItems: List<Pair<PhotoRecordEntity, String>>,
+        deletedPaths: List<String>
+    ): MediaDeleteResult {
+        return when {
+            failedItems.isEmpty() -> MediaDeleteResult.Success(succeededPhotos, deletedPaths)
+            succeededPhotos.isNotEmpty() -> MediaDeleteResult.PartialFailure(succeededPhotos, failedItems, deletedPaths)
+            else -> MediaDeleteResult.Failure(
+                reason = failedItems.firstOrNull()?.second ?: "Failed to delete media file",
+                failedItems = failedItems
+            )
+        }
+    }
+
+    private fun pendingUrisForPhoto(photo: PhotoRecordEntity, pendingUris: List<Uri>): List<Uri> {
+        val rawUri = if (photo.filePath.startsWith("content://")) runCatching { Uri.parse(photo.filePath) }.getOrNull() else null
+        return if (rawUri != null && rawUri in pendingUris) listOf(rawUri) else emptyList()
+    }
+
+    private fun markPendingApproval(photos: List<PhotoRecordEntity>) {
+        photos.forEach { photo ->
+            if (photo.filePath.isNotBlank()) pendingApprovalPaths.add(photo.filePath)
+            if (photo.fileName.isNotBlank()) pendingApprovalNames.add(photo.fileName)
+        }
+    }
+
+    private fun clearPendingApproval(photos: List<PhotoRecordEntity>) {
+        photos.forEach { photo ->
+            if (photo.filePath.isNotBlank()) pendingApprovalPaths.remove(photo.filePath)
+            if (photo.fileName.isNotBlank()) pendingApprovalNames.remove(photo.fileName)
+        }
+    }
+
+    private fun findAssociatedFiles(photo: PhotoRecordEntity): List<File> {
+        val seenCanonical = LinkedHashSet<String>()
+        val result = mutableListOf<File>()
+
+        fun addCandidate(file: File?) {
+            if (file == null) return
+            val key = runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
+            if (seenCanonical.add(key)) {
+                result.add(file)
+            }
+        }
+
+        if (photo.filePath.isNotBlank() && !photo.filePath.startsWith("content://")) {
+            val primary = File(photo.filePath)
+            addCandidate(primary)
+            if (!primary.isAbsolute) {
+                addCandidate(File(context.filesDir, photo.filePath))
+            }
+        } else if (photo.filePath.startsWith("content://")) {
+            resolveDataPathFromUri(Uri.parse(photo.filePath))?.let { resolvedPath ->
+                addCandidate(File(resolvedPath))
+            }
+        }
+
+        photo.thumbnailPath?.takeIf { it.isNotBlank() && !it.startsWith("content://") }?.let { thumb ->
+            addCandidate(File(thumb))
+        }
+
+        val targetName = photo.fileName.ifBlank {
+            if (photo.filePath.isNotBlank() && !photo.filePath.startsWith("content://")) {
+                File(photo.filePath).name
+            } else {
+                ""
+            }
+        }
+
+        if (targetName.isNotBlank()) {
+            val highwayDirs = listOfNotNull(
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "HighwayCamera"),
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "HighwayCamera"),
+                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)?.let { File(it, "HighwayCamera") },
+                context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)?.let { File(it, "HighwayCamera") },
+                File(context.filesDir, "HighwayCamera")
+            )
+            highwayDirs.forEach { dir -> addCandidate(File(dir, targetName)) }
+        }
+
+        return result
+    }
+
+    private fun resolveDataPathFromUri(uri: Uri): String? {
+        return try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(MediaStore.MediaColumns.DATA),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val col = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                    if (col >= 0) cursor.getString(col)?.takeIf { it.isNotBlank() } else null
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun findAssociatedUris(photo: PhotoRecordEntity, associatedFiles: List<File>): List<Uri> {
+        val uris = LinkedHashSet<Uri>()
+
+        if (photo.filePath.startsWith("content://")) {
+            runCatching { Uri.parse(photo.filePath) }.getOrNull()?.let { uris.add(it) }
+        }
+        photo.thumbnailPath?.takeIf { it.startsWith("content://") }?.let { thumbUri ->
+            runCatching { Uri.parse(thumbUri) }.getOrNull()?.let { uris.add(it) }
+        }
+
+        val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) ||
+            photo.filePath.endsWith(".mp4", ignoreCase = true)
+        val collections = if (isVideo) {
+            listOfNotNull(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else null,
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            ).distinct()
+        } else {
+            listOfNotNull(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else null,
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            ).distinct()
+        }
+
+        val pathCandidates = associatedFiles.map { it.absolutePath }.distinct()
+        val targetName = photo.fileName.ifBlank {
+            associatedFiles.firstOrNull()?.name.orEmpty()
+        }
+
+        for (collection in collections) {
+            if (pathCandidates.isNotEmpty()) {
+                try {
+                    val placeholders = pathCandidates.joinToString(",") { "?" }
+                    context.contentResolver.query(
+                        collection,
+                        arrayOf(BaseColumns._ID),
+                        "${MediaStore.MediaColumns.DATA} IN ($placeholders)",
+                        pathCandidates.toTypedArray(),
+                        null
+                    )?.use { cursor ->
+                        val idIdx = cursor.getColumnIndex(BaseColumns._ID)
+                        while (cursor.moveToNext() && idIdx >= 0) {
+                            val id = cursor.getLong(idIdx)
+                            uris.add(ContentUris.withAppendedId(collection, id))
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            if (targetName.isNotBlank()) {
+                try {
+                    val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+                    } else {
+                        "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.DATA} LIKE ?"
+                    }
+                    val args = arrayOf(targetName, "%HighwayCamera%")
+                    context.contentResolver.query(
+                        collection,
+                        arrayOf(BaseColumns._ID),
+                        selection,
+                        args,
+                        null
+                    )?.use { cursor ->
+                        val idIdx = cursor.getColumnIndex(BaseColumns._ID)
+                        while (cursor.moveToNext() && idIdx >= 0) {
+                            val id = cursor.getLong(idIdx)
+                            uris.add(ContentUris.withAppendedId(collection, id))
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        return uris.toList()
+    }
+
+    @OptIn(ExperimentalCoilApi::class)
+    private fun clearMediaCaches(photos: List<PhotoRecordEntity>, paths: List<String>) {
+        try {
+            val loader = context.imageLoader
+            val candidateKeys = buildSet {
+                paths.forEach { path ->
+                    if (path.isNotBlank()) {
+                        add(path)
+                        add("file://$path")
+                        runCatching { File(path).toURI().toString() }.getOrNull()?.let { add(it) }
+                    }
+                }
+                photos.forEach { photo ->
+                    if (photo.filePath.isNotBlank()) {
+                        add(photo.filePath)
+                        if (!photo.filePath.startsWith("content://")) {
+                            add("file://${photo.filePath}")
+                        }
+                    }
+                    photo.thumbnailPath?.takeIf { it.isNotBlank() }?.let { thumb ->
+                        add(thumb)
+                        if (!thumb.startsWith("content://")) {
+                            add("file://$thumb")
+                        }
+                    }
+                }
+            }
+            loader.memoryCache?.let { memCache ->
+                val keysToRemove = memCache.keys.filter { memKey ->
+                    candidateKeys.any { candidate -> memKey.key.contains(candidate) }
+                }
+                keysToRemove.forEach { memCache.remove(it) }
+            }
+            loader.diskCache?.let { diskCache ->
+                candidateKeys.forEach { key ->
+                    runCatching { diskCache.remove(key) }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("PhotoRepository", "Media cache eviction warning: ${e.message}")
+        }
+    }
+
+    private fun notifyMediaScannerOfDeletedPaths(paths: List<String>) {
+        if (paths.isEmpty()) return
+        try {
+            MediaScannerConnection.scanFile(
+                context,
+                paths.toTypedArray(),
+                null,
+                null
+            )
+        } catch (ignored: Exception) {}
     }
 
     /**
@@ -471,97 +1028,102 @@ class PhotoRepository(
      * and permanently repairs any legacy database records where activity was defaulted to "DBM".
      */
     suspend fun syncMediaFilesFromStorage(): Int = withContext(Dispatchers.IO) {
-        var addedCount = 0
-        try {
-            val existingList = photoRecordDao.getAllPhotosList()
-            val existingPaths = existingList.map { it.filePath }.toSet()
-            val existingNames = mutableSetOf<String>()
+        mediaMutationMutex.withLock {
+            var addedCount = 0
+            try {
+                val existingList = photoRecordDao.getAllPhotosList()
+                val existingPaths = existingList.map { it.filePath }.toSet()
+                val existingNames = mutableSetOf<String>()
 
-            // Clean up existing duplicates and permanently repair legacy "DBM" records in database
-            val seenKeys = mutableSetOf<String>()
-            for (record in existingList) {
-                val key = record.fileName.ifBlank { record.filePath }
-                if (seenKeys.contains(key)) {
-                    photoRecordDao.deletePhotoById(record.id)
-                } else {
-                    seenKeys.add(key)
-                    existingNames.add(record.fileName)
-                    val recovered = recoverTrueActivityForRecord(record)
-                    if (recovered != null) {
-                        photoRecordDao.updatePhoto(
-                            record.copy(
-                                activity = recovered.first,
-                                subActivity = recovered.second
+                // Clean up existing duplicates and permanently repair legacy "DBM" records in database
+                val seenKeys = mutableSetOf<String>()
+                for (record in existingList) {
+                    val key = record.fileName.ifBlank { record.filePath }
+                    if (seenKeys.contains(key)) {
+                        photoRecordDao.deletePhotoById(record.id)
+                    } else {
+                        seenKeys.add(key)
+                        existingNames.add(record.fileName)
+                        val recovered = recoverTrueActivityForRecord(record)
+                        if (recovered != null) {
+                            photoRecordDao.updatePhoto(
+                                record.copy(
+                                    activity = recovered.first,
+                                    subActivity = recovered.second
+                                )
                             )
+                        }
+                    }
+                }
+
+                val dirsToScan = listOfNotNull(
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "HighwayCamera"),
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "HighwayCamera"),
+                    context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)?.let { File(it, "HighwayCamera") },
+                    context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)?.let { File(it, "HighwayCamera") },
+                    File(context.filesDir, "HighwayCamera")
+                )
+
+                for (dir in dirsToScan) {
+                    if (!dir.exists() || !dir.isDirectory) continue
+                    val files = dir.listFiles() ?: continue
+                    for (file in files) {
+                        if (file.isDirectory || file.length() == 0L) continue
+                        val path = file.absolutePath
+                        val name = file.name
+                        if (path in existingPaths || name in existingNames || name in seenKeys) continue
+                        if (path in pendingApprovalPaths || name in pendingApprovalNames) continue
+
+                        val isVideo = name.endsWith(".mp4", ignoreCase = true)
+                        val isPhoto = name.endsWith(".jpg", ignoreCase = true) || name.endsWith(".jpeg", ignoreCase = true) || name.endsWith(".png", ignoreCase = true)
+                        if (!isVideo && !isPhoto) continue
+
+                        var timestamp = file.lastModified()
+                        val match = Regex("""(?:TimePhoto|TimeVideo|Photo|Video)_(\d{8})_(\d{6})""").find(name)
+                        if (match != null) {
+                            try {
+                                val dateStr = "${match.groupValues[1]}_${match.groupValues[2]}"
+                                val parsedDate = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(dateStr)
+                                if (parsedDate != null) timestamp = parsedDate.time
+                            } catch (ignored: Exception) {}
+                        }
+
+                        val baseEntity = PhotoRecordEntity(
+                            filePath = path,
+                            fileName = name,
+                            timestamp = timestamp,
+                            latitude = 0.0,
+                            longitude = 0.0,
+                            accuracy = 0f,
+                            altitude = 0.0,
+                            chainageMetres = null,
+                            chainageLabel = if (name.contains("+")) {
+                                Regex("""\d+\+\d+""").find(name)?.value
+                            } else null,
+                            chainageConfidence = "MANUAL",
+                            isManualChainage = true,
+                            offsetMetres = 0f,
+                            highwayId = "",
+                            packageSection = "",
+                            roadSide = "",
+                            lane = "",
+                            activity = if (isVideo) "Video Recording" else "",
+                            subActivity = "",
+                            customDescription = "",
+                            inspectorName = "",
+                            formattedOverlayText = name.substringBeforeLast(".")
                         )
+                        val entity = applyRecoveredMetadata(baseEntity)
+                        photoRecordDao.insertPhoto(entity)
+                        existingNames.add(name)
+                        seenKeys.add(name)
+                        addedCount++
                     }
                 }
+            } catch (e: Exception) {
+                Log.w("PhotoRepository", "Media files sync error: ${e.message}", e)
             }
-
-            val dirsToScan = listOfNotNull(
-                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "HighwayCamera"),
-                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "HighwayCamera"),
-                context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)?.let { File(it, "HighwayCamera") },
-                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)?.let { File(it, "HighwayCamera") },
-                File(context.filesDir, "HighwayCamera")
-            )
-
-            for (dir in dirsToScan) {
-                if (!dir.exists() || !dir.isDirectory) continue
-                val files = dir.listFiles() ?: continue
-                for (file in files) {
-                    if (file.isDirectory || file.length() == 0L) continue
-                    val path = file.absolutePath
-                    val name = file.name
-                    if (path in existingPaths || name in existingNames || name in seenKeys) continue
-
-                    val isVideo = name.endsWith(".mp4", ignoreCase = true)
-                    val isPhoto = name.endsWith(".jpg", ignoreCase = true) || name.endsWith(".jpeg", ignoreCase = true) || name.endsWith(".png", ignoreCase = true)
-                    if (!isVideo && !isPhoto) continue
-
-                    var timestamp = file.lastModified()
-                    val match = Regex("""(?:TimePhoto|TimeVideo|Photo|Video)_(\d{8})_(\d{6})""").find(name)
-                    if (match != null) {
-                        try {
-                            val dateStr = "${match.groupValues[1]}_${match.groupValues[2]}"
-                            val parsedDate = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(dateStr)
-                            if (parsedDate != null) timestamp = parsedDate.time
-                        } catch (ignored: Exception) {}
-                    }
-
-                    val baseEntity = PhotoRecordEntity(
-                        filePath = path,
-                        fileName = name,
-                        timestamp = timestamp,
-                        latitude = 0.0,
-                        longitude = 0.0,
-                        accuracy = 0f,
-                        altitude = 0.0,
-                        chainageMetres = null,
-                        chainageLabel = if (name.contains("+")) {
-                            Regex("""\d+\+\d+""").find(name)?.value
-                        } else null,
-                        chainageConfidence = "MANUAL",
-                        isManualChainage = true,
-                        offsetMetres = 0f,
-                        highwayId = "",
-                        packageSection = "",
-                        roadSide = "",
-                        lane = "",
-                        activity = if (isVideo) "Video Recording" else "",
-                        subActivity = "",
-                        customDescription = "",
-                        inspectorName = "",
-                        formattedOverlayText = name.substringBeforeLast(".")
-                    )
-                    val entity = applyRecoveredMetadata(baseEntity)
-                    photoRecordDao.insertPhoto(entity)
-                    addedCount++
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("PhotoRepository", "Media files sync error: ${e.message}", e)
+            addedCount
         }
-        addedCount
     }
 }

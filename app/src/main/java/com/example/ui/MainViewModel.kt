@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.app.Application
 import android.content.ContentValues
+import android.content.IntentSender
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
@@ -24,6 +25,7 @@ import com.example.backup.BackupRestoreReport
 import com.example.backup.RestoreMode
 import com.example.backup.SettingsBackupManager
 import com.example.data.AppDatabase
+import com.example.data.MediaDeleteResult
 import com.example.data.PhotoRecordEntity
 import com.example.data.PhotoRepository
 import com.example.data.PreferencesManager
@@ -99,6 +101,14 @@ data class ToastMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
     val message: String,
     val type: ToastType = ToastType.INFO
+)
+
+data class PendingMediaDeleteRequest(
+    val intentSender: IntentSender,
+    val targetPhotos: List<PhotoRecordEntity>,
+    val pendingUris: List<Uri>,
+    val alreadyDeletedPhotos: List<PhotoRecordEntity> = emptyList(),
+    val alreadyDeletedPaths: List<String> = emptyList()
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -805,6 +815,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isImportingRoute = MutableStateFlow(false)
     val isImportingRoute: StateFlow<Boolean> = _isImportingRoute.asStateFlow()
+
+    private val _pendingMediaDeleteRequest = MutableStateFlow<PendingMediaDeleteRequest?>(null)
+    val pendingMediaDeleteRequest: StateFlow<PendingMediaDeleteRequest?> = _pendingMediaDeleteRequest.asStateFlow()
+
+    private val _isDeletingMedia = MutableStateFlow(false)
+    val isDeletingMedia: StateFlow<Boolean> = _isDeletingMedia.asStateFlow()
+
+    private val inFlightDeleteKeys = mutableSetOf<String>()
 
     init {
         // Synchronize authoritative in-memory ProjectProfile with persisted DataStore preferences
@@ -2260,23 +2278,121 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deletePhoto(photo: PhotoRecordEntity) {
-        viewModelScope.launch {
-            photoRepository.deletePhoto(photo)
-            _uiMessages.emit(UiMessage.Info("Photo deleted"))
-        }
+        deletePhotos(listOf(photo))
     }
 
     fun deletePhotos(photos: List<PhotoRecordEntity>) {
+        val uniqueTargets = photos.distinctBy { if (it.id != 0L) "id:${it.id}" else "path:${it.filePath}" }
+        val keys = uniqueTargets.map { if (it.id != 0L) "id:${it.id}" else "path:${it.filePath}" }
+        val newTargets = uniqueTargets.filterIndexed { index, _ -> !inFlightDeleteKeys.contains(keys[index]) }
+        if (newTargets.isEmpty()) return
+
+        val newKeys = newTargets.map { if (it.id != 0L) "id:${it.id}" else "path:${it.filePath}" }
+        inFlightDeleteKeys.addAll(newKeys)
+        _isDeletingMedia.value = true
+
         viewModelScope.launch {
-            var count = 0
-            photos.forEach { p ->
-                try {
-                    photoRepository.deletePhoto(p)
-                    count++
-                } catch (ignored: Exception) {}
+            try {
+                val result = photoRepository.deleteMediaItems(newTargets)
+                handleMediaDeleteResult(result)
+            } catch (e: Exception) {
+                val err = e.message ?: "Failed to delete media file"
+                _uiMessages.emit(UiMessage.Error(err))
+                showToast(err, ToastType.ERROR)
+            } finally {
+                if (_pendingMediaDeleteRequest.value == null) {
+                    inFlightDeleteKeys.removeAll(newKeys.toSet())
+                }
+                _isDeletingMedia.value = false
             }
-            _uiMessages.emit(UiMessage.Info("Deleted $count photos"))
-            showToast("Deleted $count photos", ToastType.SUCCESS)
+        }
+    }
+
+    fun onSystemDeleteApprovalResult(approved: Boolean) {
+        val pending = _pendingMediaDeleteRequest.value ?: return
+        _pendingMediaDeleteRequest.value = null
+        val keys = pending.targetPhotos.map { if (it.id != 0L) "id:${it.id}" else "path:${it.filePath}" }.toSet()
+
+        viewModelScope.launch {
+            _isDeletingMedia.value = true
+            try {
+                if (!approved) {
+                    photoRepository.cancelPendingDeletion(pending.targetPhotos)
+                    clearLastCapturedIfDeleted(pending.alreadyDeletedPhotos)
+                    val msg = if (pending.alreadyDeletedPhotos.isNotEmpty()) {
+                        "Deleted ${pending.alreadyDeletedPhotos.size} item(s); ${pending.targetPhotos.size} cancelled (permission denied)"
+                    } else {
+                        "Deletion cancelled — device storage permission denied"
+                    }
+                    _uiMessages.emit(UiMessage.Error(msg))
+                    showToast(msg, ToastType.ERROR)
+                    if (pending.alreadyDeletedPhotos.isNotEmpty()) {
+                        photoRepository.syncMediaFilesFromStorage()
+                    }
+                    return@launch
+                }
+
+                val result = photoRepository.completeApprovedDeletion(
+                    targetPhotos = pending.targetPhotos,
+                    pendingUris = pending.pendingUris,
+                    alreadyDeletedPhotos = pending.alreadyDeletedPhotos,
+                    alreadyDeletedPaths = pending.alreadyDeletedPaths
+                )
+                handleMediaDeleteResult(result)
+            } catch (e: Exception) {
+                val err = e.message ?: "Failed to complete media deletion"
+                _uiMessages.emit(UiMessage.Error(err))
+                showToast(err, ToastType.ERROR)
+            } finally {
+                inFlightDeleteKeys.removeAll(keys)
+                _isDeletingMedia.value = false
+            }
+        }
+    }
+
+    private suspend fun handleMediaDeleteResult(result: MediaDeleteResult) {
+        when (result) {
+            is MediaDeleteResult.Success -> {
+                clearLastCapturedIfDeleted(result.deletedPhotos)
+                photoRepository.syncMediaFilesFromStorage()
+                val msg = if (result.deletedPhotos.size == 1) {
+                    val isVideo = result.deletedPhotos.first().fileName.endsWith(".mp4", ignoreCase = true)
+                    if (isVideo) "Video deleted permanently" else "Photo deleted permanently"
+                } else {
+                    "Deleted ${result.deletedPhotos.size} media files permanently"
+                }
+                _uiMessages.emit(UiMessage.Success(msg))
+                showToast(msg, ToastType.SUCCESS)
+            }
+            is MediaDeleteResult.RequiresSystemApproval -> {
+                clearLastCapturedIfDeleted(result.alreadyDeletedPhotos)
+                _pendingMediaDeleteRequest.value = PendingMediaDeleteRequest(
+                    intentSender = result.intentSender,
+                    targetPhotos = result.targetPhotos,
+                    pendingUris = result.pendingUris,
+                    alreadyDeletedPhotos = result.alreadyDeletedPhotos,
+                    alreadyDeletedPaths = result.alreadyDeletedPaths
+                )
+            }
+            is MediaDeleteResult.PartialFailure -> {
+                clearLastCapturedIfDeleted(result.deletedPhotos)
+                photoRepository.syncMediaFilesFromStorage()
+                val firstErr = result.failedItems.firstOrNull()?.second ?: "permission denied"
+                val msg = "Deleted ${result.deletedPhotos.size} item(s); ${result.failedItems.size} failed ($firstErr)"
+                _uiMessages.emit(UiMessage.Error(msg))
+                showToast(msg, ToastType.ERROR)
+            }
+            is MediaDeleteResult.Failure -> {
+                _uiMessages.emit(UiMessage.Error(result.reason))
+                showToast(result.reason, ToastType.ERROR)
+            }
+        }
+    }
+
+    private fun clearLastCapturedIfDeleted(deletedPhotos: List<PhotoRecordEntity>) {
+        val current = _lastCapturedPhoto.value ?: return
+        if (deletedPhotos.any { it.id == current.id || (it.filePath.isNotBlank() && it.filePath == current.filePath) }) {
+            _lastCapturedPhoto.value = null
         }
     }
 

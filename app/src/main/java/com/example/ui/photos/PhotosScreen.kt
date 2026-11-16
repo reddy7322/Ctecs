@@ -49,6 +49,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -189,6 +192,35 @@ fun PhotosScreen(
 
     val photoCount = remember(photos) { photos.count { !it.fileName.endsWith(".mp4", ignoreCase = true) } }
     val videoCount = remember(photos) { photos.count { it.fileName.endsWith(".mp4", ignoreCase = true) } }
+
+    // Scoped Storage system confirmation launcher (Android 10 / 11+ MediaStore.createDeleteRequest)
+    val pendingDeleteRequest by viewModel.pendingMediaDeleteRequest.collectAsStateWithLifecycle()
+    val deletePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        viewModel.onSystemDeleteApprovalResult(result.resultCode == android.app.Activity.RESULT_OK)
+    }
+
+    LaunchedEffect(pendingDeleteRequest) {
+        val request = pendingDeleteRequest ?: return@LaunchedEffect
+        try {
+            deletePermissionLauncher.launch(
+                IntentSenderRequest.Builder(request.intentSender).build()
+            )
+        } catch (e: Exception) {
+            viewModel.onSystemDeleteApprovalResult(false)
+        }
+    }
+
+    // Ensure transient modal/selection state drops references to permanently deleted items
+    LaunchedEffect(photos) {
+        val activeIds = photos.map { it.id }.toSet()
+        selectedPhotoIds.retainAll { it in activeIds }
+        if (viewingPhoto != null && viewingPhoto?.id !in activeIds) viewingPhoto = null
+        if (viewingVideo != null && viewingVideo?.id !in activeIds) viewingVideo = null
+        if (photoForDetails != null && photoForDetails?.id !in activeIds) photoForDetails = null
+        if (photoForOptions != null && photoForOptions?.id !in activeIds) photoForOptions = null
+    }
 
     // Auto-sync storage videos and photos when gallery screen opens
     LaunchedEffect(Unit) {
