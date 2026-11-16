@@ -168,7 +168,9 @@ import com.example.location.LocationTracker
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.GeoPoint
+import com.example.model.HomeScreensaverSettings
 import com.example.model.MatchConfidence
+import com.example.model.MiniMapStyle
 import com.example.model.RoadSide
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
@@ -201,6 +203,7 @@ fun HomeScreen(
     val currentThemeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
     val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
+    val screensaverSettings by viewModel.homeScreensaverSettings.collectAsStateWithLifecycle()
 
     // App-level & Home-level blocking modal states for safe screensaver gating
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
@@ -340,6 +343,7 @@ fun HomeScreen(
                 mapThemePreference = mapThemePreference,
                 mapTypePreference = mapTypePreference,
                 isDarkAppTheme = isDark,
+                screensaverSettings = screensaverSettings,
                 onDismiss = dismissScreensaver
             )
         }
@@ -518,25 +522,64 @@ fun HomeScreen(
                         viewModel.refreshLocation()
                         viewModel.showToast("Location refreshed")
                     },
-                    mapThemePreference = mapThemePreference,
-                    mapTypePreference = mapTypePreference,
+                    mapThemePreference = when (screensaverSettings.miniMapStyle) {
+                        MiniMapStyle.DARK -> "dark"
+                        MiniMapStyle.LIGHT -> "light"
+                        else -> mapThemePreference
+                    },
+                    mapTypePreference = if (screensaverSettings.miniMapStyle == MiniMapStyle.SATELLITE) {
+                        "satellite"
+                    } else {
+                        mapTypePreference
+                    },
                     onToggleMapTheme = {
-                        val next = when (mapThemePreference) {
-                            "system" -> "light"
-                            "light" -> "dark"
-                            else -> "system"
+                        val nextStyle = when (screensaverSettings.miniMapStyle) {
+                            MiniMapStyle.DARK -> MiniMapStyle.LIGHT
+                            MiniMapStyle.LIGHT -> MiniMapStyle.STANDARD
+                            else -> MiniMapStyle.DARK
                         }
-                        viewModel.setMapTheme(next)
-                        viewModel.showToast("Map Theme: ${next.uppercase(Locale.ROOT)}")
+                        viewModel.setHomeMiniMapStyle(nextStyle)
+                        viewModel.showToast("Map Style: ${nextStyle.label}")
                     },
                     onToggleMapType = {
-                        val next = if (mapTypePreference == "satellite") "standard" else "satellite"
-                        viewModel.setMapType(next)
-                        viewModel.showToast(if (next == "satellite") "Satellite Imagery" else "Standard Map")
+                        val nextStyle = if (screensaverSettings.miniMapStyle == MiniMapStyle.SATELLITE ||
+                            mapTypePreference == "satellite"
+                        ) {
+                            MiniMapStyle.STANDARD
+                        } else {
+                            MiniMapStyle.SATELLITE
+                        }
+                        viewModel.setHomeMiniMapStyle(nextStyle)
+                        viewModel.showToast(if (nextStyle == MiniMapStyle.SATELLITE) "Satellite Imagery" else "Standard Map")
                     },
+                    sharedZoomLevel = screensaverSettings.miniMapZoomLevel,
+                    sharedRecenterEpoch = screensaverSettings.recenterEpoch,
+                    onSharedZoomIn = { viewModel.zoomInHomeMiniMap() },
+                    onSharedZoomOut = { viewModel.zoomOutHomeMiniMap() },
+                    onSharedRecenter = { viewModel.recenterHomeMiniMap() },
                     modifier = Modifier.fillMaxSize()
                 )
             }
+
+            // 4b. Shared Screensaver Mode (Portrait / Landscape / Mirror HUD) & Shared Mini Map Controls (Home Page only)
+            HomeScreensaverAndMapControls(
+                settings = screensaverSettings,
+                onSelectMode = { mode -> viewModel.setScreensaverDisplayMode(mode) },
+                onToggleMirror = { enabled -> viewModel.setScreensaverMirrorEnabled(enabled) },
+                onHudBrightnessChange = { brightness -> viewModel.setScreensaverHudBrightness(brightness) },
+                onOrientationChange = { orientation -> viewModel.setHomeMiniMapOrientation(orientation) },
+                onZoomIn = { viewModel.zoomInHomeMiniMap() },
+                onZoomOut = { viewModel.zoomOutHomeMiniMap() },
+                onRecenter = { viewModel.recenterHomeMiniMap() },
+                onToggleMapVisible = { viewModel.setHomeMiniMapVisible(!screensaverSettings.miniMapVisible) },
+                onStyleChange = { style -> viewModel.setHomeMiniMapStyle(style) },
+                cardBgColor = cardBgColor,
+                cardBorderColor = cardBorderColor,
+                mainTextColor = mainTextColor,
+                subTextColor = subTextColor,
+                isDark = isDark,
+                isCompact = isCompactHeight
+            )
 
             // 5. Prominent Next KM Stone Card
             val nextKmTracker = remember { NextKmStoneTracker() }
@@ -2792,6 +2835,11 @@ fun InteractiveSmartMap(
     mapTypePreference: String = "standard",
     onToggleMapTheme: (() -> Unit)? = null,
     onToggleMapType: (() -> Unit)? = null,
+    sharedZoomLevel: Float? = null,
+    sharedRecenterEpoch: Long = 0L,
+    onSharedZoomIn: (() -> Unit)? = null,
+    onSharedZoomOut: (() -> Unit)? = null,
+    onSharedRecenter: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -2805,6 +2853,28 @@ fun InteractiveSmartMap(
     var panOffsetY by remember { mutableFloatStateOf(0f) }
     var viewRangeMetres by remember { mutableDoubleStateOf(1000.0) }
     var isFollowingUser by remember { mutableStateOf(true) }
+
+    LaunchedEffect(sharedZoomLevel) {
+        if (sharedZoomLevel != null) {
+            viewRangeMetres = when {
+                sharedZoomLevel >= 17.8f -> 250.0
+                sharedZoomLevel >= 16.8f -> 550.0
+                sharedZoomLevel >= 15.8f -> 1000.0
+                sharedZoomLevel >= 14.8f -> 2200.0
+                sharedZoomLevel >= 13.8f -> 4500.0
+                sharedZoomLevel >= 12.8f -> 8500.0
+                else -> 13000.0
+            }
+        }
+    }
+
+    LaunchedEffect(sharedRecenterEpoch) {
+        if (sharedRecenterEpoch > 0L) {
+            isFollowingUser = true
+            panOffsetX = 0f
+            panOffsetY = 0f
+        }
+    }
 
     LaunchedEffect(location, isFollowingUser) {
         if (isFollowingUser) {
@@ -3160,6 +3230,7 @@ fun InteractiveSmartMap(
                         isFollowingUser = true
                         panOffsetX = 0f
                         panOffsetY = 0f
+                        onSharedRecenter?.invoke()
                     }
                     .testTag("map_follow_button")
             ) {
@@ -3326,7 +3397,10 @@ fun InteractiveSmartMap(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 IconButton(
-                    onClick = { viewRangeMetres = (viewRangeMetres * 0.7).coerceAtLeast(100.0) },
+                    onClick = {
+                        viewRangeMetres = (viewRangeMetres * 0.7).coerceAtLeast(100.0)
+                        onSharedZoomIn?.invoke()
+                    },
                     modifier = Modifier
                         .size(36.dp)
                         .testTag("map_zoom_in")
@@ -3345,7 +3419,10 @@ fun InteractiveSmartMap(
                         .background(controlBorderColor)
                 )
                 IconButton(
-                    onClick = { viewRangeMetres = (viewRangeMetres * 1.4).coerceAtMost(15000.0) },
+                    onClick = {
+                        viewRangeMetres = (viewRangeMetres * 1.4).coerceAtMost(15000.0)
+                        onSharedZoomOut?.invoke()
+                    },
                     modifier = Modifier
                         .size(36.dp)
                         .testTag("map_zoom_out")
@@ -3775,13 +3852,10 @@ fun HomeScreensaverCoordinator(
 }
 
 /**
- * Minimal Full-Screen Chainage Screensaver UI.
- * Displays ONLY five elements:
- * 1. Transparent Glassy KMZ/KML Map Background with glowing route & subtle live navigation marker.
- * 2. Very Large, Bold, Centrally Aligned Dynamic Chainage.
- * 3. Reliable LHS / RHS Direction with directional arrow ("← LHS" or "RHS →", hidden when unreliable).
- * 4. Dynamically resolved Current Location Name (via cached reverse geocoding).
- * 5. Live Speed in km/h (actual GPS speed, or "-- km/h" when unavailable/stale).
+ * Full-Screen Automotive HUD & Chainage Screensaver Overlay.
+ * Strictly button-free inside the screensaver; touching anywhere dismisses immediately.
+ * Delegates Portrait, Landscape, and Car Dashboard Mirror HUD reflection rendering to
+ * [AutomotiveChainageScreensaverContent].
  */
 @Composable
 fun ChainageScreensaverOverlay(
@@ -3793,25 +3867,17 @@ fun ChainageScreensaverOverlay(
     mapThemePreference: String = "system",
     mapTypePreference: String = "standard",
     isDarkAppTheme: Boolean = com.example.ui.theme.isAppDarkTheme(),
+    screensaverSettings: HomeScreensaverSettings = HomeScreensaverSettings(),
     onDismiss: () -> Unit
 ) {
-    val isDarkMap = com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isDarkAppTheme)
-    val useDarkGlass = isDarkAppTheme || isDarkMap
-
-    val chainageColor by animateColorAsState(
-        targetValue = if (useDarkGlass) Color(0xFFF8FAFC) else Color(0xFF0F172A),
-        animationSpec = tween(300),
-        label = "screensaver_chainage_color"
-    )
-    val secondaryTextColor by animateColorAsState(
-        targetValue = if (useDarkGlass) Color(0xFFE2E8F0) else Color(0xFF1E293B),
-        animationSpec = tween(260),
-        label = "screensaver_secondary_text_color"
-    )
-    val chainageShadowColor = if (useDarkGlass) {
-        Color(0xFF38BDF8).copy(alpha = 0.28f)
-    } else {
-        Color(0xFFFFFFFF).copy(alpha = 0.72f)
+    val resolvedSettings = remember(screensaverSettings, mapTypePreference, mapThemePreference) {
+        if (screensaverSettings == HomeScreensaverSettings() &&
+            mapTypePreference.equals("satellite", ignoreCase = true)
+        ) {
+            screensaverSettings.copy(miniMapStyle = MiniMapStyle.SATELLITE)
+        } else {
+            screensaverSettings
+        }
     }
 
     Box(
@@ -3831,628 +3897,16 @@ fun ChainageScreensaverOverlay(
                 }
             }
     ) {
-        // 1. Background — Full-screen Transparent Glassy Map
-        ScreensaverGlassMapBackground(
+        AutomotiveChainageScreensaverContent(
+            displayState = displayState,
             location = location,
             bearing = bearing,
             compassHeading = compassHeading,
             routeData = routeData,
-            isDarkMap = isDarkMap,
-            useDarkGlass = useDarkGlass,
+            mapThemePreference = mapThemePreference,
             mapTypePreference = mapTypePreference,
-            modifier = Modifier
-                .fillMaxSize()
-                .testTag("screensaver_glass_map")
+            isDarkAppTheme = isDarkAppTheme,
+            screensaverSettings = resolvedSettings
         )
-
-        // 2, 3, 4 & 5. Centre Chainage + LHS/RHS + Current Location Name + Live Speed
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
-            val charCount = displayState.chainageText.length.coerceAtLeast(6)
-            val availableWidth = (maxWidth - 24.dp).coerceAtLeast(180.dp)
-            val maxByWidth = (availableWidth.value / (charCount * 0.61f * fontScale))
-            val maxByViewport = minOf(maxWidth.value * 0.24f, maxHeight.value * 0.34f)
-            val chainageFontSize = maxByWidth.coerceIn(36f, maxByViewport.coerceAtLeast(38f)).sp
-            val lineHeightSp = (chainageFontSize.value * 1.06f).sp
-
-            val spacingMain = (maxHeight * 0.026f).coerceIn(10.dp, 22.dp)
-            val spacingSecondary = (maxHeight * 0.018f).coerceIn(8.dp, 16.dp)
-            val sideFontSize = (chainageFontSize.value * 0.25f).coerceIn(15f, 23f).sp
-            val arrowSize = (sideFontSize.value * 1.05f).dp
-            val locationFontSize = (chainageFontSize.value * 0.20f).coerceIn(13f, 17f).sp
-            val speedFontSize = (chainageFontSize.value * 0.24f).coerceIn(15f, 20f).sp
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Element 2: Centre – Very Large, Bold, Smoothly Animated Dynamic Chainage
-                ScreensaverAnimatedChainage(
-                    chainageText = displayState.chainageText,
-                    isIncreasing = displayState.isIncreasingTrend,
-                    textColor = chainageColor,
-                    glowColor = chainageShadowColor,
-                    fontSize = chainageFontSize,
-                    lineHeight = lineHeightSp,
-                    modifier = Modifier
-                        .testTag("screensaver_chainage_text")
-                        .clearAndSetSemantics {
-                            text = AnnotatedString(displayState.chainageText)
-                            contentDescription = displayState.chainageText
-                        }
-                )
-
-                Spacer(modifier = Modifier.height(spacingMain))
-
-                // Element 3: Direction – Small "← LHS" or "RHS →" (hidden when unreliable)
-                AnimatedVisibility(
-                    visible = displayState.reliableSide != null,
-                    enter = fadeIn(tween(240)) + scaleIn(initialScale = 0.92f, animationSpec = tween(240)),
-                    exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f, animationSpec = tween(180))
-                ) {
-                    val side = displayState.reliableSide
-                    if (side != null) {
-                        ScreensaverDirectionIndicator(
-                            side = side,
-                            useDarkGlass = useDarkGlass,
-                            fontSize = sideFontSize,
-                            arrowSize = arrowSize,
-                            modifier = Modifier.testTag("screensaver_direction_badge")
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(spacingSecondary))
-
-                // Element 4: Below Chainage – Current Location Name (hidden when unavailable)
-                AnimatedVisibility(
-                    visible = displayState.locationName.isNotBlank(),
-                    enter = fadeIn(tween(260)),
-                    exit = fadeOut(tween(200))
-                ) {
-                    ScreensaverLocationLabel(
-                        locationName = displayState.locationName,
-                        textColor = secondaryTextColor,
-                        shadowColor = chainageShadowColor,
-                        fontSize = locationFontSize,
-                        modifier = Modifier
-                            .padding(bottom = 8.dp)
-                            .testTag("screensaver_location_name")
-                    )
-                }
-
-                // Element 5: Below Chainage – Live Speed in km/h (or "-- km/h" when unavailable/stale)
-                ScreensaverSpeedReadout(
-                    speedText = displayState.speedText,
-                    isLiveAvailable = displayState.speedKmh != null,
-                    useDarkGlass = useDarkGlass,
-                    textColor = secondaryTextColor,
-                    fontSize = speedFontSize,
-                    modifier = Modifier.testTag("screensaver_speed_text")
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScreensaverAnimatedChainage(
-    chainageText: String,
-    isIncreasing: Boolean,
-    textColor: Color,
-    glowColor: Color,
-    fontSize: TextUnit,
-    lineHeight: TextUnit,
-    modifier: Modifier = Modifier
-) {
-    val style = TextStyle(
-        color = textColor,
-        fontSize = fontSize,
-        lineHeight = lineHeight,
-        fontWeight = FontWeight.Black,
-        letterSpacing = (-1.2).sp,
-        fontFeatureSettings = "tnum",
-        shadow = Shadow(
-            color = glowColor,
-            offset = Offset.Zero,
-            blurRadius = 22f
-        )
-    )
-
-    Row(
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier
-    ) {
-        val len = chainageText.length
-        for (i in 0 until len) {
-            val ch = chainageText[i]
-            val slotKey = len - i // Right-aligned digit position stability across transitions
-            AnimatedContent(
-                targetState = ch,
-                transitionSpec = {
-                    val enterOffset = { fullHeight: Int ->
-                        if (isIncreasing) fullHeight / 3 else -fullHeight / 3
-                    }
-                    val exitOffset = { fullHeight: Int ->
-                        if (isIncreasing) -fullHeight / 3 else fullHeight / 3
-                    }
-                    (slideInVertically(tween(210, easing = FastOutSlowInEasing), enterOffset) +
-                        fadeIn(tween(190))) togetherWith
-                        (slideOutVertically(tween(170), exitOffset) +
-                            fadeOut(tween(150)))
-                },
-                label = "screensaver_digit_$slotKey"
-            ) { targetChar ->
-                Text(
-                    text = targetChar.toString(),
-                    style = style,
-                    maxLines = 1,
-                    softWrap = false,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScreensaverDirectionIndicator(
-    side: String,
-    useDarkGlass: Boolean,
-    fontSize: TextUnit,
-    arrowSize: Dp,
-    modifier: Modifier = Modifier
-) {
-    val isLhs = side == "LHS"
-    val accentColor by animateColorAsState(
-        targetValue = when {
-            isLhs && useDarkGlass -> Color(0xFF34D399)
-            isLhs -> Color(0xFF059669)
-            useDarkGlass -> Color(0xFF38BDF8)
-            else -> Color(0xFF1D4ED8)
-        },
-        animationSpec = tween(260),
-        label = "screensaver_side_accent"
-    )
-    val glassBg = if (useDarkGlass) {
-        Color(0xFF0F172A).copy(alpha = 0.52f)
-    } else {
-        Color(0xFFFFFFFF).copy(alpha = 0.68f)
-    }
-    val glassBorder = accentColor.copy(alpha = if (useDarkGlass) 0.42f else 0.35f)
-
-    // Subtle directional float motion while screensaver is active (stops automatically on dismiss)
-    val arrowTransition = rememberInfiniteTransition(label = "screensaver_arrow_float")
-    val arrowFloatFactor by arrowTransition.animateFloat(
-        initialValue = -1f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "screensaver_arrow_offset"
-    )
-    val arrowOffsetX = (arrowFloatFactor * (if (isLhs) -2.2f else 2.2f)).dp
-
-    Surface(
-        shape = CircleShape,
-        color = glassBg,
-        border = BorderStroke(1.dp, glassBorder),
-        shadowElevation = 0.dp,
-        modifier = modifier
-    ) {
-        AnimatedContent(
-            targetState = side,
-            transitionSpec = {
-                (fadeIn(tween(220)) + scaleIn(initialScale = 0.9f, animationSpec = tween(220))) togetherWith
-                    (fadeOut(tween(150)) + scaleOut(targetScale = 0.9f, animationSpec = tween(150)))
-            },
-            label = "screensaver_direction_switch"
-        ) { targetSide ->
-            val targetIsLhs = targetSide == "LHS"
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-            ) {
-                if (targetIsLhs) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Increasing",
-                        tint = accentColor,
-                        modifier = Modifier
-                            .size(arrowSize)
-                            .offset(x = arrowOffsetX)
-                    )
-                    Text(
-                        text = targetSide,
-                        color = accentColor,
-                        fontSize = fontSize,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 2.8.sp,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                } else {
-                    Text(
-                        text = targetSide,
-                        color = accentColor,
-                        fontSize = fontSize,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 2.8.sp,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Decreasing",
-                        tint = accentColor,
-                        modifier = Modifier
-                            .size(arrowSize)
-                            .offset(x = arrowOffsetX)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScreensaverLocationLabel(
-    locationName: String,
-    textColor: Color,
-    shadowColor: Color,
-    fontSize: TextUnit,
-    modifier: Modifier = Modifier
-) {
-    AnimatedContent(
-        targetState = locationName,
-        transitionSpec = {
-            fadeIn(tween(280)) togetherWith fadeOut(tween(200))
-        },
-        label = "screensaver_location_transition",
-        modifier = modifier
-    ) { targetLocation ->
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            modifier = Modifier.padding(horizontal = 16.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Place,
-                contentDescription = null,
-                tint = textColor.copy(alpha = 0.85f),
-                modifier = Modifier.size((fontSize.value * 1.08f).dp)
-            )
-            Text(
-                text = targetLocation,
-                style = TextStyle(
-                    color = textColor.copy(alpha = 0.92f),
-                    fontSize = fontSize,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.3.sp,
-                    shadow = Shadow(
-                        color = shadowColor,
-                        offset = Offset.Zero,
-                        blurRadius = 12f
-                    )
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun ScreensaverSpeedReadout(
-    speedText: String,
-    isLiveAvailable: Boolean,
-    useDarkGlass: Boolean,
-    textColor: Color,
-    fontSize: TextUnit,
-    modifier: Modifier = Modifier
-) {
-    val speedAccent = when {
-        !isLiveAvailable -> textColor.copy(alpha = 0.65f)
-        useDarkGlass -> Color(0xFF7DD3FC)
-        else -> Color(0xFF0369A1)
-    }
-    val glassBg = if (useDarkGlass) {
-        Color(0xFF0F172A).copy(alpha = 0.44f)
-    } else {
-        Color(0xFFFFFFFF).copy(alpha = 0.62f)
-    }
-    val glassBorder = if (useDarkGlass) {
-        Color(0xFF38BDF8).copy(alpha = if (isLiveAvailable) 0.28f else 0.14f)
-    } else {
-        Color(0xFF0284C7).copy(alpha = if (isLiveAvailable) 0.24f else 0.14f)
-    }
-
-    Surface(
-        shape = CircleShape,
-        color = glassBg,
-        border = BorderStroke(1.dp, glassBorder),
-        shadowElevation = 0.dp,
-        modifier = modifier
-    ) {
-        AnimatedContent(
-            targetState = speedText,
-            transitionSpec = {
-                (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 4 }) togetherWith
-                    (fadeOut(tween(160)) + slideOutVertically(tween(160)) { -it / 4 })
-            },
-            label = "screensaver_speed_transition"
-        ) { targetSpeed ->
-            Text(
-                text = targetSpeed,
-                style = TextStyle(
-                    color = speedAccent,
-                    fontSize = fontSize,
-                    fontWeight = FontWeight.SemiBold,
-                    fontFeatureSettings = "tnum",
-                    letterSpacing = 0.4.sp
-                ),
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ScreensaverGlassMapBackground(
-    location: GeoPoint?,
-    bearing: Float?,
-    compassHeading: Float,
-    routeData: RouteData?,
-    isDarkMap: Boolean,
-    useDarkGlass: Boolean,
-    mapTypePreference: String,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
-    val mapTheme = com.example.ui.map.rememberMapThemeColors(isDarkMap)
-    val reusableRoutePath = remember { Path() }
-    val zoom = 16
-
-    // Retain last known coordinate when GPS drops briefly so the map stays calm and anchored
-    var lastValidLocation by remember { mutableStateOf(location) }
-    LaunchedEffect(location) {
-        if (location != null) {
-            lastValidLocation = location
-        }
-    }
-
-    val targetAnchor = location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-
-    // Precision Double glide interpolation so GPS camera follow never micro-jitters
-    var startAnchor by remember { mutableStateOf(targetAnchor) }
-    var endAnchor by remember { mutableStateOf(targetAnchor) }
-    val glideAnim = remember { Animatable(1f) }
-    LaunchedEffect(targetAnchor.latitude, targetAnchor.longitude) {
-        if (targetAnchor.latitude != endAnchor.latitude || targetAnchor.longitude != endAnchor.longitude) {
-            val frac = glideAnim.value.toDouble()
-            val curLat = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * frac
-            val curLng = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * frac
-            startAnchor = GeoPoint(curLat, curLng)
-            endAnchor = targetAnchor
-            glideAnim.snapTo(0f)
-            glideAnim.animateTo(1f, animationSpec = tween(650, easing = FastOutSlowInEasing))
-        }
-    }
-    val interpolatedAnchor = GeoPoint(
-        latitude = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * glideAnim.value.toDouble(),
-        longitude = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * glideAnim.value.toDouble()
-    )
-
-    val navTransition = rememberInfiniteTransition(label = "screensaver_nav_beacon")
-    val navPulse by navTransition.animateFloat(
-        initialValue = 0.20f,
-        targetValue = 0.50f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "screensaver_nav_pulse"
-    )
-
-    val mapBlurModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        Modifier.blur(5.dp)
-    } else {
-        Modifier
-    }
-
-    val outerGlowColor = if (useDarkGlass) Color(0xFF38BDF8) else Color(0xFF0EA5E9)
-    val routeCoreColor = if (useDarkGlass) Color(0xFF7DD3FC) else Color(0xFF2563EB)
-    val navIndicatorColor = if (useDarkGlass) Color(0xFF38BDF8) else Color(0xFF2563EB)
-
-    Box(modifier = modifier) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(mapBlurModifier)
-        ) {
-            val _tick = tileUpdate
-            val w = size.width
-            val h = size.height
-
-            val osmBmp = OsmTileManager.renderMapBitmap(
-                context = context,
-                center = interpolatedAnchor,
-                widthPx = w.toInt().coerceAtLeast(1),
-                heightPx = h.toInt().coerceAtLeast(1),
-                zoom = zoom,
-                panOffsetX = 0f,
-                panOffsetY = 0f,
-                darkTheme = mapTheme.isDark,
-                mapType = mapTypePreference
-            )
-
-            if (osmBmp != null) {
-                drawImage(
-                    image = osmBmp.asImageBitmap(),
-                    dstOffset = IntOffset.Zero,
-                    dstSize = IntSize(w.toInt(), h.toInt())
-                )
-            } else {
-                drawRect(color = mapTheme.mapBackground)
-                val gridSpacing = 76.dp.toPx()
-                var gx = 0f
-                while (gx < w) {
-                    drawLine(
-                        color = mapTheme.gridLineColor,
-                        start = Offset(gx, 0f),
-                        end = Offset(gx, h),
-                        strokeWidth = 1f
-                    )
-                    gx += gridSpacing
-                }
-                var gy = 0f
-                while (gy < h) {
-                    drawLine(
-                        color = mapTheme.gridLineColor,
-                        start = Offset(0f, gy),
-                        end = Offset(w, gy),
-                        strokeWidth = 1f
-                    )
-                    gy += gridSpacing
-                }
-            }
-
-            fun toScreen(pt: GeoPoint): Offset {
-                val (sx, sy) = OsmTileManager.geoToScreen(
-                    pt = pt,
-                    center = interpolatedAnchor,
-                    widthPx = w,
-                    heightPx = h,
-                    zoom = zoom,
-                    panOffsetX = 0f,
-                    panOffsetY = 0f
-                )
-                return Offset(sx, sy)
-            }
-
-            // Subtle Glowing Imported KMZ/KML Road Alignment
-            if (routeData != null && routeData.alignments.isNotEmpty()) {
-                for (align in routeData.alignments) {
-                    if (align.points.size < 2) continue
-                    reusableRoutePath.reset()
-                    var started = false
-                    for (pt in align.points) {
-                        val off = toScreen(pt)
-                        if (!started) {
-                            reusableRoutePath.moveTo(off.x, off.y)
-                            started = true
-                        } else {
-                            reusableRoutePath.lineTo(off.x, off.y)
-                        }
-                    }
-
-                    // Soft wide outer bloom
-                    drawPath(
-                        path = reusableRoutePath,
-                        color = outerGlowColor.copy(alpha = 0.22f),
-                        style = Stroke(width = 20.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                    // Mid luminous halo
-                    drawPath(
-                        path = reusableRoutePath,
-                        color = outerGlowColor.copy(alpha = 0.36f),
-                        style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                    // Subtle crisp centerline
-                    drawPath(
-                        path = reusableRoutePath,
-                        color = routeCoreColor.copy(alpha = 0.72f),
-                        style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                }
-            }
-        }
-
-        // Translucent Glass Veil + Soft Ambient Center Glow (keeps map subdued so chainage shines)
-        val glassTint = if (useDarkGlass) {
-            Color(0xFF060B16).copy(alpha = 0.64f)
-        } else {
-            Color(0xFFF8FAFC).copy(alpha = 0.62f)
-        }
-        val radialSpotlight = if (useDarkGlass) {
-            Brush.radialGradient(
-                colors = listOf(
-                    Color(0xFF0EA5E9).copy(alpha = 0.14f),
-                    Color(0xFF060B16).copy(alpha = 0.45f),
-                    Color(0xFF020617).copy(alpha = 0.78f)
-                )
-            )
-        } else {
-            Brush.radialGradient(
-                colors = listOf(
-                    Color(0xFFFFFFFF).copy(alpha = 0.54f),
-                    Color(0xFFF1F5F9).copy(alpha = 0.42f),
-                    Color(0xFFCBD5E1).copy(alpha = 0.56f)
-                )
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(glassTint)
-                .background(radialSpotlight)
-        )
-
-        // Small Crisp Live GPS Navigation Indicator drawn above the frosted glass
-        if (location != null) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val (ux, uy) = OsmTileManager.geoToScreen(
-                    pt = location,
-                    center = interpolatedAnchor,
-                    widthPx = size.width,
-                    heightPx = size.height,
-                    zoom = zoom,
-                    panOffsetX = 0f,
-                    panOffsetY = 0f
-                )
-                val userOff = Offset(ux, uy)
-                if (ux in -48f..(size.width + 48f) && uy in -48f..(size.height + 48f)) {
-                    drawCircle(
-                        color = navIndicatorColor.copy(alpha = navPulse),
-                        radius = 16.dp.toPx(),
-                        center = userOff
-                    )
-                    val activeHeading = bearing ?: compassHeading
-                    rotate(degrees = activeHeading, pivot = userOff) {
-                        reusableRoutePath.reset()
-                        reusableRoutePath.moveTo(userOff.x, userOff.y - 10.dp.toPx())
-                        reusableRoutePath.lineTo(userOff.x - 5.5.dp.toPx(), userOff.y + 5.5.dp.toPx())
-                        reusableRoutePath.lineTo(userOff.x, userOff.y + 2.dp.toPx())
-                        reusableRoutePath.lineTo(userOff.x + 5.5.dp.toPx(), userOff.y + 5.5.dp.toPx())
-                        reusableRoutePath.close()
-                        drawPath(path = reusableRoutePath, color = navIndicatorColor.copy(alpha = 0.92f))
-                    }
-                    drawCircle(
-                        color = Color.White.copy(alpha = 0.92f),
-                        radius = 4.2.dp.toPx(),
-                        center = userOff
-                    )
-                    drawCircle(
-                        color = navIndicatorColor,
-                        radius = 2.6.dp.toPx(),
-                        center = userOff
-                    )
-                }
-            }
-        }
     }
 }

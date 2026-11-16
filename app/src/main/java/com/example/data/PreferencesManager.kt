@@ -16,6 +16,7 @@ import com.example.model.Chainage
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageLogEntry
 import com.example.model.DefinedProject
+import com.example.model.HomeScreensaverSettings
 import com.example.model.LogoPosition
 import com.example.model.LogoShape
 import com.example.model.MiniMapStyleConfig
@@ -191,6 +192,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_SAVED_CUSTOM_CHAINAGES = stringPreferencesKey("saved_custom_chainages")
         val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
         val KEY_CALIBRATION_PROFILES_JSON = stringPreferencesKey("permanent_calibration_profiles_json")
+        val KEY_HOME_SCREENSAVER_JSON = stringPreferencesKey("home_screensaver_settings_json")
     }
 
     val galleryViewModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -240,6 +242,16 @@ class PreferencesManager(private val context: Context) {
     suspend fun updateMapType(type: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_MAP_TYPE] = type
+        }
+    }
+
+    val homeScreensaverSettingsFlow: Flow<HomeScreensaverSettings> = context.dataStore.data.map { prefs ->
+        HomeScreensaverSettings.fromJsonString(prefs[KEY_HOME_SCREENSAVER_JSON])
+    }.distinctUntilChanged()
+
+    suspend fun updateHomeScreensaverSettings(settings: HomeScreensaverSettings) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_HOME_SCREENSAVER_JSON] = settings.toJsonString()
         }
     }
 

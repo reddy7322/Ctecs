@@ -51,13 +51,17 @@ import com.example.model.CameraMode
 import com.example.model.DefinedProject
 import com.example.model.GeneratedChainageMarker
 import com.example.model.GeoPoint
+import com.example.model.HomeScreensaverSettings
 import com.example.model.KmzReplacementPreview
+import com.example.model.MiniMapOrientationMode
+import com.example.model.MiniMapStyle
 import com.example.model.OverlayConfig
 import com.example.model.PermanentCalibrationProfile
 import com.example.model.ProjectProfile
 import com.example.model.RefreshMode
 import com.example.model.RoadSide
 import com.example.model.RouteData
+import com.example.model.ScreensaverDisplayMode
 import com.example.model.SpeedUnit
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -405,6 +409,114 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferencesManager.updateMapType(type)
             val label = if (type.equals("satellite", ignoreCase = true)) "Satellite" else "Standard (Street)"
             _uiMessages.emit(UiMessage.Info("Map Type: $label"))
+        }
+    }
+
+    private val _homeScreensaverSettings = MutableStateFlow(HomeScreensaverSettings())
+    val homeScreensaverSettings: StateFlow<HomeScreensaverSettings> = _homeScreensaverSettings.asStateFlow()
+    private val homeScreensaverMutationLock = Any()
+    private var homeScreensaverWriteVersion = 0L
+    private var homeScreensaverFlushedVersion = 0L
+    private var homeScreensaverWriteJob: Job? = null
+
+    private fun updateHomeScreensaverState(transform: (HomeScreensaverSettings) -> HomeScreensaverSettings) {
+        val (myVersion, snapshot) = synchronized(homeScreensaverMutationLock) {
+            homeScreensaverWriteVersion += 1L
+            val updated = transform(_homeScreensaverSettings.value)
+            _homeScreensaverSettings.value = updated
+            homeScreensaverWriteVersion to updated
+        }
+        homeScreensaverWriteJob?.cancel()
+        homeScreensaverWriteJob = viewModelScope.launch {
+            preferencesManager.updateHomeScreensaverSettings(snapshot)
+            synchronized(homeScreensaverMutationLock) {
+                if (myVersion > homeScreensaverFlushedVersion) {
+                    homeScreensaverFlushedVersion = myVersion
+                }
+            }
+        }
+    }
+
+    fun setScreensaverDisplayMode(mode: ScreensaverDisplayMode) {
+        updateHomeScreensaverState { current ->
+            when (mode) {
+                ScreensaverDisplayMode.PORTRAIT -> current.selectPortrait()
+                ScreensaverDisplayMode.LANDSCAPE -> current.selectLandscape()
+                ScreensaverDisplayMode.MIRROR -> current.setMirrorEnabled(true)
+            }
+        }
+    }
+
+    fun setScreensaverMirrorEnabled(enabled: Boolean) {
+        updateHomeScreensaverState { current ->
+            current.setMirrorEnabled(enabled)
+        }
+    }
+
+    fun setScreensaverHudBrightness(brightness: Float) {
+        updateHomeScreensaverState { current ->
+            current.withHudBrightness(brightness)
+        }
+    }
+
+    fun setHomeMiniMapOrientation(orientation: MiniMapOrientationMode) {
+        updateHomeScreensaverState { current ->
+            current.withOrientation(orientation)
+        }
+    }
+
+    fun zoomInHomeMiniMap() {
+        updateHomeScreensaverState { current ->
+            current.withZoomIn()
+        }
+    }
+
+    fun zoomOutHomeMiniMap() {
+        updateHomeScreensaverState { current ->
+            current.withZoomOut()
+        }
+    }
+
+    fun setHomeMiniMapZoomLevel(zoom: Float) {
+        updateHomeScreensaverState { current ->
+            current.withZoomLevel(zoom)
+        }
+    }
+
+    fun recenterHomeMiniMap() {
+        updateHomeScreensaverState { current ->
+            current.withRecenter()
+        }
+    }
+
+    fun setHomeMiniMapVisible(visible: Boolean) {
+        updateHomeScreensaverState { current ->
+            current.withMiniMapVisible(visible)
+        }
+    }
+
+    fun setHomeMiniMapStyle(style: MiniMapStyle) {
+        updateHomeScreensaverState { current ->
+            current.withMiniMapStyle(style)
+        }
+        viewModelScope.launch {
+            when (style) {
+                MiniMapStyle.STANDARD -> {
+                    preferencesManager.updateMapType("standard")
+                    preferencesManager.updateMapTheme("system")
+                }
+                MiniMapStyle.SATELLITE -> {
+                    preferencesManager.updateMapType("satellite")
+                }
+                MiniMapStyle.DARK -> {
+                    preferencesManager.updateMapType("standard")
+                    preferencesManager.updateMapTheme("dark")
+                }
+                MiniMapStyle.LIGHT -> {
+                    preferencesManager.updateMapType("standard")
+                    preferencesManager.updateMapTheme("light")
+                }
+            }
         }
     }
 
@@ -832,6 +944,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             preferencesManager.projectProfileFlow.collect { savedProfile ->
                 _projectProfile.value = savedProfile
+            }
+        }
+
+        // Synchronize Home Screensaver & Shared Mini Map preferences with DataStore
+        viewModelScope.launch {
+            preferencesManager.homeScreensaverSettingsFlow.collect { savedSettings ->
+                synchronized(homeScreensaverMutationLock) {
+                    if (homeScreensaverFlushedVersion == homeScreensaverWriteVersion) {
+                        val currentEpoch = _homeScreensaverSettings.value.recenterEpoch
+                        _homeScreensaverSettings.value = savedSettings.copy(recenterEpoch = currentEpoch)
+                    }
+                }
             }
         }
 
