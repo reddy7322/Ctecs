@@ -204,8 +204,11 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_SAVED_CUSTOM_CHAINAGES.name,
                 PreferencesManager.KEY_CHAINAGE_AUDIT_LOG_JSON.name,
                 PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name,
-                // Screensaver & Lock-Screen Navigation
-                PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name
+                // Screensaver, Lock-Screen Navigation, Widgets & KM Stone Alerts
+                PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name,
+                PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name,
+                PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name,
+                PreferencesManager.KEY_KM_STONE_ALERT_JSON.name
             )
         }
     }
@@ -361,7 +364,10 @@ class SettingsBackupManager(
         PreferencesManager.KEY_INCLUDE_PDF_SIGNATURE_DEFAULT.name,
         PreferencesManager.KEY_PDF_DEFAULT_PREPARED_BY.name -> BackupCategory.DPR
 
-        PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name -> BackupCategory.GENERAL
+        PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name,
+        PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name,
+        PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name,
+        PreferencesManager.KEY_KM_STONE_ALERT_JSON.name -> BackupCategory.GENERAL
 
         else -> BackupCategory.OTHER
     }
@@ -533,7 +539,13 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_GALLERY_VIEW_MODE.name, PrefValueType.STRING, galleryView)
         putEntry(PreferencesManager.KEY_GALLERY_SORT_OPTION.name, PrefValueType.STRING, gallerySort)
         putEntry(PreferencesManager.KEY_GALLERY_GROUP_OPTION.name, PrefValueType.STRING, galleryGroup)
+        val navNotifSettings = preferencesManager.navigationNotificationSettingsFlow.first()
+        val widgetSettings = preferencesManager.widgetSettingsFlow.first()
+        val kmStoneAlertSettings = preferencesManager.kmStoneAlertSettingsFlow.first()
         putEntry(PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name, PrefValueType.STRING, screensaverSettings.toJsonString())
+        putEntry(PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name, PrefValueType.STRING, navNotifSettings.toJsonString())
+        putEntry(PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name, PrefValueType.STRING, widgetSettings.toJsonString())
+        putEntry(PreferencesManager.KEY_KM_STONE_ALERT_JSON.name, PrefValueType.STRING, kmStoneAlertSettings.toJsonString())
 
         // Calibration defaults
         putEntry(PreferencesManager.KEY_ROUTE_CORRECTIONS_ENABLED.name, PrefValueType.BOOLEAN, correctionsEnabled)

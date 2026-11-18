@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
@@ -84,6 +85,7 @@ import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -96,6 +98,7 @@ import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
 import com.example.model.HudMapMarkerStyle
 import com.example.model.MiniMapStyle
+import com.example.model.NavigationNotificationSettings
 import com.example.model.RouteData
 import com.example.overlay.MiniMapRenderer
 import kotlin.math.ceil
@@ -115,7 +118,7 @@ private val DarkMapSaturationMatrix = ColorMatrix().apply {
  * A. Full-bleed dark minimalist map with bright white highlighted KMZ/KML route & bottom-centered GPS chevron
  * B. Rounded dark top direction/marker card (verified direction + distance + alignment/stretch name)
  * C. Large central live calibrated chainage & LHS/RHS badge
- * D. Compact dark bottom bar showing verified distance, ETA (when moving), speed, and GPS timestamp status
+ * D. Compact dark bottom bar showing verified distance, ETA (when moving) or Current Time, speed, and GPS status
  */
 @Composable
 fun LockScreenNavigationContent(
@@ -126,12 +129,20 @@ fun LockScreenNavigationContent(
     routeData: RouteData?,
     screensaverSettings: HomeScreensaverSettings,
     onClose: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    notifSettings: NavigationNotificationSettings = NavigationNotificationSettings.defaultSettings()
 ) {
     val mapBackground = Color(0xFF05070A)
     val cardSurface = Color(0xFF181A1F).copy(alpha = 0.96f)
     val cardBorder = Color(0xFF2B313D)
     val bottomBarBg = Color(0xFF0B0E14).copy(alpha = 0.94f)
+
+    val showChainage = notifSettings.showChainage
+    val showRoadSide = notifSettings.showRoadSide && navState.reliableSide != null
+    val showNextMarker = screensaverSettings.lockScreenShowNextMarker && notifSettings.showNextKmMarker
+    val showDistanceRemaining = screensaverSettings.lockScreenShowNextMarker && notifSettings.showDistanceRemaining
+    val showSpeed = screensaverSettings.lockScreenShowSpeed && notifSettings.showSpeed
+    val showLocation = notifSettings.showLocation
 
     BoxWithConstraints(
         modifier = modifier
@@ -275,7 +286,7 @@ fun LockScreenNavigationContent(
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         val headlinePrimary = when {
-                            screensaverSettings.lockScreenShowNextMarker && !navState.distanceToNextText.isNullOrBlank() ->
+                            showDistanceRemaining && !navState.distanceToNextText.isNullOrBlank() ->
                                 navState.distanceToNextText
                             navState.reliableSide != null ->
                                 navState.directionInstruction
@@ -305,7 +316,7 @@ fun LockScreenNavigationContent(
                             modifier = Modifier.testTag("lock_screen_top_road")
                         )
 
-                        if (screensaverSettings.lockScreenShowNextMarker && !navState.nextMarkerLabel.isNullOrBlank()) {
+                        if (showNextMarker && !navState.nextMarkerLabel.isNullOrBlank()) {
                             Text(
                                 text = navState.nextMarkerLabel,
                                 color = Color(0xFF94A3B8),
@@ -357,50 +368,85 @@ fun LockScreenNavigationContent(
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            LockScreenChainageOdometerText(
-                                chainageText = navState.chainageText,
-                                isIncreasing = navState.isIncreasingTrend,
-                                fontSizeSp = if (isCompactH) 28f else 34f,
-                                modifier = Modifier
-                                    .testTag("lock_screen_chainage_text")
-                                    .clearAndSetSemantics {
-                                        text = AnnotatedString(navState.chainageText)
-                                        contentDescription = navState.chainageText
-                                    }
-                            )
-
-                            AnimatedVisibility(
-                                visible = navState.reliableSide != null,
-                                enter = fadeIn(tween(180)),
-                                exit = fadeOut(tween(150))
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val badgeReservedDp = if (showRoadSide) 78.dp else 0.dp
+                            val maxChainageW = (maxWidth - badgeReservedDp - 8.dp).coerceAtLeast(84.dp)
+                            val targetCeilingSp = if (isCompactH) 28f else 34f
+                            val textMeasurer = rememberTextMeasurer()
+                            val density = LocalDensity.current
+                            val fittedSp = remember(
+                                navState.chainageText,
+                                maxChainageW,
+                                targetCeilingSp,
+                                density.density,
+                                density.fontScale
                             ) {
-                                val side = navState.reliableSide
-                                if (side != null) {
-                                    val sideColor = if (side == "LHS") Color(0xFF34D399) else Color(0xFF38BDF8)
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = sideColor.copy(alpha = 0.16f),
-                                        border = BorderStroke(1.dp, sideColor.copy(alpha = 0.65f)),
-                                        modifier = Modifier.testTag("lock_screen_side_badge")
-                                    ) {
-                                        Text(
-                                            text = "$side ${navState.directionArrow}",
-                                            color = sideColor,
-                                            fontSize = 11.sp,
+                                val tmpl = navState.chainageText.map { if (it.isDigit()) '8' else it }.joinToString("")
+                                val maxPx = with(density) { maxChainageW.toPx() } * 0.94f
+                                var sp = targetCeilingSp
+                                while (sp > 18f) {
+                                    val m = textMeasurer.measure(
+                                        text = tmpl,
+                                        style = TextStyle(
+                                            fontSize = sp.sp,
                                             fontWeight = FontWeight.Black,
-                                            letterSpacing = 0.8.sp,
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
-                                        )
+                                            fontFeatureSettings = "tnum"
+                                        ),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                    if (!m.hasVisualOverflow && m.size.width <= maxPx) break
+                                    sp -= 1.5f
+                                }
+                                sp.coerceAtLeast(18f)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (showChainage) {
+                                    LockScreenChainageOdometerText(
+                                        chainageText = navState.chainageText,
+                                        isIncreasing = navState.isIncreasingTrend,
+                                        fontSizeSp = fittedSp,
+                                        modifier = Modifier
+                                            .testTag("lock_screen_chainage_text")
+                                            .clearAndSetSemantics {
+                                                text = AnnotatedString(navState.chainageText)
+                                                contentDescription = navState.chainageText
+                                            }
+                                    )
+                                }
+
+                                AnimatedVisibility(
+                                    visible = showRoadSide,
+                                    enter = fadeIn(tween(180)),
+                                    exit = fadeOut(tween(150))
+                                ) {
+                                    val side = navState.reliableSide
+                                    if (side != null) {
+                                        val sideColor = if (side == "LHS") Color(0xFF34D399) else Color(0xFF38BDF8)
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = sideColor.copy(alpha = 0.16f),
+                                            border = BorderStroke(1.dp, sideColor.copy(alpha = 0.65f)),
+                                            modifier = Modifier.testTag("lock_screen_side_badge")
+                                        ) {
+                                            Text(
+                                                text = "$side ${navState.directionArrow}",
+                                                color = sideColor,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Black,
+                                                letterSpacing = 0.8.sp,
+                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        if (navState.locationName.isNotBlank()) {
+                        if (showLocation && navState.locationName.isNotBlank()) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -425,7 +471,7 @@ fun LockScreenNavigationContent(
                     }
 
                     // Compact Speed badge on right when enabled
-                    if (screensaverSettings.lockScreenShowSpeed) {
+                    if (showSpeed) {
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = Color(0xFF141923),
@@ -477,10 +523,12 @@ fun LockScreenNavigationContent(
                 val primaryMetric = when {
                     screensaverSettings.lockScreenShowEta && !navState.etaDurationText.isNullOrBlank() ->
                         navState.etaDurationText
-                    screensaverSettings.lockScreenShowSpeed ->
+                    showSpeed ->
                         navState.speedText
-                    else ->
+                    showChainage ->
                         navState.chainageText
+                    else ->
+                        navState.directionInstruction
                 }
 
                 Text(
@@ -494,11 +542,13 @@ fun LockScreenNavigationContent(
                 )
 
                 val detailParts = buildList {
-                    if (screensaverSettings.lockScreenShowNextMarker && !navState.distanceToNextText.isNullOrBlank()) {
+                    if (showDistanceRemaining && !navState.distanceToNextText.isNullOrBlank()) {
                         add(navState.distanceToNextText)
                     }
                     if (screensaverSettings.lockScreenShowEta && !navState.etaArrivalTimeText.isNullOrBlank()) {
                         add(navState.etaArrivalTimeText)
+                    } else if (navState.currentTimeText.isNotBlank()) {
+                        add(navState.currentTimeText)
                     }
                     if (!navState.lastUpdateStatusText.isNullOrBlank()) {
                         add(navState.lastUpdateStatusText)

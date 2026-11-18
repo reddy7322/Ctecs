@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.LinearScale
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
@@ -70,7 +71,9 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -193,6 +196,9 @@ fun SettingsScreen(
     val lastValidLocation by viewModel.lastValidLocation.collectAsStateWithLifecycle()
     val liveMatchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
     val screensaverSettings by viewModel.homeScreensaverSettings.collectAsStateWithLifecycle()
+    val navNotificationSettings by viewModel.navigationNotificationSettings.collectAsStateWithLifecycle()
+    val widgetSettings by viewModel.widgetSettings.collectAsStateWithLifecycle()
+    val kmStoneAlertSettings by viewModel.kmStoneAlertSettings.collectAsStateWithLifecycle()
     val compassState by viewModel.compassState.collectAsStateWithLifecycle()
     val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
     val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
@@ -3738,6 +3744,128 @@ fun SettingsScreen(
                         onMiniMapStyleChange = { style -> viewModel.setHomeMiniMapStyle(style) },
                         onToggleLockScreenNav = { enabled -> viewModel.setLockScreenNavigationEnabled(enabled) },
                         onResetDefaults = { viewModel.resetScreensaverSettings() }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 13c. NAVIGATION NOTIFICATIONS (STATUS BAR / NOW BAR / LOCK SCREEN)
+            // ====================================================
+            if (matchesSearch("navigation notifications lock screen status bar now bar live update chainage speed location", searchQuery)) {
+                val navNotifActive = navNotificationSettings.enabled && screensaverSettings.lockScreenNavEnabled
+                val navNotifSummary = if (navNotifActive) {
+                    buildString {
+                        append("ON")
+                        if (navNotificationSettings.liveNotificationEnabled) append(" • Live Chip")
+                        if (navNotificationSettings.showOnLockScreen) append(" • Lock Screen")
+                    }
+                } else {
+                    "OFF • Status bar & lock-screen updates"
+                }
+                SmartDropdownSection(
+                    title = "Navigation Notifications",
+                    subtitle = navNotifSummary,
+                    icon = Icons.Default.NotificationsActive,
+                    accentColor = primaryAccent,
+                    isExpanded = expandedSections["navigation_notifications"] ?: false,
+                    onToggleExpand = {
+                        expandedSections["navigation_notifications"] = !(expandedSections["navigation_notifications"] ?: false)
+                    }
+                ) {
+                    NavigationNotificationSettingsSectionContent(
+                        notifSettings = navNotificationSettings,
+                        isLockScreenNavActive = screensaverSettings.lockScreenNavEnabled,
+                        matchResult = liveMatchResult,
+                        locationState = locationState,
+                        activeRoute = activeRoute,
+                        projectProfile = currentProject,
+                        currentLocationName = currentLocationName,
+                        accentColor = primaryAccent,
+                        onToggleNotificationEnabled = { enabled ->
+                            viewModel.setNavigationNotificationEnabled(enabled)
+                        },
+                        onUpdateNotifSettings = { transform ->
+                            viewModel.updateNavigationNotificationSettings(transform)
+                        },
+                        onResetDefaults = {
+                            viewModel.resetNavigationNotificationSettings()
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 13d. WIDGETS (NATIVE ANDROID HOME-SCREEN WIDGETS)
+            // ====================================================
+            if (matchesSearch("widgets home screen compact navigation mini map dashboard flat theme accent chainage speed", searchQuery)) {
+                val widgetSummary = buildString {
+                    append(widgetSettings.themeMode.label)
+                    append(" • ")
+                    append(widgetSettings.backgroundStyle.label)
+                    append(" • ")
+                    append(widgetSettings.accentColor.label)
+                }
+                SmartDropdownSection(
+                    title = "Widgets",
+                    subtitle = widgetSummary,
+                    icon = Icons.Default.Widgets,
+                    accentColor = primaryAccent,
+                    isExpanded = expandedSections["widgets"] ?: false,
+                    onToggleExpand = {
+                        expandedSections["widgets"] = !(expandedSections["widgets"] ?: false)
+                    }
+                ) {
+                    WidgetSettingsSectionContent(
+                        widgetSettings = widgetSettings,
+                        matchResult = liveMatchResult,
+                        locationState = locationState,
+                        activeRoute = activeRoute,
+                        projectProfile = currentProject,
+                        currentLocationName = currentLocationName,
+                        compassHeading = compassState.azimuthDegrees,
+                        isTrackingActive = navNotificationSettings.enabled && screensaverSettings.lockScreenNavEnabled,
+                        accentColor = primaryAccent,
+                        onUpdateSettings = { transform -> viewModel.updateWidgetSettings(transform) },
+                        onUpdateInstanceConfig = { cfg -> viewModel.updateWidgetInstanceConfig(cfg) },
+                        onRemoveInstanceOverride = { id -> viewModel.removeWidgetInstanceOverride(id) },
+                        onRefreshWidgetsNow = { viewModel.refreshHomeScreenWidgetsNow() },
+                        onResetDefaults = { viewModel.resetWidgetSettings() }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 13e. NAVIGATION ALERTS -> KM STONE ARRIVAL
+            // ====================================================
+            if (matchesSearch("navigation alerts km stone arrival haptic vibration sound beep chime advance warning proximity threshold", searchQuery)) {
+                val kmAlertSummary = buildString {
+                    append(if (kmStoneAlertSettings.enabled) "ON" else "OFF")
+                    append(" • ±${kmStoneAlertSettings.proximityThresholdMetres}m")
+                    if (kmStoneAlertSettings.vibrationEnabled) append(" • ${kmStoneAlertSettings.vibrationPattern.label}")
+                    if (kmStoneAlertSettings.soundEnabled) append(" • ${kmStoneAlertSettings.soundOption.label}")
+                }
+                SmartDropdownSection(
+                    title = "Navigation Alerts • KM Stone Arrival",
+                    subtitle = kmAlertSummary,
+                    icon = Icons.Default.Vibration,
+                    accentColor = primaryAccent,
+                    isExpanded = expandedSections["km_stone_alerts"] ?: false,
+                    onToggleExpand = {
+                        expandedSections["km_stone_alerts"] = !(expandedSections["km_stone_alerts"] ?: false)
+                    }
+                ) {
+                    KmStoneAlertSettingsSectionContent(
+                        settings = kmStoneAlertSettings,
+                        accentColor = primaryAccent,
+                        onUpdateSettings = { transform -> viewModel.updateKmStoneAlertSettings(transform) },
+                        onResetDefaults = { viewModel.resetKmStoneAlertSettings() },
+                        onFeedbackMessage = { msg -> viewModel.showToast(msg, ToastType.INFO) }
                     )
                 }
             }

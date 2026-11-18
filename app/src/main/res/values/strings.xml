@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">Ctecs</string>
+    <string name="widget_compact_title">CTECS Compact Chainage</string>
+    <string name="widget_compact_desc">Live calibrated chainage, LHS/RHS direction, and GPS speed in a compact flat bar.</string>
+    <string name="widget_navigation_title">CTECS Navigation Strip</string>
+    <string name="widget_navigation_desc">Large chainage, LHS/RHS, Next KM stone, remaining distance, speed, and GPS status.</string>
+    <string name="widget_minimap_title">CTECS Mini Map</string>
+    <string name="widget_minimap_desc">Live KMZ/KML alignment Mini Map with current GPS position, direction, chainage, and speed.</string>
+    <string name="widget_dashboard_title">CTECS Highway Dashboard</string>
+    <string name="widget_dashboard_desc">Digital chainage, automotive speed readout, LHS/RHS, Next KM marker, location, and optional Mini Map.</string>
 </resources>

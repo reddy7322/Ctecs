@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent">
+
+    <!-- High-DPI minimalist Flat UI rendered surface -->
+    <ImageView
+        android:id="@+id/widget_canvas_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:contentDescription="@string/app_name" />
+
+    <!-- Accessible & testable hidden text mirrors for launcher indexing and screen readers -->
+    <TextView
+        android:id="@+id/widget_text_chainage"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_text_direction"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_text_speed"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_text_next_km"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_text_status"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <!-- Interactive hit zones for Chainage, Mini Map, Dashboard, Refresh, and Tracking Toggle -->
+    <LinearLayout
+        android:id="@+id/widget_hit_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:weightSum="100">
+
+        <!-- Top / Header Action Bar (Main Dashboard + Tracking Toggle + Manual Refresh) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="26"
+            android:orientation="horizontal"
+            android:weightSum="100">
+
+            <FrameLayout
+                android:id="@+id/widget_zone_main"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="64"
+                android:contentDescription="Open CTECS Navigation Dashboard" />
+
+            <FrameLayout
+                android:id="@+id/widget_btn_tracking"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="20"
+                android:contentDescription="Start or Stop Navigation Tracking" />
+
+            <FrameLayout
+                android:id="@+id/widget_btn_refresh"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="16"
+                android:contentDescription="Refresh Widget Telemetry" />
+        </LinearLayout>
+
+        <!-- Body Split: Left/Primary Chainage Zone & Right/Secondary Mini Map / Navigation Zone -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="74"
+            android:orientation="horizontal"
+            android:weightSum="100">
+
+            <FrameLayout
+                android:id="@+id/widget_zone_chainage"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="56"
+                android:contentDescription="Open CTECS Chainage Screen" />
+
+            <FrameLayout
+                android:id="@+id/widget_zone_minimap"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="44"
+                android:contentDescription="Open CTECS Navigation Map" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>

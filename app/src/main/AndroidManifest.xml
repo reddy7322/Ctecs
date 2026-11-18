@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -62,6 +64,62 @@
             android:name=".navigation.LockScreenNavigationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <receiver
+            android:name=".widget.CtecsCompactWidgetProvider"
+            android:exported="false"
+            android:label="@string/widget_compact_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_WIDGET_MANUAL_REFRESH" />
+                <action android:name="com.example.widget.ACTION_WIDGET_SYNC_ALL" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_compact" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.CtecsNavigationWidgetProvider"
+            android:exported="false"
+            android:label="@string/widget_navigation_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_WIDGET_MANUAL_REFRESH" />
+                <action android:name="com.example.widget.ACTION_WIDGET_SYNC_ALL" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_navigation" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.CtecsMiniMapWidgetProvider"
+            android:exported="false"
+            android:label="@string/widget_minimap_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_WIDGET_MANUAL_REFRESH" />
+                <action android:name="com.example.widget.ACTION_WIDGET_SYNC_ALL" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_minimap" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.CtecsDashboardWidgetProvider"
+            android:exported="false"
+            android:label="@string/widget_dashboard_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_WIDGET_MANUAL_REFRESH" />
+                <action android:name="com.example.widget.ACTION_WIDGET_SYNC_ALL" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info_dashboard" />
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

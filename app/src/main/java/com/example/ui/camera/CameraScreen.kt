@@ -17,11 +17,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.Image
@@ -32,10 +30,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -264,6 +263,7 @@ private fun CameraApertureIcon(modifier: Modifier = Modifier, tint: Color = Colo
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CameraScreen(
     viewModel: MainViewModel,
@@ -413,7 +413,6 @@ fun CameraScreen(
     var showCustomCommentDialog by remember { mutableStateOf(false) }
     var commentInput by remember { mutableStateOf("") }
     var isTopToolbarExpanded by remember { mutableStateOf(true) }
-    var isQuickOverlayExpanded by remember { mutableStateOf(false) }
     var showLaneMenu by remember { mutableStateOf(false) }
     var isHdrEnabled by remember { mutableStateOf(false) }
     var activeOutputSettingsType by remember { mutableStateOf<String?>(null) }
@@ -1113,460 +1112,444 @@ fun CameraScreen(
                 }
             }
 
-            // 2. LEFT CORNER: HIGHWAY-RELATED MINIMALIST GLASS CONTROLS (Chainage always visible; Quick Overlay Settings collapsed initially)
-            Column(
+            // 2. LEFT CORNER: HIGHWAY FUNCTIONS — ALWAYS VISIBLE & RESPONSIVE IN LANDSCAPE
+            BoxWithConstraints(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(top = 54.dp, start = 14.dp, bottom = 12.dp)
-                    .width(150.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(top = 52.dp, start = 14.dp, bottom = 12.dp)
             ) {
-                // Always-visible Chainage Adjustment Pill (Value + Animated Status Bulbs Only)
-                val isManualSource = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
-                val isCustomCorrectionSource = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
-                val sourceBorderColor = when {
-                    isManualSource -> HighlightYellow
-                    isCustomCorrectionSource -> Color(0xFFA855F7)
-                    chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
-                    else -> glassBorderIdle
+                val isUltraShortHeight = maxHeight < 180.dp
+                val isCompactHeight = maxHeight < 380.dp
+                val pillHeight = when {
+                    isUltraShortHeight -> 28.dp
+                    isCompactHeight -> 30.dp
+                    else -> 33.dp
                 }
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.8.dp,
-                        sourceBorderColor
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(33.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .clickable { viewModel.openManualChainageDialog() }
-                        .testTag("landscape_chainage_pill")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = chainageIndicators.displayChainage,
-                            color = PrimaryText,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .testTag("hud_landscape_chainage_value")
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        ChainageStatusBubblesRow(
-                            state = chainageIndicators,
-                            isDarkTheme = true,
-                            isScreenVisible = isCameraScreenVisible,
-                            showInactiveBubbles = false,
-                            showLabels = false,
-                            tagPrefix = "hud_landscape_"
-                        )
-                    }
+                val itemSpacing = when {
+                    isUltraShortHeight -> 4.dp
+                    isCompactHeight -> 5.dp
+                    else -> 6.dp
                 }
+                val pillWidth = if (isUltraShortHeight) 144.dp else 150.dp
 
-                // Compact Quick Overlay Settings Toggle Button (Collapsed Initially)
-                val hasCustomOverlayValues = projectProfile.roadSide != RoadSide.NONE ||
-                    projectProfile.hasActiveLane() ||
-                    projectProfile.hasActiveActivity() ||
-                    (projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true))
-                Box(
-                    modifier = Modifier
-                        .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .clickable { isQuickOverlayExpanded = !isQuickOverlayExpanded }
-                        .semantics(mergeDescendants = true) {
-                            contentDescription = if (isQuickOverlayExpanded) {
-                                "Collapse Quick Overlay Settings"
-                            } else {
-                                "Expand Quick Overlay Settings"
-                            }
-                            stateDescription = if (isQuickOverlayExpanded) "Expanded" else "Collapsed"
-                        }
-                        .testTag("landscape_quick_overlay_toggle"),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = if (isQuickOverlayExpanded) Color(0x28FACC15) else Color.Transparent,
-                        border = androidx.compose.foundation.BorderStroke(
-                            0.8.dp,
-                            if (isQuickOverlayExpanded) HighlightYellow else glassBorderIdle
-                        ),
-                        modifier = Modifier.height(33.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = null,
-                                tint = if (isQuickOverlayExpanded) HighlightYellow else PrimaryText,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            if (hasCustomOverlayValues && !isQuickOverlayExpanded) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(HighlightYellow)
-                                )
-                            }
-                            Icon(
-                                imageVector = if (isQuickOverlayExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = if (isQuickOverlayExpanded) HighlightYellow else PrimaryText.copy(alpha = 0.85f),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Expandable Quick Overlay Controls (Side, Lane, Activity, Custom Comment)
-                AnimatedVisibility(
-                    visible = isQuickOverlayExpanded,
-                    enter = fadeIn(tween(220)) + expandVertically(tween(240)),
-                    exit = fadeOut(tween(180)) + shrinkVertically(tween(200))
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        // Control 2: LHS / RHS / BHS / Median / None Segmented Pill (Full Transparent Glass)
-                        Box {
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(33.dp)
-                                    .testTag("landscape_side_pill")
-                            ) {
-                                Row(modifier = Modifier.fillMaxSize()) {
-                                    val isLhs = projectProfile.roadSide == RoadSide.LHS
-                                    val isRhs = projectProfile.roadSide == RoadSide.RHS
-                                    val isOtherSide = !isLhs && !isRhs
-
-                                    // LHS Segment
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxSize()
-                                            .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
-                                            .background(Color.Transparent)
-                                            .clickable { viewModel.updateSide(RoadSide.LHS) },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                        ) {
-                                            if (isLhs) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(5.dp)
-                                                        .clip(CircleShape)
-                                                        .background(HighlightYellow)
-                                                )
-                                            }
-                                            Text(
-                                                text = "LHS",
-                                                color = if (isLhs) HighlightYellow else PrimaryText,
-                                                fontSize = 11.sp,
-                                                fontWeight = if (isLhs) FontWeight.Black else FontWeight.Medium
-                                            )
-                                        }
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .width(0.8.dp)
-                                            .fillMaxHeight()
-                                            .background(Color.White.copy(alpha = 0.25f))
-                                    )
-
-                                    // RHS Segment
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .fillMaxSize()
-                                            .background(Color.Transparent)
-                                            .clickable { viewModel.updateSide(RoadSide.RHS) },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                        ) {
-                                            if (isRhs) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(5.dp)
-                                                        .clip(CircleShape)
-                                                        .background(HighlightYellow)
-                                                )
-                                            }
-                                            Text(
-                                                text = "RHS",
-                                                color = if (isRhs) HighlightYellow else PrimaryText,
-                                                fontSize = 11.sp,
-                                                fontWeight = if (isRhs) FontWeight.Black else FontWeight.Medium
-                                            )
-                                        }
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .width(0.8.dp)
-                                            .fillMaxHeight()
-                                            .background(Color.White.copy(alpha = 0.25f))
-                                    )
-
-                                    // BHS / Median / None Dropdown Segment
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1.1f)
-                                            .fillMaxSize()
-                                            .clip(RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp))
-                                            .background(Color.Transparent)
-                                            .clickable { showSideMenu = true },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = if (isOtherSide) projectProfile.roadSide.label else "BHS▾",
-                                            color = if (isOtherSide) HighlightYellow else PrimaryText,
-                                            fontSize = 10.5.sp,
-                                            fontWeight = if (isOtherSide) FontWeight.Black else FontWeight.Medium,
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = showSideMenu,
-                                onDismissRequest = { showSideMenu = false }
-                            ) {
-                                RoadSide.entries.forEach { sideOption ->
-                                    val isSel = projectProfile.roadSide == sideOption
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = sideOption.label,
-                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSel) HighlightYellow else Color.Unspecified
-                                            )
-                                        },
-                                        onClick = {
-                                            viewModel.updateSide(sideOption)
-                                            showSideMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Control 3: Lane Selector Dropdown Pill (Full Transparent Glass)
-                        Box {
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(33.dp)
-                                    .clip(RoundedCornerShape(18.dp))
-                                    .clickable { showLaneMenu = true }
-                                    .testTag("landscape_lane_pill")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        RoadMarkingIcon(tint = PrimaryText)
-                                        Text(
-                                            text = projectProfile.lane.ifBlank { "None" },
-                                            color = PrimaryText,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = "Select Lane",
-                                        tint = PrimaryText.copy(alpha = 0.85f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = showLaneMenu,
-                                onDismissRequest = { showLaneMenu = false }
-                            ) {
-                                ProjectProfile.LANE_PRESETS.forEach { l ->
-                                    val isSel = projectProfile.lane.equals(l, ignoreCase = true)
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = l,
-                                                color = if (isSel) HighlightYellow else Color.Unspecified,
-                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
-                                            )
-                                        },
-                                        onClick = {
-                                            viewModel.updateLane(l)
-                                            showLaneMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Control 4: Activity & Sub-Activity Selector Dropdown Pill (Full Transparent Glass)
-                        Box {
-                            val actLabel = projectProfile.activity.ifBlank { "None" }
-                            val subSuffix = if (projectProfile.hasActiveSubActivity()) " (${projectProfile.subActivity})" else ""
-                            val displayActivityPill = if (actLabel.equals("None", ignoreCase = true)) "None" else "$actLabel$subSuffix"
-
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(33.dp)
-                                    .clip(RoundedCornerShape(18.dp))
-                                    .clickable { showActivityMenu = true }
-                                    .testTag("landscape_activity_pill")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Layers,
-                                            contentDescription = null,
-                                            tint = PrimaryText,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Text(
-                                            text = displayActivityPill,
-                                            color = PrimaryText,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = "Select Activity",
-                                        tint = PrimaryText.copy(alpha = 0.85f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-
-                            DropdownMenu(
-                                expanded = showActivityMenu,
-                                onDismissRequest = { showActivityMenu = false }
-                            ) {
-                                ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
-                                    val isSel = projectProfile.activity.equals(act, ignoreCase = true) ||
-                                        (act == "None" && projectProfile.activity.isBlank())
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = act,
-                                                color = if (isSel) HighlightYellow else Color.Unspecified,
-                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
-                                            )
-                                        },
-                                        onClick = {
-                                            viewModel.updateActivity(act)
-                                            showActivityMenu = false
-                                        }
-                                    )
-                                }
-                                HorizontalDivider(color = glassBorderIdle)
-                                DropdownMenuItem(
-                                    text = { Text("Custom Activity / Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
-                                    onClick = {
-                                        showActivityMenu = false
-                                        showManualActivityDialog = true
-                                    }
-                                )
-                            }
-                        }
-
-                        // Control 6: Comment Pill (Full Transparent Glass)
-                        val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
+                val sidePillContent: @Composable () -> Unit = {
+                    // Control 2: LHS / RHS / BHS / Median / None Segmented Pill (Full Transparent Glass)
+                    Box(modifier = Modifier.width(pillWidth)) {
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = Color.Transparent,
-                            border = androidx.compose.foundation.BorderStroke(
-                                0.8.dp,
-                                if (hasComment) Color(0xFF38BDF8) else glassBorderIdle
-                            ),
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(33.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable {
-                                    commentInput = projectProfile.customDescription
-                                    showCustomCommentDialog = true
+                                .height(pillHeight)
+                                .testTag("landscape_side_pill")
+                        ) {
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                val isLhs = projectProfile.roadSide == RoadSide.LHS
+                                val isRhs = projectProfile.roadSide == RoadSide.RHS
+                                val isOtherSide = !isLhs && !isRhs
+
+                                // LHS Segment
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
+                                        .background(Color.Transparent)
+                                        .clickable { viewModel.updateSide(RoadSide.LHS) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        if (isLhs) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(5.dp)
+                                                    .clip(CircleShape)
+                                                    .background(HighlightYellow)
+                                            )
+                                        }
+                                        Text(
+                                            text = "LHS",
+                                            color = if (isLhs) HighlightYellow else PrimaryText,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isLhs) FontWeight.Black else FontWeight.Medium
+                                        )
+                                    }
                                 }
-                                .testTag("landscape_comment_pill")
+
+                                Box(
+                                    modifier = Modifier
+                                        .width(0.8.dp)
+                                        .fillMaxHeight()
+                                        .background(Color.White.copy(alpha = 0.25f))
+                                )
+
+                                // RHS Segment
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxSize()
+                                        .background(Color.Transparent)
+                                        .clickable { viewModel.updateSide(RoadSide.RHS) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        if (isRhs) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(5.dp)
+                                                    .clip(CircleShape)
+                                                    .background(HighlightYellow)
+                                            )
+                                        }
+                                        Text(
+                                            text = "RHS",
+                                            color = if (isRhs) HighlightYellow else PrimaryText,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isRhs) FontWeight.Black else FontWeight.Medium
+                                        )
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .width(0.8.dp)
+                                        .fillMaxHeight()
+                                        .background(Color.White.copy(alpha = 0.25f))
+                                )
+
+                                // BHS / Median / None Dropdown Segment
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1.1f)
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp))
+                                        .background(Color.Transparent)
+                                        .clickable { showSideMenu = true },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = if (isOtherSide) projectProfile.roadSide.label else "BHS▾",
+                                        color = if (isOtherSide) HighlightYellow else PrimaryText,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = if (isOtherSide) FontWeight.Black else FontWeight.Medium,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = showSideMenu,
+                            onDismissRequest = { showSideMenu = false }
+                        ) {
+                            RoadSide.entries.forEach { sideOption ->
+                                val isSel = projectProfile.roadSide == sideOption
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = sideOption.label,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isSel) HighlightYellow else Color.Unspecified
+                                        )
+                                    },
+                                    onClick = {
+                                        viewModel.updateSide(sideOption)
+                                        showSideMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val lanePillContent: @Composable () -> Unit = {
+                    // Control 3: Lane Selector Dropdown Pill (Full Transparent Glass)
+                    Box(modifier = Modifier.width(pillWidth)) {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color.Transparent,
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(pillHeight)
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable { showLaneMenu = true }
+                                .testTag("landscape_lane_pill")
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    RoadMarkingIcon(tint = PrimaryText)
+                                    Text(
+                                        text = projectProfile.lane.ifBlank { "None" },
+                                        color = PrimaryText,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                                 Icon(
-                                    imageVector = Icons.Default.ChatBubbleOutline,
-                                    contentDescription = "Custom Comment",
-                                    tint = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = if (hasComment) projectProfile.customDescription else "+ Comment",
-                                    color = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Select Lane",
+                                    tint = PrimaryText.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
+
+                        DropdownMenu(
+                            expanded = showLaneMenu,
+                            onDismissRequest = { showLaneMenu = false }
+                        ) {
+                            ProjectProfile.LANE_PRESETS.forEach { l ->
+                                val isSel = projectProfile.lane.equals(l, ignoreCase = true)
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = l,
+                                            color = if (isSel) HighlightYellow else Color.Unspecified,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        viewModel.updateLane(l)
+                                        showLaneMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val activityPillContent: @Composable () -> Unit = {
+                    // Control 4: Activity & Sub-Activity Selector Dropdown Pill (Full Transparent Glass)
+                    Box(modifier = Modifier.width(pillWidth)) {
+                        val actLabel = projectProfile.activity.ifBlank { "None" }
+                        val subSuffix = if (projectProfile.hasActiveSubActivity()) " (${projectProfile.subActivity})" else ""
+                        val displayActivityPill = if (actLabel.equals("None", ignoreCase = true)) "None" else "$actLabel$subSuffix"
+
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color.Transparent,
+                            border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(pillHeight)
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable { showActivityMenu = true }
+                                .testTag("landscape_activity_pill")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Layers,
+                                        contentDescription = null,
+                                        tint = PrimaryText,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = displayActivityPill,
+                                        color = PrimaryText,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Select Activity",
+                                    tint = PrimaryText.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = showActivityMenu,
+                            onDismissRequest = { showActivityMenu = false }
+                        ) {
+                            ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
+                                val isSel = projectProfile.activity.equals(act, ignoreCase = true) ||
+                                    (act == "None" && projectProfile.activity.isBlank())
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = act,
+                                            color = if (isSel) HighlightYellow else Color.Unspecified,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        viewModel.updateActivity(act)
+                                        showActivityMenu = false
+                                    }
+                                )
+                            }
+                            HorizontalDivider(color = glassBorderIdle)
+                            DropdownMenuItem(
+                                text = { Text("Custom Activity / Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                                onClick = {
+                                    showActivityMenu = false
+                                    showManualActivityDialog = true
+                                }
+                            )
+                        }
+                    }
+                }
+
+                val chainagePillContent: @Composable () -> Unit = {
+                    // Control 5: Always-visible Chainage Adjustment Pill (Value + Animated Status Bulbs Only)
+                    val isManualSource = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
+                    val isCustomCorrectionSource = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
+                    val sourceBorderColor = when {
+                        isManualSource -> HighlightYellow
+                        isCustomCorrectionSource -> Color(0xFFA855F7)
+                        chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
+                        else -> glassBorderIdle
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color.Transparent,
+                        border = androidx.compose.foundation.BorderStroke(
+                            0.8.dp,
+                            sourceBorderColor
+                        ),
+                        modifier = Modifier
+                            .width(pillWidth)
+                            .height(pillHeight)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { viewModel.openManualChainageDialog() }
+                            .testTag("landscape_chainage_pill")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = chainageIndicators.displayChainage,
+                                color = PrimaryText,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .testTag("hud_landscape_chainage_value")
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            ChainageStatusBubblesRow(
+                                state = chainageIndicators,
+                                isDarkTheme = true,
+                                isScreenVisible = isCameraScreenVisible,
+                                showInactiveBubbles = false,
+                                showLabels = false,
+                                tagPrefix = "hud_landscape_"
+                            )
+                        }
+                    }
+                }
+
+                val commentPillContent: @Composable () -> Unit = {
+                    // Control 6: Comment Pill (Full Transparent Glass)
+                    val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color.Transparent,
+                        border = androidx.compose.foundation.BorderStroke(
+                            0.8.dp,
+                            if (hasComment) Color(0xFF38BDF8) else glassBorderIdle
+                        ),
+                        modifier = Modifier
+                            .width(pillWidth)
+                            .height(pillHeight)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable {
+                                commentInput = projectProfile.customDescription
+                                showCustomCommentDialog = true
+                            }
+                            .testTag("landscape_comment_pill")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ChatBubbleOutline,
+                                contentDescription = "Custom Comment",
+                                tint = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (hasComment) projectProfile.customDescription else "+ Comment",
+                                color = if (hasComment) Color(0xFF38BDF8) else PrimaryText,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                if (isUltraShortHeight) {
+                    FlowRow(
+                        maxItemsInEachRow = 2,
+                        horizontalArrangement = Arrangement.spacedBy(itemSpacing),
+                        verticalArrangement = Arrangement.spacedBy(itemSpacing),
+                        modifier = Modifier
+                            .widthIn(max = 304.dp)
+                            .verticalScroll(rememberScrollState())
+                            .testTag("landscape_highway_functions_column")
+                    ) {
+                        sidePillContent()
+                        lanePillContent()
+                        activityPillContent()
+                        chainagePillContent()
+                        commentPillContent()
+                    }
+                } else {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(itemSpacing),
+                        modifier = Modifier
+                            .width(pillWidth)
+                            .verticalScroll(rememberScrollState())
+                            .testTag("landscape_highway_functions_column")
+                    ) {
+                        sidePillContent()
+                        lanePillContent()
+                        activityPillContent()
+                        chainagePillContent()
+                        commentPillContent()
                     }
                 }
             }
@@ -2401,198 +2384,130 @@ fun CameraScreen(
                     .padding(bottom = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Expandable Quick Overlay Settings Strip (Side, Lane, Activity, Custom Comments) — Collapsed Initially
-                AnimatedVisibility(
-                    visible = isQuickOverlayExpanded,
-                    enter = fadeIn(tween(220)) + expandVertically(tween(240), expandFrom = Alignment.Bottom),
-                    exit = fadeOut(tween(180)) + shrinkVertically(tween(200), shrinkTowards = Alignment.Bottom)
+                // Always-visible Responsive Highway Functions Bar (Side, Lane, Activity, Chainage, Custom Comments)
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
-                    androidx.compose.foundation.lazy.LazyRow(
+                    val isNarrowPortrait = maxWidth < 360.dp
+                    val hGap = if (isNarrowPortrait) 5.dp else 6.dp
+                    val vGap = if (isNarrowPortrait) 4.dp else 5.dp
+
+                    FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .testTag("portrait_highway_functions_bar"),
+                        horizontalArrangement = Arrangement.spacedBy(hGap, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(vGap)
                     ) {
                         // Side chip (RHS / LHS / BHS / Median / None)
-                        item {
-                            FloatingGlassCard(
-                                shape = RoundedCornerShape(14.dp),
-                                backgroundColor = Color(0x1A101726),
-                                borderColor = Color(0x35FFFFFF),
-                                onClick = {
-                                    val nextSide = when (projectProfile.roadSide) {
-                                        RoadSide.RHS -> RoadSide.LHS
-                                        RoadSide.LHS -> RoadSide.BOTH
-                                        RoadSide.BOTH -> RoadSide.MEDIAN
-                                        RoadSide.MEDIAN -> RoadSide.NONE
-                                        RoadSide.NONE -> RoadSide.RHS
-                                    }
-                                    viewModel.updateSide(nextSide)
-                                },
-                                modifier = Modifier
-                                    .wrapContentWidth()
-                                    .wrapContentHeight()
-                                    .testTag("side_chip")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(5.dp)
-                                            .clip(CircleShape)
-                                            .background(if (projectProfile.roadSide == RoadSide.NONE) Color.Gray else HighlightYellow)
-                                    )
-                                    Text(
-                                        text = projectProfile.roadSide.label,
-                                        color = if (projectProfile.roadSide == RoadSide.NONE) Color.White.copy(alpha = 0.75f) else HighlightYellow,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x35FFFFFF),
+                            onClick = {
+                                val nextSide = when (projectProfile.roadSide) {
+                                    RoadSide.RHS -> RoadSide.LHS
+                                    RoadSide.LHS -> RoadSide.BOTH
+                                    RoadSide.BOTH -> RoadSide.MEDIAN
+                                    RoadSide.MEDIAN -> RoadSide.NONE
+                                    RoadSide.NONE -> RoadSide.RHS
                                 }
+                                viewModel.updateSide(nextSide)
+                            },
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .wrapContentHeight()
+                                .testTag("side_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(if (projectProfile.roadSide == RoadSide.NONE) Color.Gray else HighlightYellow)
+                                )
+                                Text(
+                                    text = projectProfile.roadSide.label,
+                                    color = if (projectProfile.roadSide == RoadSide.NONE) Color.White.copy(alpha = 0.75f) else HighlightYellow,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
                             }
                         }
 
                         // Lane / Type chip
-                        item {
-                            FloatingGlassCard(
-                                shape = RoundedCornerShape(14.dp),
-                                backgroundColor = Color(0x1A101726),
-                                borderColor = Color(0x35FFFFFF),
-                                onClick = {
-                                    val lanes = ProjectProfile.LANE_PRESETS
-                                    val currentIdx = lanes.indexOfFirst { it.equals(projectProfile.lane, ignoreCase = true) }
-                                    val nextIndex = if (currentIdx >= 0) (currentIdx + 1) % lanes.size else 0
-                                    viewModel.updateLane(lanes[nextIndex])
-                                },
-                                modifier = Modifier
-                                    .wrapContentWidth()
-                                    .wrapContentHeight()
-                                    .testTag("lane_chip")
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = Color(0x1A101726),
+                            borderColor = Color(0x35FFFFFF),
+                            onClick = {
+                                val lanes = ProjectProfile.LANE_PRESETS
+                                val currentIdx = lanes.indexOfFirst { it.equals(projectProfile.lane, ignoreCase = true) }
+                                val nextIndex = if (currentIdx >= 0) (currentIdx + 1) % lanes.size else 0
+                                viewModel.updateLane(lanes[nextIndex])
+                            },
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .wrapContentHeight()
+                                .testTag("lane_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Tune,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Text(
-                                        text = projectProfile.lane.ifBlank { "None" },
-                                        color = Color.White,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = projectProfile.lane.ifBlank { "None" },
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
                             }
                         }
 
                         // Activity chip
-                        item {
-                            Box {
-                                val actText = projectProfile.activity.ifBlank { "None" }
-                                val subText = if (projectProfile.hasActiveSubActivity()) " (${projectProfile.subActivity})" else ""
-                                val chipDisplay = if (actText.equals("None", ignoreCase = true)) "None" else "$actText$subText"
+                        Box {
+                            val actText = projectProfile.activity.ifBlank { "None" }
+                            val subText = if (projectProfile.hasActiveSubActivity()) " (${projectProfile.subActivity})" else ""
+                            val chipDisplay = if (actText.equals("None", ignoreCase = true)) "None" else "$actText$subText"
 
-                                FloatingGlassCard(
-                                    shape = RoundedCornerShape(14.dp),
-                                    backgroundColor = Color(0x1A101726),
-                                    borderColor = Color(0x35FFFFFF),
-                                    onClick = { showActivityMenu = true },
-                                    modifier = Modifier
-                                        .wrapContentWidth()
-                                        .wrapContentHeight()
-                                        .testTag("activity_chip")
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Edit,
-                                            contentDescription = null,
-                                            tint = HighlightYellow,
-                                            modifier = Modifier.size(12.dp)
-                                        )
-                                        Text(
-                                            text = chipDisplay,
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-
-                                DropdownMenu(
-                                    expanded = showActivityMenu,
-                                    onDismissRequest = { showActivityMenu = false }
-                                ) {
-                                    ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
-                                        val isSel = projectProfile.activity.equals(act, ignoreCase = true) ||
-                                            (act == "None" && projectProfile.activity.isBlank())
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    text = act,
-                                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                                    color = if (isSel) HighlightYellow else Color.Unspecified
-                                                )
-                                            },
-                                            onClick = {
-                                                viewModel.updateActivity(act)
-                                                showActivityMenu = false
-                                            }
-                                        )
-                                    }
-                                    HorizontalDivider(color = BorderColor)
-                                    DropdownMenuItem(
-                                        text = { Text("Custom Activity & Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
-                                        onClick = {
-                                            showActivityMenu = false
-                                            showManualActivityDialog = true
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Custom Comments chip
-                        item {
-                            val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
                             FloatingGlassCard(
                                 shape = RoundedCornerShape(14.dp),
-                                backgroundColor = if (hasComment) Color(0x250284C7) else Color(0x1A101726),
-                                borderColor = if (hasComment) Color(0xFF38BDF8) else Color(0x35FFFFFF),
-                                onClick = {
-                                    commentInput = projectProfile.customDescription
-                                    showCustomCommentDialog = true
-                                },
+                                backgroundColor = Color(0x1A101726),
+                                borderColor = Color(0x35FFFFFF),
+                                onClick = { showActivityMenu = true },
                                 modifier = Modifier
                                     .wrapContentWidth()
                                     .wrapContentHeight()
-                                    .testTag("custom_comment_chip")
+                                    .testTag("activity_chip")
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.ChatBubbleOutline,
-                                        contentDescription = "Custom Comment",
-                                        tint = if (hasComment) Color(0xFF38BDF8) else Color.White,
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = null,
+                                        tint = HighlightYellow,
                                         modifier = Modifier.size(12.dp)
                                     )
                                     Text(
-                                        text = if (hasComment) projectProfile.customDescription else "+ Comments",
+                                        text = chipDisplay,
                                         color = Color.White,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
@@ -2602,124 +2517,124 @@ fun CameraScreen(
                                     )
                                 }
                             }
-                        }
-                    }
-                }
 
-                // Always-visible Compact Bar: Quick Overlay Settings Toggle + Live Chainage (with animated bulbs only)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val hasCustomOverlayValues = projectProfile.roadSide != RoadSide.NONE ||
-                        projectProfile.hasActiveLane() ||
-                        projectProfile.hasActiveActivity() ||
-                        (projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true))
-
-                    // Compact Quick Overlay Settings Toggle Button (48dp touch target)
-                    Box(
-                        modifier = Modifier
-                            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { isQuickOverlayExpanded = !isQuickOverlayExpanded }
-                            .semantics(mergeDescendants = true) {
-                                contentDescription = if (isQuickOverlayExpanded) {
-                                    "Collapse Quick Overlay Settings"
-                                } else {
-                                    "Expand Quick Overlay Settings"
+                            DropdownMenu(
+                                expanded = showActivityMenu,
+                                onDismissRequest = { showActivityMenu = false }
+                            ) {
+                                ProjectProfile.ACTIVITY_PRESETS.forEach { act ->
+                                    val isSel = projectProfile.activity.equals(act, ignoreCase = true) ||
+                                        (act == "None" && projectProfile.activity.isBlank())
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = act,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSel) HighlightYellow else Color.Unspecified
+                                            )
+                                        },
+                                        onClick = {
+                                            viewModel.updateActivity(act)
+                                            showActivityMenu = false
+                                        }
+                                    )
                                 }
-                                stateDescription = if (isQuickOverlayExpanded) "Expanded" else "Collapsed"
+                                HorizontalDivider(color = BorderColor)
+                                DropdownMenuItem(
+                                    text = { Text("Custom Activity & Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
+                                    onClick = {
+                                        showActivityMenu = false
+                                        showManualActivityDialog = true
+                                    }
+                                )
                             }
-                            .testTag("portrait_quick_overlay_toggle"),
-                        contentAlignment = Alignment.Center
-                    ) {
+                        }
+
+                        // Always-visible Chainage quick edit button (Value + Animated Status Bulbs Only)
+                        val isManualActive = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
+                        val isCustomActive = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
+                        val chipBg = when {
+                            isManualActive -> Color(0x25FACC15)
+                            isCustomActive -> Color(0x259333EA)
+                            chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0x25F59E0B)
+                            else -> Color(0x1A101726)
+                        }
+                        val chipBorder = when {
+                            isManualActive -> HighlightYellow
+                            isCustomActive -> Color(0xFFA855F7)
+                            chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
+                            else -> Color(0x35FFFFFF)
+                        }
                         FloatingGlassCard(
                             shape = RoundedCornerShape(14.dp),
-                            backgroundColor = if (isQuickOverlayExpanded) Color(0x28FACC15) else Color(0x1A101726),
-                            borderColor = if (isQuickOverlayExpanded) HighlightYellow else Color(0x35FFFFFF),
-                            onClick = null,
+                            backgroundColor = chipBg,
+                            borderColor = chipBorder,
+                            onClick = { viewModel.openManualChainageDialog() },
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .wrapContentHeight()
+                                .testTag("chainage_chip")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(
+                                    text = chainageIndicators.displayChainage,
+                                    color = Color.White,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.testTag("hud_chainage_value")
+                                )
+                                ChainageStatusBubblesRow(
+                                    state = chainageIndicators,
+                                    isDarkTheme = true,
+                                    isScreenVisible = isCameraScreenVisible,
+                                    showInactiveBubbles = false,
+                                    showLabels = false,
+                                    tagPrefix = "hud_portrait_"
+                                )
+                            }
+                        }
+
+                        // Custom Comments chip
+                        val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
+                        FloatingGlassCard(
+                            shape = RoundedCornerShape(14.dp),
+                            backgroundColor = if (hasComment) Color(0x250284C7) else Color(0x1A101726),
+                            borderColor = if (hasComment) Color(0xFF38BDF8) else Color(0x35FFFFFF),
+                            onClick = {
+                                commentInput = projectProfile.customDescription
+                                showCustomCommentDialog = true
+                            },
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .wrapContentHeight()
+                                .testTag("custom_comment_chip")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Tune,
-                                    contentDescription = null,
-                                    tint = if (isQuickOverlayExpanded) HighlightYellow else Color.White,
-                                    modifier = Modifier.size(14.dp)
+                                    imageVector = Icons.Default.ChatBubbleOutline,
+                                    contentDescription = "Custom Comment",
+                                    tint = if (hasComment) Color(0xFF38BDF8) else Color.White,
+                                    modifier = Modifier.size(12.dp)
                                 )
-                                if (hasCustomOverlayValues && !isQuickOverlayExpanded) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(5.dp)
-                                            .clip(CircleShape)
-                                            .background(HighlightYellow)
-                                    )
-                                }
-                                Icon(
-                                    imageVector = if (isQuickOverlayExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                    contentDescription = null,
-                                    tint = if (isQuickOverlayExpanded) HighlightYellow else Color.White.copy(alpha = 0.85f),
-                                    modifier = Modifier.size(14.dp)
+                                Text(
+                                    text = if (hasComment) projectProfile.customDescription else "+ Comments",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 140.dp)
                                 )
                             }
-                        }
-                    }
-
-                    // Always-visible Chainage quick edit button (Value + Animated Status Bulbs Only)
-                    val isManualActive = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
-                    val isCustomActive = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
-                    val chipBg = when {
-                        isManualActive -> Color(0x25FACC15)
-                        isCustomActive -> Color(0x259333EA)
-                        chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0x25F59E0B)
-                        else -> Color(0x1A101726)
-                    }
-                    val chipBorder = when {
-                        isManualActive -> HighlightYellow
-                        isCustomActive -> Color(0xFFA855F7)
-                        chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
-                        else -> Color(0x35FFFFFF)
-                    }
-                    FloatingGlassCard(
-                        shape = RoundedCornerShape(14.dp),
-                        backgroundColor = chipBg,
-                        borderColor = chipBorder,
-                        onClick = { viewModel.openManualChainageDialog() },
-                        modifier = Modifier
-                            .wrapContentWidth()
-                            .wrapContentHeight()
-                            .testTag("chainage_chip")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Text(
-                                text = chainageIndicators.displayChainage,
-                                color = Color.White,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.testTag("hud_chainage_value")
-                            )
-                            ChainageStatusBubblesRow(
-                                state = chainageIndicators,
-                                isDarkTheme = true,
-                                isScreenVisible = isCameraScreenVisible,
-                                showInactiveBubbles = false,
-                                showLabels = false,
-                                tagPrefix = "hud_portrait_"
-                            )
                         }
                     }
                 }

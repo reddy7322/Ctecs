@@ -193,6 +193,9 @@ class PreferencesManager(private val context: Context) {
         val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
         val KEY_CALIBRATION_PROFILES_JSON = stringPreferencesKey("permanent_calibration_profiles_json")
         val KEY_HOME_SCREENSAVER_JSON = stringPreferencesKey("home_screensaver_settings_json")
+        val KEY_NAV_NOTIFICATION_JSON = stringPreferencesKey("nav_notification_settings_json")
+        val KEY_WIDGET_SETTINGS_JSON = stringPreferencesKey("widget_settings_config_json")
+        val KEY_KM_STONE_ALERT_JSON = stringPreferencesKey("km_stone_alert_settings_json")
     }
 
     val galleryViewModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -252,6 +255,39 @@ class PreferencesManager(private val context: Context) {
     suspend fun updateHomeScreensaverSettings(settings: HomeScreensaverSettings) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HOME_SCREENSAVER_JSON] = settings.toJsonString()
+        }
+    }
+
+    val navigationNotificationSettingsFlow: Flow<com.example.model.NavigationNotificationSettings> =
+        context.dataStore.data.map { prefs ->
+            com.example.model.NavigationNotificationSettings.fromJsonString(prefs[KEY_NAV_NOTIFICATION_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateNavigationNotificationSettings(settings: com.example.model.NavigationNotificationSettings) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NAV_NOTIFICATION_JSON] = settings.toJsonString()
+        }
+    }
+
+    val widgetSettingsFlow: Flow<com.example.model.CtecsWidgetSettings> =
+        context.dataStore.data.map { prefs ->
+            com.example.model.CtecsWidgetSettings.fromJsonString(prefs[KEY_WIDGET_SETTINGS_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateWidgetSettings(settings: com.example.model.CtecsWidgetSettings) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_WIDGET_SETTINGS_JSON] = settings.toJsonString()
+        }
+    }
+
+    val kmStoneAlertSettingsFlow: Flow<com.example.model.KmStoneAlertSettings> =
+        context.dataStore.data.map { prefs ->
+            com.example.model.KmStoneAlertSettings.fromJsonString(prefs[KEY_KM_STONE_ALERT_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateKmStoneAlertSettings(settings: com.example.model.KmStoneAlertSettings) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_KM_STONE_ALERT_JSON] = settings.toJsonString()
         }
     }
 

@@ -14,10 +14,12 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.example.model.Chainage
@@ -33,6 +35,7 @@ import com.example.ui.camera.ChainageStatusBubblesRow
 import com.example.ui.camera.resolveChainageIndicatorsState
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -152,7 +155,7 @@ class CameraChainageBulbsAndQuickOverlayTest {
 
     @Test
     @Config(qualifiers = "w411dp-h891dp-port")
-    fun `Portrait CameraScreen collapses Quick Overlay Settings initially toggles cleanly and keeps Chainage visible`() {
+    fun `Portrait CameraScreen keeps all Highway Functions always visible and interactive with no toggle`() {
         composeTestRule.mainClock.autoAdvance = false
         val app = ApplicationProvider.getApplicationContext<Application>()
         val viewModel = MainViewModel(app)
@@ -173,42 +176,29 @@ class CameraChainageBulbsAndQuickOverlayTest {
         }
         advanceAndIdle(200L)
 
-        // Initially collapsed: Quick Overlay toggle & always-visible chainage + animated yellow manual bulb are shown
-        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle")
-            .assertIsDisplayed()
-            .assert(expectStateDescription("Collapsed"))
+        // Collapse/expand toggle must NOT exist
+        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle").assertDoesNotExist()
+
+        // All 5 Highway Functions + animated bulb + shutter + timestamp card must be immediately displayed
+        composeTestRule.onNodeWithTag("portrait_highway_functions_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("side_chip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("lane_chip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("activity_chip").assertIsDisplayed()
         composeTestRule.onNodeWithTag("chainage_chip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("custom_comment_chip").assertIsDisplayed()
         composeTestRule.onNodeWithTag("hud_chainage_value", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("hud_portrait_chainage_bulb_manual", useUnmergedTree = true)
             .assertIsDisplayed()
             .assert(expectStateDescription("ANIMATED_ACTIVE"))
         composeTestRule.onNodeWithTag("shutter_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("portrait_timestamp_card").assertIsDisplayed()
 
-        // Quick overlay chips must NOT be displayed initially
-        composeTestRule.onNodeWithTag("side_chip").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("lane_chip").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("activity_chip").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("custom_comment_chip").assertDoesNotExist()
-
-        // No permanent KMZ / CUSTOM / MANUAL text labels on Camera HUD
+        // No KMZ / CUSTOM / MANUAL text labels on Camera HUD
         assertEquals(0, composeTestRule.onAllNodesWithText("KMZ").fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("CUSTOM").fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("MANUAL").fetchSemanticsNodes().size)
 
-        // Tap once -> Smoothly expands all quick overlay controls
-        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle").performClick()
-        advanceAndIdle(400L)
-
-        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle")
-            .assert(expectStateDescription("Expanded"))
-        composeTestRule.onNodeWithTag("side_chip").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lane_chip").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("activity_chip").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("custom_comment_chip").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("chainage_chip").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("shutter_button").assertIsDisplayed()
-
-        // Interactive options inside expanded Quick Overlay still work
+        // Verify Side chip cycles RoadSide correctly
         val initialSide = viewModel.projectProfile.value.roadSide
         composeTestRule.onNodeWithTag("side_chip").performClick()
         advanceAndIdle(150L)
@@ -223,34 +213,62 @@ class CameraChainageBulbsAndQuickOverlayTest {
             viewModel.projectProfile.value.roadSide
         )
 
-        // Tap again -> Smoothly collapses back
-        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle").performClick()
-        advanceAndIdle(400L)
+        // Verify Activity dropdown opens on click and updates activity when preset selected
+        composeTestRule.onNodeWithTag("activity_chip").performClick()
+        advanceAndIdle(200L)
+        composeTestRule.onNodeWithText("EMB").assertIsDisplayed().performClick()
+        advanceAndIdle(200L)
+        assertEquals("EMB", viewModel.projectProfile.value.activity)
 
-        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle")
-            .assert(expectStateDescription("Collapsed"))
-        composeTestRule.onNodeWithTag("side_chip").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("lane_chip").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("activity_chip").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("custom_comment_chip").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("chainage_chip").assertIsDisplayed()
-
-        // Expand then re-enter CameraScreen -> must reset to collapsed
-        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle").performClick()
-        advanceAndIdle(400L)
-        composeTestRule.onNodeWithTag("side_chip").assertIsDisplayed()
-
+        // Re-entering CameraScreen preserves permanent visibility of all Highway Functions
         sessionKey++
         advanceAndIdle(200L)
-        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle")
-            .assert(expectStateDescription("Collapsed"))
-        composeTestRule.onNodeWithTag("side_chip").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("portrait_quick_overlay_toggle").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("side_chip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("lane_chip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("activity_chip").assertIsDisplayed()
         composeTestRule.onNodeWithTag("chainage_chip").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("custom_comment_chip").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-port")
+    fun `Narrow Portrait CameraScreen wraps all 5 Highway Functions cleanly without clipping or overlapping shutter`() {
+        composeTestRule.mainClock.autoAdvance = false
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = MainViewModel(app)
+        viewModel.setManualChainage("199+250")
+
+        composeTestRule.setContent {
+            MyApplicationTheme(themeMode = "dark") {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    CameraScreen(
+                        viewModel = viewModel,
+                        onNavigateToPhotos = {}
+                    )
+                }
+            }
+        }
+        advanceAndIdle(200L)
+
+        listOf("side_chip", "lane_chip", "activity_chip", "chainage_chip", "custom_comment_chip").forEach { tag ->
+            composeTestRule.onNodeWithTag(tag).assertIsDisplayed()
+            val bounds = composeTestRule.onNodeWithTag(tag).getBoundsInRoot()
+            assertTrue("$tag right edge ${bounds.right.value} should stay within 320dp", bounds.right.value <= 320f)
+            assertTrue("$tag left edge ${bounds.left.value} should be >= 0dp", bounds.left.value >= 0f)
+        }
+
+        val highwayBarBounds = composeTestRule.onNodeWithTag("portrait_highway_functions_bar").getBoundsInRoot()
+        val shutterBounds = composeTestRule.onNodeWithTag("shutter_button").getBoundsInRoot()
+        assertTrue(
+            "Highway functions bar bottom (${highwayBarBounds.bottom.value}) should stay above shutter top (${shutterBounds.top.value})",
+            highwayBarBounds.bottom.value < shutterBounds.top.value
+        )
     }
 
     @Test
     @Config(qualifiers = "w891dp-h411dp-land")
-    fun `Landscape CameraScreen collapses Quick Overlay Settings initially toggles cleanly and keeps Chainage visible`() {
+    fun `Landscape CameraScreen keeps all Highway Functions always visible without toggle while preserving top toolbar toggle`() {
         composeTestRule.mainClock.autoAdvance = false
         val app = ApplicationProvider.getApplicationContext<Application>()
         val viewModel = MainViewModel(app)
@@ -268,48 +286,79 @@ class CameraChainageBulbsAndQuickOverlayTest {
         }
         advanceAndIdle(200L)
 
-        // Initially collapsed in Landscape
-        composeTestRule.onNodeWithTag("landscape_quick_overlay_toggle")
-            .assertIsDisplayed()
-            .assert(expectStateDescription("Collapsed"))
+        // Quick overlay toggle must NOT exist in Landscape
+        composeTestRule.onNodeWithTag("landscape_quick_overlay_toggle").assertDoesNotExist()
+
+        // All 5 Highway Functions must be immediately visible
+        composeTestRule.onNodeWithTag("landscape_highway_functions_column").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("landscape_side_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("landscape_lane_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("landscape_activity_pill").assertIsDisplayed()
         composeTestRule.onNodeWithTag("landscape_chainage_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("landscape_comment_pill").assertIsDisplayed()
         composeTestRule.onNodeWithTag("hud_landscape_chainage_value", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("hud_landscape_chainage_bulb_manual", useUnmergedTree = true)
             .assertIsDisplayed()
             .assert(expectStateDescription("ANIMATED_ACTIVE"))
         composeTestRule.onNodeWithTag("landscape_shutter_button").assertIsDisplayed()
 
-        composeTestRule.onNodeWithTag("landscape_side_pill").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("landscape_lane_pill").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("landscape_activity_pill").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("landscape_comment_pill").assertDoesNotExist()
+        // Confirm pills fit vertically within 411dp screen height without clipping
+        val commentBounds = composeTestRule.onNodeWithTag("landscape_comment_pill").getBoundsInRoot()
+        assertTrue("Comment pill bottom (${commentBounds.bottom.value}) should stay within 411dp", commentBounds.bottom.value <= 411f)
 
-        assertEquals(0, composeTestRule.onAllNodesWithText("KMZ").fetchSemanticsNodes().size)
-        assertEquals(0, composeTestRule.onAllNodesWithText("CUSTOM").fetchSemanticsNodes().size)
-        assertEquals(0, composeTestRule.onAllNodesWithText("MANUAL").fetchSemanticsNodes().size)
+        // Top hardware toolbar toggle starts expanded and toggles independently without hiding Highway Functions
+        composeTestRule.onNodeWithTag("landscape_toolbar_toggle").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("landscape_flash_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("landscape_toolbar_toggle").performClick()
+        advanceAndIdle(600L)
+        composeTestRule.onNodeWithTag("landscape_flash_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("landscape_toolbar_toggle").performClick()
+        advanceAndIdle(600L)
+        composeTestRule.onNodeWithTag("landscape_flash_button").assertIsDisplayed()
 
-        // Expand in Landscape
-        composeTestRule.onNodeWithTag("landscape_quick_overlay_toggle").performClick()
-        advanceAndIdle(400L)
-
-        composeTestRule.onNodeWithTag("landscape_quick_overlay_toggle")
-            .assert(expectStateDescription("Expanded"))
+        // All 5 Highway Functions remain visible while top toolbar is expanded
         composeTestRule.onNodeWithTag("landscape_side_pill").assertIsDisplayed()
         composeTestRule.onNodeWithTag("landscape_lane_pill").assertIsDisplayed()
         composeTestRule.onNodeWithTag("landscape_activity_pill").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("landscape_chainage_pill").assertIsDisplayed()
         composeTestRule.onNodeWithTag("landscape_comment_pill").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("landscape_chainage_pill").assertIsDisplayed()
 
-        // Collapse again in Landscape
-        composeTestRule.onNodeWithTag("landscape_quick_overlay_toggle").performClick()
-        advanceAndIdle(400L)
+        // No KMZ / CUSTOM / MANUAL labels
+        assertEquals(0, composeTestRule.onAllNodesWithText("KMZ").fetchSemanticsNodes().size)
+        assertEquals(0, composeTestRule.onAllNodesWithText("CUSTOM").fetchSemanticsNodes().size)
+        assertEquals(0, composeTestRule.onAllNodesWithText("MANUAL").fetchSemanticsNodes().size)
+    }
 
-        composeTestRule.onNodeWithTag("landscape_quick_overlay_toggle")
-            .assert(expectStateDescription("Collapsed"))
-        composeTestRule.onNodeWithTag("landscape_side_pill").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("landscape_lane_pill").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("landscape_activity_pill").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("landscape_comment_pill").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("landscape_chainage_pill").assertIsDisplayed()
+    @Test
+    @Config(qualifiers = "w720dp-h220dp-land")
+    fun `Ultra-short Landscape CameraScreen dynamically rearranges all 5 Highway Functions into 2-column FlowRow without vertical clipping`() {
+        composeTestRule.mainClock.autoAdvance = false
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = MainViewModel(app)
+        viewModel.setManualChainage("202+100")
+
+        composeTestRule.setContent {
+            MyApplicationTheme(themeMode = "dark") {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    CameraScreen(
+                        viewModel = viewModel,
+                        onNavigateToPhotos = {}
+                    )
+                }
+            }
+        }
+        advanceAndIdle(200L)
+
+        listOf(
+            "landscape_side_pill",
+            "landscape_lane_pill",
+            "landscape_activity_pill",
+            "landscape_chainage_pill",
+            "landscape_comment_pill"
+        ).forEach { tag ->
+            composeTestRule.onNodeWithTag(tag).assertIsDisplayed()
+            val bounds = composeTestRule.onNodeWithTag(tag).getBoundsInRoot()
+            assertTrue("$tag bottom (${bounds.bottom.value}) should stay within 220dp", bounds.bottom.value <= 220f)
+        }
     }
 }

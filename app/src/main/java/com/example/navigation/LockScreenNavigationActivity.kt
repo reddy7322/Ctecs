@@ -42,6 +42,7 @@ class LockScreenNavigationActivity : ComponentActivity() {
             val locationName by CtecsNavigationTelemetryHub.locationName.collectAsStateWithLifecycle()
             val compassState by CtecsNavigationTelemetryHub.compassState.collectAsStateWithLifecycle()
             val screensaverSettings by CtecsNavigationTelemetryHub.screensaverSettings.collectAsStateWithLifecycle()
+            val notifSettings by CtecsNavigationTelemetryHub.navigationNotificationSettings.collectAsStateWithLifecycle()
             val is24Hour by CtecsNavigationTelemetryHub.is24HourFormat.collectAsStateWithLifecycle()
 
             var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -81,7 +82,8 @@ class LockScreenNavigationActivity : ComponentActivity() {
                     compassHeading = compassState.azimuthDegrees,
                     routeData = activeRoute,
                     screensaverSettings = screensaverSettings,
-                    onClose = { finish() }
+                    onClose = { finish() },
+                    notifSettings = notifSettings
                 )
             }
         }

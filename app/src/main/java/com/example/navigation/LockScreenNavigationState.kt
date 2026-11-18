@@ -5,9 +5,12 @@ import com.example.location.LocationState
 import com.example.location.LocationTracker
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
+import com.example.model.CtecsWidgetSettings
 import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
+import com.example.model.KmStoneAlertSettings
 import com.example.model.MatchConfidence
+import com.example.model.NavigationNotificationSettings
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.RouteData
@@ -24,8 +27,8 @@ import kotlin.math.roundToLong
 
 /**
  * Process-wide singleton telemetry hub so MainViewModel, LockScreenNavigationService,
- * and LockScreenNavigationActivity share the EXACT same single [LocationTracker] instance
- * without creating duplicate GPS listeners or conflicting location callbacks.
+ * LockScreenNavigationActivity, and Home-Screen Widgets share the EXACT same single [LocationTracker]
+ * instance without creating duplicate GPS listeners or conflicting location callbacks.
  */
 object CtecsNavigationTelemetryHub {
     @Volatile
@@ -57,6 +60,19 @@ object CtecsNavigationTelemetryHub {
     private val _screensaverSettings = MutableStateFlow(HomeScreensaverSettings())
     val screensaverSettings: StateFlow<HomeScreensaverSettings> = _screensaverSettings.asStateFlow()
 
+    private val _navigationNotificationSettings = MutableStateFlow(NavigationNotificationSettings())
+    val navigationNotificationSettings: StateFlow<NavigationNotificationSettings> =
+        _navigationNotificationSettings.asStateFlow()
+
+    private val _widgetSettings = MutableStateFlow(CtecsWidgetSettings())
+    val widgetSettings: StateFlow<CtecsWidgetSettings> = _widgetSettings.asStateFlow()
+
+    private val _kmStoneAlertSettings = MutableStateFlow(KmStoneAlertSettings())
+    val kmStoneAlertSettings: StateFlow<KmStoneAlertSettings> = _kmStoneAlertSettings.asStateFlow()
+
+    private val _isCameraOrSurveyRecording = MutableStateFlow(false)
+    val isCameraOrSurveyRecording: StateFlow<Boolean> = _isCameraOrSurveyRecording.asStateFlow()
+
     private val _is24HourFormat = MutableStateFlow(true)
     val is24HourFormat: StateFlow<Boolean> = _is24HourFormat.asStateFlow()
 
@@ -66,6 +82,9 @@ object CtecsNavigationTelemetryHub {
     private val _serviceStatusNote = MutableStateFlow<String?>(null)
     val serviceStatusNote: StateFlow<String?> = _serviceStatusNote.asStateFlow()
 
+    // Shared single KM Stone Arrival Detector instance across Foreground Service & ViewModel
+    val sharedKmStoneDetector = KmStoneArrivalDetector()
+
     fun updateTelemetry(
         matchResult: ChainageMatchResult? = null,
         routeData: RouteData? = _activeRoute.value,
@@ -73,6 +92,10 @@ object CtecsNavigationTelemetryHub {
         locationName: String? = null,
         compassState: CompassState? = null,
         screensaverSettings: HomeScreensaverSettings? = null,
+        navigationNotificationSettings: NavigationNotificationSettings? = null,
+        widgetSettings: CtecsWidgetSettings? = null,
+        kmStoneAlertSettings: KmStoneAlertSettings? = null,
+        isCameraOrSurveyRecording: Boolean? = null,
         is24HourFormat: Boolean? = null
     ) {
         if (matchResult != null) _matchResult.value = matchResult
@@ -81,6 +104,10 @@ object CtecsNavigationTelemetryHub {
         if (locationName != null) _locationName.value = locationName
         if (compassState != null) _compassState.value = compassState
         if (screensaverSettings != null) _screensaverSettings.value = screensaverSettings
+        if (navigationNotificationSettings != null) _navigationNotificationSettings.value = navigationNotificationSettings
+        if (widgetSettings != null) _widgetSettings.value = widgetSettings
+        if (kmStoneAlertSettings != null) _kmStoneAlertSettings.value = kmStoneAlertSettings
+        if (isCameraOrSurveyRecording != null) _isCameraOrSurveyRecording.value = isCameraOrSurveyRecording
         if (is24HourFormat != null) _is24HourFormat.value = is24HourFormat
     }
 
@@ -109,6 +136,7 @@ data class LockScreenNavUiState(
     val speedText: String = "-- km/h",
     val etaDurationText: String? = null,
     val etaArrivalTimeText: String? = null,
+    val currentTimeText: String = "",
     val locationName: String = "",
     val isLiveGpsValid: Boolean = false,
     val hasRouteData: Boolean = false,
@@ -186,6 +214,10 @@ class LockScreenNavStateResolver {
                 locationState.lastFixTime > 0L &&
                 (nowMs - locationState.lastFixTime) <= ScreensaverChainageStateHolder.SCREENSAVER_SPEED_STALE_MS
         }
+        val timePattern = if (is24HourFormat) "HH:mm" else "h:mm a"
+        val currentTimeFormatted = SimpleDateFormat(timePattern, Locale.getDefault())
+            .format(Date(nowMs))
+
         val etaPair = if (
             verifiedDistanceM != null &&
             verifiedDistanceM > 0L &&
@@ -199,8 +231,7 @@ class LockScreenNavStateResolver {
                 etaMinutes < 60L -> "$etaMinutes min"
                 else -> "${etaMinutes / 60L}h ${etaMinutes % 60L}m"
             }
-            val pattern = if (is24HourFormat) "HH:mm" else "h:mm a"
-            val arrivalStr = SimpleDateFormat(pattern, Locale.getDefault())
+            val arrivalStr = SimpleDateFormat(timePattern, Locale.getDefault())
                 .format(Date(nowMs + secondsToNext * 1000L))
             durationStr to arrivalStr
         } else {
@@ -248,6 +279,7 @@ class LockScreenNavStateResolver {
             speedText = screensaverResolved.speedText,
             etaDurationText = etaPair.first,
             etaArrivalTimeText = etaPair.second,
+            currentTimeText = currentTimeFormatted,
             locationName = screensaverResolved.locationName,
             isLiveGpsValid = screensaverResolved.isLiveGpsValid,
             hasRouteData = routeData != null,

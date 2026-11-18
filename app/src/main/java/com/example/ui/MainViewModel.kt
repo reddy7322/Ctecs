@@ -421,6 +421,119 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var homeScreensaverFlushedVersion = 0L
     private var homeScreensaverWriteJob: Job? = null
 
+    private val _navigationNotificationSettings =
+        MutableStateFlow(com.example.model.NavigationNotificationSettings())
+    val navigationNotificationSettings: StateFlow<com.example.model.NavigationNotificationSettings> =
+        _navigationNotificationSettings.asStateFlow()
+    private val navNotifMutationLock = Any()
+    private var navNotifWriteVersion = 0L
+    private var navNotifFlushedVersion = 0L
+    private var navNotifWriteJob: Job? = null
+
+    private val _widgetSettings = MutableStateFlow(com.example.model.CtecsWidgetSettings())
+    val widgetSettings: StateFlow<com.example.model.CtecsWidgetSettings> = _widgetSettings.asStateFlow()
+    private val widgetSettingsMutationLock = Any()
+    private var widgetSettingsWriteVersion = 0L
+    private var widgetSettingsFlushedVersion = 0L
+    private var widgetSettingsWriteJob: Job? = null
+
+    private val _kmStoneAlertSettings = MutableStateFlow(com.example.model.KmStoneAlertSettings())
+    val kmStoneAlertSettings: StateFlow<com.example.model.KmStoneAlertSettings> = _kmStoneAlertSettings.asStateFlow()
+    private val kmStoneAlertMutationLock = Any()
+    private var kmStoneAlertWriteVersion = 0L
+    private var kmStoneAlertFlushedVersion = 0L
+    private var kmStoneAlertWriteJob: Job? = null
+
+    private val _lastKmStoneAlertEvent = MutableStateFlow<com.example.navigation.KmStoneAlertEvent?>(null)
+    val lastKmStoneAlertEvent: StateFlow<com.example.navigation.KmStoneAlertEvent?> = _lastKmStoneAlertEvent.asStateFlow()
+
+    private fun updateWidgetSettingsState(
+        transform: (com.example.model.CtecsWidgetSettings) -> com.example.model.CtecsWidgetSettings
+    ) {
+        val (myVersion, snapshot) = synchronized(widgetSettingsMutationLock) {
+            widgetSettingsWriteVersion += 1L
+            val updated = transform(_widgetSettings.value)
+            _widgetSettings.value = updated
+            widgetSettingsWriteVersion to updated
+        }
+        CtecsNavigationTelemetryHub.updateTelemetry(widgetSettings = snapshot)
+        com.example.widget.CtecsWidgetUpdater.cacheWidgetSettings(getApplication(), snapshot)
+        com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
+        widgetSettingsWriteJob?.cancel()
+        widgetSettingsWriteJob = viewModelScope.launch {
+            preferencesManager.updateWidgetSettings(snapshot)
+            synchronized(widgetSettingsMutationLock) {
+                if (myVersion > widgetSettingsFlushedVersion) {
+                    widgetSettingsFlushedVersion = myVersion
+                }
+            }
+        }
+    }
+
+    fun updateWidgetSettings(
+        transform: (com.example.model.CtecsWidgetSettings) -> com.example.model.CtecsWidgetSettings
+    ) {
+        updateWidgetSettingsState(transform)
+    }
+
+    fun updateWidgetInstanceConfig(config: com.example.model.CtecsWidgetInstanceConfig) {
+        updateWidgetSettingsState { current ->
+            current.withInstanceConfig(config)
+        }
+    }
+
+    fun removeWidgetInstanceOverride(appWidgetId: Int) {
+        updateWidgetSettingsState { current ->
+            current.withoutInstanceConfig(appWidgetId)
+        }
+    }
+
+    fun resetWidgetSettings() {
+        val defaults = com.example.model.CtecsWidgetSettings.defaultSettings()
+        updateWidgetSettingsState { defaults }
+        showToast("Widget settings reset to default", ToastType.SUCCESS)
+    }
+
+    fun refreshHomeScreenWidgetsNow() {
+        refreshLocation()
+        com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
+        showToast("Home-screen widgets refreshed", ToastType.SUCCESS)
+    }
+
+    private fun updateKmStoneAlertState(
+        transform: (com.example.model.KmStoneAlertSettings) -> com.example.model.KmStoneAlertSettings
+    ) {
+        val (myVersion, snapshot) = synchronized(kmStoneAlertMutationLock) {
+            kmStoneAlertWriteVersion += 1L
+            val updated = transform(_kmStoneAlertSettings.value)
+            _kmStoneAlertSettings.value = updated
+            kmStoneAlertWriteVersion to updated
+        }
+        CtecsNavigationTelemetryHub.updateTelemetry(kmStoneAlertSettings = snapshot)
+        kmStoneAlertWriteJob?.cancel()
+        kmStoneAlertWriteJob = viewModelScope.launch {
+            preferencesManager.updateKmStoneAlertSettings(snapshot)
+            synchronized(kmStoneAlertMutationLock) {
+                if (myVersion > kmStoneAlertFlushedVersion) {
+                    kmStoneAlertFlushedVersion = myVersion
+                }
+            }
+        }
+    }
+
+    fun updateKmStoneAlertSettings(
+        transform: (com.example.model.KmStoneAlertSettings) -> com.example.model.KmStoneAlertSettings
+    ) {
+        updateKmStoneAlertState(transform)
+    }
+
+    fun resetKmStoneAlertSettings() {
+        val defaults = com.example.model.KmStoneAlertSettings.defaultSettings()
+        updateKmStoneAlertState { defaults }
+        CtecsNavigationTelemetryHub.sharedKmStoneDetector.reset()
+        showToast("KM Stone Arrival alert settings reset to default", ToastType.SUCCESS)
+    }
+
     private fun updateHomeScreensaverState(transform: (HomeScreensaverSettings) -> HomeScreensaverSettings) {
         val (myVersion, snapshot) = synchronized(homeScreensaverMutationLock) {
             homeScreensaverWriteVersion += 1L
@@ -549,10 +662,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateHomeScreensaverState { current ->
             current.copy(lockScreenNavEnabled = enabled)
         }
+        if (enabled && !_navigationNotificationSettings.value.enabled) {
+            updateNavNotificationState { it.copy(enabled = true) }
+        }
         if (enabled) {
             startLocation()
         }
-        LockScreenNavigationService.syncServiceState(getApplication(), enabled)
+        val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
+            screensaverSettings = _homeScreensaverSettings.value,
+            notifSettings = _navigationNotificationSettings.value
+        )
+        LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
+    }
+
+    private fun updateNavNotificationState(
+        transform: (com.example.model.NavigationNotificationSettings) -> com.example.model.NavigationNotificationSettings
+    ) {
+        val (myVersion, snapshot) = synchronized(navNotifMutationLock) {
+            navNotifWriteVersion += 1L
+            val updated = transform(_navigationNotificationSettings.value)
+            _navigationNotificationSettings.value = updated
+            navNotifWriteVersion to updated
+        }
+        CtecsNavigationTelemetryHub.updateTelemetry(navigationNotificationSettings = snapshot)
+        navNotifWriteJob?.cancel()
+        navNotifWriteJob = viewModelScope.launch {
+            preferencesManager.updateNavigationNotificationSettings(snapshot)
+            synchronized(navNotifMutationLock) {
+                if (myVersion > navNotifFlushedVersion) {
+                    navNotifFlushedVersion = myVersion
+                }
+            }
+        }
+    }
+
+    fun updateNavigationNotificationSettings(
+        transform: (com.example.model.NavigationNotificationSettings) -> com.example.model.NavigationNotificationSettings
+    ) {
+        updateNavNotificationState(transform)
+    }
+
+    fun setNavigationNotificationEnabled(enabled: Boolean) {
+        updateNavNotificationState { current -> current.copy(enabled = enabled) }
+        updateHomeScreensaverState { current -> current.copy(lockScreenNavEnabled = enabled) }
+        if (enabled) {
+            startLocation()
+        }
+        val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
+            screensaverSettings = _homeScreensaverSettings.value,
+            notifSettings = _navigationNotificationSettings.value
+        )
+        LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
+    }
+
+    fun resetNavigationNotificationSettings() {
+        val defaults = com.example.model.NavigationNotificationSettings.defaultSettings()
+        updateNavNotificationState { defaults }
+        val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
+            screensaverSettings = _homeScreensaverSettings.value,
+            notifSettings = defaults
+        )
+        LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
+        showToast("Navigation notification settings reset", ToastType.SUCCESS)
     }
 
     fun resetScreensaverSettings() {
@@ -1007,10 +1178,80 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 resolvedSnapshot?.let { snap ->
                     CtecsNavigationTelemetryHub.updateTelemetry(screensaverSettings = snap)
-                    if (snap.lockScreenNavEnabled) {
+                    val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
+                        screensaverSettings = snap,
+                        notifSettings = _navigationNotificationSettings.value
+                    )
+                    if (stayActive) {
                         LockScreenNavigationService.syncServiceState(getApplication(), true)
                     }
                 }
+            }
+        }
+
+        // Synchronize Navigation Notification preferences with DataStore & Hub
+        viewModelScope.launch {
+            preferencesManager.navigationNotificationSettingsFlow.collect { savedNotif ->
+                var resolvedNotif: com.example.model.NavigationNotificationSettings? = null
+                synchronized(navNotifMutationLock) {
+                    if (navNotifFlushedVersion == navNotifWriteVersion) {
+                        _navigationNotificationSettings.value = savedNotif
+                        resolvedNotif = savedNotif
+                    }
+                }
+                resolvedNotif?.let { snap ->
+                    CtecsNavigationTelemetryHub.updateTelemetry(navigationNotificationSettings = snap)
+                    val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
+                        screensaverSettings = _homeScreensaverSettings.value,
+                        notifSettings = snap
+                    )
+                    LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
+                }
+            }
+        }
+
+        // Synchronize Widget settings with DataStore, Hub, and Native AppWidgets
+        viewModelScope.launch {
+            preferencesManager.widgetSettingsFlow.collect { savedWidgets ->
+                var resolvedWidgets: com.example.model.CtecsWidgetSettings? = null
+                synchronized(widgetSettingsMutationLock) {
+                    if (widgetSettingsFlushedVersion == widgetSettingsWriteVersion) {
+                        _widgetSettings.value = savedWidgets
+                        resolvedWidgets = savedWidgets
+                    }
+                }
+                resolvedWidgets?.let { snap ->
+                    CtecsNavigationTelemetryHub.updateTelemetry(widgetSettings = snap)
+                    com.example.widget.CtecsWidgetUpdater.cacheWidgetSettings(getApplication(), snap)
+                    com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
+                }
+            }
+        }
+
+        // Synchronize KM Stone Arrival Alert settings with DataStore & Hub
+        viewModelScope.launch {
+            preferencesManager.kmStoneAlertSettingsFlow.collect { savedAlerts ->
+                var resolvedAlerts: com.example.model.KmStoneAlertSettings? = null
+                synchronized(kmStoneAlertMutationLock) {
+                    if (kmStoneAlertFlushedVersion == kmStoneAlertWriteVersion) {
+                        _kmStoneAlertSettings.value = savedAlerts
+                        resolvedAlerts = savedAlerts
+                    }
+                }
+                resolvedAlerts?.let { snap ->
+                    CtecsNavigationTelemetryHub.updateTelemetry(kmStoneAlertSettings = snap)
+                }
+            }
+        }
+
+        // Track active Camera or Survey recording so KM Stone alerts never interrupt recording
+        viewModelScope.launch {
+            combine(_isRecording, surveyManager.activeSession) { isRec, surveySession ->
+                val isSurveyActive = surveySession != null &&
+                    surveySession.status == com.example.survey.model.SurveyStatus.RECORDING
+                isRec || isSurveyActive
+            }.distinctUntilChanged().collect { recordingActive ->
+                CtecsNavigationTelemetryHub.updateTelemetry(isCameraOrSurveyRecording = recordingActive)
             }
         }
 
@@ -1023,16 +1264,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             activeRouteData.collect { route ->
                 CtecsNavigationTelemetryHub.updateTelemetry(routeData = route)
+                com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
             }
         }
         viewModelScope.launch {
             _projectProfile.collect { profile ->
                 CtecsNavigationTelemetryHub.updateTelemetry(projectProfile = profile)
+                com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
             }
         }
         viewModelScope.launch {
             _currentLocationName.collect { locName ->
                 CtecsNavigationTelemetryHub.updateTelemetry(locationName = locName)
+                com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
             }
         }
         viewModelScope.launch {
@@ -1043,6 +1287,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             cameraSettings.collect { cam ->
                 CtecsNavigationTelemetryHub.updateTelemetry(is24HourFormat = cam.is24HourFormat)
+            }
+        }
+
+        // Evaluate KM Stone Arrival Alerts & update Home-Screen Widgets on GPS/Chainage changes
+        viewModelScope.launch(Dispatchers.Default) {
+            combine(
+                locationTracker.locationState,
+                liveMatchResult,
+                activeRouteData,
+                _projectProfile,
+                _kmStoneAlertSettings
+            ) { loc, match, route, profile, alertSettings ->
+                if (!CtecsNavigationTelemetryHub.isServiceRunning.value) {
+                    val events = CtecsNavigationTelemetryHub.sharedKmStoneDetector.evaluate(
+                        locationState = loc,
+                        matchResult = match,
+                        routeData = route,
+                        projectRoadSide = profile.roadSide,
+                        settings = alertSettings
+                    )
+                    if (events.isNotEmpty()) {
+                        events.forEach { evt ->
+                            _lastKmStoneAlertEvent.value = evt
+                            com.example.navigation.KmStoneAlertFeedbackManager.dispatchAlert(
+                                context = getApplication(),
+                                event = evt,
+                                settings = alertSettings,
+                                isRecordingActive = CtecsNavigationTelemetryHub.isCameraOrSurveyRecording.value
+                            )
+                        }
+                    }
+                }
+                Unit
+            }.collect {
+                com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
             }
         }
 
