@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.example.location.LocationState
 import com.example.location.LocationStatus
@@ -514,14 +515,100 @@ class WidgetsAndKmStoneAlertsTest {
         composeRule.onNodeWithTag("widget_settings_root").assertExists()
         composeRule.onNodeWithTag("km_stone_alert_settings_root").assertExists()
 
-        // Switch widget theme to Light & background to Soft Flat
-        composeRule.onNodeWithTag("widget_theme_light").performClick()
+        // Scroll to and switch widget theme to Light & background to Soft Flat
+        composeRule.onNodeWithTag("widget_theme_light")
+            .performScrollTo()
+            .performClick()
         assertEquals(WidgetThemeMode.LIGHT, currentWidgetSettings.themeMode)
 
-        composeRule.onNodeWithTag("widget_bg_soft_flat").performClick()
+        composeRule.onNodeWithTag("widget_bg_soft_flat")
+            .performScrollTo()
+            .performClick()
         assertEquals(WidgetBackgroundStyle.SOFT_FLAT, currentWidgetSettings.backgroundStyle)
 
         // Test vibration button in KM Stone Alert Settings
-        composeRule.onNodeWithTag("km_alert_test_vibration_btn").assertExists()
+        composeRule.onNodeWithTag("km_alert_test_vibration_btn")
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun chainageNavigationResolver_calculatesDistanceDirectionAndResolvesCoordinatesAccurately() {
+        val points = listOf(
+            GeoPoint(17.4000, 78.4000),
+            GeoPoint(17.4500, 78.4500),
+            GeoPoint(17.5000, 78.5000)
+        )
+        val markers = listOf(
+            RouteMarker("m1", "KM 195+000", Chainage.fromMetres(195_000L), GeoPoint(17.4000, 78.4000)),
+            RouteMarker("m2", "KM 200+000", Chainage.fromMetres(200_000L), GeoPoint(17.4500, 78.4500)),
+            RouteMarker("m3", "KM 205+000", Chainage.fromMetres(205_000L), GeoPoint(17.5000, 78.5000))
+        )
+        val route = RouteData(
+            id = "route_195_205",
+            name = "NH-65 195-205",
+            fileName = "nh65.kmz",
+            markers = markers,
+            alignments = listOf(RouteAlignment("align_1", "Main Carriageway", points)),
+            bounds = GeoBounds(17.4000, 17.5000, 78.4000, 78.5000),
+            startChainage = Chainage.fromMetres(195_000L),
+            endChainage = Chainage.fromMetres(205_000L)
+        )
+
+        // Example from specification: Current Chainage "196+494", Destination "201+000" -> Distance "4.506 km", Increasing Chainage
+        val currentMatch = buildMatch(196_494L, "LHS")
+        val calc = com.example.navigation.ChainageNavigationResolver.calculateAndResolveDestination(
+            rawDestinationInput = "201+000",
+            matchResult = currentMatch,
+            activeRoute = route,
+            projectRoadSide = RoadSide.LHS,
+            detectedSideOverride = "LHS"
+        )
+
+        assertTrue(calc.isValidChainageInput)
+        assertEquals("196+494", calc.formattedCurrentChainage)
+        assertEquals("201+000", calc.formattedDestinationChainage)
+        assertEquals(4_506L, calc.chainageDifferenceMetres)
+        assertEquals("4.506 km", calc.formattedChainageDifference)
+        assertEquals(
+            com.example.navigation.ChainageTravelDirection.INCREASING,
+            calc.travelDirection
+        )
+        assertTrue(calc.isLocationResolved)
+        assertNotNull(calc.destinationPoint)
+        assertTrue(calc.canStartNavigation)
+
+        // Out-of-range chainage must NOT invent coordinates
+        val outOfRange = com.example.navigation.ChainageNavigationResolver.calculateAndResolveDestination(
+            rawDestinationInput = "250+000",
+            matchResult = currentMatch,
+            activeRoute = route
+        )
+        assertTrue(outOfRange.isValidChainageInput)
+        assertFalse(outOfRange.isLocationResolved)
+        assertFalse(outOfRange.canStartNavigation)
+        assertNotNull(outOfRange.unavailableReason)
+
+        // Invalid chainage input is rejected
+        val invalid = com.example.navigation.ChainageNavigationResolver.calculateAndResolveDestination(
+            rawDestinationInput = "-196+9999",
+            matchResult = currentMatch,
+            activeRoute = route
+        )
+        assertFalse(invalid.isValidChainageInput)
+        assertFalse(invalid.canStartNavigation)
+
+        // Verify Google Maps & Mappls intents pass resolved coordinates and NEVER pass chainage text as coordinates
+        val destPt = calc.destinationPoint!!
+        val gmapsIntent = com.example.navigation.ExternalNavigationLauncher.buildDirectionsIntent(
+            app = com.example.navigation.ExternalNavApp.GOOGLE_MAPS,
+            originPoint = GeoPoint(17.4150, 78.4150),
+            destinationPoint = destPt,
+            destinationChainageLabel = "201+000"
+        )
+        val uriStr = gmapsIntent.dataString.orEmpty()
+        assertTrue(uriStr.contains("destination=${String.format(java.util.Locale.US, "%.6f,%.6f", destPt.latitude, destPt.longitude)}"))
+        assertFalse(uriStr.contains("destination=201+000"))
     }
 }
+

@@ -183,10 +183,13 @@ import com.example.model.MatchConfidence
 import com.example.model.MiniMapStyle
 import com.example.model.RoadSide
 import com.example.model.RouteData
+import com.example.navigation.ActiveChainageNavigationTarget
 import com.example.overlay.MiniMapRenderer
 import com.example.ui.MainViewModel
 import com.example.ui.dialogs.ChainageManagementDialog
 import com.example.ui.dialogs.ChainageSourceBadge
+import com.example.ui.dialogs.NavigateToChainageDialog
+import com.example.ui.dialogs.NavigateToChainageQuickButton
 import com.example.ui.theme.AccentRed
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -224,11 +227,15 @@ fun HomeScreen(
 
     var showChainageManagementDialog by remember { mutableStateOf(false) }
     var showEditProjectStretchDialog by remember { mutableStateOf(false) }
+    var showNavigateToChainageDialog by remember { mutableStateOf(false) }
+    var activeChainageNavTarget by remember { mutableStateOf<ActiveChainageNavigationTarget?>(null) }
+    var preferredExternalNavAppId by remember { mutableStateOf<String?>(null) }
     var isScreensaverVisible by remember { mutableStateOf(false) }
     val screensaverStateHolder = remember { ScreensaverChainageStateHolder() }
 
     val isBlockingScreensaverModal = showChainageManagementDialog ||
         showEditProjectStretchDialog ||
+        showNavigateToChainageDialog ||
         availableUpdate != null ||
         showWhatsNewDialog ||
         interruptedSession != null ||
@@ -631,21 +638,69 @@ fun HomeScreen(
                 )
             }
 
-            NextChainageCard(
-                nextChainage = nextKmState.nextChainage,
-                distanceText = nextKmState.distanceText,
-                detectedSide = nextKmState.directionSide,
-                directionArrow = nextKmState.directionArrow,
-                distanceMetres = nextKmState.distanceMetres,
-                intervalMetres = nextKmState.intervalMetres,
-                isReliable = nextKmState.isReliable,
-                cardBgColor = cardBgColor,
-                cardBorderColor = cardBorderColor,
-                mainTextColor = mainTextColor,
-                subTextColor = subTextColor,
-                isDark = isDark,
-                isCompact = isCompactHeight
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NextChainageCard(
+                    nextChainage = nextKmState.nextChainage,
+                    distanceText = nextKmState.distanceText,
+                    detectedSide = nextKmState.directionSide,
+                    directionArrow = nextKmState.directionArrow,
+                    distanceMetres = nextKmState.distanceMetres,
+                    intervalMetres = nextKmState.intervalMetres,
+                    isReliable = nextKmState.isReliable,
+                    cardBgColor = cardBgColor,
+                    cardBorderColor = cardBorderColor,
+                    mainTextColor = mainTextColor,
+                    subTextColor = subTextColor,
+                    isDark = isDark,
+                    isCompact = isCompactHeight,
+                    modifier = Modifier.weight(1f)
+                )
+
+                NavigateToChainageQuickButton(
+                    onClick = { showNavigateToChainageDialog = true },
+                    hasActiveTarget = activeChainageNavTarget != null &&
+                        activeChainageNavTarget?.routeId == activeRoute?.id,
+                    activeTargetChainageText = activeChainageNavTarget?.destinationChainage?.format(),
+                    cardBgColor = cardBgColor,
+                    cardBorderColor = cardBorderColor,
+                    mainTextColor = mainTextColor,
+                    isDark = isDark,
+                    isCompact = isCompactHeight
+                )
+            }
+
+            if (showNavigateToChainageDialog) {
+                val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
+                val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
+                NavigateToChainageDialog(
+                    matchResult = matchResult,
+                    activeRoute = activeRoute,
+                    currentGpsPoint = locationState.point,
+                    correctionPoints = correctionsForRoute,
+                    isCorrectionsEnabled = isCorrectionsEnabled,
+                    projectRoadSide = projectProfile.roadSide,
+                    detectedSideLabel = detectedSide,
+                    nextKmStoneSuggestion = nextKmState.nextChainage.takeIf { nextKmState.isReliable },
+                    activeTarget = activeChainageNavTarget?.takeIf { it.routeId == activeRoute?.id },
+                    preferredExternalAppId = preferredExternalNavAppId,
+                    onSavePreferredExternalAppId = { preferredExternalNavAppId = it },
+                    onStartInAppTarget = { target ->
+                        activeChainageNavTarget = target
+                    },
+                    onClearActiveTarget = {
+                        activeChainageNavTarget = null
+                    },
+                    onFeedbackMessage = { msg ->
+                        viewModel.showToast(msg, com.example.ui.ToastType.INFO)
+                    },
+                    isDark = isDark,
+                    onDismiss = { showNavigateToChainageDialog = false }
+                )
+            }
 
             // 6. Tools & DPR Notes Quick Action Buttons (Flush above bottom bar with zero gap)
             HomeQuickActionButtons(
@@ -2447,7 +2502,8 @@ fun NextChainageCard(
     mainTextColor: Color,
     subTextColor: Color,
     isDark: Boolean = false,
-    isCompact: Boolean = false
+    isCompact: Boolean = false,
+    modifier: Modifier = Modifier.fillMaxWidth()
 ) {
     val cleanDistance = distanceText.replace("Exact ", "", ignoreCase = true).trim()
     val resolvedMetres = remember(distanceMetres, cleanDistance) {
@@ -2529,16 +2585,16 @@ fun NextChainageCard(
         color = glassSurfaceColor,
         border = BorderStroke(1.dp, cardBorderColor),
         shadowElevation = if (isDark) 0.dp else 1.dp,
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .height(if (isCompact) 50.dp else 54.dp)
             .testTag("next_chainage_card")
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val isTightRow = maxWidth < 305.dp
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                    .padding(horizontal = if (isTightRow) 9.dp else 12.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -2549,14 +2605,14 @@ fun NextChainageCard(
                     Surface(
                         shape = RoundedCornerShape(9.dp),
                         color = iconBoxBg,
-                        modifier = Modifier.size(if (isCompact) 34.dp else 38.dp)
+                        modifier = Modifier.size(if (isCompact || isTightRow) 32.dp else 38.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            KmStoneIcon(sizeDp = if (isCompact) 26.dp else 30.dp, isDark = isDark)
+                            KmStoneIcon(sizeDp = if (isCompact || isTightRow) 24.dp else 30.dp, isDark = isDark)
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(if (isTightRow) 7.dp else 10.dp))
 
                     Column(verticalArrangement = Arrangement.Center) {
                         Text(
