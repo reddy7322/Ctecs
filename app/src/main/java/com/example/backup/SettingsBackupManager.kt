@@ -203,7 +203,9 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_MANUAL_CHAINAGE_CUSTOM_TEXT.name,
                 PreferencesManager.KEY_SAVED_CUSTOM_CHAINAGES.name,
                 PreferencesManager.KEY_CHAINAGE_AUDIT_LOG_JSON.name,
-                PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name
+                PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name,
+                // Screensaver & Lock-Screen Navigation
+                PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name
             )
         }
     }
@@ -358,6 +360,8 @@ class SettingsBackupManager(
         PreferencesManager.KEY_PDF_SIGNATURE_URI.name,
         PreferencesManager.KEY_INCLUDE_PDF_SIGNATURE_DEFAULT.name,
         PreferencesManager.KEY_PDF_DEFAULT_PREPARED_BY.name -> BackupCategory.DPR
+
+        PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name -> BackupCategory.GENERAL
 
         else -> BackupCategory.OTHER
     }
@@ -521,13 +525,15 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_PHOTO_ASPECT_RATIO.name, PrefValueType.STRING, camera.photoAspectRatio)
         putEntry(PreferencesManager.KEY_VIDEO_ASPECT_RATIO.name, PrefValueType.STRING, camera.videoAspectRatio)
 
-        // Theme, Map Theme/Type & Gallery
+        // Theme, Map Theme/Type & Gallery & Screensaver
+        val screensaverSettings = preferencesManager.homeScreensaverSettingsFlow.first()
         putEntry(PreferencesManager.KEY_THEME_MODE.name, PrefValueType.STRING, themeMode)
         putEntry(PreferencesManager.KEY_MAP_THEME.name, PrefValueType.STRING, mapTheme)
         putEntry(PreferencesManager.KEY_MAP_TYPE.name, PrefValueType.STRING, mapType)
         putEntry(PreferencesManager.KEY_GALLERY_VIEW_MODE.name, PrefValueType.STRING, galleryView)
         putEntry(PreferencesManager.KEY_GALLERY_SORT_OPTION.name, PrefValueType.STRING, gallerySort)
         putEntry(PreferencesManager.KEY_GALLERY_GROUP_OPTION.name, PrefValueType.STRING, galleryGroup)
+        putEntry(PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name, PrefValueType.STRING, screensaverSettings.toJsonString())
 
         // Calibration defaults
         putEntry(PreferencesManager.KEY_ROUTE_CORRECTIONS_ENABLED.name, PrefValueType.BOOLEAN, correctionsEnabled)

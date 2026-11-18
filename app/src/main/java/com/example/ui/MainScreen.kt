@@ -126,7 +126,7 @@ fun MainScreen(
     DisposableEffect(lifecycleOwner) {
         viewModel.startLocation()
         onDispose {
-            viewModel.stopLocation()
+            viewModel.stopLocationIfIdle()
         }
     }
 

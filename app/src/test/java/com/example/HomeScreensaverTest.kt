@@ -394,7 +394,9 @@ class HomeScreensaverTest {
 
         // Single touch anywhere on screensaver closes it immediately AND preserves Home scroll position
         composeTestRule.onNodeWithTag("home_chainage_screensaver").performTouchInput { click() }
+        composeTestRule.mainClock.advanceTimeBy(100L)
         composeTestRule.waitForIdle()
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         composeTestRule.onNodeWithTag("home_chainage_screensaver").assertDoesNotExist()
         assertEquals(450, observedScrollValue)
 

@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -121,10 +123,10 @@ fun MiniMapSettingsSection(
         }
     }
 
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)),
-        border = BorderStroke(1.dp, accentColor.copy(alpha = if (isExpanded) 0.7f else 0.35f)),
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(0.75.dp, accentColor.copy(alpha = if (isExpanded) 0.55f else 0.35f)),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("mini_map_settings_section")
@@ -134,8 +136,9 @@ fun MiniMapSettingsSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .clickable { onToggleExpand() }
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
                     .testTag("mini_map_settings_header"),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -146,16 +149,16 @@ fun MiniMapSettingsSection(
                     modifier = Modifier.weight(1f)
                 ) {
                     Surface(
-                        shape = CircleShape,
-                        color = accentColor.copy(alpha = 0.16f),
-                        modifier = Modifier.size(34.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        color = accentColor.copy(alpha = 0.14f),
+                        modifier = Modifier.size(30.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.Map,
                                 contentDescription = "Mini Map Settings",
                                 tint = accentColor,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
@@ -163,13 +166,13 @@ fun MiniMapSettingsSection(
                         Text(
                             text = "Mini Map Settings",
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         val modeLabel = if (draftOverlay.showMapInset) {
                             "Photo: ${if (draftOverlay.photoMiniMap.enabled) draftOverlay.photoMiniMap.sizePreset.label else "OFF"} • Video: ${if (draftOverlay.videoMiniMap.enabled) draftOverlay.videoMiniMap.sizePreset.label else "OFF"}"
                         } else {
-                            "Master Disabled"
+                            "Disabled"
                         }
                         Text(
                             text = if (hasUnsavedChanges) "$modeLabel • Unsaved changes" else modeLabel,
@@ -181,7 +184,8 @@ fun MiniMapSettingsSection(
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = if (isExpanded) "Collapse" else "Expand",
-                    tint = accentColor
+                    tint = accentColor,
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
@@ -189,16 +193,16 @@ fun MiniMapSettingsSection(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, bottom = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                     // A. ENABLE / DISABLE
                     MiniMapGroupTitle("A. ENABLE / DISABLE", accentColor)
                     MiniMapSwitchRow(
                         title = "Master Mini Map ON/OFF",
-                        subtitle = "Global toggle for Mini Map on camera preview, photos, and videos",
+                        subtitle = "Apply across preview, photos & videos",
                         checked = draftOverlay.showMapInset,
                         onCheckedChange = { draftOverlay = draftOverlay.copy(showMapInset = it) },
                         accentColor = accentColor,
@@ -234,11 +238,6 @@ fun MiniMapSettingsSection(
 
                     MiniMapSwitchRow(
                         title = if (editingVideoMode) "Video Mini Map ON/OFF" else "Photo Mini Map ON/OFF",
-                        subtitle = if (editingVideoMode) {
-                            "Independent enable/disable for recorded videos"
-                        } else {
-                            "Independent enable/disable for captured photos"
-                        },
                         checked = activeStyleConfig.enabled,
                         onCheckedChange = { enabled -> updateActiveStyle { it.copy(enabled = enabled) } },
                         accentColor = accentColor,
@@ -520,7 +519,6 @@ fun MiniMapSettingsSection(
 
                     MiniMapSwitchRow(
                         title = "Border Outline",
-                        subtitle = "Draw border frame around mini map container",
                         checked = activeStyleConfig.borderEnabled,
                         onCheckedChange = { b -> updateActiveStyle { it.copy(borderEnabled = b) } },
                         accentColor = accentColor
@@ -626,7 +624,6 @@ fun MiniMapSettingsSection(
 
                     MiniMapSwitchRow(
                         title = "Subtle Drop Shadow",
-                        subtitle = "Soft outer elevation shadow behind mini map container",
                         checked = activeStyleConfig.shadowEnabled,
                         onCheckedChange = { s -> updateActiveStyle { it.copy(shadowEnabled = s) } },
                         accentColor = accentColor
@@ -636,7 +633,7 @@ fun MiniMapSettingsSection(
                     MiniMapGroupTitle("F. MAP ZOOM & ORIENTATION", accentColor)
                     MiniMapSwitchRow(
                         title = "Automatic Zoom",
-                        subtitle = "Dynamically fit current GPS position & nearby KMZ alignment",
+                        subtitle = "Fit current GPS & nearby KMZ corridor",
                         checked = activeStyleConfig.autoZoom,
                         onCheckedChange = { az -> updateActiveStyle { it.copy(autoZoom = az) } },
                         accentColor = accentColor
@@ -675,42 +672,38 @@ fun MiniMapSettingsSection(
                     MiniMapGroupTitle("G. MAP INFORMATION TOGGLES", accentColor)
                     MiniMapSwitchRow(
                         title = "Current Position Marker",
-                        subtitle = "Display live GPS pin inside mini map",
                         checked = activeStyleConfig.showCurrentPositionMarker,
                         onCheckedChange = { v -> updateActiveStyle { it.copy(showCurrentPositionMarker = v) } },
                         accentColor = accentColor
                     )
                     MiniMapSwitchRow(
                         title = "Road Alignment",
-                        subtitle = "Display imported KMZ/KML road corridor & pathway",
+                        subtitle = "Show imported KMZ/KML corridor",
                         checked = activeStyleConfig.showRoadAlignment,
                         onCheckedChange = { v -> updateActiveStyle { it.copy(showRoadAlignment = v) } },
                         accentColor = accentColor
                     )
                     MiniMapSwitchRow(
                         title = "Current Chainage Label",
-                        subtitle = "Show reliable calibrated chainage inside mini map",
                         checked = activeStyleConfig.showCurrentChainageLabel,
                         onCheckedChange = { v -> updateActiveStyle { it.copy(showCurrentChainageLabel = v) } },
                         accentColor = accentColor
                     )
                     MiniMapSwitchRow(
                         title = "LHS / RHS Indicator",
-                        subtitle = "Display reliable road side badge inside mini map",
                         checked = activeStyleConfig.showSideIndicator,
                         onCheckedChange = { v -> updateActiveStyle { it.copy(showSideIndicator = v) } },
                         accentColor = accentColor
                     )
                     MiniMapSwitchRow(
                         title = "Direction Arrow",
-                        subtitle = "Show travel/road heading indicator",
                         checked = activeStyleConfig.showDirectionArrow,
                         onCheckedChange = { v -> updateActiveStyle { it.copy(showDirectionArrow = v) } },
                         accentColor = accentColor
                     )
                     MiniMapSwitchRow(
                         title = "Nearby Chainage Markers",
-                        subtitle = "Display KM stone / chainage dots along nearby alignment",
+                        subtitle = "Show KM dots along corridor",
                         checked = activeStyleConfig.showNearbyChainageMarkers,
                         onCheckedChange = { v -> updateActiveStyle { it.copy(showNearbyChainageMarkers = v) } },
                         accentColor = accentColor
@@ -786,7 +779,7 @@ private fun MiniMapGroupTitle(title: String, accentColor: Color) {
 @Composable
 private fun MiniMapSwitchRow(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     accentColor: Color,
@@ -795,8 +788,9 @@ private fun MiniMapSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
             .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 4.dp),
+            .padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -804,14 +798,16 @@ private fun MiniMapSwitchRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         Switch(
             checked = checked,

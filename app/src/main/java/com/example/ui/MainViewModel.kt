@@ -52,6 +52,8 @@ import com.example.model.DefinedProject
 import com.example.model.GeneratedChainageMarker
 import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
+import com.example.navigation.CtecsNavigationTelemetryHub
+import com.example.navigation.LockScreenNavigationService
 import com.example.model.KmzReplacementPreview
 import com.example.model.MiniMapOrientationMode
 import com.example.model.MiniMapStyle
@@ -158,7 +160,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    val locationTracker = LocationTracker(application)
+    val locationTracker = CtecsNavigationTelemetryHub.getOrCreateLocationTracker(application)
     val compassTracker = com.example.sensor.CompassAndOrientationTracker(application)
     val appUpdateManager = com.example.update.AppUpdateManager(application)
     val whatsNewManager = com.example.update.WhatsNewManager(application)
@@ -426,6 +428,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _homeScreensaverSettings.value = updated
             homeScreensaverWriteVersion to updated
         }
+        CtecsNavigationTelemetryHub.updateTelemetry(screensaverSettings = snapshot)
         homeScreensaverWriteJob?.cancel()
         homeScreensaverWriteJob = viewModelScope.launch {
             preferencesManager.updateHomeScreensaverSettings(snapshot)
@@ -435,6 +438,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    fun updateScreensaverSettings(transform: (HomeScreensaverSettings) -> HomeScreensaverSettings) {
+        updateHomeScreensaverState(transform)
     }
 
     fun setScreensaverDisplayMode(mode: ScreensaverDisplayMode) {
@@ -450,6 +457,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setScreensaverMirrorEnabled(enabled: Boolean) {
         updateHomeScreensaverState { current ->
             current.setMirrorEnabled(enabled)
+        }
+    }
+
+    fun setScreensaverAutoOrientationEnabled(enabled: Boolean) {
+        updateHomeScreensaverState { current ->
+            current.withAutoOrientation(enabled)
+        }
+    }
+
+    fun toggleScreensaverMirrorQuickMode(
+        enableMirror: Boolean,
+        isCurrentlyLandscape: Boolean
+    ) {
+        updateHomeScreensaverState { current ->
+            current.withMirrorQuickToggle(
+                enableMirror = enableMirror,
+                isCurrentlyLandscape = isCurrentlyLandscape
+            )
         }
     }
 
@@ -518,6 +543,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    fun setLockScreenNavigationEnabled(enabled: Boolean) {
+        updateHomeScreensaverState { current ->
+            current.copy(lockScreenNavEnabled = enabled)
+        }
+        if (enabled) {
+            startLocation()
+        }
+        LockScreenNavigationService.syncServiceState(getApplication(), enabled)
+    }
+
+    fun resetScreensaverSettings() {
+        val defaults = HomeScreensaverSettings.defaultSettings()
+        updateHomeScreensaverState { defaults }
+        LockScreenNavigationService.syncServiceState(getApplication(), false)
+        viewModelScope.launch {
+            preferencesManager.updateMapType("standard")
+            preferencesManager.updateMapTheme("system")
+        }
+        showToast("Screensaver settings reset to defaults", ToastType.SUCCESS)
     }
 
     val cameraSettings: StateFlow<com.example.model.CameraSettings> = preferencesManager.cameraSettingsFlow.stateIn(
@@ -950,12 +996,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Synchronize Home Screensaver & Shared Mini Map preferences with DataStore
         viewModelScope.launch {
             preferencesManager.homeScreensaverSettingsFlow.collect { savedSettings ->
+                var resolvedSnapshot: HomeScreensaverSettings? = null
                 synchronized(homeScreensaverMutationLock) {
                     if (homeScreensaverFlushedVersion == homeScreensaverWriteVersion) {
                         val currentEpoch = _homeScreensaverSettings.value.recenterEpoch
-                        _homeScreensaverSettings.value = savedSettings.copy(recenterEpoch = currentEpoch)
+                        val updated = savedSettings.copy(recenterEpoch = currentEpoch)
+                        _homeScreensaverSettings.value = updated
+                        resolvedSnapshot = updated
                     }
                 }
+                resolvedSnapshot?.let { snap ->
+                    CtecsNavigationTelemetryHub.updateTelemetry(screensaverSettings = snap)
+                    if (snap.lockScreenNavEnabled) {
+                        LockScreenNavigationService.syncServiceState(getApplication(), true)
+                    }
+                }
+            }
+        }
+
+        // Mirror live chainage, route, project, compass, and clock format into shared Navigation Hub
+        viewModelScope.launch {
+            liveMatchResult.collect { match ->
+                CtecsNavigationTelemetryHub.updateTelemetry(matchResult = match)
+            }
+        }
+        viewModelScope.launch {
+            activeRouteData.collect { route ->
+                CtecsNavigationTelemetryHub.updateTelemetry(routeData = route)
+            }
+        }
+        viewModelScope.launch {
+            _projectProfile.collect { profile ->
+                CtecsNavigationTelemetryHub.updateTelemetry(projectProfile = profile)
+            }
+        }
+        viewModelScope.launch {
+            _currentLocationName.collect { locName ->
+                CtecsNavigationTelemetryHub.updateTelemetry(locationName = locName)
+            }
+        }
+        viewModelScope.launch {
+            compassState.collect { compass ->
+                CtecsNavigationTelemetryHub.updateTelemetry(compassState = compass)
+            }
+        }
+        viewModelScope.launch {
+            cameraSettings.collect { cam ->
+                CtecsNavigationTelemetryHub.updateTelemetry(is24HourFormat = cam.is24HourFormat)
             }
         }
 
@@ -1026,7 +1113,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var lastGeocodedTimeMs = 0L
             locationTracker.locationState.collect { state ->
                 val pt = state.point ?: return@collect
-                if (!overlayConfig.value.showLocationName) return@collect
+                if (!overlayConfig.value.showLocationName &&
+                    !_homeScreensaverSettings.value.locationDynamicUpdates
+                ) return@collect
                 val now = System.currentTimeMillis()
                 val moved = lastGeocodedPt?.let { com.example.geo.GeoUtils.distanceMetres(it, pt) } ?: Double.MAX_VALUE
                 if (moved < 45.0 && (now - lastGeocodedTimeMs) < 15_000L && _currentLocationName.value.isNotBlank()) {
@@ -2380,6 +2469,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun importRouteFromUrl(
+        rawUrl: String,
+        onComplete: ((Result<RouteData>) -> Unit)? = null
+    ) {
+        val trimmedUrl = rawUrl.trim()
+        if (trimmedUrl.isEmpty()) {
+            _routeImportError.value = "Please enter a Google My Maps or direct KML/KMZ URL."
+            showToast("Please enter a valid KML or My Maps URL", ToastType.ERROR)
+            return
+        }
+        if (_isImportingRoute.value) {
+            showToast("Import already in progress...", ToastType.INFO)
+            return
+        }
+        viewModelScope.launch {
+            _isImportingRoute.value = true
+            _routeImportError.value = null
+            val isMyMaps = com.example.parser.KmlUrlImporter.isGoogleMyMapsUrl(trimmedUrl)
+            _routeImportStatus.value = if (isMyMaps) {
+                "Fetching Google My Maps KML/KMZ..."
+            } else {
+                "Downloading & parsing KML/KMZ URL..."
+            }
+            try {
+                val result = routeRepository.importRouteFromUrl(trimmedUrl)
+                if (result.isSuccess) {
+                    val data = result.getOrNull()
+                    selectedAlignmentId.value = null
+                    lastCalculatedMatchResult = null
+                    progressionTracker.resetChainageFilter()
+                    if (_manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()) {
+                        _manualChainage.value = null
+                        _manualChainageText.value = null
+                        preferencesManager.setManualChainageOverride(null, null)
+                    }
+                    val rangeStr = if (data?.startChainage != null && data.endChainage != null) {
+                        " • ${data.startChainage.format()} → ${data.endChainage.format()}"
+                    } else ""
+                    val msg = "Imported '${data?.name ?: data?.fileName ?: "URL Alignment"}' (${data?.markers?.size ?: 0} markers$rangeStr)"
+                    _routeImportStatus.value = msg
+                    _routeImportError.value = null
+                    _uiMessages.emit(UiMessage.Success(msg))
+                    showToast(msg, ToastType.SUCCESS)
+                } else {
+                    val err = result.exceptionOrNull()?.message ?: "Failed to import from URL"
+                    _routeImportStatus.value = null
+                    _routeImportError.value = err
+                    _uiMessages.emit(UiMessage.Error("URL import failed: $err"))
+                    showToast("URL import failed: $err", ToastType.ERROR)
+                }
+                onComplete?.invoke(result)
+            } finally {
+                _isImportingRoute.value = false
+            }
+        }
+    }
+
     fun selectActiveRoute(id: String) {
         viewModelScope.launch {
             selectedAlignmentId.value = null
@@ -2725,6 +2871,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopLocation() {
         locationTracker.stopTracking()
+        compassTracker.stopTracking()
+    }
+
+    fun stopLocationIfIdle() {
+        val lockNavRunning = _homeScreensaverSettings.value.lockScreenNavEnabled &&
+            CtecsNavigationTelemetryHub.isServiceRunning.value
+        if (!lockNavRunning) {
+            locationTracker.stopTracking()
+        }
         compassTracker.stopTracking()
     }
 

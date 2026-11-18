@@ -444,6 +444,25 @@ class RouteRepository(
         null
     }
 
+    suspend fun importRouteFromUrl(
+        rawUrl: String,
+        httpClient: okhttp3.OkHttpClient = com.example.parser.KmlUrlImporter.defaultClient
+    ): Result<RouteData> = withContext(Dispatchers.IO) {
+        val payload = try {
+            logInfo("Starting KMZ/KML import from URL: '$rawUrl'")
+            com.example.parser.KmlUrlImporter.downloadRoute(rawUrl, httpClient)
+        } catch (e: Exception) {
+            logError("KMZ/KML URL download failed: ${e.message}", e)
+            return@withContext Result.failure(e)
+        }
+
+        return@withContext importRouteFromBytes(
+            bytes = payload.bytes,
+            fileName = payload.resolvedFileName,
+            displayName = payload.suggestedDisplayName.orEmpty()
+        )
+    }
+
     suspend fun importRouteFromBytes(bytes: ByteArray, fileName: String, displayName: String): Result<RouteData> = withContext(Dispatchers.IO) {
         importMutex.withLock {
             var tempFile: File? = null
@@ -456,14 +475,21 @@ class RouteRepository(
                 tempFile = File(routesDir, "staging_${System.currentTimeMillis()}_$sanitizedName")
                 tempFile.writeBytes(bytes)
 
+                // Parse and validate BEFORE modifying any existing active alignment or database state
                 val parsedRoute = KmzParser.parse(tempFile, fileName)
+
+                val cleanParsedName = parsedRoute.name.takeIf {
+                    it.isNotBlank() &&
+                        !it.equals("Model", ignoreCase = true) &&
+                        !it.equals("doc", ignoreCase = true) &&
+                        !it.equals("doc.kml", ignoreCase = true) &&
+                        it != sanitizedName
+                }
 
                 val finalDisplayName = if (displayName.isNotBlank() && displayName != sanitizedName) {
                     displayName
-                } else if (parsedRoute.name.isNotBlank() && parsedRoute.name != sanitizedName) {
-                    parsedRoute.name
                 } else {
-                    fileName.substringBeforeLast(".")
+                    cleanParsedName ?: fileName.substringBeforeLast(".").ifBlank { "Imported Alignment" }
                 }
 
                 val existingRoutes = routeDao.getAllRoutes().firstOrNull().orEmpty()
@@ -515,11 +541,18 @@ class RouteRepository(
                 _activeRouteData.value = finalRoute
                 preferencesManager.setActiveRouteId(finalRoute.id)
 
+                logInfo(
+                    "Successfully imported & activated '${finalRoute.fileName}' " +
+                        "(id=${finalRoute.id}, markers=${finalRoute.markers.size}, " +
+                        "range=${finalRoute.startChainage?.format()}..${finalRoute.endChainage?.format()})"
+                )
+
                 Result.success(finalRoute)
             } catch (e: Exception) {
                 try {
                     tempFile?.delete()
                 } catch (_: Exception) {}
+                logError("KMZ/KML byte/URL import failed: ${e.message}", e)
                 Result.failure(e)
             }
         }

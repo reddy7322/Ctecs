@@ -204,13 +204,13 @@ fun BackupRestoreContent(
         // 2. Last Backup Info & Validation Status
         val latestItem = history.firstOrNull()
         Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.35f else 0.45f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Row(
@@ -252,7 +252,7 @@ fun BackupRestoreContent(
                     )
                 } else {
                     Text(
-                        text = "No backups created on this device yet. Tap Export Backup to save all settings cleanly.",
+                        text = "No backups yet. Tap Export Backup to save all settings.",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -262,13 +262,13 @@ fun BackupRestoreContent(
 
         // 3. Restore Options
         Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.30f else 0.38f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
@@ -304,9 +304,9 @@ fun BackupRestoreContent(
                 }
                 Text(
                     text = if (defaultRestoreMode == RestoreMode.COMPLETE) {
-                        "Restores all backed-up categories safely while preserving existing media, projects & unbacked items."
+                        "Restores all categories while preserving existing media & projects."
                     } else {
-                        "Choose specific categories (General, Camera, Mini Map, Calibration, DPR, etc.) during import preview."
+                        "Pick specific categories during import preview."
                     },
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -344,10 +344,10 @@ fun BackupRestoreContent(
 
         if (history.isEmpty()) {
             Text(
-                text = "Your exported backups will appear here for one-tap restore, sharing, or management.",
+                text = "Exported backups appear here for restore or sharing.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 4.dp)
+                modifier = Modifier.padding(vertical = 2.dp)
             )
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

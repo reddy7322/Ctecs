@@ -29,14 +29,16 @@ import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.ScreensaverDisplayMode
 import com.example.ui.MainViewModel
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.example.ui.home.ChainageScreensaverOverlay
 import com.example.ui.home.DashboardHudBrightnessKey
 import com.example.ui.home.DashboardLandscapeRotationKey
 import com.example.ui.home.DashboardMirrorScaleXKey
-import com.example.ui.home.HomeScreensaverAndMapControls
 import com.example.ui.home.MiniMapRotationDegKey
 import com.example.ui.home.ScreensaverDisplayModeKey
 import com.example.ui.home.ScreensaverDisplayState
+import com.example.ui.settings.ScreensaverSettingsSectionContent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -219,10 +221,11 @@ class AutomotiveHudScreensaverTest {
     }
 
     @Test
-    fun `mirror mode applies horizontal flip at complete dashboard root with brightness and button-free screensaver`() {
+    fun `mirror mode applies horizontal flip at complete dashboard root with only compact quick toggle`() {
         var settingsState by mutableStateOf(
             HomeScreensaverSettings(
                 displayMode = ScreensaverDisplayMode.PORTRAIT,
+                autoOrientationEnabled = false,
                 hudBrightness = 0.62f,
                 miniMapVisible = true,
                 miniMapOrientation = MiniMapOrientationMode.DIRECTION_UP
@@ -240,6 +243,9 @@ class AutomotiveHudScreensaverTest {
                     compassHeading = 90f,
                     routeData = sampleRoute(),
                     screensaverSettings = settingsState,
+                    onToggleMirrorQuickMode = { enableMirror, currentlyLandscape ->
+                        settingsState = settingsState.withMirrorQuickToggle(enableMirror, currentlyLandscape)
+                    },
                     onDismiss = { dismissCount += 1 }
                 )
             }
@@ -250,16 +256,23 @@ class AutomotiveHudScreensaverTest {
         composeTestRule.onNodeWithTag("screensaver_chainage_text").assertTextEquals("204+320")
         composeTestRule.onNodeWithTag("screensaver_speed_text").assertTextEquals("68 km/h")
         composeTestRule.onNodeWithTag("screensaver_glass_map").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("screensaver_mirror_quick_toggle").assertIsDisplayed()
 
         val portraitRootNode = composeTestRule.onNodeWithTag("screensaver_dashboard_root").fetchSemanticsNode()
         assertEquals(1f, portraitRootNode.config[DashboardMirrorScaleXKey], 0.001f)
         assertEquals(0f, portraitRootNode.config[DashboardLandscapeRotationKey], 0.001f)
         assertEquals("PORTRAIT", portraitRootNode.config[ScreensaverDisplayModeKey])
-        assertTrue(
-            "Screensaver must contain zero buttons or interactive child controls",
-            collectDescendantRolesAndClickables(
-                composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode()
-            ).isEmpty()
+        val portraitInteractive = collectDescendantRolesAndClickables(
+            composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode()
+        )
+        assertEquals(
+            "Screensaver must contain strictly one interactive control (the Mirror/Normal quick toggle)",
+            1,
+            portraitInteractive.size
+        )
+        assertEquals(
+            "screensaver_mirror_quick_toggle",
+            portraitInteractive.first().config.getOrNull(SemanticsProperties.TestTag)
         )
 
         val mapNode = composeTestRule.onNodeWithTag("screensaver_glass_map").fetchSemanticsNode()
@@ -276,11 +289,10 @@ class AutomotiveHudScreensaverTest {
         assertEquals(90f, landscapeRootNode.config[DashboardLandscapeRotationKey], 0.001f)
         assertEquals("LANDSCAPE", landscapeRootNode.config[ScreensaverDisplayModeKey])
 
-        // 3. Mirror HUD Mode checks (complete dashboard root flips scaleX = -1f & obeys hudBrightness)
-        composeTestRule.runOnIdle {
-            settingsState = settingsState.setMirrorEnabled(true)
-        }
+        // 3. Mirror HUD Mode checks via Quick Toggle (does NOT dismiss, flips scaleX = -1f & obeys hudBrightness)
+        composeTestRule.onNodeWithTag("screensaver_mirror_quick_toggle").performClick()
         composeTestRule.waitForIdle()
+        assertEquals(0, dismissCount)
         composeTestRule.onNodeWithTag("screensaver_landscape_layout").assertIsDisplayed()
         composeTestRule.onNodeWithTag("screensaver_chainage_text").assertTextEquals("204+320")
         composeTestRule.onNodeWithTag("screensaver_speed_text").assertTextEquals("68 km/h")
@@ -289,12 +301,22 @@ class AutomotiveHudScreensaverTest {
         assertEquals(0.62f, mirrorRootNode.config[DashboardHudBrightnessKey], 0.001f)
         assertEquals(90f, mirrorRootNode.config[DashboardLandscapeRotationKey], 0.001f)
         assertEquals("MIRROR", mirrorRootNode.config[ScreensaverDisplayModeKey])
-        assertTrue(
-            "Mirror HUD screensaver must remain strictly button-free",
-            collectDescendantRolesAndClickables(
-                composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode()
-            ).isEmpty()
+        val mirrorInteractive = collectDescendantRolesAndClickables(
+            composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode()
         )
+        assertEquals(1, mirrorInteractive.size)
+        assertEquals(
+            "screensaver_mirror_quick_toggle",
+            mirrorInteractive.first().config.getOrNull(SemanticsProperties.TestTag)
+        )
+
+        // Tapping quick toggle again switches back to Landscape Normal without dismissing
+        composeTestRule.onNodeWithTag("screensaver_mirror_quick_toggle").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(0, dismissCount)
+        val revertedRootNode = composeTestRule.onNodeWithTag("screensaver_dashboard_root").fetchSemanticsNode()
+        assertEquals(1f, revertedRootNode.config[DashboardMirrorScaleXKey], 0.001f)
+        assertEquals("LANDSCAPE", revertedRootNode.config[ScreensaverDisplayModeKey])
 
         // 4. Shared Mini Map Hide hides map across screensaver modes
         composeTestRule.runOnIdle {
@@ -305,56 +327,60 @@ class AutomotiveHudScreensaverTest {
     }
 
     @Test
-    fun `home dashboard controls update modes mirror coupling and shared minimap state`() {
+    fun `settings screensaver controls update modes mirror coupling and shared minimap state`() {
         var settingsState by mutableStateOf(HomeScreensaverSettings())
 
         composeTestRule.setContent {
-            HomeScreensaverAndMapControls(
-                settings = settingsState,
-                onSelectMode = { mode ->
-                    settingsState = when (mode) {
-                        ScreensaverDisplayMode.PORTRAIT -> settingsState.selectPortrait()
-                        ScreensaverDisplayMode.LANDSCAPE -> settingsState.selectLandscape()
-                        ScreensaverDisplayMode.MIRROR -> settingsState.setMirrorEnabled(true)
-                    }
-                },
-                onToggleMirror = { enabled -> settingsState = settingsState.setMirrorEnabled(enabled) },
-                onHudBrightnessChange = { b -> settingsState = settingsState.withHudBrightness(b) },
-                onOrientationChange = { o -> settingsState = settingsState.withOrientation(o) },
-                onZoomIn = { settingsState = settingsState.withZoomIn() },
-                onZoomOut = { settingsState = settingsState.withZoomOut() },
-                onRecenter = { settingsState = settingsState.withRecenter() },
-                onToggleMapVisible = { settingsState = settingsState.withMiniMapVisible(!settingsState.miniMapVisible) },
-                onStyleChange = { s -> settingsState = settingsState.withMiniMapStyle(s) },
-                cardBgColor = androidx.compose.ui.graphics.Color.White,
-                cardBorderColor = androidx.compose.ui.graphics.Color.LightGray,
-                mainTextColor = androidx.compose.ui.graphics.Color.Black,
-                subTextColor = androidx.compose.ui.graphics.Color.Gray,
-                isDark = false,
-                isCompact = false
-            )
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                ScreensaverSettingsSectionContent(
+                    settings = settingsState,
+                    onUpdateSettings = { transform -> settingsState = transform(settingsState) },
+                    onSelectDisplayMode = { mode ->
+                        settingsState = when (mode) {
+                            ScreensaverDisplayMode.PORTRAIT -> settingsState.selectPortrait()
+                            ScreensaverDisplayMode.LANDSCAPE -> settingsState.selectLandscape()
+                            ScreensaverDisplayMode.MIRROR -> settingsState.setMirrorEnabled(true)
+                        }
+                    },
+                    onToggleMirror = { enabled -> settingsState = settingsState.setMirrorEnabled(enabled) },
+                    onHudBrightnessChange = { b -> settingsState = settingsState.withHudBrightness(b) },
+                    onMiniMapOrientationChange = { o -> settingsState = settingsState.withOrientation(o) },
+                    onMiniMapZoomIn = { settingsState = settingsState.withZoomIn() },
+                    onMiniMapZoomOut = { settingsState = settingsState.withZoomOut() },
+                    onMiniMapRecenter = { settingsState = settingsState.withRecenter() },
+                    onMiniMapStyleChange = { s -> settingsState = settingsState.withMiniMapStyle(s) },
+                    onToggleLockScreenNav = { en -> settingsState = settingsState.copy(lockScreenNavEnabled = en) },
+                    onResetDefaults = { settingsState = HomeScreensaverSettings.defaultSettings() }
+                )
+            }
         }
 
-        // Turning Mirror ON auto-selects Landscape & reveals HUD brightness slider
-        composeTestRule.onNodeWithTag("home_mode_mirror_switch").performClick()
+        // Expand Display Mode sub-section -> turn Mirror ON (auto-selects Landscape & reveals HUD brightness slider)
+        composeTestRule.onNodeWithTag("screensaver_section_display_mode").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("screensaver_mirror_switch").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         assertTrue(settingsState.isMirrorMode)
         assertTrue(settingsState.isLandscapeLayout)
-        composeTestRule.onNodeWithTag("home_hud_brightness_slider").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("screensaver_brightness_slider").performScrollTo().assertIsDisplayed()
 
         // Tapping Portrait exits Mirror mode cleanly
-        composeTestRule.onNodeWithTag("home_mode_portrait_btn").performClick()
+        composeTestRule.onNodeWithTag("screensaver_mode_portrait").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         assertEquals(ScreensaverDisplayMode.PORTRAIT, settingsState.displayMode)
         assertFalse(settingsState.isMirrorMode)
 
-        // Shared Mini Map controls update orientation, zoom, recenter, visibility, and style
+        // Expand Shared Mini Map sub-section & test orientation, zoom, recenter, visibility, and style
+        composeTestRule.onNodeWithTag("screensaver_section_minimap").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
         val initialZoom = settingsState.miniMapZoomLevel
-        composeTestRule.onNodeWithTag("home_map_orient_direction_up").performScrollTo().performClick()
-        composeTestRule.onNodeWithTag("home_map_zoom_in_btn").performScrollTo().performClick()
-        composeTestRule.onNodeWithTag("home_map_recenter_btn").performScrollTo().performClick()
-        composeTestRule.onNodeWithTag("home_map_style_dark").performScrollTo().performClick()
-        composeTestRule.onNodeWithTag("home_map_visibility_btn").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("screensaver_map_orient_direction_up").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("screensaver_map_zoom_in_btn").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("screensaver_map_recenter_btn").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("screensaver_map_style_dark").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("screensaver_minimap_visible_switch").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
         assertEquals(MiniMapOrientationMode.DIRECTION_UP, settingsState.miniMapOrientation)

@@ -1,9 +1,14 @@
 package com.example.ui.home
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.SystemClock
+import android.view.View
+import android.view.ViewTreeObserver
+import android.view.Window
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -31,6 +36,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -105,6 +111,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -156,6 +163,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -169,10 +178,12 @@ import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
+import com.example.model.HudMapMarkerStyle
 import com.example.model.MatchConfidence
 import com.example.model.MiniMapStyle
 import com.example.model.RoadSide
 import com.example.model.RouteData
+import com.example.overlay.MiniMapRenderer
 import com.example.ui.MainViewModel
 import com.example.ui.dialogs.ChainageManagementDialog
 import com.example.ui.dialogs.ChainageSourceBadge
@@ -269,12 +280,21 @@ fun HomeScreen(
     var screensaverClockMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     // Throttled cached reverse-geocoding for active screensaver only (never blocks UI or calls Geocoder on every GPS tick)
-    LaunchedEffect(isScreensaverVisible, locationState.point, vmLocationName) {
+    LaunchedEffect(
+        isScreensaverVisible,
+        locationState.point,
+        vmLocationName,
+        screensaverSettings.locationDynamicUpdates
+    ) {
         if (vmLocationName.isNotBlank()) {
             screensaverResolvedLocationName = vmLocationName
         }
         val pt = locationState.point
-        if (isScreensaverVisible && pt != null && LocationTracker.isValidCoordinate(pt.latitude, pt.longitude)) {
+        if (isScreensaverVisible &&
+            screensaverSettings.locationDynamicUpdates &&
+            pt != null &&
+            LocationTracker.isValidCoordinate(pt.latitude, pt.longitude)
+        ) {
             val nowMs = System.currentTimeMillis()
             val movedMetres = lastScreensaverGeocodePoint?.let { GeoUtils.distanceMetres(it, pt) } ?: Double.MAX_VALUE
             val currentName = screensaverResolvedLocationName.ifBlank { vmLocationName }
@@ -329,10 +349,14 @@ fun HomeScreen(
 
     HomeScreensaverCoordinator(
         isBlockingUiOpen = isBlockingScreensaverModal,
-        inactivityTimeoutMs = HOME_SCREENSAVER_INACTIVITY_TIMEOUT_MS,
+        inactivityTimeoutMs = screensaverSettings.effectiveTimeoutMs(),
         isScreensaverVisible = isScreensaverVisible,
         onShowScreensaver = { isScreensaverVisible = true },
         onDismissScreensaver = { isScreensaverVisible = false },
+        masterEnabled = screensaverSettings.masterEnabled,
+        autoActivateEnabled = screensaverSettings.autoActivateEnabled,
+        touchToDismiss = screensaverSettings.touchToDismiss,
+        autoRestartTimer = screensaverSettings.autoRestartTimer,
         screensaverContent = { dismissScreensaver ->
             ChainageScreensaverOverlay(
                 displayState = screensaverDisplayState,
@@ -344,6 +368,12 @@ fun HomeScreen(
                 mapTypePreference = mapTypePreference,
                 isDarkAppTheme = isDark,
                 screensaverSettings = screensaverSettings,
+                onToggleMirrorQuickMode = { enableMirror, currentlyLandscape ->
+                    viewModel.toggleScreensaverMirrorQuickMode(
+                        enableMirror = enableMirror,
+                        isCurrentlyLandscape = currentlyLandscape
+                    )
+                },
                 onDismiss = dismissScreensaver
             )
         }
@@ -502,84 +532,85 @@ fun HomeScreen(
                 )
             }
 
-            // 4. Interactive Smart KMZ Map - Smart Dynamic Fit (weight 1f fills all remaining height with 0 vertical scroll/gaps)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, cardBorderColor, RoundedCornerShape(14.dp))
-            ) {
-                InteractiveSmartMap(
-                    location = locationState.point,
-                    gpsAccuracy = locationState.accuracy,
-                    bearing = locationState.bearing,
-                    compassHeading = compassState.azimuthDegrees,
-                    compassHeadingStr = compassState.displayHeading,
-                    routeData = activeRoute,
-                    matchedProjectedPoint = matchResult.projectedPoint,
-                    onRefreshLocation = {
-                        viewModel.refreshLocation()
-                        viewModel.showToast("Location refreshed")
-                    },
-                    mapThemePreference = when (screensaverSettings.miniMapStyle) {
-                        MiniMapStyle.DARK -> "dark"
-                        MiniMapStyle.LIGHT -> "light"
-                        else -> mapThemePreference
-                    },
-                    mapTypePreference = if (screensaverSettings.miniMapStyle == MiniMapStyle.SATELLITE) {
-                        "satellite"
-                    } else {
-                        mapTypePreference
-                    },
-                    onToggleMapTheme = {
-                        val nextStyle = when (screensaverSettings.miniMapStyle) {
-                            MiniMapStyle.DARK -> MiniMapStyle.LIGHT
-                            MiniMapStyle.LIGHT -> MiniMapStyle.STANDARD
-                            else -> MiniMapStyle.DARK
-                        }
-                        viewModel.setHomeMiniMapStyle(nextStyle)
-                        viewModel.showToast("Map Style: ${nextStyle.label}")
-                    },
-                    onToggleMapType = {
-                        val nextStyle = if (screensaverSettings.miniMapStyle == MiniMapStyle.SATELLITE ||
-                            mapTypePreference == "satellite"
-                        ) {
-                            MiniMapStyle.STANDARD
+            // 4. Interactive Smart KMZ Map - Synchronized with Shared Mini Map Settings (all Screensaver config lives in Settings -> Screensaver)
+            if (screensaverSettings.miniMapVisible) {
+                val mapBorderModifier = if (screensaverSettings.miniMapShowBorder) {
+                    Modifier.border(
+                        width = 1.2.dp,
+                        color = Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                } else {
+                    Modifier
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .alpha(
+                            screensaverSettings.miniMapOpacity.coerceIn(
+                                HomeScreensaverSettings.MIN_MINI_MAP_OPACITY,
+                                1.0f
+                            )
+                        )
+                        .clip(RoundedCornerShape(14.dp))
+                        .then(mapBorderModifier)
+                        .testTag("home_interactive_map_container")
+                ) {
+                    InteractiveSmartMap(
+                        location = locationState.point,
+                        gpsAccuracy = locationState.accuracy,
+                        bearing = locationState.bearing,
+                        compassHeading = compassState.azimuthDegrees,
+                        compassHeadingStr = compassState.displayHeading,
+                        routeData = activeRoute,
+                        matchedProjectedPoint = matchResult.projectedPoint,
+                        onRefreshLocation = {
+                            viewModel.refreshLocation()
+                            viewModel.showToast("Location refreshed")
+                        },
+                        mapThemePreference = when (screensaverSettings.miniMapStyle) {
+                            MiniMapStyle.DARK -> "dark"
+                            MiniMapStyle.LIGHT -> "light"
+                            else -> mapThemePreference
+                        },
+                        mapTypePreference = if (screensaverSettings.miniMapStyle == MiniMapStyle.SATELLITE) {
+                            "satellite"
                         } else {
-                            MiniMapStyle.SATELLITE
-                        }
-                        viewModel.setHomeMiniMapStyle(nextStyle)
-                        viewModel.showToast(if (nextStyle == MiniMapStyle.SATELLITE) "Satellite Imagery" else "Standard Map")
-                    },
-                    sharedZoomLevel = screensaverSettings.miniMapZoomLevel,
-                    sharedRecenterEpoch = screensaverSettings.recenterEpoch,
-                    onSharedZoomIn = { viewModel.zoomInHomeMiniMap() },
-                    onSharedZoomOut = { viewModel.zoomOutHomeMiniMap() },
-                    onSharedRecenter = { viewModel.recenterHomeMiniMap() },
-                    modifier = Modifier.fillMaxSize()
-                )
+                            mapTypePreference
+                        },
+                        onToggleMapTheme = {
+                            val nextStyle = when (screensaverSettings.miniMapStyle) {
+                                MiniMapStyle.DARK -> MiniMapStyle.LIGHT
+                                MiniMapStyle.LIGHT -> MiniMapStyle.STANDARD
+                                else -> MiniMapStyle.DARK
+                            }
+                            viewModel.setHomeMiniMapStyle(nextStyle)
+                            viewModel.showToast("Map Style: ${nextStyle.label}")
+                        },
+                        onToggleMapType = {
+                            val nextStyle = if (screensaverSettings.miniMapStyle == MiniMapStyle.SATELLITE ||
+                                mapTypePreference == "satellite"
+                            ) {
+                                MiniMapStyle.STANDARD
+                            } else {
+                                MiniMapStyle.SATELLITE
+                            }
+                            viewModel.setHomeMiniMapStyle(nextStyle)
+                            viewModel.showToast(if (nextStyle == MiniMapStyle.SATELLITE) "Satellite Imagery" else "Standard Map")
+                        },
+                        sharedZoomLevel = screensaverSettings.miniMapZoomLevel,
+                        sharedRecenterEpoch = screensaverSettings.recenterEpoch,
+                        onSharedZoomIn = { viewModel.zoomInHomeMiniMap() },
+                        onSharedZoomOut = { viewModel.zoomOutHomeMiniMap() },
+                        onSharedRecenter = { viewModel.recenterHomeMiniMap() },
+                        screensaverSettings = screensaverSettings,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
             }
-
-            // 4b. Shared Screensaver Mode (Portrait / Landscape / Mirror HUD) & Shared Mini Map Controls (Home Page only)
-            HomeScreensaverAndMapControls(
-                settings = screensaverSettings,
-                onSelectMode = { mode -> viewModel.setScreensaverDisplayMode(mode) },
-                onToggleMirror = { enabled -> viewModel.setScreensaverMirrorEnabled(enabled) },
-                onHudBrightnessChange = { brightness -> viewModel.setScreensaverHudBrightness(brightness) },
-                onOrientationChange = { orientation -> viewModel.setHomeMiniMapOrientation(orientation) },
-                onZoomIn = { viewModel.zoomInHomeMiniMap() },
-                onZoomOut = { viewModel.zoomOutHomeMiniMap() },
-                onRecenter = { viewModel.recenterHomeMiniMap() },
-                onToggleMapVisible = { viewModel.setHomeMiniMapVisible(!screensaverSettings.miniMapVisible) },
-                onStyleChange = { style -> viewModel.setHomeMiniMapStyle(style) },
-                cardBgColor = cardBgColor,
-                cardBorderColor = cardBorderColor,
-                mainTextColor = mainTextColor,
-                subTextColor = subTextColor,
-                isDark = isDark,
-                isCompact = isCompactHeight
-            )
 
             // 5. Prominent Next KM Stone Card
             val nextKmTracker = remember { NextKmStoneTracker() }
@@ -2840,6 +2871,7 @@ fun InteractiveSmartMap(
     onSharedZoomIn: (() -> Unit)? = null,
     onSharedZoomOut: (() -> Unit)? = null,
     onSharedRecenter: (() -> Unit)? = null,
+    screensaverSettings: HomeScreensaverSettings = HomeScreensaverSettings(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -2925,6 +2957,30 @@ fun InteractiveSmartMap(
         label = "map_compass_rotation"
     )
 
+    // Shared map orientation mode rotation (North Up / Direction Up / Auto)
+    val anchorForOrientation = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+    val effectiveMapBearing = remember(anchorForOrientation, bearing, routeData?.id) {
+        MiniMapRenderer.resolveEffectiveBearing(anchorForOrientation, bearing, routeData)
+    }
+    val rawTargetMapRotation = remember(screensaverSettings.miniMapOrientation, effectiveMapBearing) {
+        MiniMapRenderer.resolveMapRotationDegrees(
+            mode = screensaverSettings.miniMapOrientation,
+            effectiveBearing = effectiveMapBearing
+        )
+    }
+    var unwrappedMapRotation by remember { mutableFloatStateOf(rawTargetMapRotation) }
+    LaunchedEffect(rawTargetMapRotation) {
+        var delta = (rawTargetMapRotation - unwrappedMapRotation) % 360f
+        if (delta > 180f) delta -= 360f
+        if (delta < -180f) delta += 360f
+        unwrappedMapRotation += delta
+    }
+    val animatedMapRotation by animateFloatAsState(
+        targetValue = unwrappedMapRotation,
+        animationSpec = tween(260, easing = FastOutSlowInEasing),
+        label = "home_shared_map_rotation"
+    )
+
     Box(modifier = modifier) {
         Canvas(
             modifier = Modifier
@@ -2942,6 +2998,8 @@ fun InteractiveSmartMap(
             val _tick = tileUpdate
             val w = size.width
             val h = size.height
+            val cx = w / 2f
+            val cy = h / 2f
 
             val anchorGeo = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
 
@@ -2958,132 +3016,147 @@ fun InteractiveSmartMap(
                 mapType = mapTypePreference
             )
 
-            if (osmBmp != null) {
-                drawImage(
-                    image = osmBmp.asImageBitmap(),
-                    dstOffset = IntOffset.Zero,
-                    dstSize = IntSize(w.toInt(), h.toInt())
-                )
-                hasOsmTiles = true
-            }
+            drawRect(color = mapTheme.mapBackground)
 
-            if (!hasOsmTiles) {
-                drawRect(color = mapTheme.mapBackground)
-                val gridSpacing = 72.dp.toPx()
-                var gx = 0f
-                while (gx < w) {
-                    drawLine(
-                        color = mapTheme.gridLineColor,
-                        start = Offset(gx, 0f),
-                        end = Offset(gx, h),
-                        strokeWidth = 1f
+            rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
+                if (osmBmp != null) {
+                    drawImage(
+                        image = osmBmp.asImageBitmap(),
+                        dstOffset = IntOffset.Zero,
+                        dstSize = IntSize(w.toInt(), h.toInt())
                     )
-                    gx += gridSpacing
+                    hasOsmTiles = true
                 }
-                var gy = 0f
-                while (gy < h) {
-                    drawLine(
-                        color = mapTheme.gridLineColor,
-                        start = Offset(0f, gy),
-                        end = Offset(w, gy),
-                        strokeWidth = 1f
-                    )
-                    gy += gridSpacing
-                }
-            }
 
-            fun toScreen(pt: GeoPoint): Offset {
-                val (sx, sy) = OsmTileManager.geoToScreen(
-                    pt = pt,
-                    center = anchorGeo,
-                    widthPx = w,
-                    heightPx = h,
-                    zoom = currentZoom,
-                    panOffsetX = panOffsetX,
-                    panOffsetY = panOffsetY
-                )
-                return Offset(sx, sy)
-            }
-
-            // High-Contrast Highway Route Polylines
-            if (routeData != null && routeData.alignments.isNotEmpty()) {
-                for (align in routeData.alignments) {
-                    if (align.points.size < 2) continue
-                    val path = Path()
-                    var started = false
-                    for (pt in align.points) {
-                        val off = toScreen(pt)
-                        if (!started) {
-                            path.moveTo(off.x, off.y)
-                            started = true
-                        } else {
-                            path.lineTo(off.x, off.y)
-                        }
+                if (!hasOsmTiles) {
+                    val gridSpacing = 72.dp.toPx()
+                    var gx = 0f
+                    while (gx < w) {
+                        drawLine(
+                            color = mapTheme.gridLineColor,
+                            start = Offset(gx, 0f),
+                            end = Offset(gx, h),
+                            strokeWidth = 1f
+                        )
+                        gx += gridSpacing
                     }
-
-                    // Soft outer glow for clear distinction from surrounding roads
-                    drawPath(
-                        path = path,
-                        color = Color(0xFF2563EB).copy(alpha = 0.22f),
-                        style = Stroke(width = 14.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                    // Outer high-contrast casing
-                    drawPath(
-                        path = path,
-                        color = if (mapTheme.isDark) Color(0xFF0F172A) else Color(0xFF1E3A8A),
-                        style = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                    // Inner vibrant alignment line
-                    drawPath(
-                        path = path,
-                        color = if (mapTheme.isDark) Color(0xFF38BDF8) else Color(0xFF3B82F6),
-                        style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
+                    var gy = 0f
+                    while (gy < h) {
+                        drawLine(
+                            color = mapTheme.gridLineColor,
+                            start = Offset(0f, gy),
+                            end = Offset(w, gy),
+                            strokeWidth = 1f
+                        )
+                        gy += gridSpacing
+                    }
                 }
-            }
 
-            // Route Chainage Markers
-            if (routeData != null) {
-                for (marker in routeData.markers) {
-                    val mOff = toScreen(marker.point)
-                    if (mOff.x in -100f..(w + 100f) && mOff.y in -100f..(h + 100f)) {
-                        drawCircle(color = Color.White, radius = 5.5.dp.toPx(), center = mOff)
-                        drawCircle(
-                            color = Color(0xFF2563EB),
-                            radius = 4.dp.toPx(),
-                            center = mOff
+                fun toScreen(pt: GeoPoint): Offset {
+                    val (sx, sy) = OsmTileManager.geoToScreen(
+                        pt = pt,
+                        center = anchorGeo,
+                        widthPx = w,
+                        heightPx = h,
+                        zoom = currentZoom,
+                        panOffsetX = panOffsetX,
+                        panOffsetY = panOffsetY
+                    )
+                    return Offset(sx, sy)
+                }
+
+                // High-Contrast Highway Route Polylines (synchronized with shared Mini Map alignment visibility)
+                if (screensaverSettings.miniMapShowRouteAlignment &&
+                    routeData != null &&
+                    routeData.alignments.isNotEmpty()
+                ) {
+                    for (align in routeData.alignments) {
+                        if (align.points.size < 2) continue
+                        val path = Path()
+                        var started = false
+                        for (pt in align.points) {
+                            val off = toScreen(pt)
+                            if (!started) {
+                                path.moveTo(off.x, off.y)
+                                started = true
+                            } else {
+                                path.lineTo(off.x, off.y)
+                            }
+                        }
+
+                        // Soft outer glow for clear distinction from surrounding roads
+                        drawPath(
+                            path = path,
+                            color = Color(0xFF2563EB).copy(alpha = 0.22f),
+                            style = Stroke(width = 14.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                        // Outer high-contrast casing
+                        drawPath(
+                            path = path,
+                            color = if (mapTheme.isDark) Color(0xFF0F172A) else Color(0xFF1E3A8A),
+                            style = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                        // Inner vibrant alignment line
+                        drawPath(
+                            path = path,
+                            color = if (mapTheme.isDark) Color(0xFF38BDF8) else Color(0xFF3B82F6),
+                            style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                     }
                 }
-            }
 
-            // Live GPS Location Marker with Heading Cone & Accuracy Aura
-            if (location != null) {
-                val userOff = toScreen(location)
-
-                // Pulsing GPS Accuracy Halo
-                drawCircle(
-                    color = Color(0xFFEF4444).copy(alpha = pulseAlpha * 0.35f),
-                    radius = 26.dp.toPx(),
-                    center = userOff
-                )
-
-                // Directional Heading Pointer Cone
-                val activeHeading = bearing ?: animatedCompassHeading
-                rotate(degrees = activeHeading, pivot = userOff) {
-                    val conePath = Path().apply {
-                        moveTo(userOff.x, userOff.y - 19.dp.toPx())
-                        lineTo(userOff.x - 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
-                        lineTo(userOff.x, userOff.y + 2.dp.toPx())
-                        lineTo(userOff.x + 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
-                        close()
+                // Route Chainage Markers
+                if (screensaverSettings.miniMapShowRouteAlignment && routeData != null) {
+                    for (marker in routeData.markers) {
+                        val mOff = toScreen(marker.point)
+                        if (mOff.x in -100f..(w + 100f) && mOff.y in -100f..(h + 100f)) {
+                            drawCircle(color = Color.White, radius = 5.5.dp.toPx(), center = mOff)
+                            drawCircle(
+                                color = Color(0xFF2563EB),
+                                radius = 4.dp.toPx(),
+                                center = mOff
+                            )
+                        }
                     }
-                    drawPath(path = conePath, color = Color(0xFFEF4444))
                 }
 
-                // Crisp White Outer Ring + Red Core Beacon
-                drawCircle(color = Color.White, radius = 7.dp.toPx(), center = userOff)
-                drawCircle(color = Color(0xFFEF4444), radius = 4.8.dp.toPx(), center = userOff)
+                // Live GPS Location Marker synchronized with shared marker style
+                if (location != null) {
+                    val userOff = toScreen(location)
+
+                    // Pulsing GPS Accuracy Halo
+                    drawCircle(
+                        color = Color(0xFFEF4444).copy(alpha = pulseAlpha * 0.35f),
+                        radius = 26.dp.toPx(),
+                        center = userOff
+                    )
+
+                    val activeHeading = bearing ?: animatedCompassHeading
+                    when (screensaverSettings.miniMapMarkerStyle) {
+                        HudMapMarkerStyle.NAVIGATION_ARROW -> {
+                            rotate(degrees = activeHeading, pivot = userOff) {
+                                val conePath = Path().apply {
+                                    moveTo(userOff.x, userOff.y - 19.dp.toPx())
+                                    lineTo(userOff.x - 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
+                                    lineTo(userOff.x, userOff.y + 2.dp.toPx())
+                                    lineTo(userOff.x + 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
+                                    close()
+                                }
+                                drawPath(path = conePath, color = Color(0xFFEF4444))
+                            }
+                            drawCircle(color = Color.White, radius = 7.dp.toPx(), center = userOff)
+                            drawCircle(color = Color(0xFFEF4444), radius = 4.8.dp.toPx(), center = userOff)
+                        }
+                        HudMapMarkerStyle.PULSE_DOT -> {
+                            drawCircle(color = Color.White, radius = 8.dp.toPx(), center = userOff)
+                            drawCircle(color = Color(0xFF38BDF8), radius = 5.5.dp.toPx(), center = userOff)
+                        }
+                        HudMapMarkerStyle.CLASSIC_PIN -> {
+                            drawCircle(color = Color.White, radius = 8.5.dp.toPx(), center = userOff)
+                            drawCircle(color = Color(0xFFEF4444), radius = 5.8.dp.toPx(), center = userOff)
+                        }
+                    }
+                }
             }
         }
 
@@ -3488,16 +3561,23 @@ data class ScreensaverDisplayState(
 )
 
 /**
- * Pure gating predicate deciding when the 20s inactivity timer may count down and present
+ * Pure gating predicate deciding when the inactivity timer may count down and present
  * the full-screen Chainage Screensaver.
  */
 fun shouldAllowScreensaver(
     isLifecycleResumed: Boolean,
     isDialogOpen: Boolean,
     isKeyboardOpen: Boolean,
-    isInputFocused: Boolean = false
+    isInputFocused: Boolean = false,
+    isMasterEnabled: Boolean = true,
+    isAutoActivateEnabled: Boolean = true
 ): Boolean {
-    return isLifecycleResumed && !isDialogOpen && !isKeyboardOpen && !isInputFocused
+    return isMasterEnabled &&
+        isAutoActivateEnabled &&
+        isLifecycleResumed &&
+        !isDialogOpen &&
+        !isKeyboardOpen &&
+        !isInputFocused
 }
 
 /**
@@ -3716,11 +3796,73 @@ class ScreensaverChainageStateHolder {
     }
 }
 
+private tailrec fun Context.findHostActivityWindow(): Window? {
+    return when (this) {
+        is Activity -> window
+        is ContextWrapper -> baseContext.findHostActivityWindow()
+        else -> null
+    }
+}
+
 /**
- * Coordinates the single 20-second inactivity countdown for the Home Page, tracks foreground
+ * Enforces true edge-to-edge immersive mode on both the Screensaver Dialog Window
+ * and the underlying host Activity Window so clock, battery, status icons, and navigation bar
+ * remain completely hidden even across Portrait / Landscape / Mirror focus transitions, and
+ * cleanly restores system bars immediately upon dismissal.
+ */
+internal fun applyScreensaverImmersiveMode(
+    dialogWindow: Window?,
+    dialogView: View?,
+    hostActivityWindow: Window?,
+    enable: Boolean
+) {
+    if (dialogWindow != null) {
+        WindowCompat.setDecorFitsSystemWindows(dialogWindow, false)
+        dialogWindow.setLayout(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT
+        )
+        @Suppress("DEPRECATION")
+        dialogWindow.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        dialogWindow.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val attrs = dialogWindow.attributes
+            attrs.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            dialogWindow.attributes = attrs
+        }
+        val targetView = dialogView ?: dialogWindow.decorView
+        val controller = WindowCompat.getInsetsController(dialogWindow, targetView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (enable) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    if (hostActivityWindow != null) {
+        val hostController = WindowCompat.getInsetsController(
+            hostActivityWindow,
+            hostActivityWindow.decorView
+        )
+        hostController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (enable) {
+            hostController.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            hostController.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+}
+
+/**
+ * Coordinates the configurable inactivity countdown for the Home Page, tracks foreground
  * lifecycle, detects pointer/key activity cleanly without consuming child gestures, blocks while
- * dialogs/keyboard are active, and hosts the full-screen immersive Dialog without disturbing Home
- * Page scroll position or state.
+ * dialogs/keyboard are active, respects Master/Auto-Activate/Touch-to-Dismiss/Auto-Restart toggles,
+ * and hosts the true immersive edge-to-edge Dialog without disturbing Home Page scroll position or state.
  */
 @Composable
 fun HomeScreensaverCoordinator(
@@ -3730,8 +3872,13 @@ fun HomeScreensaverCoordinator(
     onShowScreensaver: () -> Unit,
     onDismissScreensaver: () -> Unit,
     screensaverContent: @Composable (onDismiss: () -> Unit) -> Unit,
+    masterEnabled: Boolean = true,
+    autoActivateEnabled: Boolean = true,
+    touchToDismiss: Boolean = true,
+    autoRestartTimer: Boolean = true,
     content: @Composable (interactionModifier: Modifier) -> Unit
 ) {
+    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var isLifecycleResumed by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
@@ -3739,6 +3886,7 @@ fun HomeScreensaverCoordinator(
 
     var interactionEpoch by remember { mutableLongStateOf(0L) }
     var lastMoveBumpUptimeMs by remember { mutableLongStateOf(0L) }
+    var hasDismissedInSession by remember { mutableStateOf(false) }
 
     fun notifyUserInteraction(force: Boolean) {
         val nowMs = SystemClock.uptimeMillis()
@@ -3748,11 +3896,19 @@ fun HomeScreensaverCoordinator(
         }
     }
 
+    // Reset single-cycle dismissal flag whenever auto-restart or master toggles change
+    LaunchedEffect(autoRestartTimer, masterEnabled, autoActivateEnabled) {
+        if (autoRestartTimer || !masterEnabled || !autoActivateEnabled) {
+            hasDismissedInSession = false
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     isLifecycleResumed = true
+                    hasDismissedInSession = false
                     interactionEpoch += 1L
                 }
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
@@ -3770,23 +3926,42 @@ fun HomeScreensaverCoordinator(
 
     val density = LocalDensity.current
     val isKeyboardOpen = WindowInsets.ime.getBottom(density) > 0
-    val canRunTimer = shouldAllowScreensaver(
+    val canAllowWhenVisible = shouldAllowScreensaver(
         isLifecycleResumed = isLifecycleResumed,
         isDialogOpen = isBlockingUiOpen,
-        isKeyboardOpen = isKeyboardOpen
+        isKeyboardOpen = isKeyboardOpen,
+        isMasterEnabled = masterEnabled,
+        isAutoActivateEnabled = true // If already visible manually or via timer, only master/blocking/background closes it
+    )
+    val canRunAutoTimer = shouldAllowScreensaver(
+        isLifecycleResumed = isLifecycleResumed,
+        isDialogOpen = isBlockingUiOpen,
+        isKeyboardOpen = isKeyboardOpen,
+        isMasterEnabled = masterEnabled,
+        isAutoActivateEnabled = autoActivateEnabled
     )
 
-    // Dismiss immediately if a dialog, keyboard, or background transition occurs
-    LaunchedEffect(canRunTimer, isScreensaverVisible) {
-        if (!canRunTimer && isScreensaverVisible) {
+    // Dismiss immediately if disabled, dialog opens, keyboard opens, or background transition occurs
+    LaunchedEffect(canAllowWhenVisible, isScreensaverVisible) {
+        if (!canAllowWhenVisible && isScreensaverVisible) {
             onDismissScreensaver()
         }
     }
 
     // Single inactivity timer coroutine — automatically cancelled & restarted on any interaction
-    LaunchedEffect(isScreensaverVisible, canRunTimer, interactionEpoch, inactivityTimeoutMs) {
-        if (!isScreensaverVisible && canRunTimer) {
-            delay(inactivityTimeoutMs)
+    LaunchedEffect(
+        isScreensaverVisible,
+        canRunAutoTimer,
+        interactionEpoch,
+        inactivityTimeoutMs,
+        hasDismissedInSession,
+        autoRestartTimer
+    ) {
+        val shouldCount = !isScreensaverVisible &&
+            canRunAutoTimer &&
+            (autoRestartTimer || !hasDismissedInSession)
+        if (shouldCount) {
+            delay(inactivityTimeoutMs.coerceAtLeast(1_000L))
             onShowScreensaver()
         }
     }
@@ -3814,38 +3989,67 @@ fun HomeScreensaverCoordinator(
 
     content(interactionModifier)
 
-    if (isScreensaverVisible && canRunTimer) {
+    val latestTouchToDismiss by rememberUpdatedState(touchToDismiss)
+    val latestOnDismissScreensaver by rememberUpdatedState(onDismissScreensaver)
+
+    if (isScreensaverVisible && canAllowWhenVisible) {
+        val hostActivityWindow = remember(context) { context.findHostActivityWindow() }
         Dialog(
             onDismissRequest = {
                 notifyUserInteraction(force = true)
-                onDismissScreensaver()
+                hasDismissedInSession = true
+                latestOnDismissScreensaver()
             },
             properties = DialogProperties(
                 usePlatformDefaultWidth = false,
                 decorFitsSystemWindows = false,
                 dismissOnBackPress = true,
-                dismissOnClickOutside = true
+                dismissOnClickOutside = latestTouchToDismiss
             )
         ) {
-            val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-            DisposableEffect(dialogWindow) {
+            val localView = LocalView.current
+            val dialogWindow = (localView.parent as? DialogWindowProvider)?.window
+            DisposableEffect(dialogWindow, localView, hostActivityWindow) {
                 if (dialogWindow != null) {
                     dialogWindow.setDimAmount(0f)
                     dialogWindow.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
-                    WindowCompat.setDecorFitsSystemWindows(dialogWindow, false)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        val attrs = dialogWindow.attributes
-                        attrs.layoutInDisplayCutoutMode =
-                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                        dialogWindow.attributes = attrs
+                }
+                applyScreensaverImmersiveMode(
+                    dialogWindow = dialogWindow,
+                    dialogView = localView,
+                    hostActivityWindow = hostActivityWindow,
+                    enable = true
+                )
+                val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+                    if (hasFocus) {
+                        applyScreensaverImmersiveMode(
+                            dialogWindow = dialogWindow,
+                            dialogView = localView,
+                            hostActivityWindow = hostActivityWindow,
+                            enable = true
+                        )
                     }
                 }
-                onDispose {}
+                localView.viewTreeObserver.addOnWindowFocusChangeListener(focusListener)
+                onDispose {
+                    if (localView.viewTreeObserver.isAlive) {
+                        localView.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener)
+                    }
+                    applyScreensaverImmersiveMode(
+                        dialogWindow = dialogWindow,
+                        dialogView = localView,
+                        hostActivityWindow = hostActivityWindow,
+                        enable = false
+                    )
+                }
             }
 
             screensaverContent {
-                notifyUserInteraction(force = true)
-                onDismissScreensaver()
+                if (latestTouchToDismiss) {
+                    notifyUserInteraction(force = true)
+                    hasDismissedInSession = true
+                    latestOnDismissScreensaver()
+                }
             }
         }
     }
@@ -3853,9 +4057,8 @@ fun HomeScreensaverCoordinator(
 
 /**
  * Full-Screen Automotive HUD & Chainage Screensaver Overlay.
- * Strictly button-free inside the screensaver; touching anywhere dismisses immediately.
- * Delegates Portrait, Landscape, and Car Dashboard Mirror HUD reflection rendering to
- * [AutomotiveChainageScreensaverContent].
+ * Minimal HUD layout featuring only a compact Mirror/Normal quick-switch toggle in a safe corner.
+ * Tapping anywhere outside the quick toggle dismisses immediately when Touch-to-Dismiss is active.
  */
 @Composable
 fun ChainageScreensaverOverlay(
@@ -3868,6 +4071,9 @@ fun ChainageScreensaverOverlay(
     mapTypePreference: String = "standard",
     isDarkAppTheme: Boolean = com.example.ui.theme.isAppDarkTheme(),
     screensaverSettings: HomeScreensaverSettings = HomeScreensaverSettings(),
+    isSamplePreview: Boolean = false,
+    sensorPostureOverride: ScreensaverSensorPosture? = null,
+    onToggleMirrorQuickMode: ((enableMirror: Boolean, isCurrentlyLandscape: Boolean) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val resolvedSettings = remember(screensaverSettings, mapTypePreference, mapThemePreference) {
@@ -3879,23 +4085,83 @@ fun ChainageScreensaverOverlay(
             screensaverSettings
         }
     }
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val hardwareSensorPosture = rememberScreensaverSensorPosture(
+        enabled = resolvedSettings.autoOrientationEnabled && sensorPostureOverride == null
+    )
+    val activeSensorPosture = sensorPostureOverride ?: hardwareSensorPosture
+
+    var temporaryLandscapeOverride by remember { mutableStateOf(false) }
+    LaunchedEffect(activeSensorPosture) {
+        if (activeSensorPosture?.isLandscape == true) {
+            temporaryLandscapeOverride = false
+        }
+    }
+    LaunchedEffect(resolvedSettings.mirrorModePreferred, resolvedSettings.displayMode) {
+        if (!resolvedSettings.mirrorModePreferred &&
+            resolvedSettings.displayMode != com.example.model.ScreensaverDisplayMode.MIRROR
+        ) {
+            temporaryLandscapeOverride = false
+        }
+    }
+
+    val handleQuickToggle: ((Boolean, Boolean) -> Unit)? = if (onToggleMirrorQuickMode != null) {
+        { enableMirror, currentlyLandscape ->
+            if (enableMirror) {
+                if (resolvedSettings.autoOrientationEnabled && activeSensorPosture?.isLandscape == false) {
+                    temporaryLandscapeOverride = true
+                }
+            } else {
+                temporaryLandscapeOverride = false
+            }
+            onToggleMirrorQuickMode(enableMirror, currentlyLandscape)
+        }
+    } else {
+        null
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .testTag("home_chainage_screensaver")
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    awaitFirstDown(requireUnconsumed = false)
-                    onDismiss()
+            .pointerInput(resolvedSettings.touchToDismiss) {
+                if (!resolvedSettings.touchToDismiss) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val downPos = down.position
+                    val touchSlop = viewConfiguration.touchSlop
+                    var movedTooFar = false
+                    var consumedByChild = down.isConsumed
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.isConsumed) {
+                            consumedByChild = true
+                        }
+                        if ((change.position - downPos).getDistance() > touchSlop) {
+                            movedTooFar = true
+                        }
+                        if (!change.pressed) {
+                            if (change.changedToUpIgnoreConsumed() && !consumedByChild && !movedTooFar) {
+                                currentOnDismiss()
+                            }
+                            break
+                        }
+                    }
                 }
             }
-            .semantics {
-                onClick(label = "Dismiss screensaver") {
-                    onDismiss()
-                    true
+            .then(
+                if (resolvedSettings.touchToDismiss) {
+                    Modifier.semantics {
+                        onClick(label = "Dismiss screensaver") {
+                            currentOnDismiss()
+                            true
+                        }
+                    }
+                } else {
+                    Modifier
                 }
-            }
+            )
     ) {
         AutomotiveChainageScreensaverContent(
             displayState = displayState,
@@ -3906,7 +4172,11 @@ fun ChainageScreensaverOverlay(
             mapThemePreference = mapThemePreference,
             mapTypePreference = mapTypePreference,
             isDarkAppTheme = isDarkAppTheme,
-            screensaverSettings = resolvedSettings
+            screensaverSettings = resolvedSettings,
+            isSamplePreview = isSamplePreview,
+            sensorPosture = activeSensorPosture,
+            temporaryLandscapeOverride = temporaryLandscapeOverride,
+            onToggleMirrorQuickMode = handleQuickToggle
         )
     }
 }

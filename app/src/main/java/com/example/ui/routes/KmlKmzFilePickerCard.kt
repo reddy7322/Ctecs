@@ -25,20 +25,29 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,19 +61,23 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.isAppDarkTheme
 
 /**
- * Modern, interactive File Picker UI component for selecting .kml and .kmz route files from local storage.
- * Integrates SAF (Storage Access Framework) with OpenDocument contract, persistable URI grants,
- * visual file format badges, and live parsing feedback.
+ * Interactive File & URL Picker UI component for importing .kml, .kmz, Google My Maps links,
+ * and direct KML/KMZ URLs through the unified KMZ/KML alignment pipeline.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun KmlKmzFilePickerCard(
     onFileSelected: (uri: Uri, displayName: String) -> Unit,
     isImporting: Boolean = false,
+    onImportFromUrl: ((String) -> Unit)? = null,
+    importStatusMessage: String? = null,
+    importErrorMessage: String? = null,
+    onDismissStatus: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val isDark = isAppDarkTheme()
+    var showUrlImportDialog by remember { mutableStateOf(false) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -127,6 +140,8 @@ fun KmlKmzFilePickerCard(
     }
 
     val primaryColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+    val greenAccent = Color(0xFF10B981)
+    val redAccent = Color(0xFFEF4444)
     val cardBg = if (isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)
     val borderColor = if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
 
@@ -163,7 +178,7 @@ fun KmlKmzFilePickerCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Select Route File (.KML / .KMZ)",
+                text = "Import Route Alignment (.KML / .KMZ / URL)",
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isDark) Color.White else Color(0xFF0F172A),
@@ -173,7 +188,7 @@ fun KmlKmzFilePickerCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Pick a Google Earth or CAD alignment file from local storage to parse chainage & GPS coordinates.",
+                text = "Pick a local .kml/.kmz file or paste a Google My Maps / direct KML URL to parse chainage & GPS alignment.",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -192,9 +207,9 @@ fun KmlKmzFilePickerCard(
                 Spacer(modifier = Modifier.width(6.dp))
                 FormatBadge(".KML Document", isDark)
                 Spacer(modifier = Modifier.width(6.dp))
-                FormatBadge("AutoCAD Civil 3D", isDark)
+                FormatBadge("Google My Maps URL", isDark)
                 Spacer(modifier = Modifier.width(6.dp))
-                FormatBadge("QGIS / Global Mapper", isDark)
+                FormatBadge("Direct KML URL", isDark)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -221,9 +236,10 @@ fun KmlKmzFilePickerCard(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Parsing KML/KMZ File...",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
+                        text = importStatusMessage ?: "Importing KML/KMZ...",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 } else {
                     Icon(
@@ -237,6 +253,138 @@ fun KmlKmzFilePickerCard(
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+            }
+
+            if (onImportFromUrl != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedButton(
+                    onClick = { showUrlImportDialog = true },
+                    enabled = !isImporting,
+                    border = BorderStroke(1.2.dp, primaryColor.copy(alpha = 0.6f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryColor),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("import_kml_url_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Import KML / My Maps URL",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (isImporting) {
+                Spacer(modifier = Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    color = primaryColor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                )
+            }
+
+            if (!isImporting && !importErrorMessage.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = redAccent.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, redAccent.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("kml_import_error_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = null,
+                                tint = redAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = importErrorMessage,
+                                fontSize = 11.5.sp,
+                                color = if (isDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C)
+                            )
+                        }
+                        if (onDismissStatus != null) {
+                            IconButton(onClick = onDismissStatus, modifier = Modifier.size(24.dp)) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Dismiss error",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!isImporting && importErrorMessage.isNullOrBlank() && !importStatusMessage.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = greenAccent.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, greenAccent.copy(alpha = 0.35f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("kml_import_status_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = greenAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = importStatusMessage,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
+                            )
+                        }
+                        if (onDismissStatus != null) {
+                            IconButton(onClick = onDismissStatus, modifier = Modifier.size(24.dp)) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Dismiss status",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -260,6 +408,13 @@ fun KmlKmzFilePickerCard(
                 )
             }
         }
+    }
+
+    if (showUrlImportDialog && onImportFromUrl != null) {
+        KmlUrlImportDialog(
+            onDismiss = { showUrlImportDialog = false },
+            onImportUrl = { url -> onImportFromUrl(url) }
+        )
     }
 }
 

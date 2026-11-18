@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BrandingWatermark
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
@@ -54,6 +57,7 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LinearScale
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Palette
@@ -181,10 +185,17 @@ fun SettingsScreen(
     val isFrontCamera by viewModel.isFrontCamera.collectAsStateWithLifecycle()
     val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
+    val isImportingRoute by viewModel.isImportingRoute.collectAsStateWithLifecycle()
+    val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
+    val routeImportError by viewModel.routeImportError.collectAsStateWithLifecycle()
     val manualChainage by viewModel.manualChainage.collectAsStateWithLifecycle()
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val lastValidLocation by viewModel.lastValidLocation.collectAsStateWithLifecycle()
     val liveMatchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
+    val screensaverSettings by viewModel.homeScreensaverSettings.collectAsStateWithLifecycle()
+    val compassState by viewModel.compassState.collectAsStateWithLifecycle()
+    val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
+    val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
 
     // In-App Update States
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
@@ -194,6 +205,7 @@ fun SettingsScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var showRestoreDialog by remember { mutableStateOf(false) }
+    var showKmlUrlImportDialog by remember { mutableStateOf(false) }
     var isPreviewLandscape by remember { mutableStateOf(false) }
     var paddingTargetMode by remember { mutableStateOf("photo") }
     var previewMediaMode by remember { mutableStateOf("photo") }
@@ -269,7 +281,7 @@ fun SettingsScreen(
         CameraResolutionHelper.getSupportedVideoResolutions(context, isFrontCamera)
     }
 
-    // ALL 9 UNIFIED SECTIONS ARE COLLAPSED INITIALLY
+    // ALL UNIFIED SECTIONS ARE COLLAPSED INITIALLY
     val expandedSections = remember {
         mutableStateMapOf(
             "project" to false,
@@ -281,6 +293,7 @@ fun SettingsScreen(
             "logo" to false,
             "storage" to false,
             "display" to false,
+            "screensaver" to false,
             "backup_restore" to false,
             "permissions_about" to false
         )
@@ -653,19 +666,13 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "Settings",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = primaryAccent
-                            )
+                    Text(
+                        text = "Settings",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = primaryAccent
                         )
-                        Text(
-                            text = "9 Categories • Complete Camera & Overlay Config",
-                            style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        )
-                    }
+                    )
                 },
                 navigationIcon = {
                     IconButton(
@@ -709,33 +716,36 @@ fun SettingsScreen(
         bottomBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth(),
-                tonalElevation = 6.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Preferences saved persistently",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = primaryAccent,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Button(
-                        onClick = onNavigateBack,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = primaryAccent,
-                            contentColor = primaryAccentContent
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.testTag("settings_done_button")
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Done", color = primaryAccentContent, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Preferences saved automatically",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Button(
+                            onClick = onNavigateBack,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = primaryAccent,
+                                contentColor = primaryAccentContent
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("settings_done_button")
+                        ) {
+                            Text("Done", color = primaryAccentContent, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -743,11 +753,17 @@ fun SettingsScreen(
         containerColor = MaterialTheme.colorScheme.background,
         modifier = modifier
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .imePadding()
+                .imePadding(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .widthIn(max = 720.dp)
                 .pointerInput(Unit) {
                     detectTapGestures(onTap = {
                         focusManager.clearFocus()
@@ -755,7 +771,7 @@ fun SettingsScreen(
                     })
                 }
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             // Instant Search Bar
             OutlinedTextField(
@@ -764,7 +780,7 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("settings_search_input"),
-                placeholder = { Text("Search settings (e.g. project, stretch, work type, resolution, logo)...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), fontSize = 13.sp) },
+                placeholder = { Text("Search settings...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), fontSize = 13.sp) },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = "Search", tint = primaryAccent, modifier = Modifier.size(18.dp))
                 },
@@ -815,7 +831,7 @@ fun SettingsScreen(
                         onClick = {
                             listOf(
                                 "project", "camera", "timestamp", "mini_map", "gps", "chainage",
-                                "logo", "storage", "display", "backup_restore", "permissions_about"
+                                "logo", "storage", "display", "screensaver", "backup_restore", "permissions_about"
                             ).forEach { expandedSections[it] = true }
                         }
                     ) {
@@ -825,7 +841,7 @@ fun SettingsScreen(
                         onClick = {
                             listOf(
                                 "project", "camera", "timestamp", "mini_map", "gps", "chainage",
-                                "logo", "storage", "display", "backup_restore", "permissions_about"
+                                "logo", "storage", "display", "screensaver", "backup_restore", "permissions_about"
                             ).forEach { expandedSections[it] = false }
                         }
                     ) {
@@ -853,7 +869,7 @@ fun SettingsScreen(
 
                 SmartDropdownSection(
                     title = "Project Settings",
-                    subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Strech Set" }} (${currentProject.startChainage} - ${currentProject.endChainage}) • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
+                    subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Stretch Set" }} (${currentProject.startChainage} - ${currentProject.endChainage}) • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
                     icon = Icons.Default.Engineering,
                     accentColor = primaryAccent,
                     isExpanded = expandedSections["project"] ?: false,
@@ -1027,8 +1043,8 @@ fun SettingsScreen(
                             projectStretchInput = newStretch
                             viewModel.saveProjectProfileSilent(currentProject.copy(packageSection = newStretch))
                         },
-                        label = { Text("Strech") },
-                        placeholder = { Text("Enter Strech / Section", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                        label = { Text("Stretch") },
+                        placeholder = { Text("Enter Stretch / Section", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("settings_stretch_input"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = primaryAccent,
@@ -1307,7 +1323,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Touch to take photo",
-                        subtitle = "Tap anywhere on preview frame to trigger photo capture",
                         checked = currentCameraSettings.touchToCapture,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(touchToCapture = it)) },
                         tag = "switch_touch_to_capture"
@@ -1315,7 +1330,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Shutter sound",
-                        subtitle = "Audible feedback upon photo or video capture",
                         checked = currentCameraSettings.captureSound,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(captureSound = it)) },
                         tag = "switch_shutter_sound"
@@ -1323,7 +1337,7 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Show Grid",
-                        subtitle = "Display 3×3 or 4×4 rule-of-thirds alignment grid",
+                        subtitle = "Display 3×3 alignment grid",
                         checked = currentCameraSettings.gridMode != CameraGridMode.OFF,
                         onCheckedChange = {
                             val newMode = if (it) CameraGridMode.GRID_3X3 else CameraGridMode.OFF
@@ -1334,7 +1348,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Easy to toggle cameras",
-                        subtitle = "One-tap front/back camera switch button on viewfinder",
                         checked = currentCameraSettings.easyToggleCameras,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(easyToggleCameras = it)) },
                         tag = "switch_easy_toggle_cameras"
@@ -1342,7 +1355,7 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Front camera mirror",
-                        subtitle = "Save front camera photos mirrored as seen in viewfinder",
+                        subtitle = "Flip captured front-camera photos horizontally",
                         checked = currentCameraSettings.frontCameraMirror,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(frontCameraMirror = it)) },
                         tag = "switch_front_mirror"
@@ -1350,15 +1363,15 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Battery save mode",
-                        subtitle = "Dim viewfinder preview brightness when idle to conserve power",
+                        subtitle = "Dim viewfinder when idle",
                         checked = currentCameraSettings.batterySaveMode,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(batterySaveMode = it)) },
                         tag = "switch_battery_save"
                     )
 
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                        modifier = Modifier.padding(vertical = 10.dp)
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
 
                     // ----------------------------------------------------
@@ -1374,7 +1387,7 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Save original photo",
-                        subtitle = "Save pristine un-watermarked photo alongside stamped copy",
+                        subtitle = "Keep un-watermarked copy alongside stamped image",
                         checked = currentOverlay.saveOriginalImage,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(saveOriginalImage = it)) },
                         tag = "switch_keep_original"
@@ -1382,7 +1395,7 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Preserve EXIF metadata",
-                        subtitle = "Embed GPS & timestamp inside standard JPEG EXIF headers",
+                        subtitle = "Embed GPS & timestamp inside JPEG EXIF",
                         checked = currentCameraSettings.preserveExif,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(preserveExif = it)) },
                         tag = "switch_preserve_exif"
@@ -1423,8 +1436,8 @@ fun SettingsScreen(
                     )
 
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                        modifier = Modifier.padding(vertical = 10.dp)
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
 
                     // ----------------------------------------------------
@@ -1440,13 +1453,12 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Record Audio",
-                        subtitle = "Include microphone audio track in recorded video clips",
                         checked = currentCameraSettings.recordAudio,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(recordAudio = it)) },
                         tag = "switch_record_audio"
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Target Video Frame Rate",
                         style = MaterialTheme.typography.labelMedium,
@@ -1472,53 +1484,41 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text(
-                        text = "Videos use hardware-accelerated MediaCodec & MediaMuxer frame pipeline to burn-in dynamic metadata without video quality loss.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
-                        modifier = Modifier.padding(vertical = 10.dp)
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
 
                     // ----------------------------------------------------
                     // SUBGROUP 4: RESOLUTION CAPABILITIES (PHOTO & VIDEO)
                     // ----------------------------------------------------
                     Text(
-                        text = "RESOLUTION CAPABILITIES (PHOTO & VIDEO)",
+                        text = "RESOLUTION",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = primaryAccent,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
-                    Text(
-                        text = "Separate hardware resolution lists derived from active sensor output capabilities.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
 
                     // Unified Photo Resolution Selector
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, secondaryAccent.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = androidx.compose.foundation.BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Column(modifier = Modifier.padding(10.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Still Photo Resolution", fontWeight = FontWeight.Bold, color = secondaryAccent, fontSize = 13.sp)
-                                Text("${photoResolutions.size} Options Detected", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Still Photo Resolution", fontWeight = FontWeight.SemiBold, color = secondaryAccent, fontSize = 13.sp)
+                                Text("${photoResolutions.size} options", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("Current Selection: ${currentCameraSettings.photoResolution}", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(currentCameraSettings.photoResolution, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Spacer(modifier = Modifier.height(6.dp))
                             Button(
                                 onClick = { showPhotoResolutionDialog = true },
                                 colors = ButtonDefaults.buttonColors(
@@ -1526,31 +1526,35 @@ fun SettingsScreen(
                                     contentColor = secondaryAccentContent
                                 ),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().testTag("choose_photo_resolution_button")
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("choose_photo_resolution_button")
                             ) {
-                                Text("Choose Still Photo Resolution...", color = secondaryAccentContent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Choose Still Photo Resolution", color = secondaryAccentContent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
 
                     // Unified Video Resolution Selector
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, videoAccent.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = androidx.compose.foundation.BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Column(modifier = Modifier.padding(10.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Video Recording Resolution", fontWeight = FontWeight.Bold, color = videoAccent, fontSize = 13.sp)
-                                Text("${videoResolutions.size} Options Detected", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Video Recording Resolution", fontWeight = FontWeight.SemiBold, color = videoAccent, fontSize = 13.sp)
+                                Text("${videoResolutions.size} options", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("Current Selection: ${currentCameraSettings.videoResolution}", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(currentCameraSettings.videoResolution, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Spacer(modifier = Modifier.height(6.dp))
                             Button(
                                 onClick = { showVideoResolutionDialog = true },
                                 colors = ButtonDefaults.buttonColors(
@@ -1558,9 +1562,12 @@ fun SettingsScreen(
                                     contentColor = Color.White
                                 ),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().testTag("choose_video_resolution_button")
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("choose_video_resolution_button")
                             ) {
-                                Text("Choose Video Recording Resolution...", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Choose Video Resolution", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -1690,7 +1697,7 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Enable Timestamp Burn-In",
-                        subtitle = "Permanently render timestamp onto captured photos & video frames",
+                        subtitle = "Render timestamp onto captured photos & videos",
                         checked = currentOverlay.burnInTimestamp,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(burnInTimestamp = it)) },
                         tag = "switch_burn_in_timestamp"
@@ -1698,20 +1705,20 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Current Location Name",
-                        subtitle = "Automatically detect & stamp locality/city/state via GPS reverse geocoding",
+                        subtitle = "Auto-resolve locality via GPS",
                         checked = currentOverlay.showLocationName,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showLocationName = it)) },
                         tag = "switch_show_location_name"
                     )
 
                     if (currentOverlay.showLocationName) {
-                        Card(
+                        Surface(
                             shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, timestampAccent.copy(alpha = 0.45f)),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(0.75.dp, timestampAccent.copy(alpha = 0.4f)),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 3.dp)
                         ) {
                             Row(
                                 modifier = Modifier
@@ -1744,7 +1751,7 @@ fun SettingsScreen(
                                         viewModel.refreshLocationName()
                                         viewModel.showToast("Refreshing location name...", ToastType.INFO)
                                     },
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Refresh,
@@ -1759,7 +1766,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "24-Hour Time Format",
-                        subtitle = "Display 23:45 instead of 11:45 PM",
                         checked = currentCameraSettings.is24HourFormat,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(is24HourFormat = it)) },
                         tag = "switch_24_hour"
@@ -1767,7 +1773,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Show Project Info",
-                        subtitle = "Include Highway ID, Section & Lane details",
                         checked = currentOverlay.showProjectInfo,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showProjectInfo = it)) },
                         tag = "switch_show_project"
@@ -1775,7 +1780,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Show Compass Heading",
-                        subtitle = "Include live compass direction (e.g. 359° N)",
                         checked = currentOverlay.showCompass,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showCompass = it)) },
                         tag = "switch_show_compass"
@@ -1783,7 +1787,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Show Altitude",
-                        subtitle = "Include elevation in meters above sea level",
                         checked = currentOverlay.showAltitude,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAltitude = it)) },
                         tag = "switch_show_altitude"
@@ -1791,7 +1794,6 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Show GPS Accuracy",
-                        subtitle = "Include GPS error margin (e.g. ±4m)",
                         checked = currentOverlay.showAccuracy,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAccuracy = it)) },
                         tag = "switch_show_accuracy"
@@ -2035,11 +2037,6 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = timestampAccent
-                                    )
-                                    Text(
-                                        text = "Anchors timestamp & metadata to this frame position",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 Icon(
@@ -2633,22 +2630,15 @@ fun SettingsScreen(
                     // SUBSECTION 8: MANUAL OVERLAY PADDING CONTROLS
                     // ----------------------------------------------------
                     Text(
-                        text = "MANUAL OVERLAY PADDING CONTROLS",
+                        text = "MANUAL OVERLAY PADDING",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = timestampAccent,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
-                    Text(
-                        text = "Adjust 4-side safe margins (Top, Bottom, Left, Right in dp) to position the stamp overlay perfectly and avoid clipping near camera controls, cutouts, or device edges.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
 
                     CompactSwitchRow(
-                        title = "Use Same Padding for Photo and Video",
-                        subtitle = "Apply identical 4-side safe margins across photo stamps and video overlays",
+                        title = "Same Padding for Photo & Video",
                         checked = currentOverlay.useSamePaddingForPhotoAndVideo,
                         onCheckedChange = { isSame ->
                             viewModel.saveOverlayConfigSilent(
@@ -2850,13 +2840,12 @@ fun SettingsScreen(
                 ) {
                     CompactSwitchRow(
                         title = "Show GPS Coordinates",
-                        subtitle = "Render live latitude & longitude on captured media",
                         checked = currentOverlay.showCoordinates,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showCoordinates = it)) },
                         tag = "switch_show_coordinates"
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text("Coordinate Format", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -2895,7 +2884,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // ====================================================
             // 8. CHAINAGE, KMZ AND LHS/RHS
@@ -2911,7 +2900,6 @@ fun SettingsScreen(
                 ) {
                     CompactSwitchRow(
                         title = "Show Chainage Stamp",
-                        subtitle = "Burn KMZ-derived chainage onto captured media",
                         checked = currentOverlay.showChainage,
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showChainage = it)) },
                         tag = "switch_show_chainage"
@@ -2927,14 +2915,56 @@ fun SettingsScreen(
                     ) {
                         Button(
                             onClick = { kmzPickerLauncher.launch(arrayOf("*/*")) },
+                            enabled = !isImportingRoute,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7), contentColor = Color.White),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Import Custom KMZ/KML", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (isImportingRoute) "Importing..." else "Import Custom KMZ/KML",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
                         }
+
+                        OutlinedButton(
+                            onClick = { showKmlUrlImportDialog = true },
+                            enabled = !isImportingRoute,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryAccent),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent.copy(alpha = 0.55f)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("settings_import_kml_url_button")
+                        ) {
+                            Icon(Icons.Default.Link, contentDescription = "Import KML / My Maps URL", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Import URL", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (isImportingRoute) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            color = primaryAccent,
+                            modifier = Modifier.fillMaxWidth().height(3.dp)
+                        )
+                        routeImportStatus?.let { status ->
+                            Text(
+                                text = status,
+                                fontSize = 11.sp,
+                                color = primaryAccent,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    } else if (!routeImportError.isNullOrBlank()) {
+                        Text(
+                            text = routeImportError ?: "",
+                            fontSize = 11.sp,
+                            color = Color(0xFFEF4444),
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
                     }
 
                     SliderRow(
@@ -2967,50 +2997,45 @@ fun SettingsScreen(
                     onToggleExpand = { expandedSections["logo"] = !(expandedSections["logo"] ?: false) }
                 ) {
                     if (!hasCustomLogo) {
-                        // Empty State - No prefilled logos or dummy presets
-                        Card(
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                         ) {
                             Column(
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(48.dp)
+                                        .size(40.dp)
                                         .clip(CircleShape)
-                                        .background(primaryAccent.copy(alpha = 0.15f)),
+                                        .background(primaryAccent.copy(alpha = 0.14f)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.AddPhotoAlternate,
                                         contentDescription = null,
                                         tint = primaryAccent,
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(10.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "No Custom Logo Uploaded",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Upload your project or company logo to watermark captured photos and videos.",
+                                    text = "Upload your company or project logo",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                                    modifier = Modifier.padding(bottom = 10.dp),
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
                                 Button(
                                     onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7), contentColor = Color.White),
                                     shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.testTag("upload_custom_logo_button")
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("upload_custom_logo_button")
                                 ) {
                                     Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
@@ -3121,7 +3146,6 @@ fun SettingsScreen(
 
                         CompactSwitchRow(
                             title = "Show Logo Stamp",
-                            subtitle = "Burn uploaded logo onto captured photos & videos",
                             checked = currentOverlay.showLogo,
                             onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showLogo = it)) },
                             tag = "switch_show_logo"
@@ -3223,18 +3247,13 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "PDF Default Logo & Signature (DPR Reports)",
-                            style = MaterialTheme.typography.titleSmall,
+                            text = "PDF DEFAULT LOGO & SIGNATURE",
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = primaryAccent
                         )
-                        Text(
-                            text = "Configure default header logo, signature, and engineer name for exported PDF reports.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         // --- PDF HEADER LOGO ---
                         Text(
@@ -3312,7 +3331,6 @@ fun SettingsScreen(
 
                         CompactSwitchRow(
                             title = "Include PDF Logo by Default",
-                            subtitle = "Automatically include header logo in exported DPR reports",
                             checked = currentOverlay.includePdfLogoDefault,
                             onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(includePdfLogoDefault = it)) },
                             tag = "switch_pdf_logo_default"
@@ -3405,7 +3423,6 @@ fun SettingsScreen(
 
                         CompactSwitchRow(
                             title = "Include Signature by Default",
-                            subtitle = "Automatically include saved signature in exported DPR reports",
                             checked = currentOverlay.includePdfSignatureDefault,
                             onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(includePdfSignatureDefault = it)) },
                             tag = "switch_pdf_sig_default"
@@ -3459,21 +3476,19 @@ fun SettingsScreen(
                     onToggleExpand = { expandedSections["storage"] = !(expandedSections["storage"] ?: false) }
                 ) {
                     // Smart Dynamic Option: File Name Save Format (Photos & Videos)
-                    Card(
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 6.dp)
+                            .padding(vertical = 4.dp)
                             .testTag("file_name_format_card"),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent.copy(alpha = 0.5f))
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = androidx.compose.foundation.BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp)
+                                .padding(10.dp)
                         ) {
                             Row(
                                 modifier = Modifier
@@ -3484,66 +3499,39 @@ fun SettingsScreen(
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Info,
                                         contentDescription = "File name format",
                                         tint = primaryAccent,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                     Column {
                                         Text(
                                             text = "File Name Save Format",
                                             style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = "Photos & Videos (Tap to choose format)",
+                                            text = "$dynamicPreview (.jpg / .mp4)",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = primaryAccent
+                                            color = primaryAccent,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { showInlineFormatDropdown = !showInlineFormatDropdown }) {
-                                        Icon(
-                                            imageVector = Icons.Default.ArrowDropDown,
-                                            contentDescription = "Dropdown format selector",
-                                            tint = primaryAccent
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Dynamic Live Preview Box
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surface,
-                                border = androidx.compose.foundation.BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp)
-                                    .clickable { showFileNameFormatDialog = true }
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Text(
-                                        text = "Current dynamic filename:",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Text(
-                                        text = "$dynamicPreview.jpg",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = primaryAccent
-                                    )
-                                    Text(
-                                        text = "$dynamicPreview.mp4 (Video)",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = primaryAccent.copy(alpha = 0.85f)
+                                IconButton(
+                                    onClick = { showInlineFormatDropdown = !showInlineFormatDropdown },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Dropdown format selector",
+                                        tint = primaryAccent
                                     )
                                 }
                             }
@@ -3673,7 +3661,7 @@ fun SettingsScreen(
                 ) {
                     CompactSwitchRow(
                         title = "Horizon level indicator",
-                        subtitle = "Display electronic horizon line on camera viewfinder",
+                        subtitle = "Show horizon line on camera viewfinder",
                         checked = currentCameraSettings.showHorizonLevel,
                         onCheckedChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(showHorizonLevel = it)) },
                         tag = "switch_horizon_level"
@@ -3700,6 +3688,57 @@ fun SettingsScreen(
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 13b. SCREENSAVER & LOCK-SCREEN NAVIGATION
+            // ====================================================
+            if (matchesSearch("screensaver hud mirror portrait landscape speedometer chainage direction lock screen navigation mini map", searchQuery)) {
+                val screensaverSummary = buildString {
+                    append(if (screensaverSettings.masterEnabled) "ON" else "OFF")
+                    append(" • ")
+                    append(screensaverSettings.displayMode.label)
+                    append(" • ")
+                    append("${screensaverSettings.inactivityTimeoutSeconds}s")
+                    if (screensaverSettings.lockScreenNavEnabled) {
+                        append(" • Lock-Screen Nav")
+                    }
+                }
+                SmartDropdownSection(
+                    title = "Screensaver",
+                    subtitle = screensaverSummary,
+                    icon = Icons.Default.Bedtime,
+                    accentColor = primaryAccent,
+                    isExpanded = expandedSections["screensaver"] ?: false,
+                    onToggleExpand = { expandedSections["screensaver"] = !(expandedSections["screensaver"] ?: false) }
+                ) {
+                    ScreensaverSettingsSectionContent(
+                        settings = screensaverSettings,
+                        matchResult = liveMatchResult,
+                        locationState = locationState,
+                        activeRoute = activeRoute,
+                        projectProfile = currentProject,
+                        compassHeading = compassState.azimuthDegrees,
+                        currentLocationName = currentLocationName,
+                        mapThemePreference = mapThemePreference,
+                        mapTypePreference = mapTypePreference,
+                        accentColor = primaryAccent,
+                        secondaryColor = secondaryAccent,
+                        onUpdateSettings = { transform -> viewModel.updateScreensaverSettings(transform) },
+                        onSelectDisplayMode = { mode -> viewModel.setScreensaverDisplayMode(mode) },
+                        onToggleMirror = { enabled -> viewModel.setScreensaverMirrorEnabled(enabled) },
+                        onHudBrightnessChange = { brightness -> viewModel.setScreensaverHudBrightness(brightness) },
+                        onMiniMapOrientationChange = { orientation -> viewModel.setHomeMiniMapOrientation(orientation) },
+                        onMiniMapZoomIn = { viewModel.zoomInHomeMiniMap() },
+                        onMiniMapZoomOut = { viewModel.zoomOutHomeMiniMap() },
+                        onMiniMapRecenter = { viewModel.recenterHomeMiniMap() },
+                        onMiniMapStyleChange = { style -> viewModel.setHomeMiniMapStyle(style) },
+                        onToggleLockScreenNav = { enabled -> viewModel.setLockScreenNavigationEnabled(enabled) },
+                        onResetDefaults = { viewModel.resetScreensaverSettings() }
+                    )
                 }
             }
 
@@ -3778,9 +3817,8 @@ fun SettingsScreen(
                         }
                     }
 
-                    Text("Package: ${context.packageName}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        text = if (isBetaApp) "Update Channel: Beta (Receives Beta releases only)" else "Update Channel: Stable (Receives Stable releases only)",
+                        text = if (isBetaApp) "Update Channel: Beta" else "Update Channel: Stable",
                         fontSize = 11.sp,
                         color = channelColor,
                         modifier = Modifier.padding(top = 2.dp)
@@ -3920,7 +3958,8 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(80.dp))
+            Spacer(modifier = Modifier.height(72.dp))
+        }
         }
     }
 
@@ -3981,6 +4020,13 @@ fun SettingsScreen(
                     Text("Cancel", color = dialogColors.textSecondaryColor)
                 }
             }
+        )
+    }
+
+    if (showKmlUrlImportDialog) {
+        com.example.ui.routes.KmlUrlImportDialog(
+            onDismiss = { showKmlUrlImportDialog = false },
+            onImportUrl = { url -> viewModel.importRouteFromUrl(url) }
         )
     }
 
@@ -4382,20 +4428,24 @@ private fun SmartDropdownSection(
     onToggleExpand: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (isExpanded) accentColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(
+            width = 0.75.dp,
+            color = if (isExpanded) accentColor.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+        ),
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize(tween(250))
+            .animateContentSize(tween(220))
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .clickable { onToggleExpand() }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -4404,36 +4454,38 @@ private fun SmartDropdownSection(
                     modifier = Modifier.weight(1f)
                 ) {
                     Surface(
-                        shape = CircleShape,
-                        color = accentColor.copy(alpha = 0.15f),
-                        modifier = Modifier.size(36.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        color = accentColor.copy(alpha = 0.14f),
+                        modifier = Modifier.size(32.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(20.dp))
+                            Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
                         }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
                             text = title,
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        if (subtitle.isNotBlank()) {
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = if (isExpanded) "Collapse" else "Expand",
                     tint = if (isExpanded) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
@@ -4441,9 +4493,9 @@ private fun SmartDropdownSection(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
                 ) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(bottom = 10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), modifier = Modifier.padding(bottom = 8.dp))
                     content()
                 }
             }
@@ -4454,7 +4506,7 @@ private fun SmartDropdownSection(
 @Composable
 private fun CompactSwitchRow(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     tag: String
@@ -4466,14 +4518,17 @@ private fun CompactSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
             .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 6.dp),
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
             Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!subtitle.isNullOrBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Switch(
             checked = checked,

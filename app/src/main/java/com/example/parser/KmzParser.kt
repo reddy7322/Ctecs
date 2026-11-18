@@ -460,6 +460,22 @@ object KmzParser {
             throw RouteParseException("KML stream is empty: $originalFileName")
         }
 
+        val headerProbe = String(
+            cleanBytes,
+            0,
+            minOf(cleanBytes.size, 2048),
+            Charsets.UTF_8
+        ).trimStart().lowercase(Locale.ROOT)
+        if (headerProbe.startsWith("<!doctype html") ||
+            headerProbe.startsWith("<html") ||
+            headerProbe.startsWith("<head") ||
+            headerProbe.startsWith("<body")
+        ) {
+            throw RouteParseException(
+                "Received an HTML webpage instead of valid KML/XML data ($originalFileName)."
+            )
+        }
+
         val parser = try {
             val factory = XmlPullParserFactory.newInstance()
             factory.isNamespaceAware = false

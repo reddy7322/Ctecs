@@ -21,6 +21,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,13 +30,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -43,10 +45,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,6 +88,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,9 +103,21 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.geo.OsmTileManager
 import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
+import com.example.model.HudColorPreset
+import com.example.model.HudDirectionColorMode
+import com.example.model.HudDirectionPosition
+import com.example.model.HudDirectionStyle
+import com.example.model.HudFontStyle
+import com.example.model.HudLocationPosition
+import com.example.model.HudMapMarkerStyle
+import com.example.model.HudMapPosition
+import com.example.model.HudPanelSize
+import com.example.model.HudSpeedometerStyle
+import com.example.model.HudVerticalPosition
 import com.example.model.MiniMapStyle
 import com.example.model.RouteData
 import com.example.model.ScreensaverDisplayMode
+import com.example.model.resolveEffectiveScreensaverPresentation
 import com.example.overlay.MiniMapRenderer
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -142,21 +160,26 @@ private data class HudClusterPalette(
 
 private fun resolveHudClusterPalette(
     useDarkInstrument: Boolean,
-    isMirrorMode: Boolean
+    isMirrorMode: Boolean,
+    settings: HomeScreensaverSettings
 ): HudClusterPalette {
+    val chainageTint = Color(settings.chainageColorPreset.colorLong)
+    val chainageGlow = Color(settings.chainageColorPreset.glowLong)
+    val speedAccent = Color(settings.speedometerColorPreset.colorLong)
+
     return when {
         isMirrorMode -> HudClusterPalette(
             rootBackground = Color(0xFF000000),
             ambientGlowTop = Color(0xFF0284C7).copy(alpha = 0.08f),
             panelBackground = Color(0xFF030712).copy(alpha = 0.88f),
             panelBorder = Color(0xFF38BDF8).copy(alpha = 0.48f),
-            primaryDigitColor = Color(0xFFFFFFFF),
-            chainageGlowColor = Color(0xFF38BDF8).copy(alpha = 0.45f),
+            primaryDigitColor = if (settings.chainageColorPreset == HudColorPreset.WHITE) Color.White else chainageTint,
+            chainageGlowColor = chainageGlow.copy(alpha = 0.45f),
             secondaryTextColor = Color(0xFFE0F2FE),
             speedArcTrack = Color(0xFF1E293B),
-            speedArcStart = Color(0xFF06B6D4),
+            speedArcStart = speedAccent,
             speedArcEnd = Color(0xFF34D399),
-            needleColor = Color(0xFF38BDF8),
+            needleColor = speedAccent,
             isDark = true,
             isHudMirror = true
         )
@@ -165,13 +188,13 @@ private fun resolveHudClusterPalette(
             ambientGlowTop = Color(0xFF0EA5E9).copy(alpha = 0.16f),
             panelBackground = Color(0xFF0F172A).copy(alpha = 0.68f),
             panelBorder = Color(0xFF38BDF8).copy(alpha = 0.28f),
-            primaryDigitColor = Color(0xFFF8FAFC),
-            chainageGlowColor = Color(0xFF38BDF8).copy(alpha = 0.30f),
+            primaryDigitColor = chainageTint,
+            chainageGlowColor = chainageGlow.copy(alpha = 0.30f),
             secondaryTextColor = Color(0xFFE2E8F0),
             speedArcTrack = Color(0xFF1E293B),
-            speedArcStart = Color(0xFF0EA5E9),
+            speedArcStart = speedAccent,
             speedArcEnd = Color(0xFF34D399),
-            needleColor = Color(0xFF38BDF8),
+            needleColor = speedAccent,
             isDark = true,
             isHudMirror = false
         )
@@ -180,13 +203,13 @@ private fun resolveHudClusterPalette(
             ambientGlowTop = Color(0xFF38BDF8).copy(alpha = 0.14f),
             panelBackground = Color(0xFF111C33).copy(alpha = 0.72f),
             panelBorder = Color(0xFF7DD3FC).copy(alpha = 0.28f),
-            primaryDigitColor = Color(0xFFF8FAFC),
-            chainageGlowColor = Color(0xFF38BDF8).copy(alpha = 0.28f),
+            primaryDigitColor = chainageTint,
+            chainageGlowColor = chainageGlow.copy(alpha = 0.28f),
             secondaryTextColor = Color(0xFFE2E8F0),
             speedArcTrack = Color(0xFF1E293B),
-            speedArcStart = Color(0xFF0284C7),
+            speedArcStart = speedAccent,
             speedArcEnd = Color(0xFF10B981),
-            needleColor = Color(0xFF38BDF8),
+            needleColor = speedAccent,
             isDark = true,
             isHudMirror = false
         )
@@ -195,7 +218,8 @@ private fun resolveHudClusterPalette(
 
 /**
  * Renders the redesigned Automotive Instrument Cluster & Windshield Mirror HUD Screensaver.
- * Strictly button-free inside the screensaver; touching anywhere dismisses cleanly.
+ * Keeps the HUD clean and minimal with only a tiny glassmorphic Mirror/Normal quick-switch toggle
+ * in a screen-safe corner; touching anywhere else dismisses cleanly when enabled.
  *
  * Notice that in [ScreensaverDisplayMode.MIRROR], horizontal flip (`scaleX = -1f`) is applied
  * ONCE at the root container wrapping the complete rendered Landscape dashboard so every digit,
@@ -212,33 +236,80 @@ fun AutomotiveChainageScreensaverContent(
     mapThemePreference: String,
     mapTypePreference: String,
     isDarkAppTheme: Boolean,
-    screensaverSettings: HomeScreensaverSettings
+    screensaverSettings: HomeScreensaverSettings,
+    isSamplePreview: Boolean = false,
+    sensorPosture: ScreensaverSensorPosture? = null,
+    temporaryLandscapeOverride: Boolean = false,
+    onToggleMirrorQuickMode: ((enableMirror: Boolean, currentlyLandscape: Boolean) -> Unit)? = null
 ) {
-    val isMirrorMode = screensaverSettings.isMirrorMode
-    val isLandscapeMode = screensaverSettings.isLandscapeLayout
-    val palette = remember(isDarkAppTheme, isMirrorMode, mapThemePreference) {
-        resolveHudClusterPalette(
-            useDarkInstrument = isDarkAppTheme ||
-                com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isDarkAppTheme),
-            isMirrorMode = isMirrorMode
-        )
-    }
-    val hudAlpha = if (isMirrorMode) {
-        screensaverSettings.hudBrightness.coerceIn(
-            HomeScreensaverSettings.MIN_HUD_BRIGHTNESS,
-            HomeScreensaverSettings.MAX_HUD_BRIGHTNESS
-        )
-    } else {
-        1f
-    }
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
         val isWindowPortrait = maxWidth < maxHeight
-        val rotationDegrees = if (isLandscapeMode && isWindowPortrait) 90f else 0f
+        val presentation = remember(
+            screensaverSettings,
+            sensorPosture,
+            isWindowPortrait,
+            temporaryLandscapeOverride
+        ) {
+            resolveEffectiveScreensaverPresentation(
+                settings = screensaverSettings,
+                sensorIsLandscape = sensorPosture?.isLandscape,
+                windowIsLandscape = !isWindowPortrait,
+                temporaryLandscapeOverride = temporaryLandscapeOverride
+            )
+        }
+        val isMirrorMode = presentation.isMirror
+        val isLandscapeMode = presentation.isLandscape
+        val effectiveMode = presentation.activeMode
+
+        val palette = remember(
+            isDarkAppTheme,
+            isMirrorMode,
+            mapThemePreference,
+            screensaverSettings.chainageColorPreset,
+            screensaverSettings.speedometerColorPreset
+        ) {
+            resolveHudClusterPalette(
+                useDarkInstrument = isDarkAppTheme ||
+                    com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isDarkAppTheme),
+                isMirrorMode = isMirrorMode,
+                settings = screensaverSettings
+            )
+        }
+        val targetHudAlpha = if (isMirrorMode) {
+            screensaverSettings.hudBrightness.coerceIn(
+                HomeScreensaverSettings.MIN_HUD_BRIGHTNESS,
+                HomeScreensaverSettings.MAX_HUD_BRIGHTNESS
+            )
+        } else {
+            1f
+        }
+        val hudAlpha by animateFloatAsState(
+            targetValue = targetHudAlpha,
+            animationSpec = tween(durationMillis = 220),
+            label = "hud_brightness_transition"
+        )
+        val rotationDegrees = if (isLandscapeMode && isWindowPortrait) {
+            if (sensorPosture?.isLandscape == true && !temporaryLandscapeOverride) {
+                sensorPosture.softwareRotationDeg
+            } else {
+                90f
+            }
+        } else {
+            0f
+        }
+
+        // Subtle animated transition pulse when toggling Mirror <-> Normal
+        val transitionAlphaPulse = remember { Animatable(1f) }
+        LaunchedEffect(effectiveMode) {
+            if (transitionAlphaPulse.value == 1f) {
+                transitionAlphaPulse.snapTo(0.84f)
+                transitionAlphaPulse.animateTo(1f, animationSpec = tween(210))
+            }
+        }
 
         val renderCompleteDashboard: @Composable () -> Unit = {
             val scaleXFactor = if (isMirrorMode) -1f else 1f
@@ -246,67 +317,112 @@ fun AutomotiveChainageScreensaverContent(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(palette.rootBackground)
-                    .testTag("screensaver_dashboard_root")
-                    .semantics {
-                        dashboardMirrorScaleX = scaleXFactor
-                        dashboardHudBrightness = hudAlpha
-                        dashboardLandscapeRotation = rotationDegrees
-                        screensaverDisplayMode = screensaverSettings.displayMode.name
-                    }
-                    .graphicsLayer {
-                        scaleX = scaleXFactor
-                    }
             ) {
-                // Foreground instrument surface scaled by adjustable HUD brightness over opaque black
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .alpha(hudAlpha)
+                        .testTag("screensaver_dashboard_root")
+                        .semantics {
+                            dashboardMirrorScaleX = scaleXFactor
+                            dashboardHudBrightness = targetHudAlpha
+                            dashboardLandscapeRotation = rotationDegrees
+                            screensaverDisplayMode = effectiveMode.name
+                        }
+                        .graphicsLayer {
+                            scaleX = scaleXFactor
+                            alpha = transitionAlphaPulse.value
+                        }
                 ) {
-                    // Subtle automotive radial cluster ambient glow
-                    if (!isMirrorMode) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.radialGradient(
-                                        colors = listOf(
-                                            palette.ambientGlowTop,
-                                            palette.rootBackground.copy(alpha = 0.85f),
-                                            palette.rootBackground
+                    // Foreground instrument surface scaled by adjustable HUD brightness over opaque black
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(hudAlpha)
+                    ) {
+                        // Subtle automotive radial cluster ambient glow
+                        if (!isMirrorMode) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.radialGradient(
+                                            colors = listOf(
+                                                palette.ambientGlowTop,
+                                                palette.rootBackground.copy(alpha = 0.85f),
+                                                palette.rootBackground
+                                            )
                                         )
                                     )
-                                )
-                        )
+                            )
+                        }
+
+                        // True immersive edge-to-edge: only pad around physical display cutouts (punch-holes/notches)
+                        val safeCutoutModifier = Modifier
+                            .fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.displayCutout)
+
+                        if (isLandscapeMode) {
+                            LandscapeAutomotiveCluster(
+                                displayState = displayState,
+                                location = location,
+                                bearing = bearing,
+                                compassHeading = compassHeading,
+                                routeData = routeData,
+                                screensaverSettings = screensaverSettings,
+                                palette = palette,
+                                modifier = safeCutoutModifier
+                            )
+                        } else {
+                            PortraitAutomotiveCluster(
+                                displayState = displayState,
+                                location = location,
+                                bearing = bearing,
+                                compassHeading = compassHeading,
+                                routeData = routeData,
+                                screensaverSettings = screensaverSettings,
+                                palette = palette,
+                                modifier = safeCutoutModifier
+                            )
+                        }
                     }
 
-                    if (isLandscapeMode) {
-                        LandscapeAutomotiveCluster(
-                            displayState = displayState,
-                            location = location,
-                            bearing = bearing,
-                            compassHeading = compassHeading,
-                            routeData = routeData,
-                            screensaverSettings = screensaverSettings,
-                            palette = palette,
+                    // Sample badge ONLY inside explicit Settings preview mode (never during real Home screensaver)
+                    if (isSamplePreview) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFFF59E0B).copy(alpha = 0.20f),
+                            border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.7f)),
                             modifier = Modifier
-                                .fillMaxSize()
-                                .windowInsetsPadding(WindowInsets.safeDrawing)
-                        )
-                    } else {
-                        PortraitAutomotiveCluster(
-                            displayState = displayState,
-                            location = location,
-                            bearing = bearing,
-                            compassHeading = compassHeading,
-                            routeData = routeData,
-                            screensaverSettings = screensaverSettings,
-                            palette = palette,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .windowInsetsPadding(WindowInsets.safeDrawing)
-                        )
+                                .align(Alignment.TopCenter)
+                                .padding(top = 8.dp)
+                                .testTag("screensaver_preview_sample_badge")
+                        ) {
+                            Text(
+                                text = "SAMPLE DATA",
+                                color = Color(0xFFFCD34D),
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.8.sp,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
                     }
+                }
+
+                // Tiny glassmorphic Mirror / Normal quick-switch button kept outside scaleX mirror wrapper
+                // so its icon, text, and accessible tap target stay upright and unobtrusive.
+                if (onToggleMirrorQuickMode != null) {
+                    ScreensaverMirrorQuickToggle(
+                        isMirrorActive = isMirrorMode,
+                        hudAlpha = hudAlpha,
+                        onToggle = {
+                            onToggleMirrorQuickMode(!isMirrorMode, isLandscapeMode)
+                        },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .windowInsetsPadding(WindowInsets.displayCutout)
+                            .padding(top = 6.dp, end = 8.dp)
+                    )
                 }
             }
         }
@@ -345,6 +461,247 @@ fun AutomotiveChainageScreensaverContent(
 }
 
 @Composable
+private fun ScreensaverMirrorQuickToggle(
+    isMirrorActive: Boolean,
+    hudAlpha: Float,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bgColor by animateColorAsState(
+        targetValue = if (isMirrorActive) {
+            Color(0xFF0284C7).copy(alpha = 0.28f)
+        } else {
+            Color(0xFF0F172A).copy(alpha = 0.56f)
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "quick_toggle_bg"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (isMirrorActive) {
+            Color(0xFF38BDF8).copy(alpha = 0.72f)
+        } else {
+            Color.White.copy(alpha = 0.22f)
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "quick_toggle_border"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (isMirrorActive) Color(0xFF7DD3FC) else Color(0xFFE2E8F0),
+        animationSpec = tween(durationMillis = 220),
+        label = "quick_toggle_content"
+    )
+    val iconRotation by animateFloatAsState(
+        targetValue = if (isMirrorActive) 180f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "quick_toggle_icon_rot"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Box(
+        contentAlignment = Alignment.TopEnd,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .alpha(hudAlpha.coerceIn(0.65f, 1f))
+            .testTag("screensaver_mirror_quick_toggle")
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple(bounded = false, radius = 24.dp, color = Color(0xFF38BDF8)),
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onClickLabel = if (isMirrorActive) "Switch to Normal mode" else "Switch to Mirror mode",
+                onClick = onToggle
+            )
+            .semantics {
+                contentDescription = if (isMirrorActive) "Mirror Mode active, tap for Normal Mode" else "Normal Mode active, tap for Mirror Mode"
+            }
+            .padding(2.dp)
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = bgColor,
+            border = BorderStroke(0.8.dp, borderColor),
+            shadowElevation = 2.dp
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                if (isMirrorActive) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .background(Color(0xFF38BDF8), CircleShape)
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.Flip,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier
+                        .size(13.dp)
+                        .graphicsLayer { rotationY = iconRotation }
+                )
+                AnimatedContent(
+                    targetState = if (isMirrorActive) "Mirror" else "Normal",
+                    transitionSpec = {
+                        (fadeIn(tween(180)) + scaleIn(initialScale = 0.9f, animationSpec = tween(180))) togetherWith
+                            fadeOut(tween(130))
+                    },
+                    label = "quick_toggle_label"
+                ) { modeLabel ->
+                    Text(
+                        text = modeLabel,
+                        color = contentColor,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.3.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroChainageCard(
+    displayState: ScreensaverDisplayState,
+    screensaverSettings: HomeScreensaverSettings,
+    palette: HudClusterPalette,
+    baseChainageFontSizeSp: Float,
+    maxAllowedFontSizeSp: Float,
+    includeLocationInside: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val showHeroCard = screensaverSettings.showChainage ||
+        (screensaverSettings.showDirectionSide && displayState.reliableSide != null) ||
+        (includeLocationInside && screensaverSettings.showLocation && displayState.locationName.isNotBlank())
+
+    if (!showHeroCard) return
+
+    val scaledChainageSp = (baseChainageFontSizeSp * screensaverSettings.chainageFontSize.scaleFactor)
+        .coerceIn(26f, maxAllowedFontSizeSp)
+        .sp
+    val panelCorner = when (screensaverSettings.chainagePanelSize) {
+        HudPanelSize.COMPACT -> 16.dp
+        HudPanelSize.STANDARD -> 22.dp
+        HudPanelSize.EXPANDED -> 26.dp
+    }
+    val panelPad = screensaverSettings.chainagePanelSize.paddingDp.dp
+
+    val renderDirectionBadge: @Composable () -> Unit = {
+        AnimatedVisibility(
+            visible = screensaverSettings.showDirectionSide && displayState.reliableSide != null,
+            enter = fadeIn(tween(240)) + scaleIn(initialScale = 0.92f, animationSpec = tween(240)),
+            exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f, animationSpec = tween(180))
+        ) {
+            val side = displayState.reliableSide
+            if (side != null) {
+                val baseDirSp = (scaledChainageSp.value * 0.28f).coerceIn(13f, 20f)
+                val dirSp = (baseDirSp * screensaverSettings.directionSize.scaleFactor).coerceIn(11f, 24f).sp
+                val arrowDp = (17f * screensaverSettings.directionSize.scaleFactor).coerceIn(13f, 24f).dp
+                AutomotiveDirectionBadge(
+                    side = side,
+                    style = screensaverSettings.directionIndicatorStyle,
+                    colorMode = screensaverSettings.directionColorPreset,
+                    arrowsAnimated = screensaverSettings.directionArrowsAnimated,
+                    isHudMirror = palette.isHudMirror,
+                    fontSize = dirSp,
+                    arrowSize = arrowDp,
+                    modifier = Modifier.testTag("screensaver_direction_badge")
+                )
+            }
+        }
+    }
+
+    val renderChainageDigits: @Composable () -> Unit = {
+        if (screensaverSettings.showChainage) {
+            AutomotiveOdometerChainage(
+                chainageText = displayState.chainageText,
+                isIncreasing = displayState.isIncreasingTrend,
+                textColor = palette.primaryDigitColor,
+                glowColor = palette.chainageGlowColor,
+                fontSize = scaledChainageSp,
+                lineHeight = (scaledChainageSp.value * 1.06f).sp,
+                fontStyle = screensaverSettings.chainageFontStyle,
+                odometerAnimated = screensaverSettings.chainageOdometerAnimation,
+                animationDurationMs = screensaverSettings.chainageAnimationSpeed.durationMs,
+                modifier = Modifier
+                    .testTag("screensaver_chainage_text")
+                    .clearAndSetSemantics {
+                        text = AnnotatedString(displayState.chainageText)
+                        contentDescription = displayState.chainageText
+                    }
+            )
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(panelCorner),
+        color = palette.panelBackground,
+        border = BorderStroke(1.dp, palette.panelBorder),
+        modifier = modifier
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = panelPad, vertical = panelPad)
+        ) {
+            when (screensaverSettings.directionPosition) {
+                HudDirectionPosition.ABOVE_CHAINAGE -> {
+                    if (screensaverSettings.showDirectionSide && displayState.reliableSide != null) {
+                        renderDirectionBadge()
+                        if (screensaverSettings.showChainage) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                    renderChainageDigits()
+                }
+                HudDirectionPosition.BELOW_CHAINAGE -> {
+                    renderChainageDigits()
+                    if (screensaverSettings.showDirectionSide && displayState.reliableSide != null) {
+                        if (screensaverSettings.showChainage) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                        renderDirectionBadge()
+                    }
+                }
+                HudDirectionPosition.INLINE -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        renderChainageDigits()
+                        renderDirectionBadge()
+                    }
+                }
+            }
+
+            if (includeLocationInside && screensaverSettings.showLocation) {
+                AnimatedVisibility(
+                    visible = displayState.locationName.isNotBlank(),
+                    enter = fadeIn(tween(260)),
+                    exit = fadeOut(tween(180))
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AutomotiveLocationLabel(
+                            locationName = displayState.locationName,
+                            textColor = palette.secondaryTextColor,
+                            shadowColor = palette.chainageGlowColor,
+                            fontSize = (14f * screensaverSettings.locationFontSize.scaleFactor).coerceIn(11f, 20f).sp,
+                            modifier = Modifier.testTag("screensaver_location_name")
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PortraitAutomotiveCluster(
     displayState: ScreensaverDisplayState,
     location: GeoPoint?,
@@ -357,126 +714,160 @@ private fun PortraitAutomotiveCluster(
 ) {
     BoxWithConstraints(
         modifier = modifier
-            .padding(horizontal = 18.dp, vertical = 14.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
             .testTag("screensaver_portrait_layout")
     ) {
         val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
         val charCount = displayState.chainageText.length.coerceAtLeast(6)
-        val availWidth = (maxWidth - 20.dp).coerceAtLeast(180.dp)
+        val availWidth = (maxWidth - 28.dp).coerceAtLeast(180.dp)
         val maxByW = (availWidth.value / (charCount * 0.63f * fontScale))
-        val maxByH = maxHeight.value * 0.14f
-        val chainageFontSize = maxByW.coerceIn(34f, maxByH.coerceAtLeast(40f)).sp
-        val dialSize = minOf(maxWidth * 0.46f, maxHeight * 0.25f).coerceIn(112.dp, 196.dp)
+        val baseChainageSp = maxByW.coerceIn(32f, (maxHeight.value * 0.13f).coerceAtLeast(38f))
+        val maxAllowedSp = (availWidth.value / (charCount * 0.56f * fontScale)).coerceAtLeast(38f)
+
+        val baseDialSize = minOf(maxWidth * 0.44f, maxHeight * 0.24f)
+        val dialSize = (baseDialSize * screensaverSettings.speedometerSize.scaleFactor).coerceIn(96.dp, 224.dp)
         val mapVisible = screensaverSettings.miniMapVisible
-        val gap = (maxHeight * 0.02f).coerceIn(8.dp, 18.dp)
+        val gap = (maxHeight * 0.018f).coerceIn(8.dp, 16.dp)
+
+        val locationOutsideTop = screensaverSettings.showLocation &&
+            screensaverSettings.locationPosition == HudLocationPosition.TOP_BAR &&
+            displayState.locationName.isNotBlank()
+        val locationOutsideAboveMap = screensaverSettings.showLocation &&
+            screensaverSettings.locationPosition == HudLocationPosition.ABOVE_MAP &&
+            displayState.locationName.isNotBlank()
+        val locationInsideHero = screensaverSettings.showLocation &&
+            screensaverSettings.locationPosition == HudLocationPosition.BELOW_SIDE
+
+        val locationSp = (14f * screensaverSettings.locationFontSize.scaleFactor).coerceIn(11f, 20f).sp
+
+        val mapWeight = screensaverSettings.miniMapSize.weightBias.coerceIn(0.65f, 1.45f)
+
+        val heroBlock: @Composable () -> Unit = {
+            HeroChainageCard(
+                displayState = displayState,
+                screensaverSettings = screensaverSettings,
+                palette = palette,
+                baseChainageFontSizeSp = baseChainageSp,
+                maxAllowedFontSizeSp = maxAllowedSp,
+                includeLocationInside = locationInsideHero,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        val speedBlock: @Composable () -> Unit = {
+            if (screensaverSettings.showSpeedometer) {
+                AutomotiveSpeedometerDisplay(
+                    speedKmh = displayState.speedKmh,
+                    speedText = displayState.speedText,
+                    style = screensaverSettings.speedometerStyle,
+                    animateNeedle = screensaverSettings.speedometerAnimateNeedle,
+                    animateNumbers = screensaverSettings.speedometerAnimateNumbers,
+                    palette = palette,
+                    dialSize = dialSize
+                )
+            }
+        }
+
+        val mapBlock: @Composable (Modifier) -> Unit = { mapMod ->
+            val borderColor = if (screensaverSettings.miniMapShowBorder) {
+                Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(alpha = 0.45f)
+            } else {
+                Color.Transparent
+            }
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = palette.panelBackground,
+                border = if (screensaverSettings.miniMapShowBorder) BorderStroke(1.2.dp, borderColor) else null,
+                modifier = mapMod.alpha(screensaverSettings.miniMapOpacity.coerceIn(0.35f, 1f))
+            ) {
+                ScreensaverLiveMiniMapPanel(
+                    location = location,
+                    bearing = bearing,
+                    compassHeading = compassHeading,
+                    routeData = routeData,
+                    screensaverSettings = screensaverSettings,
+                    isHudMirror = palette.isHudMirror,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("screensaver_glass_map")
+                )
+            }
+        }
 
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = if (mapVisible) Arrangement.SpaceBetween else Arrangement.Center
         ) {
-            // Top-Center Hero Zone: Live Chainage + Animated LHS/RHS + Location Name
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = palette.panelBackground,
-                    border = BorderStroke(1.dp, palette.panelBorder),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp)
-                    ) {
-                        AutomotiveOdometerChainage(
-                            chainageText = displayState.chainageText,
-                            isIncreasing = displayState.isIncreasingTrend,
-                            textColor = palette.primaryDigitColor,
-                            glowColor = palette.chainageGlowColor,
-                            fontSize = chainageFontSize,
-                            lineHeight = (chainageFontSize.value * 1.06f).sp,
-                            modifier = Modifier
-                                .testTag("screensaver_chainage_text")
-                                .clearAndSetSemantics {
-                                    text = AnnotatedString(displayState.chainageText)
-                                    contentDescription = displayState.chainageText
-                                }
-                        )
-
-                        AnimatedVisibility(
-                            visible = displayState.reliableSide != null,
-                            enter = fadeIn(tween(240)) + scaleIn(initialScale = 0.92f, animationSpec = tween(240)),
-                            exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f, animationSpec = tween(180))
-                        ) {
-                            val side = displayState.reliableSide
-                            if (side != null) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    AutomotiveDirectionBadge(
-                                        side = side,
-                                        isHudMirror = palette.isHudMirror,
-                                        fontSize = (chainageFontSize.value * 0.28f).coerceIn(14f, 20f).sp,
-                                        arrowSize = 18.dp,
-                                        modifier = Modifier.testTag("screensaver_direction_badge")
-                                    )
-                                }
-                            }
-                        }
-
-                        AnimatedVisibility(
-                            visible = displayState.locationName.isNotBlank(),
-                            enter = fadeIn(tween(260)),
-                            exit = fadeOut(tween(180))
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                AutomotiveLocationLabel(
-                                    locationName = displayState.locationName,
-                                    textColor = palette.secondaryTextColor,
-                                    shadowColor = palette.chainageGlowColor,
-                                    fontSize = 14.sp,
-                                    modifier = Modifier.testTag("screensaver_location_name")
-                                )
-                            }
-                        }
-                    }
-                }
+            if (locationOutsideTop) {
+                AutomotiveLocationLabel(
+                    locationName = displayState.locationName,
+                    textColor = palette.secondaryTextColor,
+                    shadowColor = palette.chainageGlowColor,
+                    fontSize = locationSp,
+                    modifier = Modifier
+                        .padding(bottom = gap)
+                        .testTag("screensaver_location_name")
+                )
             }
 
-            Spacer(modifier = Modifier.height(gap))
-
-            // Center-Lower Gauge Zone: Automotive Circular Digital Speedometer
-            AutomotiveCircularSpeedometer(
-                speedKmh = displayState.speedKmh,
-                speedText = displayState.speedText,
-                palette = palette,
-                dialSize = dialSize
-            )
-
-            // Bottom Zone: Shared Live Mini Map Panel
-            if (mapVisible) {
+            if (mapVisible && screensaverSettings.miniMapPosition == HudMapPosition.TOP) {
+                mapBlock(Modifier.fillMaxWidth().weight(mapWeight))
                 Spacer(modifier = Modifier.height(gap))
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = palette.panelBackground,
-                    border = BorderStroke(1.dp, palette.panelBorder),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
-                    ScreensaverLiveMiniMapPanel(
-                        location = location,
-                        bearing = bearing,
-                        compassHeading = compassHeading,
-                        routeData = routeData,
-                        screensaverSettings = screensaverSettings,
-                        isHudMirror = palette.isHudMirror,
+                if (locationOutsideAboveMap) {
+                    AutomotiveLocationLabel(
+                        locationName = displayState.locationName,
+                        textColor = palette.secondaryTextColor,
+                        shadowColor = palette.chainageGlowColor,
+                        fontSize = locationSp,
                         modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("screensaver_glass_map")
+                            .padding(bottom = gap / 2)
+                            .testTag("screensaver_location_name")
                     )
+                }
+                if (screensaverSettings.chainagePanelPosition == HudVerticalPosition.BOTTOM) {
+                    speedBlock()
+                    if (screensaverSettings.showSpeedometer) Spacer(modifier = Modifier.height(gap))
+                    heroBlock()
+                } else {
+                    heroBlock()
+                    if (screensaverSettings.showSpeedometer) {
+                        Spacer(modifier = Modifier.height(gap))
+                        speedBlock()
+                    }
+                }
+            } else {
+                when (screensaverSettings.chainagePanelPosition) {
+                    HudVerticalPosition.TOP -> {
+                        heroBlock()
+                        if (screensaverSettings.showSpeedometer) {
+                            Spacer(modifier = Modifier.height(gap))
+                            speedBlock()
+                        }
+                    }
+                    HudVerticalPosition.CENTER, HudVerticalPosition.BOTTOM -> {
+                        if (screensaverSettings.showSpeedometer) {
+                            speedBlock()
+                            Spacer(modifier = Modifier.height(gap))
+                        }
+                        heroBlock()
+                    }
+                }
+
+                if (locationOutsideAboveMap) {
+                    Spacer(modifier = Modifier.height(gap))
+                    AutomotiveLocationLabel(
+                        locationName = displayState.locationName,
+                        textColor = palette.secondaryTextColor,
+                        shadowColor = palette.chainageGlowColor,
+                        fontSize = locationSp,
+                        modifier = Modifier.testTag("screensaver_location_name")
+                    )
+                }
+
+                if (mapVisible) {
+                    Spacer(modifier = Modifier.height(gap))
+                    mapBlock(Modifier.fillMaxWidth().weight(mapWeight))
                 }
             }
         }
@@ -496,140 +887,214 @@ private fun LandscapeAutomotiveCluster(
 ) {
     BoxWithConstraints(
         modifier = modifier
-            .padding(horizontal = 18.dp, vertical = 14.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
             .testTag("screensaver_landscape_layout")
     ) {
         val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
         val mapVisible = screensaverSettings.miniMapVisible
-        val centerWeight = if (mapVisible) 0.42f else 0.62f
-        val leftWeight = if (mapVisible) 0.27f else 0.38f
+        val speedVisible = screensaverSettings.showSpeedometer
+
+        val rawMapW = if (mapVisible) 0.31f * screensaverSettings.miniMapSize.weightBias else 0f
+        val rawSpeedW = if (speedVisible) 0.27f else 0f
+        val rawCenterW = (1f - rawMapW - rawSpeedW).coerceAtLeast(0.34f)
+        val totalW = rawMapW + rawSpeedW + rawCenterW
+        val mapWeight = rawMapW / totalW
+        val leftWeight = rawSpeedW / totalW
+        val centerWeight = rawCenterW / totalW
+
         val centerAvailW = (maxWidth * centerWeight) - 24.dp
         val charCount = displayState.chainageText.length.coerceAtLeast(6)
         val maxByW = (centerAvailW.value / (charCount * 0.63f * fontScale))
-        val maxByH = maxHeight.value * 0.28f
-        val chainageFontSize = maxByW.coerceIn(32f, maxByH.coerceAtLeast(38f)).sp
-        val dialSize = minOf(maxWidth * leftWeight - 12.dp, maxHeight * 0.78f).coerceIn(110.dp, 210.dp)
+        val baseChainageSp = maxByW.coerceIn(30f, (maxHeight.value * 0.26f).coerceAtLeast(36f))
+        val maxAllowedSp = (centerAvailW.value / (charCount * 0.54f * fontScale)).coerceAtLeast(36f)
+        val baseDialSize = minOf(maxWidth * leftWeight.coerceAtLeast(0.22f) - 12.dp, maxHeight * 0.76f)
+        val dialSize = (baseDialSize * screensaverSettings.speedometerSize.scaleFactor).coerceIn(92.dp, 224.dp)
 
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // LEFT CLUSTER: Circular Automotive Speedometer
+        val speedPanel: @Composable androidx.compose.foundation.layout.RowScope.(Float) -> Unit = { w ->
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = palette.panelBackground,
                 border = BorderStroke(1.dp, palette.panelBorder),
                 modifier = Modifier
-                    .weight(leftWeight)
+                    .weight(w)
                     .fillMaxHeight()
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.fillMaxSize().padding(8.dp)
                 ) {
-                    AutomotiveCircularSpeedometer(
+                    AutomotiveSpeedometerDisplay(
                         speedKmh = displayState.speedKmh,
                         speedText = displayState.speedText,
+                        style = screensaverSettings.speedometerStyle,
+                        animateNeedle = screensaverSettings.speedometerAnimateNeedle,
+                        animateNumbers = screensaverSettings.speedometerAnimateNumbers,
                         palette = palette,
                         dialSize = dialSize
                     )
                 }
             }
+        }
 
-            // CENTER HERO CLUSTER: Large Odometer Chainage + Animated LHS/RHS + Location Name
+        val centerPanel: @Composable androidx.compose.foundation.layout.RowScope.(Float) -> Unit = { w ->
+            HeroChainageCard(
+                displayState = displayState,
+                screensaverSettings = screensaverSettings,
+                palette = palette,
+                baseChainageFontSizeSp = baseChainageSp,
+                maxAllowedFontSizeSp = maxAllowedSp,
+                includeLocationInside = screensaverSettings.showLocation,
+                modifier = Modifier
+                    .weight(w)
+                    .fillMaxHeight()
+            )
+        }
+
+        val mapPanel: @Composable androidx.compose.foundation.layout.RowScope.(Float) -> Unit = { w ->
+            val borderColor = Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(alpha = 0.45f)
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = palette.panelBackground,
-                border = BorderStroke(1.dp, palette.panelBorder),
+                border = if (screensaverSettings.miniMapShowBorder) BorderStroke(1.2.dp, borderColor) else null,
                 modifier = Modifier
-                    .weight(centerWeight)
+                    .weight(w)
                     .fillMaxHeight()
+                    .alpha(screensaverSettings.miniMapOpacity.coerceIn(0.35f, 1f))
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
+                ScreensaverLiveMiniMapPanel(
+                    location = location,
+                    bearing = bearing,
+                    compassHeading = compassHeading,
+                    routeData = routeData,
+                    screensaverSettings = screensaverSettings,
+                    isHudMirror = palette.isHudMirror,
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 14.dp, vertical = 12.dp)
-                ) {
-                    AutomotiveOdometerChainage(
-                        chainageText = displayState.chainageText,
-                        isIncreasing = displayState.isIncreasingTrend,
-                        textColor = palette.primaryDigitColor,
-                        glowColor = palette.chainageGlowColor,
-                        fontSize = chainageFontSize,
-                        lineHeight = (chainageFontSize.value * 1.06f).sp,
-                        modifier = Modifier
-                            .testTag("screensaver_chainage_text")
-                            .clearAndSetSemantics {
-                                text = AnnotatedString(displayState.chainageText)
-                                contentDescription = displayState.chainageText
-                            }
-                    )
-
-                    AnimatedVisibility(
-                        visible = displayState.reliableSide != null,
-                        enter = fadeIn(tween(240)) + scaleIn(initialScale = 0.92f, animationSpec = tween(240)),
-                        exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f, animationSpec = tween(180))
-                    ) {
-                        val side = displayState.reliableSide
-                        if (side != null) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                AutomotiveDirectionBadge(
-                                    side = side,
-                                    isHudMirror = palette.isHudMirror,
-                                    fontSize = (chainageFontSize.value * 0.28f).coerceIn(14f, 20f).sp,
-                                    arrowSize = 18.dp,
-                                    modifier = Modifier.testTag("screensaver_direction_badge")
-                                )
-                            }
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = displayState.locationName.isNotBlank(),
-                        enter = fadeIn(tween(260)),
-                        exit = fadeOut(tween(180))
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            AutomotiveLocationLabel(
-                                locationName = displayState.locationName,
-                                textColor = palette.secondaryTextColor,
-                                shadowColor = palette.chainageGlowColor,
-                                fontSize = 14.sp,
-                                modifier = Modifier.testTag("screensaver_location_name")
-                            )
-                        }
-                    }
-                }
+                        .testTag("screensaver_glass_map")
+                )
             }
+        }
 
-            // RIGHT CLUSTER: Live Mini Map Panel (strictly synced to shared settings)
-            if (mapVisible) {
-                Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = palette.panelBackground,
-                    border = BorderStroke(1.dp, palette.panelBorder),
-                    modifier = Modifier
-                        .weight(0.31f)
-                        .fillMaxHeight()
-                ) {
-                    ScreensaverLiveMiniMapPanel(
-                        location = location,
-                        bearing = bearing,
-                        compassHeading = compassHeading,
-                        routeData = routeData,
-                        screensaverSettings = screensaverSettings,
-                        isHudMirror = palette.isHudMirror,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("screensaver_glass_map")
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (mapVisible && screensaverSettings.miniMapPosition == HudMapPosition.TOP) {
+                mapPanel(mapWeight)
+                centerPanel(centerWeight)
+                if (speedVisible) speedPanel(leftWeight)
+            } else {
+                if (speedVisible) speedPanel(leftWeight)
+                centerPanel(centerWeight)
+                if (mapVisible) mapPanel(mapWeight)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AutomotiveSpeedometerDisplay(
+    speedKmh: Int?,
+    speedText: String,
+    style: HudSpeedometerStyle,
+    animateNeedle: Boolean,
+    animateNumbers: Boolean,
+    palette: HudClusterPalette,
+    dialSize: Dp
+) {
+    if (style == HudSpeedometerStyle.DIGITAL) {
+        AutomotiveDigitalSpeedometer(
+            speedKmh = speedKmh,
+            speedText = speedText,
+            animateNumbers = animateNumbers,
+            palette = palette,
+            cardSize = dialSize
+        )
+    } else {
+        AutomotiveCircularSpeedometer(
+            speedKmh = speedKmh,
+            speedText = speedText,
+            animateNeedle = animateNeedle,
+            animateNumbers = animateNumbers,
+            palette = palette,
+            dialSize = dialSize
+        )
+    }
+}
+
+@Composable
+private fun AutomotiveDigitalSpeedometer(
+    speedKmh: Int?,
+    speedText: String,
+    animateNumbers: Boolean,
+    palette: HudClusterPalette,
+    cardSize: Dp
+) {
+    val isLive = speedKmh != null
+    val digitalNumber = speedKmh?.toString() ?: "--"
+    val numberFontSize = (cardSize.value * 0.34f).coerceIn(28f, 56f).sp
+    val unitFontSize = (cardSize.value * 0.10f).coerceIn(11f, 15f).sp
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFF020617).copy(alpha = if (palette.isHudMirror) 0.90f else 0.72f),
+        border = BorderStroke(1.2.dp, palette.speedArcStart.copy(alpha = 0.45f)),
+        modifier = Modifier.size(width = cardSize * 1.15f, height = cardSize * 0.76f)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp)
+                .testTag("screensaver_speed_text")
+                .clearAndSetSemantics {
+                    text = AnnotatedString(speedText)
+                    contentDescription = speedText
+                }
+        ) {
+            if (animateNumbers) {
+                AnimatedContent(
+                    targetState = digitalNumber,
+                    transitionSpec = { fadeIn(tween(170)) togetherWith fadeOut(tween(140)) },
+                    label = "digital_speed_digits"
+                ) { txt ->
+                    Text(
+                        text = txt,
+                        style = TextStyle(
+                            color = if (isLive) palette.primaryDigitColor else palette.secondaryTextColor.copy(alpha = 0.55f),
+                            fontSize = numberFontSize,
+                            fontWeight = FontWeight.Black,
+                            fontFeatureSettings = "tnum",
+                            shadow = Shadow(color = palette.chainageGlowColor, offset = Offset.Zero, blurRadius = 16f)
+                        ),
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
+            } else {
+                Text(
+                    text = digitalNumber,
+                    style = TextStyle(
+                        color = if (isLive) palette.primaryDigitColor else palette.secondaryTextColor.copy(alpha = 0.55f),
+                        fontSize = numberFontSize,
+                        fontWeight = FontWeight.Black,
+                        fontFeatureSettings = "tnum"
+                    ),
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
+            Text(
+                text = "km/h",
+                color = palette.speedArcStart,
+                fontSize = unitFontSize,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 1.2.sp,
+                maxLines = 1,
+                softWrap = false
+            )
         }
     }
 }
@@ -638,6 +1103,8 @@ private fun LandscapeAutomotiveCluster(
 private fun AutomotiveCircularSpeedometer(
     speedKmh: Int?,
     speedText: String,
+    animateNeedle: Boolean,
+    animateNumbers: Boolean,
     palette: HudClusterPalette,
     dialSize: Dp
 ) {
@@ -645,16 +1112,17 @@ private fun AutomotiveCircularSpeedometer(
     val targetSpeed = (speedKmh ?: 0).coerceIn(0, 260).toFloat()
     val animatedSpeed by animateFloatAsState(
         targetValue = targetSpeed,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = if (animateNeedle) 260 else 0, easing = FastOutSlowInEasing),
         label = "hud_speedometer_needle"
     )
-    val sweepFraction = (animatedSpeed / 160f).coerceIn(0f, 1f)
+    val effectiveSpeed = if (animateNeedle) animatedSpeed else targetSpeed
+    val sweepFraction = (effectiveSpeed / 160f).coerceIn(0f, 1f)
     val startAngle = 150f
     val totalSweep = 240f
     val activeAngle = startAngle + totalSweep * sweepFraction
 
     val digitalNumber = speedKmh?.toString() ?: "--"
-    val digitalFontSize = (dialSize.value * 0.25f).coerceIn(22f, 44f).sp
+    val digitalFontSize = (dialSize.value * 0.25f).coerceIn(20f, 46f).sp
     val unitFontSize = (dialSize.value * 0.085f).coerceIn(10f, 14f).sp
 
     Box(
@@ -670,22 +1138,17 @@ private fun AutomotiveCircularSpeedometer(
             val cy = size.height / 2f
             val outerR = (size.minDimension / 2f) - inset * 0.55f
 
-            // Subtle dark instrument inner backdrop
             drawCircle(
                 color = Color(0xFF020617).copy(alpha = if (palette.isHudMirror) 0.92f else 0.65f),
                 radius = outerR,
                 center = Offset(cx, cy)
             )
-
-            // Outer hairline rim
             drawCircle(
                 color = palette.panelBorder.copy(alpha = 0.40f),
                 radius = outerR,
                 center = Offset(cx, cy),
                 style = Stroke(width = 1.4.dp.toPx())
             )
-
-            // Background sweep track
             drawArc(
                 color = palette.speedArcTrack,
                 startAngle = startAngle,
@@ -696,7 +1159,6 @@ private fun AutomotiveCircularSpeedometer(
                 style = Stroke(width = strokeMain, cap = StrokeCap.Round)
             )
 
-            // Graduated automotive tachometer ticks (every 10 km/h across 0..160)
             for (step in 0..16) {
                 val deg = startAngle + (totalSweep * step / 16f)
                 val rad = Math.toRadians(deg.toDouble())
@@ -723,7 +1185,6 @@ private fun AutomotiveCircularSpeedometer(
                 )
             }
 
-            // Luminous active speed arc
             if (isLive && sweepFraction > 0.004f) {
                 val arcBrush = Brush.sweepGradient(
                     0.0f to palette.speedArcStart,
@@ -742,7 +1203,6 @@ private fun AutomotiveCircularSpeedometer(
                 )
             }
 
-            // Precision Needle when live speed exists
             val needleAngleRad = Math.toRadians(activeAngle.toDouble())
             val needleInnerR = outerR * 0.56f
             val needleOuterR = outerR - strokeMain * 1.1f
@@ -761,7 +1221,6 @@ private fun AutomotiveCircularSpeedometer(
             )
         }
 
-        // Center digital readout inside dial bezel
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -773,22 +1232,42 @@ private fun AutomotiveCircularSpeedometer(
                     contentDescription = speedText
                 }
         ) {
-            Text(
-                text = digitalNumber,
-                style = TextStyle(
-                    color = if (isLive) palette.primaryDigitColor else palette.secondaryTextColor.copy(alpha = 0.55f),
-                    fontSize = digitalFontSize,
-                    fontWeight = FontWeight.Black,
-                    fontFeatureSettings = "tnum",
-                    shadow = Shadow(
-                        color = palette.chainageGlowColor,
-                        offset = Offset.Zero,
-                        blurRadius = 14f
+            if (animateNumbers) {
+                AnimatedContent(
+                    targetState = digitalNumber,
+                    transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(120)) },
+                    label = "circular_speed_digits"
+                ) { txt ->
+                    Text(
+                        text = txt,
+                        style = TextStyle(
+                            color = if (isLive) palette.primaryDigitColor else palette.secondaryTextColor.copy(alpha = 0.55f),
+                            fontSize = digitalFontSize,
+                            fontWeight = FontWeight.Black,
+                            fontFeatureSettings = "tnum",
+                            shadow = Shadow(
+                                color = palette.chainageGlowColor,
+                                offset = Offset.Zero,
+                                blurRadius = 14f
+                            )
+                        ),
+                        maxLines = 1,
+                        softWrap = false
                     )
-                ),
-                maxLines = 1,
-                softWrap = false
-            )
+                }
+            } else {
+                Text(
+                    text = digitalNumber,
+                    style = TextStyle(
+                        color = if (isLive) palette.primaryDigitColor else palette.secondaryTextColor.copy(alpha = 0.55f),
+                        fontSize = digitalFontSize,
+                        fontWeight = FontWeight.Black,
+                        fontFeatureSettings = "tnum"
+                    ),
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
             Text(
                 text = "km/h",
                 color = palette.speedArcStart,
@@ -810,14 +1289,29 @@ private fun AutomotiveOdometerChainage(
     glowColor: Color,
     fontSize: TextUnit,
     lineHeight: TextUnit,
+    fontStyle: HudFontStyle,
+    odometerAnimated: Boolean,
+    animationDurationMs: Int,
     modifier: Modifier = Modifier
 ) {
+    val resolvedFamily = when (fontStyle) {
+        HudFontStyle.MODERN -> FontFamily.SansSerif
+        HudFontStyle.CONDENSED -> FontFamily.SansSerif
+        HudFontStyle.DIGITAL -> FontFamily.Monospace
+    }
+    val resolvedSpacing = when (fontStyle) {
+        HudFontStyle.MODERN -> (-1.1).sp
+        HudFontStyle.CONDENSED -> (-2.4).sp
+        HudFontStyle.DIGITAL -> 0.sp
+    }
+
     val style = TextStyle(
         color = textColor,
         fontSize = fontSize,
         lineHeight = lineHeight,
+        fontFamily = resolvedFamily,
         fontWeight = FontWeight.Black,
-        letterSpacing = (-1.1).sp,
+        letterSpacing = resolvedSpacing,
         fontFeatureSettings = "tnum",
         shadow = Shadow(
             color = glowColor,
@@ -825,6 +1319,18 @@ private fun AutomotiveOdometerChainage(
             blurRadius = 22f
         )
     )
+
+    if (!odometerAnimated) {
+        Text(
+            text = chainageText,
+            style = style,
+            maxLines = 1,
+            softWrap = false,
+            textAlign = TextAlign.Center,
+            modifier = modifier
+        )
+        return
+    }
 
     Row(
         horizontalArrangement = Arrangement.Center,
@@ -844,10 +1350,10 @@ private fun AutomotiveOdometerChainage(
                     val exitOffset = { fullHeight: Int ->
                         if (isIncreasing) -fullHeight / 3 else fullHeight / 3
                     }
-                    (slideInVertically(tween(210, easing = FastOutSlowInEasing), enterOffset) +
-                        fadeIn(tween(190))) togetherWith
-                        (slideOutVertically(tween(170), exitOffset) +
-                            fadeOut(tween(150)))
+                    (slideInVertically(tween(animationDurationMs, easing = FastOutSlowInEasing), enterOffset) +
+                        fadeIn(tween(animationDurationMs))) togetherWith
+                        (slideOutVertically(tween((animationDurationMs * 0.8f).toInt()), exitOffset) +
+                            fadeOut(tween((animationDurationMs * 0.7f).toInt())))
                 },
                 label = "hud_odometer_digit_$slotKey"
             ) { targetChar ->
@@ -866,39 +1372,57 @@ private fun AutomotiveOdometerChainage(
 @Composable
 private fun AutomotiveDirectionBadge(
     side: String,
+    style: HudDirectionStyle,
+    colorMode: HudDirectionColorMode,
+    arrowsAnimated: Boolean,
     isHudMirror: Boolean,
     fontSize: TextUnit,
     arrowSize: Dp,
     modifier: Modifier = Modifier
 ) {
     val isLhs = side == "LHS"
+    val targetColor = when (colorMode) {
+        HudDirectionColorMode.AUTO_SIDE -> if (isLhs) Color(0xFF34D399) else Color(0xFF38BDF8)
+        HudDirectionColorMode.CYAN -> Color(0xFF38BDF8)
+        HudDirectionColorMode.EMERALD -> Color(0xFF34D399)
+        HudDirectionColorMode.AMBER -> Color(0xFFFBBF24)
+        HudDirectionColorMode.WHITE -> Color(0xFFF8FAFC)
+    }
     val accentColor by animateColorAsState(
-        targetValue = if (isLhs) Color(0xFF34D399) else Color(0xFF38BDF8),
+        targetValue = targetColor,
         animationSpec = tween(250),
         label = "hud_direction_accent"
     )
-    val glassBg = if (isHudMirror) {
-        Color(0xFF000000).copy(alpha = 0.85f)
-    } else {
-        Color(0xFF0F172A).copy(alpha = 0.70f)
+    val glassBg = when (style) {
+        HudDirectionStyle.PILL -> if (isHudMirror) Color(0xFF000000).copy(alpha = 0.85f) else Color(0xFF0F172A).copy(alpha = 0.70f)
+        HudDirectionStyle.OUTLINE, HudDirectionStyle.MINIMAL -> Color.Transparent
+    }
+    val borderStroke = when (style) {
+        HudDirectionStyle.PILL -> BorderStroke(1.2.dp, accentColor.copy(alpha = 0.58f))
+        HudDirectionStyle.OUTLINE -> BorderStroke(1.4.dp, accentColor.copy(alpha = 0.85f))
+        HudDirectionStyle.MINIMAL -> null
     }
 
-    val arrowTransition = rememberInfiniteTransition(label = "hud_direction_motion")
-    val arrowPulse by arrowTransition.animateFloat(
-        initialValue = -1f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1050, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "hud_direction_pulse"
-    )
-    val arrowOffsetX = (arrowPulse * (if (isLhs) -2.8f else 2.8f)).dp
+    val arrowOffsetX = if (arrowsAnimated) {
+        val arrowTransition = rememberInfiniteTransition(label = "hud_direction_motion")
+        val arrowPulse by arrowTransition.animateFloat(
+            initialValue = -1f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1050, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "hud_direction_pulse"
+        )
+        (arrowPulse * (if (isLhs) -2.8f else 2.8f)).dp
+    } else {
+        0.dp
+    }
 
     Surface(
         shape = CircleShape,
         color = glassBg,
-        border = BorderStroke(1.2.dp, accentColor.copy(alpha = 0.58f)),
+        border = borderStroke,
         shadowElevation = 0.dp,
         modifier = modifier
     ) {
@@ -914,7 +1438,10 @@ private fun AutomotiveDirectionBadge(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 7.dp)
+                modifier = Modifier.padding(
+                    horizontal = if (style == HudDirectionStyle.MINIMAL) 8.dp else 18.dp,
+                    vertical = if (style == HudDirectionStyle.MINIMAL) 2.dp else 7.dp
+                )
             ) {
                 if (targetLhs) {
                     Icon(
@@ -1029,7 +1556,6 @@ private fun ScreensaverLiveMiniMapPanel(
     val baseZoom = floor(continuousZoom).toInt().coerceIn(12, 18)
     val fractionalScale = 2.0.pow((continuousZoom - baseZoom).toDouble()).toFloat().coerceIn(0.6f, 2.2f)
 
-    // Retain last known coordinate when GPS drops briefly
     var lastValidLocation by remember { mutableStateOf(location) }
     LaunchedEffect(location) {
         if (location != null) {
@@ -1075,7 +1601,6 @@ private fun ScreensaverLiveMiniMapPanel(
         )
     }
 
-    // Shortest-path angular unwrap so North Up / Direction Up / Auto rotate cleanly
     var unwrappedRotation by remember { mutableFloatStateOf(rawTargetRotationDeg) }
     LaunchedEffect(rawTargetRotationDeg) {
         var delta = (rawTargetRotationDeg - unwrappedRotation) % 360f
@@ -1179,15 +1704,17 @@ private fun ScreensaverLiveMiniMapPanel(
                         panOffsetX = 0f,
                         panOffsetY = 0f
                     )
-                    // Apply fractional scale around viewport center to align vector route cleanly with tiles
                     return Offset(
                         x = cx + (sx - cx) * fractionalScale,
                         y = cy + (sy - cy) * fractionalScale
                     )
                 }
 
-                // Actual imported route alignment vector lines
-                if (routeData != null && routeData.alignments.isNotEmpty()) {
+                // Actual imported route alignment vector lines (if toggled visible)
+                if (screensaverSettings.miniMapShowRouteAlignment &&
+                    routeData != null &&
+                    routeData.alignments.isNotEmpty()
+                ) {
                     for (align in routeData.alignments) {
                         if (align.points.size < 2) continue
                         reusableRoutePath.reset()
@@ -1214,7 +1741,7 @@ private fun ScreensaverLiveMiniMapPanel(
                     }
                 }
 
-                // Live / retained vehicle marker + reliable heading cone
+                // Live / retained vehicle marker
                 val markerGeo = location ?: lastValidLocation
                 if (markerGeo != null) {
                     val userOff = toScreen(markerGeo)
@@ -1224,25 +1751,29 @@ private fun ScreensaverLiveMiniMapPanel(
                         center = userOff
                     )
                     val activeHeading = effectiveBearing ?: compassHeading
-                    rotate(degrees = activeHeading, pivot = userOff) {
-                        reusableRoutePath.reset()
-                        reusableRoutePath.moveTo(userOff.x, userOff.y - 11.dp.toPx())
-                        reusableRoutePath.lineTo(userOff.x - 6.dp.toPx(), userOff.y + 6.dp.toPx())
-                        reusableRoutePath.lineTo(userOff.x, userOff.y + 2.5.dp.toPx())
-                        reusableRoutePath.lineTo(userOff.x + 6.dp.toPx(), userOff.y + 6.dp.toPx())
-                        reusableRoutePath.close()
-                        drawPath(path = reusableRoutePath, color = markerColor)
+                    when (screensaverSettings.miniMapMarkerStyle) {
+                        HudMapMarkerStyle.NAVIGATION_ARROW -> {
+                            rotate(degrees = activeHeading, pivot = userOff) {
+                                reusableRoutePath.reset()
+                                reusableRoutePath.moveTo(userOff.x, userOff.y - 11.dp.toPx())
+                                reusableRoutePath.lineTo(userOff.x - 6.dp.toPx(), userOff.y + 6.dp.toPx())
+                                reusableRoutePath.lineTo(userOff.x, userOff.y + 2.5.dp.toPx())
+                                reusableRoutePath.lineTo(userOff.x + 6.dp.toPx(), userOff.y + 6.dp.toPx())
+                                reusableRoutePath.close()
+                                drawPath(path = reusableRoutePath, color = markerColor)
+                            }
+                            drawCircle(color = Color.White, radius = 4.dp.toPx(), center = userOff)
+                            drawCircle(color = markerColor, radius = 2.4.dp.toPx(), center = userOff)
+                        }
+                        HudMapMarkerStyle.PULSE_DOT -> {
+                            drawCircle(color = Color.White, radius = 6.5.dp.toPx(), center = userOff)
+                            drawCircle(color = markerColor, radius = 4.2.dp.toPx(), center = userOff)
+                        }
+                        HudMapMarkerStyle.CLASSIC_PIN -> {
+                            drawCircle(color = Color.White, radius = 7.dp.toPx(), center = userOff)
+                            drawCircle(color = Color(0xFFEF4444), radius = 4.5.dp.toPx(), center = userOff)
+                        }
                     }
-                    drawCircle(
-                        color = Color.White,
-                        radius = 4.dp.toPx(),
-                        center = userOff
-                    )
-                    drawCircle(
-                        color = markerColor,
-                        radius = 2.4.dp.toPx(),
-                        center = userOff
-                    )
                 }
             }
         }

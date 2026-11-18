@@ -81,6 +81,8 @@ fun RoutesScreen(
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
     val isImporting by viewModel.isImportingRoute.collectAsStateWithLifecycle()
+    val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
+    val routeImportError by viewModel.routeImportError.collectAsStateWithLifecycle()
 
     var routeToDelete by remember { mutableStateOf<RouteEntity?>(null) }
     var showMarkerInspector by remember { mutableStateOf(false) }
@@ -119,13 +121,19 @@ fun RoutesScreen(
                 )
             }
 
-            // 2. KML / KMZ File Picker Component & Survey Action
+            // 2. KML / KMZ File & URL Picker Component & Survey Action
             item {
                 KmlKmzFilePickerCard(
                     onFileSelected = { uri, resolvedName ->
                         viewModel.importRoute(uri, resolvedName)
                     },
-                    isImporting = isImporting
+                    isImporting = isImporting,
+                    onImportFromUrl = { url ->
+                        viewModel.importRouteFromUrl(url)
+                    },
+                    importStatusMessage = routeImportStatus,
+                    importErrorMessage = routeImportError,
+                    onDismissStatus = { viewModel.clearRouteImportMessages() }
                 )
             }
 

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Refresh
@@ -178,6 +179,7 @@ fun ChainageManagementDialog(
 
     var showResetCalibrationConfirm by remember { mutableStateOf(false) }
     var showRemoveAlignmentConfirm by remember { mutableStateOf(false) }
+    var showUrlImportDialog by remember { mutableStateOf(false) }
     var pendingDeletePoint by remember { mutableStateOf<ChainageCorrectionPoint?>(null) }
 
     // Android Storage Access Framework (SAF) OpenDocument launcher for .kmz and .kml files
@@ -312,7 +314,7 @@ fun ChainageManagementDialog(
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 1. KMZ / KML FILE IMPORT & ALIGNMENT STATUS SECTION
+                    // 1. KMZ / KML FILE & URL IMPORT & ALIGNMENT STATUS SECTION
                     KmzAlignmentFileSection(
                         activeRoute = activeRoute,
                         isImporting = isImportingRoute,
@@ -323,6 +325,11 @@ fun ChainageManagementDialog(
                         redAccent = redAccent,
                         dialogColors = dialogColors,
                         onImportOrReplaceClick = launchKmzFilePicker,
+                        onImportUrlClick = {
+                            if (!isImportingRoute) {
+                                showUrlImportDialog = true
+                            }
+                        },
                         onRemoveClick = { showRemoveAlignmentConfirm = true },
                         onDismissStatus = { viewModel.clearRouteImportMessages() },
                         onSelectAlignment = { alignId -> viewModel.selectAlignment(alignId) }
@@ -554,6 +561,13 @@ fun ChainageManagementDialog(
             }
         )
     }
+
+    if (showUrlImportDialog) {
+        com.example.ui.routes.KmlUrlImportDialog(
+            onDismiss = { showUrlImportDialog = false },
+            onImportUrl = { url -> viewModel.importRouteFromUrl(url) }
+        )
+    }
 }
 
 /**
@@ -604,6 +618,7 @@ private fun KmzAlignmentFileSection(
     redAccent: Color,
     dialogColors: DialogThemeTokens,
     onImportOrReplaceClick: () -> Unit,
+    onImportUrlClick: () -> Unit,
     onRemoveClick: () -> Unit,
     onDismissStatus: () -> Unit,
     onSelectAlignment: (String?) -> Unit
@@ -888,7 +903,7 @@ private fun KmzAlignmentFileSection(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Flat Action Row: Import / Replace KMZ/KML + Remove Alignment
+            // Flat Action Row: Import / Replace KMZ/KML + From URL + Remove Alignment
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -920,8 +935,29 @@ private fun KmzAlignmentFileSection(
                             else -> "Replace KMZ / KML"
                         },
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
+                }
+
+                OutlinedButton(
+                    onClick = onImportUrlClick,
+                    enabled = !isImporting,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryAccent),
+                    border = BorderStroke(1.dp, primaryAccent.copy(alpha = 0.55f)),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier
+                        .height(42.dp)
+                        .testTag("chainage_import_url_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = "Import KML or Google My Maps URL",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("URL", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
 
                 if (activeRoute != null) {
@@ -931,6 +967,7 @@ private fun KmzAlignmentFileSection(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = redAccent),
                         border = BorderStroke(1.dp, redAccent.copy(alpha = 0.5f)),
                         shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
                         modifier = Modifier
                             .height(42.dp)
                             .testTag("remove_kmz_alignment_button")
