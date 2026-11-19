@@ -6,6 +6,7 @@ import com.example.location.LocationTracker
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.CtecsWidgetSettings
+import com.example.model.DirectionDetectionState
 import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
 import com.example.model.KmStoneAlertSettings
@@ -14,6 +15,8 @@ import com.example.model.NavigationNotificationSettings
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.RouteData
+import com.example.model.SmartDirectionPreferences
+import com.example.model.SmartDirectionState
 import com.example.sensor.CompassState
 import com.example.ui.home.NextKmStoneTracker
 import com.example.ui.home.ScreensaverChainageStateHolder
@@ -60,6 +63,7 @@ object CtecsNavigationTelemetryHub {
                 val notif = prefsManager.getInitialNavigationNotificationSettings()
                 val widgets = prefsManager.getInitialWidgetSettings()
                 val alerts = prefsManager.getInitialKmStoneAlertSettings()
+                val directionPrefs = prefsManager.getInitialSmartDirectionPreferences()
                 val cam = prefsManager.getInitialCameraSettings()
                 val overlay = prefsManager.getInitialOverlayConfig()
 
@@ -68,6 +72,7 @@ object CtecsNavigationTelemetryHub {
                 _navigationNotificationSettings.value = notif
                 _widgetSettings.value = widgets
                 _kmStoneAlertSettings.value = alerts
+                _directionPreferences.value = directionPrefs
                 _is24HourFormat.value = cam.is24HourFormat
                 if (_locationName.value.isBlank() && overlay.lastDetectedLocationName.isNotBlank()) {
                     _locationName.value = overlay.lastDetectedLocationName
@@ -126,8 +131,15 @@ object CtecsNavigationTelemetryHub {
     private val _lastKmStoneEvent = MutableStateFlow<KmStoneAlertEvent?>(null)
     val lastKmStoneEvent: StateFlow<KmStoneAlertEvent?> = _lastKmStoneEvent.asStateFlow()
 
-    // Shared single KM Stone Arrival Detector instance across Foreground Services & ViewModel
+    // Shared single KM Stone Arrival Detector & Smart LHS/RHS Direction Manager across Services & ViewModel
     val sharedKmStoneDetector = KmStoneArrivalDetector()
+    val sharedDirectionManager = SmartDirectionManager()
+
+    private val _directionState = MutableStateFlow(SmartDirectionState.alignmentUnavailable())
+    val directionState: StateFlow<SmartDirectionState> = _directionState.asStateFlow()
+
+    private val _directionPreferences = MutableStateFlow(SmartDirectionPreferences())
+    val directionPreferences: StateFlow<SmartDirectionPreferences> = _directionPreferences.asStateFlow()
 
     fun updateTelemetry(
         matchResult: ChainageMatchResult? = null,
@@ -140,9 +152,14 @@ object CtecsNavigationTelemetryHub {
         widgetSettings: CtecsWidgetSettings? = null,
         kmStoneAlertSettings: KmStoneAlertSettings? = null,
         isCameraOrSurveyRecording: Boolean? = null,
-        is24HourFormat: Boolean? = null
+        is24HourFormat: Boolean? = null,
+        directionState: SmartDirectionState? = null,
+        directionPreferences: SmartDirectionPreferences? = null
     ) {
-        if (matchResult != null) _matchResult.value = matchResult
+        if (matchResult != null) {
+            _matchResult.value = matchResult
+            matchResult.smartDirectionState?.let { _directionState.value = it }
+        }
         if (routeData !== _activeRoute.value) _activeRoute.value = routeData
         if (projectProfile != null) _projectProfile.value = projectProfile
         if (locationName != null) _locationName.value = locationName
@@ -153,6 +170,8 @@ object CtecsNavigationTelemetryHub {
         if (kmStoneAlertSettings != null) _kmStoneAlertSettings.value = kmStoneAlertSettings
         if (isCameraOrSurveyRecording != null) _isCameraOrSurveyRecording.value = isCameraOrSurveyRecording
         if (is24HourFormat != null) _is24HourFormat.value = is24HourFormat
+        if (directionState != null) _directionState.value = directionState
+        if (directionPreferences != null) _directionPreferences.value = directionPreferences
     }
 
     fun setServiceRunning(running: Boolean, note: String? = null) {
@@ -238,7 +257,9 @@ data class LockScreenNavUiState(
     val hasRouteData: Boolean = false,
     val lastReliableTimestampMs: Long = 0L,
     val lastUpdateStatusText: String? = null,
-    val isSamplePreview: Boolean = false
+    val isSamplePreview: Boolean = false,
+    val directionState: DirectionDetectionState = DirectionDetectionState.ALIGNMENT_UNAVAILABLE,
+    val isDirectionManual: Boolean = false
 )
 
 /**
@@ -283,17 +304,36 @@ class LockScreenNavStateResolver {
         }
 
         val roadName = resolveVerifiedRoadOrStretch(routeData, projectProfile)
-        val effectiveSide = screensaverResolved.reliableSide
+        val smartDir = matchResult.smartDirectionState
+        val effectiveSide = if (smartDir != null) {
+            smartDir.confirmedBinarySide
+        } else {
+            screensaverResolved.reliableSide
+        }
+        val effectiveDirectionState = smartDir?.detectionState ?: when {
+            routeData == null -> DirectionDetectionState.ALIGNMENT_UNAVAILABLE
+            !hasGpsFix -> DirectionDetectionState.GPS_SIGNAL_WEAK
+            effectiveSide == "LHS" -> DirectionDetectionState.LHS_CONFIRMED
+            effectiveSide == "RHS" -> DirectionDetectionState.RHS_CONFIRMED
+            else -> DirectionDetectionState.DIRECTION_UNCERTAIN
+        }
+        val effectiveIsIncreasing = smartDir?.isIncreasingChainage ?: screensaverResolved.isIncreasingTrend
+        val effectiveArrow = when {
+            smartDir != null -> smartDir.directionArrow
+            else -> screensaverResolved.directionArrow
+        }
 
-        // Determine verified Next KM Stone only when route & match are valid
-        val isExplicitRoadSide = projectProfile.roadSide == RoadSide.LHS ||
-            projectProfile.roadSide == RoadSide.RHS
+        // Determine verified Next KM Stone only when route, match, and direction are valid
+        val isExplicitRoadSide = smartDir?.isManualOverride ?: (
+            projectProfile.roadSide == RoadSide.LHS || projectProfile.roadSide == RoadSide.RHS
+        )
         val nextKmState = if (effectiveSide != null && routeData != null) {
             nextKmTracker.evaluate(
                 matchResult = matchResult,
                 route = routeData,
                 detectedSide = effectiveSide,
-                isAutoDetectedSide = !isExplicitRoadSide
+                isAutoDetectedSide = !isExplicitRoadSide,
+                smartDirectionState = smartDir
             )
         } else {
             null
@@ -341,8 +381,18 @@ class LockScreenNavStateResolver {
                 "Manual Chainage Active"
             matchResult.confidence == MatchConfidence.NO_MATCH || matchResult.isUncertain ->
                 "Approaching route corridor"
-            effectiveSide == "LHS" -> "Increasing Chainage (LHS)"
-            effectiveSide == "RHS" -> "Decreasing Chainage (RHS)"
+            effectiveDirectionState == DirectionDetectionState.GPS_SIGNAL_WEAK ->
+                "GPS signal weak — checking direction"
+            effectiveDirectionState == DirectionDetectionState.DIRECTION_CHANGING ->
+                "Direction changing…"
+            effectiveDirectionState == DirectionDetectionState.DIRECTION_UNCERTAIN ->
+                "Travel direction uncertain"
+            effectiveDirectionState == DirectionDetectionState.STATIONARY && effectiveSide == null ->
+                "Vehicle stationary"
+            effectiveSide != null -> {
+                val trendLabel = if (effectiveIsIncreasing) "Increasing Chainage" else "Decreasing Chainage"
+                "$trendLabel ($effectiveSide)"
+            }
             else -> "Following active alignment"
         }
 
@@ -364,8 +414,8 @@ class LockScreenNavStateResolver {
         return LockScreenNavUiState(
             chainageText = screensaverResolved.chainageText,
             reliableSide = effectiveSide,
-            directionArrow = screensaverResolved.directionArrow,
-            isIncreasingTrend = screensaverResolved.isIncreasingTrend,
+            directionArrow = effectiveArrow,
+            isIncreasingTrend = effectiveIsIncreasing,
             directionInstruction = directionInstruction,
             roadOrStretchName = roadName,
             nextMarkerLabel = nextMarkerLabel,
@@ -381,7 +431,9 @@ class LockScreenNavStateResolver {
             hasRouteData = routeData != null,
             lastReliableTimestampMs = lastReliableTimestampMs,
             lastUpdateStatusText = staleStatus,
-            isSamplePreview = false
+            isSamplePreview = false,
+            directionState = effectiveDirectionState,
+            isDirectionManual = smartDir?.isManualOverride == true
         )
     }
 
@@ -434,7 +486,9 @@ class LockScreenNavStateResolver {
                 hasRouteData = true,
                 lastReliableTimestampMs = System.currentTimeMillis(),
                 lastUpdateStatusText = null,
-                isSamplePreview = true
+                isSamplePreview = true,
+                directionState = DirectionDetectionState.LHS_CONFIRMED,
+                isDirectionManual = false
             )
         }
     }

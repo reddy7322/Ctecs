@@ -437,6 +437,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _chainageVoiceAssistantSettings = MutableStateFlow(
+        preferencesManager.getInitialChainageVoiceAssistantSettings()
+    )
+    val chainageVoiceAssistantSettings: StateFlow<com.example.model.ChainageVoiceAssistantSettings> =
+        _chainageVoiceAssistantSettings.asStateFlow()
+
+    fun updateChainageVoiceAssistantSettings(
+        transform: (com.example.model.ChainageVoiceAssistantSettings) -> com.example.model.ChainageVoiceAssistantSettings
+    ) {
+        val updated = transform(_chainageVoiceAssistantSettings.value)
+        _chainageVoiceAssistantSettings.value = updated
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateChainageVoiceAssistantSettings(updated)
+        }
+    }
+
+    fun resetChainageVoiceAssistantSettings() {
+        val defaults = com.example.model.ChainageVoiceAssistantSettings.defaultSettings()
+        _chainageVoiceAssistantSettings.value = defaults
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateChainageVoiceAssistantSettings(defaults)
+        }
+        showToast("Chainage Voice Assistant settings reset to default", ToastType.SUCCESS)
+    }
+
     val surveyShow200mLabels: StateFlow<Boolean> = preferencesManager.surveyShow200mLabelsFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.Eagerly,
@@ -998,10 +1023,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = preferencesManager.getInitialChainageAuditLog()
     )
 
+    private val _smartDirectionPreferences = MutableStateFlow(preferencesManager.getInitialSmartDirectionPreferences())
+    val smartDirectionPreferences: StateFlow<com.example.model.SmartDirectionPreferences> =
+        _smartDirectionPreferences.asStateFlow()
+
+    val smartDirectionState: StateFlow<com.example.model.SmartDirectionState> =
+        CtecsNavigationTelemetryHub.directionState
+
     private val progressionTracker = com.example.geo.ChainageProgressionTracker().apply {
-        val initialProfile = preferencesManager.getInitialProjectProfile()
-        if (preferencesManager.isProjectRoadSideExplicitlySaved() && initialProfile.roadSide != RoadSide.NONE) {
-            setManualSide(initialProfile.roadSide.label)
+        val dirPrefs = _smartDirectionPreferences.value
+        if (dirPrefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE &&
+            !dirPrefs.normalizedManualSide.isNullOrBlank()
+        ) {
+            setManualSide(dirPrefs.normalizedManualSide!!)
         }
     }
     private val refreshCoordinator = ChainageAccuracyRefreshCoordinator()
@@ -1013,6 +1047,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectAlignment(alignmentId: String?) {
         selectedAlignmentId.value = alignmentId
+        CtecsNavigationTelemetryHub.sharedDirectionManager.onAlignmentChanged(
+            routeId = activeRouteData.value?.id,
+            alignmentId = alignmentId
+        )
         preferencesManager.launchSafeEdit {
             preferencesManager.updateSelectedAlignmentId(alignmentId)
         }
@@ -1048,20 +1086,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): ChainageMatchResult {
         // Tier 4 fallback if no GPS fix
         if (loc.point == null) {
-            return ChainageMatchResult.noRoute(loc.accuracy).copy(
-                detectedSide = progressionTracker.getCurrentSide(),
-                source = ChainageSource.GPS
+            val baseNoGps = ChainageMatchResult.noRoute(loc.accuracy).copy(source = ChainageSource.GPS)
+            val dirState = evaluateAndPublishSmartDirection(loc, baseNoGps, route)
+            return baseNoGps.copy(
+                detectedSide = dirState.confirmedSide ?: "Unknown",
+                smartDirectionState = dirState
             )
         }
 
         // Tier 4 fallback if no route loaded
         if (route == null || (route.markers.isEmpty() && route.alignments.isEmpty())) {
-            return ChainageMatchResult(
+            val baseNoRoute = ChainageMatchResult(
                 confidence = com.example.model.MatchConfidence.NO_MATCH,
                 gpsAccuracy = loc.accuracy,
                 statusMessage = "No route loaded (GPS Active)",
-                detectedSide = progressionTracker.getCurrentSide(),
                 source = ChainageSource.GPS
+            )
+            val dirState = evaluateAndPublishSmartDirection(loc, baseNoRoute, null)
+            return baseNoRoute.copy(
+                detectedSide = dirState.confirmedSide ?: "Unknown",
+                smartDirectionState = dirState
             )
         }
 
@@ -1086,22 +1130,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (kmzMatch.confidence == com.example.model.MatchConfidence.NO_MATCH || rawKmzChainage == null) {
             val stabilized = progressionTracker.processResult(kmzMatch, route.id)
-            lastCalculatedMatchResult = stabilized
+            val dirState = evaluateAndPublishSmartDirection(loc, stabilized, route)
+            val enrichedNoMatch = stabilized.copy(
+                detectedSide = dirState.confirmedSide ?: "Unknown",
+                smartDirectionState = dirState,
+                source = ChainageSource.GPS,
+                rawUncorrectedChainage = null
+            )
+            lastCalculatedMatchResult = enrichedNoMatch
             val latencyUs = (System.nanoTime() - startNs) / 1_000L
             SmartChainageCorrectionEngine.notifyTaskCompleted(
                 latencyMicros = latencyUs,
                 alignmentName = activeAlign?.name ?: route.name,
                 segmentsCount = cachedGeom?.segmentCount ?: 0,
                 gridCellsCount = cachedGeom?.mappedMarkers?.size ?: 0,
-                matchedChainage = stabilized.displayChainage,
-                offsetMetres = stabilized.offsetMetres,
-                confidence = stabilized.confidence.name,
+                matchedChainage = enrichedNoMatch.displayChainage,
+                offsetMetres = enrichedNoMatch.offsetMetres,
+                confidence = enrichedNoMatch.confidence.name,
                 hierarchyTier = SmartChainageCorrectionEngine.CalibrationHierarchyTier.TIER_5_GPS_FALLBACK.label
             )
-            return stabilized.copy(
-                source = ChainageSource.GPS,
-                rawUncorrectedChainage = null
-            )
+            return enrichedNoMatch
         }
 
         // Tier 2: CUSTOM KMZ CORRECTION (interpolated along route distance within valid coverage)
@@ -1196,8 +1244,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             val recoveredStabilized = progressionTracker.processResult(preRecovered, route.id)
-            lastCalculatedMatchResult = recoveredStabilized
-            _autoMatchStateFlow.value = recoveredStabilized
+            val recoveredDir = evaluateAndPublishSmartDirection(loc, recoveredStabilized, route)
+            val enrichedRecovered = recoveredStabilized.copy(
+                detectedSide = recoveredDir.confirmedSide ?: "Unknown",
+                smartDirectionState = recoveredDir
+            )
+            lastCalculatedMatchResult = enrichedRecovered
+            _autoMatchStateFlow.value = enrichedRecovered
             SmartChainageCorrectionEngine.recordStuckChainageRecovery(
                 component = stuckDecision.affectedComponent,
                 reason = stuckDecision.reason
@@ -1205,8 +1258,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             calibrationMatchingScope.launch {
                 restartCalibrationMatchingSubTask("Auto-recovery: ${stuckDecision.affectedComponent}")
             }
-            return recoveredStabilized
+            return enrichedRecovered
         }
+
+        val dirState = evaluateAndPublishSmartDirection(loc, stabilized, route)
+        val enrichedResult = stabilized.copy(
+            detectedSide = dirState.confirmedSide ?: "Unknown",
+            smartDirectionState = dirState
+        )
+        lastCalculatedMatchResult = enrichedResult
 
         val latencyUs = (System.nanoTime() - startNs) / 1_000L
         val tierLabel = smartCorrected?.hierarchyTier?.label
@@ -1217,26 +1277,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             alignmentName = activeAlign?.name ?: route.name,
             segmentsCount = cachedGeom?.segmentCount ?: 0,
             gridCellsCount = cachedGeom?.mappedMarkers?.size ?: 0,
-            matchedChainage = stabilized.displayChainage,
-            offsetMetres = stabilized.offsetMetres,
-            confidence = stabilized.confidence.name,
+            matchedChainage = enrichedResult.displayChainage,
+            offsetMetres = enrichedResult.offsetMetres,
+            confidence = enrichedResult.confidence.name,
             hierarchyTier = tierLabel
         )
+        return enrichedResult
+    }
 
-        if (!progressionTracker.isManualOverride() &&
-            stabilized.detectedSide.isNotBlank() &&
-            stabilized.detectedSide != "Unknown" &&
-            _projectProfile.value.roadSide != com.example.model.RoadSide.NONE
+    /**
+     * Runs the single shared [com.example.navigation.SmartDirectionManager], publishes the result
+     * to [CtecsNavigationTelemetryHub], synchronizes in-memory profile & active survey road side
+     * (without persisting stale GPS state), and announces confirmed direction changes via TTS.
+     */
+    private fun evaluateAndPublishSmartDirection(
+        loc: LocationState,
+        matchResult: ChainageMatchResult,
+        route: RouteData?
+    ): com.example.model.SmartDirectionState {
+        val prefs = _smartDirectionPreferences.value
+        val dirState = CtecsNavigationTelemetryHub.sharedDirectionManager.evaluate(
+            locationState = loc,
+            matchResult = matchResult,
+            routeData = route,
+            preferences = prefs
+        )
+        CtecsNavigationTelemetryHub.updateTelemetry(directionState = dirState)
+
+        // Sync in-memory ProjectProfile roadSide ONLY when direction is confirmed (never persist stale GPS direction)
+        val confirmedBinary = dirState.confirmedBinarySide
+        if (!dirState.isManualOverride &&
+            confirmedBinary != null &&
+            _projectProfile.value.roadSide != RoadSide.NONE
         ) {
-            val detectedEnum = com.example.model.RoadSide.fromString(stabilized.detectedSide)
+            val detectedEnum = RoadSide.fromString(confirmedBinary)
             if (_projectProfile.value.roadSide != detectedEnum) {
                 _projectProfile.update { it.copy(roadSide = detectedEnum) }
-                viewModelScope.launch(Dispatchers.IO) {
-                    preferencesManager.editProjectProfile { it.copy(roadSide = detectedEnum) }
+            }
+            // Keep active survey session synchronized with confirmed auto direction
+            val activeSurvey = surveyManager.activeSession.value
+            if (activeSurvey != null && activeSurvey.status == com.example.survey.model.SurveyStatus.RECORDING) {
+                val surveySide = if (confirmedBinary == "LHS") {
+                    com.example.survey.model.RoadSide.LHS
+                } else {
+                    com.example.survey.model.RoadSide.RHS
+                }
+                if (activeSurvey.roadSide != surveySide) {
+                    viewModelScope.launch {
+                        surveyManager.updateRoadSide(surveySide)
+                    }
                 }
             }
         }
-        return stabilized
+
+        // Announce ONLY genuinely confirmed LHS <-> RHS direction transitions via shared Android TTS
+        if (dirState.directionChangedFrom != null && !dirState.isManualOverride) {
+            com.example.navigation.KmStoneVoiceAnnouncementManager.announceDirectionChange(
+                context = getApplication(),
+                directionState = dirState,
+                settings = _kmStoneAlertSettings.value,
+                voiceDirectionEnabled = prefs.voiceDirectionAnnouncementsEnabled,
+                isRecordingActive = CtecsNavigationTelemetryHub.isCameraOrSurveyRecording.value
+            )
+        }
+
+        return dirState
     }
 
     /**
@@ -1257,8 +1362,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 conflatedGpsFlow,
                 effectiveRouteFlow,
                 routeCorrectionsMap,
-                isRouteCorrectionsEnabled
-            ) { loc, route, correctionsMap, isCorrectionsEnabled ->
+                isRouteCorrectionsEnabled,
+                _smartDirectionPreferences
+            ) { loc, route, correctionsMap, isCorrectionsEnabled, _ ->
                 computeAutoMatchForState(loc, route, correctionsMap, isCorrectionsEnabled)
             }.conflate().collect { result ->
                 _autoMatchStateFlow.value = result
@@ -1436,9 +1542,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             activeRouteData.collect { route ->
+                CtecsNavigationTelemetryHub.sharedDirectionManager.onAlignmentChanged(
+                    routeId = route?.id,
+                    alignmentId = selectedAlignmentId.value ?: route?.selectedAlignmentId ?: route?.activeAlignment?.id
+                )
                 CtecsNavigationTelemetryHub.updateTelemetry(routeData = route)
                 syncBackgroundNavigationService()
                 com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
+            }
+        }
+        viewModelScope.launch {
+            preferencesManager.smartDirectionPreferencesFlow.collect { prefs ->
+                _smartDirectionPreferences.value = prefs
+                CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = prefs)
+                if (prefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE &&
+                    !prefs.normalizedManualSide.isNullOrBlank()
+                ) {
+                    progressionTracker.setManualSide(prefs.normalizedManualSide!!)
+                } else {
+                    progressionTracker.clearManualSide()
+                }
             }
         }
         viewModelScope.launch {
@@ -1481,11 +1604,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         matchResult = match,
                         routeData = route,
                         projectRoadSide = profile.roadSide,
-                        settings = alertSettings
+                        settings = alertSettings,
+                        smartDirectionState = match.smartDirectionState
                     )
                     if (events.isNotEmpty()) {
                         events.forEach { evt ->
-                            _lastKmStoneAlertEvent.value = evt
+                            if (evt.kind != com.example.navigation.KmStoneAlertKind.VOICE_DISTANCE) {
+                                _lastKmStoneAlertEvent.value = evt
+                            }
                             com.example.navigation.KmStoneAlertFeedbackManager.dispatchAlert(
                                 context = getApplication(),
                                 event = evt,
@@ -2288,8 +2414,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSide(side: RoadSide) {
         progressionTracker.setManualSide(side.label)
+        val updatedPrefs = _smartDirectionPreferences.value.copy(
+            controlMode = com.example.model.DirectionControlMode.MANUAL_OVERRIDE,
+            manualOverrideSide = side.label
+        )
+        _smartDirectionPreferences.value = updatedPrefs
+        CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
         _projectProfile.update { it.copy(roadSide = side) }
         preferencesManager.launchSafeEdit {
+            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
             preferencesManager.editProjectProfile { it.copy(roadSide = side) }
         }
     }
@@ -2297,13 +2430,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resetSideToAuto() {
         viewModelScope.launch {
             progressionTracker.clearManualSide()
-            val detected = progressionTracker.getCurrentSide()
-            if (detected.isNotBlank() && detected != "Unknown") {
-                val detectedEnum = RoadSide.fromString(detected)
-                _projectProfile.update { it.copy(roadSide = detectedEnum) }
-                preferencesManager.editProjectProfile { it.copy(roadSide = detectedEnum) }
-            }
-            _uiMessages.emit(UiMessage.Info("Side set to Auto-Detection"))
+            val updatedPrefs = _smartDirectionPreferences.value.copy(
+                controlMode = com.example.model.DirectionControlMode.AUTO,
+                manualOverrideSide = null
+            )
+            _smartDirectionPreferences.value = updatedPrefs
+            CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
+            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+            // Recalculate immediately from live GPS + alignment state
+            val loc = locationTracker.locationState.value
+            val currentMatch = _autoMatchStateFlow.value
+            val route = activeRouteData.value
+            val dirState = evaluateAndPublishSmartDirection(loc, currentMatch, route)
+            _autoMatchStateFlow.value = currentMatch.copy(
+                detectedSide = dirState.confirmedSide ?: "Unknown",
+                smartDirectionState = dirState
+            )
+            _uiMessages.emit(UiMessage.Info("Direction set to Smart Auto-Detection"))
+        }
+    }
+
+    fun updateAlignmentDirectionConvention(convention: com.example.model.AlignmentDirectionConvention) {
+        val updatedPrefs = _smartDirectionPreferences.value.copy(alignmentConvention = convention)
+        _smartDirectionPreferences.value = updatedPrefs
+        CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+        }
+    }
+
+    fun setVoiceDirectionAnnouncementsEnabled(enabled: Boolean) {
+        val updatedPrefs = _smartDirectionPreferences.value.copy(voiceDirectionAnnouncementsEnabled = enabled)
+        _smartDirectionPreferences.value = updatedPrefs
+        CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
         }
     }
 
@@ -3275,24 +3436,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
 
                 val latestLocTime = locationTracker.locationState.value.lastFixTime
+                val refreshedDirState = evaluateAndPublishSmartDirection(locState, output.matchResult, effectiveRoute)
+                val enrichedRefreshMatch = output.matchResult.copy(
+                    detectedSide = refreshedDirState.confirmedSide ?: "Unknown",
+                    smartDirectionState = refreshedDirState
+                )
                 if (generation == refreshCoordinator.currentGeneration() && latestLocTime <= locState.lastFixTime) {
                     if (mode == RefreshMode.FORCE_ALL) {
                         stuckChainageMonitor.reset()
                     }
-                    lastCalculatedMatchResult = output.matchResult
-                    _autoMatchStateFlow.value = output.matchResult
-                }
-
-                if (!progressionTracker.isManualOverride() &&
-                    output.matchResult.detectedSide.isNotBlank() &&
-                    output.matchResult.detectedSide != "Unknown" &&
-                    _projectProfile.value.roadSide != RoadSide.NONE
-                ) {
-                    val detectedEnum = RoadSide.fromString(output.matchResult.detectedSide)
-                    if (_projectProfile.value.roadSide != detectedEnum) {
-                        _projectProfile.update { it.copy(roadSide = detectedEnum) }
-                        preferencesManager.editProjectProfile { it.copy(roadSide = detectedEnum) }
-                    }
+                    lastCalculatedMatchResult = enrichedRefreshMatch
+                    _autoMatchStateFlow.value = enrichedRefreshMatch
                 }
 
                 SmartChainageCorrectionEngine.recordRefreshExecuted(

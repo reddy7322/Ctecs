@@ -135,12 +135,17 @@ object OverlayRenderer {
             } else {
                 null
             }
-            val reliableSide = snapshot.matchResult.detectedSide
-                .takeIf { it.equals("LHS", ignoreCase = true) || it.equals("RHS", ignoreCase = true) }
-                ?.uppercase(Locale.US)
-                ?: snapshot.projectProfile.roadSide
-                    .takeIf { it == RoadSide.LHS || it == RoadSide.RHS }
-                    ?.label
+            val smartDir = snapshot.matchResult.smartDirectionState
+            val reliableSide = if (smartDir != null) {
+                smartDir.confirmedBinarySide
+            } else {
+                snapshot.matchResult.detectedSide
+                    .takeIf { it.equals("LHS", ignoreCase = true) || it.equals("RHS", ignoreCase = true) }
+                    ?.uppercase(Locale.US)
+                    ?: snapshot.projectProfile.roadSide
+                        .takeIf { it == RoadSide.LHS || it == RoadSide.RHS }
+                        ?.label
+            }
 
             MiniMapRenderer.drawMiniMap(
                 context = context,
@@ -368,6 +373,8 @@ object OverlayRenderer {
 
         val locNameToDisplay = snapshot.locationName.ifBlank { config.lastDetectedLocationName }
 
+        val (authSide, useAuthSide) = OverlayTextGenerator.resolveAuthoritativeCaptureSide(snapshot)
+
         val rawLines = OverlayTextGenerator.generateLines(
             config = config,
             project = project,
@@ -382,7 +389,9 @@ object OverlayRenderer {
             is24HourFormat = false,
             timestamp = snapshot.timestamp,
             isForCapture = true,
-            locationName = locNameToDisplay
+            locationName = locNameToDisplay,
+            authoritativeSideOverride = authSide,
+            useAuthoritativeSide = useAuthSide
         )
 
         if (rawLines.isEmpty()) return height - padBottomPx
@@ -714,16 +723,26 @@ object OverlayRenderer {
                     exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "M")
                 }
 
+                val (exifSide, useExifSide) = OverlayTextGenerator.resolveAuthoritativeCaptureSide(snapshot)
+                val resolvedExifSide = if (useExifSide) exifSide else snapshot.projectProfile.roadSide.label
+
                 val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
                 if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
-                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "$locName | Chainage: ${snapshot.displayChainage} | Project: ${snapshot.projectProfile.highwayId}")
+                    val sideSuffix = resolvedExifSide
+                        ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
+                        ?.let { " | Side: $it" }
+                        .orEmpty()
+                    exif.setAttribute(
+                        ExifInterface.TAG_IMAGE_DESCRIPTION,
+                        "$locName | Chainage: ${snapshot.displayChainage}$sideSuffix | Project: ${snapshot.projectProfile.highwayId}"
+                    )
                 }
 
                 val userComment = listOfNotNull(
                     snapshot.projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                     snapshot.projectProfile.packageSection.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                     snapshot.displayChainage.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
-                    snapshot.projectProfile.roadSide.label.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                    resolvedExifSide?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                     snapshot.projectProfile.lane.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                     snapshot.projectProfile.activity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                     snapshot.projectProfile.subActivity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { "($it)" },

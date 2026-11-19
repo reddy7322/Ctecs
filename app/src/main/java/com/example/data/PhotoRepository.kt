@@ -18,6 +18,7 @@ import coil.annotation.ExperimentalCoilApi
 import coil.imageLoader
 import com.example.model.CaptureSnapshot
 import com.example.overlay.OverlayRenderer
+import com.example.overlay.OverlayTextGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -393,6 +394,12 @@ class PhotoRepository(
             } else {
                 snapshot.projectProfile.highwayId
             }
+            val (authCaptureSide, useAuthCaptureSide) = OverlayTextGenerator.resolveAuthoritativeCaptureSide(snapshot)
+            val resolvedCaptureSideLabel = if (useAuthCaptureSide) {
+                authCaptureSide.orEmpty()
+            } else {
+                snapshot.projectProfile.roadSide.label
+            }
             val fileName = buildCustomFileName(
                 preset = snapshot.filenameFormatPreset,
                 prefix = snapshot.customFilenamePrefix,
@@ -403,7 +410,7 @@ class PhotoRepository(
                 tag = snapshot.overlayConfig.customTag,
                 project = snapshot.projectProfile.highwayId,
                 stretch = snapshot.projectProfile.packageSection,
-                side = snapshot.projectProfile.roadSide.label,
+                side = resolvedCaptureSideLabel,
                 lane = snapshot.projectProfile.lane,
                 workType = snapshot.projectProfile.workType,
                 activity = snapshot.projectProfile.activity,
@@ -544,7 +551,7 @@ class PhotoRepository(
                 offsetMetres = snapshot.matchResult.offsetMetres.toFloat(),
                 highwayId = snapshot.projectProfile.highwayId,
                 packageSection = snapshot.projectProfile.packageSection,
-                roadSide = snapshot.projectProfile.roadSide.label,
+                roadSide = resolvedCaptureSideLabel,
                 lane = snapshot.projectProfile.lane,
                 activity = snapshot.projectProfile.activity,
                 subActivity = snapshot.projectProfile.subActivity,
@@ -562,7 +569,11 @@ class PhotoRepository(
                 },
                 inspectorName = snapshot.projectProfile.inspectorName,
                 formattedOverlayText = run {
-                    val baseText = snapshot.projectProfile.buildHighwayText(snapshot.displayChainage)
+                    val baseText = snapshot.projectProfile.buildHighwayText(
+                        chainageFormatted = snapshot.displayChainage,
+                        sideOverride = authCaptureSide,
+                        useSideOverride = useAuthCaptureSide
+                    )
                     val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
                     if (snapshot.overlayConfig.showLocationName && locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
                         if (baseText.isNotBlank()) "$baseText | $locName" else locName

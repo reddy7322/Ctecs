@@ -246,12 +246,24 @@ class LockScreenNavigationService : Service() {
             ) { loc, match, route, profile, locName ->
                 // Fallback geometric matching only if hub has no match yet (e.g., cold service restart)
                 val effectiveMatch = if (match.chainage == null && route != null && loc.point != null && loc.isUsable) {
-                    ChainageMatcher.match(
+                    val rawRecovered = ChainageMatcher.match(
                         gpsPoint = loc.point,
                         gpsAccuracy = loc.accuracy ?: 15f,
                         bearing = loc.bearing,
                         routeData = route,
                         previousResult = match
+                    )
+                    val dirPrefs = CtecsNavigationTelemetryHub.directionPreferences.value
+                    val recoveredDir = CtecsNavigationTelemetryHub.sharedDirectionManager.evaluate(
+                        locationState = loc,
+                        matchResult = rawRecovered,
+                        routeData = route,
+                        preferences = dirPrefs
+                    )
+                    CtecsNavigationTelemetryHub.updateTelemetry(directionState = recoveredDir)
+                    rawRecovered.copy(
+                        detectedSide = recoveredDir.confirmedSide ?: "Unknown",
+                        smartDirectionState = recoveredDir
                     )
                 } else {
                     match
@@ -265,7 +277,8 @@ class LockScreenNavigationService : Service() {
                         matchResult = effectiveMatch,
                         routeData = route,
                         projectRoadSide = profile.roadSide,
-                        settings = alertCfg
+                        settings = alertCfg,
+                        smartDirectionState = effectiveMatch.smartDirectionState
                     )
                     if (events.isNotEmpty()) {
                         val isRec = CtecsNavigationTelemetryHub.isCameraOrSurveyRecording.value

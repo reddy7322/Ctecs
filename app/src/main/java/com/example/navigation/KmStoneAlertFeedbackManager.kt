@@ -45,16 +45,20 @@ data class KmStoneAlertDispatchRecord(
     val vibrationPattern: KmVibrationPattern,
     val soundOption: KmAlertSoundOption,
     val timestampMs: Long,
-    val notificationPosted: Boolean = false
+    val notificationPosted: Boolean = false,
+    val voiceTriggered: Boolean = false,
+    val spokenText: String? = null
 )
 
 /**
- * Handles vibration, haptic feedback, and synthesized/custom sound playback for KM Stone Arrival
- * and Advance Warning events.
+ * Handles vibration, haptic feedback, synthesized/custom sound playback, and coordinated Android
+ * TTS voice announcements for KM Stone Arrival, Advance Warning, and Dynamic Distance events.
  *
  * Respects:
  * - Device silent / vibrate ringer mode & Do Not Disturb filter
  * - Active Camera video recording or Survey recording (never interrupts recording)
+ * - Selected [com.example.model.KmAlertOutputMode] (Voice only, Sound only, Voice + sound,
+ *   Vibration + voice, Voice + sound + vibration)
  * - Independent arrival vs. advance-warning sound & vibration controls
  * - Non-overlapping playback jobs
  */
@@ -77,21 +81,49 @@ object KmStoneAlertFeedbackManager {
         isRecordingActive: Boolean = false,
         hostView: View? = null
     ): KmStoneAlertDispatchRecord {
+        // Dynamic voice-distance events announce smoothly without overwriting arrival notification banners
+        if (event.kind == KmStoneAlertKind.VOICE_DISTANCE) {
+            val voiceRecord = KmStoneVoiceAnnouncementManager.announceEvent(
+                context = context,
+                event = event,
+                settings = settings,
+                isRecordingActive = isRecordingActive,
+                initialDelayMs = 0L
+            )
+            val record = KmStoneAlertDispatchRecord(
+                eventKind = event.kind,
+                stoneChainage = event.stoneFormattedChainage,
+                directionSide = event.directionSide,
+                vibrationTriggered = false,
+                soundTriggered = false,
+                vibrationPattern = settings.advanceWarningVibrationPattern,
+                soundOption = settings.advanceWarningSoundOption,
+                timestampMs = event.timestampMs,
+                notificationPosted = false,
+                voiceTriggered = voiceRecord != null,
+                spokenText = voiceRecord?.spokenText
+            )
+            _lastDispatchRecord.value = record
+            return record
+        }
+
         CtecsNavigationTelemetryHub.recordKmStoneAlertEvent(event)
         val isAdvance = event.kind == KmStoneAlertKind.ADVANCE_WARNING
         val alertsActive = settings.enabled && settings.arrivalAlertsEnabled
+        val effectiveVibrationEnabled = settings.resolveEffectiveVibrationEnabled()
+        val effectiveSoundEnabled = settings.resolveEffectiveSoundEnabled()
 
         val shouldVibrate = if (isAdvance) {
-            alertsActive && settings.vibrationEnabled && settings.advanceWarningVibrationEnabled && !isRecordingActive
+            alertsActive && effectiveVibrationEnabled && settings.advanceWarningVibrationEnabled && !isRecordingActive
         } else {
-            alertsActive && settings.vibrationEnabled && !isRecordingActive
+            alertsActive && effectiveVibrationEnabled && !isRecordingActive
         }
 
         val shouldPlaySound = if (isAdvance) {
-            alertsActive && settings.soundEnabled && settings.advanceWarningSoundEnabled && !isRecordingActive &&
+            alertsActive && effectiveSoundEnabled && settings.advanceWarningSoundEnabled && !isRecordingActive &&
                 canPlayAudibleAlert(context)
         } else {
-            alertsActive && settings.soundEnabled && !isRecordingActive && canPlayAudibleAlert(context)
+            alertsActive && effectiveSoundEnabled && !isRecordingActive && canPlayAudibleAlert(context)
         }
 
         val chosenPattern = if (isAdvance) {
@@ -106,7 +138,7 @@ object KmStoneAlertFeedbackManager {
             settings.soundOption
         }
 
-        if (alertsActive && settings.hapticFeedbackEnabled && !isRecordingActive) {
+        if (alertsActive && settings.hapticFeedbackEnabled && !isRecordingActive && effectiveVibrationEnabled) {
             try {
                 hostView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             } catch (_: Exception) {}
@@ -132,6 +164,20 @@ object KmStoneAlertFeedbackManager {
             )
         }
 
+        // Coordinate arrival voice announcement (brief 240ms stagger if alert chime also plays so
+        // the chime plays crisply without drowning out the first word of TTS).
+        val voiceRecord = if (!isAdvance && alertsActive && settings.isVoiceActiveForLiveAlerts() && settings.voiceAnnounceAtArrival) {
+            KmStoneVoiceAnnouncementManager.announceEvent(
+                context = context,
+                event = event,
+                settings = settings,
+                isRecordingActive = isRecordingActive,
+                initialDelayMs = if (didSound) 240L else 0L
+            )
+        } else {
+            null
+        }
+
         val didPostNotification = if (alertsActive && !isRecordingActive) {
             postArrivalNotificationIfPermitted(context, event, settings)
         } else {
@@ -147,7 +193,9 @@ object KmStoneAlertFeedbackManager {
             vibrationPattern = chosenPattern,
             soundOption = chosenSound,
             timestampMs = event.timestampMs,
-            notificationPosted = didPostNotification
+            notificationPosted = didPostNotification,
+            voiceTriggered = voiceRecord != null,
+            spokenText = voiceRecord?.spokenText
         )
         _lastDispatchRecord.value = record
         return record

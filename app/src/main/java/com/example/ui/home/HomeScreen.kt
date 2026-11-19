@@ -183,6 +183,7 @@ import com.example.location.LocationState
 import com.example.location.LocationTracker
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
+import com.example.model.DirectionDetectionState
 import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
 import com.example.model.HudMapMarkerStyle
@@ -190,9 +191,12 @@ import com.example.model.MatchConfidence
 import com.example.model.MiniMapStyle
 import com.example.model.RoadSide
 import com.example.model.RouteData
+import com.example.model.SmartDirectionState
 import com.example.navigation.ActiveChainageNavigationTarget
 import com.example.overlay.MiniMapRenderer
 import com.example.ui.MainViewModel
+import com.example.ui.components.SmartDirectionIndicatorBadge
+import com.example.ui.components.SmartDirectionModePickerMenu
 import com.example.ui.dialogs.ChainageManagementDialog
 import com.example.ui.dialogs.ChainageSourceBadge
 import com.example.ui.dialogs.NavigateToChainageDialog
@@ -217,6 +221,7 @@ fun HomeScreen(
     // FLAG_KEEP_SCREEN_ON is acquired only while the Screensaver overlay is active.
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
+    val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
     val compassState by viewModel.compassState.collectAsStateWithLifecycle()
@@ -399,20 +404,19 @@ fun HomeScreen(
     val aodNextKmState = remember(
         isScreensaverAodActive,
         matchResult,
+        smartDirectionState,
         activeRoute?.id,
-        screensaverDisplayState.reliableSide,
-        projectProfile.roadSide
+        screensaverDisplayState.reliableSide
     ) {
         if (!isScreensaverAodActive || activeRoute == null || screensaverDisplayState.reliableSide == null) {
             null
         } else {
-            val isExplicitSide = projectProfile.roadSide == com.example.model.RoadSide.LHS ||
-                projectProfile.roadSide == com.example.model.RoadSide.RHS
             aodNextKmTracker.evaluate(
                 matchResult = matchResult,
                 route = activeRoute,
                 detectedSide = screensaverDisplayState.reliableSide,
-                isAutoDetectedSide = !isExplicitSide
+                isAutoDetectedSide = !smartDirectionState.isManualOverride,
+                smartDirectionState = smartDirectionState
             )
         }
     }
@@ -550,17 +554,8 @@ fun HomeScreen(
                 else -> "--+---"
             }
 
-            val detectedSide = when {
-                matchResult.detectedSide.equals("LHS", ignoreCase = true) -> "LHS"
-                matchResult.detectedSide.equals("RHS", ignoreCase = true) -> "RHS"
-                matchResult.detectedSide.equals("MEDIAN", ignoreCase = true) -> "MEDIAN"
-                matchResult.detectedSide.equals("BOTH", ignoreCase = true) -> "BHS"
-                projectProfile.roadSide == com.example.model.RoadSide.LHS -> "LHS"
-                projectProfile.roadSide == com.example.model.RoadSide.RHS -> "RHS"
-                projectProfile.roadSide == com.example.model.RoadSide.MEDIAN -> "MEDIAN"
-                projectProfile.roadSide == com.example.model.RoadSide.BOTH -> "BHS"
-                else -> "RHS"
-            }
+            val detectedSide = smartDirectionState.confirmedSide
+                ?: smartDirectionState.detectionState.shortLabel
 
             CentralChainageDisplay(
                 chainageText = displayChainageText,
@@ -570,6 +565,7 @@ fun HomeScreen(
                 hasActiveRoute = activeRoute != null,
                 source = matchResult.source,
                 rawChainage = matchResult.rawUncorrectedChainage?.format(),
+                smartDirectionState = smartDirectionState,
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
@@ -577,6 +573,14 @@ fun HomeScreen(
                 isDark = isDark,
                 isCompact = isCompactHeight,
                 onClick = { showChainageManagementDialog = true },
+                onSelectManualSide = { chosenSide ->
+                    viewModel.updateSide(chosenSide)
+                    viewModel.showToast("Manual direction override: ${chosenSide.label}", com.example.ui.ToastType.INFO)
+                },
+                onResetSideToAuto = {
+                    viewModel.resetSideToAuto()
+                    viewModel.showToast("Smart Auto LHS/RHS detection resumed", com.example.ui.ToastType.INFO)
+                },
                 onToggleSide = {
                     val nextSide = if (detectedSide == "LHS") com.example.model.RoadSide.RHS else com.example.model.RoadSide.LHS
                     viewModel.updateSide(nextSide)
@@ -713,20 +717,19 @@ fun HomeScreen(
 
             // 5. Prominent Next KM Stone Card
             val nextKmTracker = remember { NextKmStoneTracker() }
-            val isExplicitRoadSide = projectProfile.roadSide == com.example.model.RoadSide.LHS ||
-                projectProfile.roadSide == com.example.model.RoadSide.RHS
             val nextKmState = remember(
                 matchResult,
+                smartDirectionState,
                 activeRoute?.id,
                 activeRoute?.markers?.size,
-                detectedSide,
-                isExplicitRoadSide
+                detectedSide
             ) {
                 nextKmTracker.evaluate(
                     matchResult = matchResult,
                     route = activeRoute,
                     detectedSide = detectedSide,
-                    isAutoDetectedSide = !isExplicitRoadSide
+                    isAutoDetectedSide = !smartDirectionState.isManualOverride,
+                    smartDirectionState = smartDirectionState
                 )
             }
 
@@ -768,6 +771,7 @@ fun HomeScreen(
             if (showNavigateToChainageDialog) {
                 val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
                 val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
+                val voiceAssistantSettings by viewModel.chainageVoiceAssistantSettings.collectAsStateWithLifecycle()
                 NavigateToChainageDialog(
                     matchResult = matchResult,
                     activeRoute = activeRoute,
@@ -775,10 +779,11 @@ fun HomeScreen(
                     correctionPoints = correctionsForRoute,
                     isCorrectionsEnabled = isCorrectionsEnabled,
                     projectRoadSide = projectProfile.roadSide,
-                    detectedSideLabel = detectedSide,
+                    detectedSideLabel = smartDirectionState.confirmedSide.orEmpty(),
                     nextKmStoneSuggestion = nextKmState.nextChainage.takeIf { nextKmState.isReliable },
                     activeTarget = activeChainageNavTarget?.takeIf { it.routeId == activeRoute?.id },
                     preferredExternalAppId = preferredExternalNavAppId,
+                    voiceAssistantSettings = voiceAssistantSettings,
                     onSavePreferredExternalAppId = { viewModel.setPreferredExternalNavAppId(it) },
                     onStartInAppTarget = { target ->
                         activeChainageNavTarget = target
@@ -1309,6 +1314,7 @@ fun CentralChainageDisplay(
     hasActiveRoute: Boolean,
     source: ChainageSource = ChainageSource.GPS,
     rawChainage: String? = null,
+    smartDirectionState: SmartDirectionState? = null,
     cardBgColor: Color,
     cardBorderColor: Color,
     mainTextColor: Color,
@@ -1316,8 +1322,11 @@ fun CentralChainageDisplay(
     isDark: Boolean = false,
     isCompact: Boolean = false,
     onClick: () -> Unit = {},
-    onToggleSide: (() -> Unit)? = null
+    onToggleSide: (() -> Unit)? = null,
+    onSelectManualSide: ((RoadSide) -> Unit)? = null,
+    onResetSideToAuto: (() -> Unit)? = null
 ) {
+    var showDirectionMenu by remember { mutableStateOf(false) }
     val kmBadgeBg = if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.45f) else Color(0xFFEFF6FF)
     val kmBadgeBorder = if (isDark) Color(0xFF3B82F6).copy(alpha = 0.4f) else Color(0xFFBFDBFE)
     val kmBadgeText = if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
@@ -1436,34 +1445,60 @@ fun CentralChainageDisplay(
                             )
                         }
 
-                        // Right: LHS / RHS / BHS Badge
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = sideBadgeBg,
-                            border = BorderStroke(0.8.dp, sideBadgeBorder),
-                            modifier = Modifier.then(
-                                if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier
-                            )
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(sideBadgeText)
+                        // Right: Smart LHS/RHS Direction Badge (with Auto/Manual selector)
+                        Box {
+                            if (smartDirectionState != null) {
+                                SmartDirectionIndicatorBadge(
+                                    directionState = smartDirectionState,
+                                    isDark = isDark,
+                                    isCompact = true,
+                                    onClick = if (onSelectManualSide != null && onResetSideToAuto != null) {
+                                        { showDirectionMenu = true }
+                                    } else {
+                                        onToggleSide
+                                    },
+                                    testTagName = "home_smart_direction_badge"
                                 )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = detectedSide,
-                                    color = sideBadgeText,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                if (onSelectManualSide != null && onResetSideToAuto != null) {
+                                    SmartDirectionModePickerMenu(
+                                        expanded = showDirectionMenu,
+                                        directionState = smartDirectionState,
+                                        onDismiss = { showDirectionMenu = false },
+                                        onSelectAuto = onResetSideToAuto,
+                                        onSelectManualSide = onSelectManualSide,
+                                        includeExtendedSides = true
+                                    )
+                                }
+                            } else {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = sideBadgeBg,
+                                    border = BorderStroke(0.8.dp, sideBadgeBorder),
+                                    modifier = Modifier.then(
+                                        if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier
+                                    )
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(5.dp)
+                                                .clip(CircleShape)
+                                                .background(sideBadgeText)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = detectedSide,
+                                            color = sideBadgeText,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1510,36 +1545,60 @@ fun CentralChainageDisplay(
                             isDark = isDark
                         )
 
-                        Surface(
-                            shape = RoundedCornerShape(7.dp),
-                            color = sideBadgeBg,
-                            border = BorderStroke(0.9.dp, sideBadgeBorder),
-                            modifier = Modifier
-                                .padding(start = if (containerWidth < 360.dp) 4.dp else 8.dp)
-                                .then(if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(
-                                    horizontal = if (containerWidth < 360.dp) 6.dp else 8.dp,
-                                    vertical = if (containerWidth < 360.dp) 3.dp else 4.dp
+                        Box(modifier = Modifier.padding(start = if (containerWidth < 360.dp) 4.dp else 8.dp)) {
+                            if (smartDirectionState != null) {
+                                SmartDirectionIndicatorBadge(
+                                    directionState = smartDirectionState,
+                                    isDark = isDark,
+                                    isCompact = containerWidth < 360.dp,
+                                    onClick = if (onSelectManualSide != null && onResetSideToAuto != null) {
+                                        { showDirectionMenu = true }
+                                    } else {
+                                        onToggleSide
+                                    },
+                                    testTagName = "home_smart_direction_badge"
                                 )
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(if (containerWidth < 360.dp) 5.dp else 6.dp)
-                                        .clip(CircleShape)
-                                        .background(sideBadgeText)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = detectedSide,
-                                    color = sideBadgeText,
-                                    fontSize = if (containerWidth < 360.dp) 11.sp else 12.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                if (onSelectManualSide != null && onResetSideToAuto != null) {
+                                    SmartDirectionModePickerMenu(
+                                        expanded = showDirectionMenu,
+                                        directionState = smartDirectionState,
+                                        onDismiss = { showDirectionMenu = false },
+                                        onSelectAuto = onResetSideToAuto,
+                                        onSelectManualSide = onSelectManualSide,
+                                        includeExtendedSides = true
+                                    )
+                                }
+                            } else {
+                                Surface(
+                                    shape = RoundedCornerShape(7.dp),
+                                    color = sideBadgeBg,
+                                    border = BorderStroke(0.9.dp, sideBadgeBorder),
+                                    modifier = Modifier.then(if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(
+                                            horizontal = if (containerWidth < 360.dp) 6.dp else 8.dp,
+                                            vertical = if (containerWidth < 360.dp) 3.dp else 4.dp
+                                        )
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(if (containerWidth < 360.dp) 5.dp else 6.dp)
+                                                .clip(CircleShape)
+                                                .background(sideBadgeText)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = detectedSide,
+                                            color = sideBadgeText,
+                                            fontSize = if (containerWidth < 360.dp) 11.sp else 12.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -2282,12 +2341,22 @@ class NextKmStoneTracker(
         matchResult: com.example.model.ChainageMatchResult,
         route: com.example.model.RouteData?,
         detectedSide: String,
-        isAutoDetectedSide: Boolean = false
+        isAutoDetectedSide: Boolean = false,
+        smartDirectionState: SmartDirectionState? = matchResult.smartDirectionState
     ): NextKmStoneState {
-        val rawSide = detectedSide.trim().uppercase(Locale.ROOT)
+        val rawSide = smartDirectionState?.confirmedBinarySide
+            ?: detectedSide.trim().uppercase(Locale.ROOT)
         val validInputSide = if (rawSide == "LHS" || rawSide == "RHS") rawSide else null
-        val fallbackSide = validInputSide ?: confirmedSide ?: "RHS"
-        val fallbackArrow = if (fallbackSide == "LHS") "↑" else "↓"
+        val fallbackSide = validInputSide
+            ?: smartDirectionState?.detectionState?.shortLabel
+            ?: confirmedSide
+            ?: "---"
+        val fallbackArrow = smartDirectionState?.directionArrow?.ifBlank { "•" }
+            ?: when (fallbackSide) {
+                "LHS" -> "↑"
+                "RHS" -> "↓"
+                else -> "•"
+            }
 
         if (route == null) {
             return NextKmStoneState(
@@ -2329,6 +2398,27 @@ class NextKmStoneTracker(
             )
         }
 
+        // When authoritative SmartDirectionState is present and direction is not confirmed,
+        // never guess LHS/RHS or display a marker behind the vehicle.
+        if (smartDirectionState != null && !smartDirectionState.hasConfirmedDirection) {
+            val statusLabel = when (smartDirectionState.detectionState) {
+                DirectionDetectionState.GPS_SIGNAL_WEAK -> "Weak GPS"
+                DirectionDetectionState.DIRECTION_CHANGING -> "Direction Changing"
+                DirectionDetectionState.STATIONARY -> "Stationary"
+                DirectionDetectionState.ALIGNMENT_UNAVAILABLE -> "No Alignment"
+                else -> "Direction Uncertain"
+            }
+            return NextKmStoneState(
+                nextChainage = "--+---",
+                nextChainageMetres = null,
+                distanceMetres = null,
+                distanceText = statusLabel,
+                directionSide = smartDirectionState.detectionState.shortLabel,
+                directionArrow = "•",
+                isReliable = false
+            )
+        }
+
         if (validInputSide == null) {
             return NextKmStoneState(
                 nextChainage = "--+---",
@@ -2344,9 +2434,15 @@ class NextKmStoneTracker(
         val curM = currentChainage.metres.coerceAtLeast(0L)
         val prevM = lastChainageMetres
 
-        // Resolve effective side with hysteresis against minor GPS jitter when auto-detected
+        // Resolve effective side: when SmartDirectionState is authoritative, trust its confirmed
+        // direction directly (already multi-sample hysteresis filtered); otherwise keep legacy hysteresis.
         val prevConfirmedSide = confirmedSide
-        val effectiveSide = if (!isAutoDetectedSide || prevConfirmedSide == null) {
+        val effectiveSide = if (smartDirectionState != null) {
+            confirmedSide = validInputSide
+            pendingSide = null
+            pendingSideCount = 0
+            validInputSide
+        } else if (!isAutoDetectedSide || prevConfirmedSide == null) {
             confirmedSide = validInputSide
             pendingSide = null
             pendingSideCount = 0
@@ -2380,6 +2476,9 @@ class NextKmStoneTracker(
             }
         }
 
+        // Decouple chainage progression (increasing vs decreasing) from hardcoded LHS/RHS assumptions
+        val isIncreasing = smartDirectionState?.isIncreasingChainage ?: (effectiveSide == "LHS")
+
         val sideChanged = prevConfirmedSide != null && prevConfirmedSide != effectiveSide
         if (sideChanged) {
             lastTargetStoneMetres = null
@@ -2387,7 +2486,7 @@ class NextKmStoneTracker(
         }
 
         val kmStones = getOrExtractKmStones(route)
-        val candidate = resolveCandidateStone(curM, effectiveSide, kmStones)
+        val candidate = resolveCandidateStone(curM, isIncreasing, kmStones)
 
         var targetStoneM = candidate.targetMetres
         var passedStoneM = candidate.passedMetres
@@ -2398,17 +2497,13 @@ class NextKmStoneTracker(
         val prevTargetM = lastTargetStoneMetres
         val prevPassedM = lastPassedStoneMetres
         if (!sideChanged && prevTargetM != null && prevPassedM != null && targetStoneM != prevTargetM) {
-            if (effectiveSide == "LHS") {
-                // On LHS (increasing), if we already advanced past prevPassedM to prevTargetM
-                // and curM jittered slightly below prevPassedM within boundaryHysteresisMetres:
+            if (isIncreasing) {
                 if (targetStoneM == prevPassedM && curM < prevPassedM && (prevPassedM - curM) <= boundaryHysteresisMetres) {
                     targetStoneM = prevTargetM
                     passedStoneM = prevPassedM
                     intervalM = lastIntervalMetres
                 }
             } else {
-                // On RHS (decreasing), if we already advanced below prevPassedM to prevTargetM
-                // and curM jittered slightly above prevPassedM within boundaryHysteresisMetres:
                 if (targetStoneM == prevPassedM && curM > prevPassedM && (curM - prevPassedM) <= boundaryHysteresisMetres) {
                     targetStoneM = prevTargetM
                     passedStoneM = prevPassedM
@@ -2422,7 +2517,7 @@ class NextKmStoneTracker(
         lastPassedStoneMetres = passedStoneM
         lastIntervalMetres = intervalM
 
-        val rawDistanceMetres = if (effectiveSide == "LHS") {
+        val rawDistanceMetres = if (isIncreasing) {
             (targetStoneM - curM).coerceAtLeast(0L)
         } else {
             (curM - targetStoneM).coerceAtLeast(0L)
@@ -2430,7 +2525,7 @@ class NextKmStoneTracker(
 
         // If holding across a tiny 1-3 m boundary hysteresis jitter, clamp displayed distance to the interval
         val effectiveDistanceMetres = if (targetStoneM == prevTargetM && prevPassedM != null &&
-            ((effectiveSide == "LHS" && curM < prevPassedM) || (effectiveSide == "RHS" && curM > prevPassedM))
+            ((isIncreasing && curM < prevPassedM) || (!isIncreasing && curM > prevPassedM))
         ) {
             rawDistanceMetres.coerceAtMost(intervalM)
         } else {
@@ -2439,7 +2534,7 @@ class NextKmStoneTracker(
 
         val nextChainageFormatted = com.example.model.Chainage.fromMetres(targetStoneM).format()
         val distanceText = formatDistanceAway(effectiveDistanceMetres)
-        val directionArrow = if (effectiveSide == "LHS") "↑" else "↓"
+        val directionArrow = if (isIncreasing) "↑" else "↓"
 
         return NextKmStoneState(
             nextChainage = nextChainageFormatted,
@@ -2461,11 +2556,11 @@ class NextKmStoneTracker(
 
     private fun resolveCandidateStone(
         curM: Long,
-        side: String,
+        isIncreasing: Boolean,
         kmStones: List<KmStoneReference>
     ): CandidateResolution {
-        if (side == "LHS") {
-            // LHS - Increasing Chainage: find next higher KM stone (> curM)
+        if (isIncreasing) {
+            // Increasing Chainage: find next higher KM stone (> curM)
             val nextFromMarkers = kmStones.firstOrNull { it.chainageMetres > curM }
             val prevFromMarkers = kmStones.lastOrNull { it.chainageMetres <= curM }
             val fallbackNext = ((curM / 1000L) + 1L) * 1000L
@@ -2480,7 +2575,7 @@ class NextKmStoneTracker(
             }
             return CandidateResolution(fallbackNext, fallbackPrev, 1000L)
         } else {
-            // RHS - Decreasing Chainage: find next lower KM stone (< curM)
+            // Decreasing Chainage: find next lower KM stone (< curM)
             val nextFromMarkers = kmStones.lastOrNull { it.chainageMetres < curM }
             val prevFromMarkers = kmStones.firstOrNull { it.chainageMetres >= curM }
             val fallbackNext = if (curM == 0L) {
@@ -3712,12 +3807,14 @@ const val HOME_SCREENSAVER_INACTIVITY_TIMEOUT_MS = 20_000L
 data class ScreensaverDisplayState(
     val chainageText: String,
     val reliableSide: String?, // Strictly "LHS", "RHS", or null when unreliable or GPS is lost
-    val directionArrow: String, // "↑" for LHS, "↓" for RHS, "" when null
+    val directionArrow: String, // "↑" for increasing, "↓" for decreasing, "" when null
     val isLiveGpsValid: Boolean,
     val isIncreasingTrend: Boolean = true,
     val locationName: String = "",
     val speedText: String = "-- km/h",
-    val speedKmh: Int? = null
+    val speedKmh: Int? = null,
+    val directionState: DirectionDetectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
+    val isDirectionManual: Boolean = false
 )
 
 /**
@@ -3868,7 +3965,12 @@ class ScreensaverChainageStateHolder {
             if (metres != null) {
                 lastValidChainageMetres = metres
             }
-            val sideIfReliable = if (
+            val smartDir = matchResult.smartDirectionState
+            val sideIfReliable = if (smartDir != null) {
+                if (smartDir.isManualOverride || (hasGpsFix && route != null && !matchResult.isUncertain)) {
+                    smartDir.confirmedBinarySide
+                } else null
+            } else if (
                 hasGpsFix &&
                 route != null &&
                 matchResult.confidence != MatchConfidence.NO_MATCH &&
@@ -3879,15 +3981,22 @@ class ScreensaverChainageStateHolder {
             } else {
                 null
             }
+            val resolvedArrow = if (smartDir != null && sideIfReliable != null) {
+                smartDir.directionArrow.ifBlank { sideArrowFor(sideIfReliable) }
+            } else {
+                sideArrowFor(sideIfReliable)
+            }
             return ScreensaverDisplayState(
                 chainageText = manualText ?: lastValidChainageText ?: "--+---",
                 reliableSide = sideIfReliable,
-                directionArrow = sideArrowFor(sideIfReliable),
+                directionArrow = resolvedArrow,
                 isLiveGpsValid = hasGpsFix && route != null,
-                isIncreasingTrend = increasing,
+                isIncreasingTrend = smartDir?.isIncreasingChainage ?: increasing,
                 locationName = resolvedLocationName,
                 speedText = formattedSpeed,
-                speedKmh = resolvedSpeed
+                speedKmh = resolvedSpeed,
+                directionState = smartDir?.detectionState ?: if (sideIfReliable == "LHS") DirectionDetectionState.LHS_CONFIRMED else if (sideIfReliable == "RHS") DirectionDetectionState.RHS_CONFIRMED else DirectionDetectionState.DIRECTION_UNCERTAIN,
+                isDirectionManual = smartDir?.isManualOverride == true
             )
         }
 
@@ -3898,25 +4007,44 @@ class ScreensaverChainageStateHolder {
             !matchResult.isUncertain &&
             !(matchResult.confidence == MatchConfidence.LOW && matchResult.offsetMetres > 80.0)
 
+        val smartDir = matchResult.smartDirectionState
+
         if (isReliableLiveMatch) {
             val metres = matchResult.chainage!!.metres
             val text = matchResult.displayChainage
-            val increasing = lastValidChainageMetres?.let { metres >= it } ?: true
+            val increasing = smartDir?.isIncreasingChainage
+                ?: lastValidChainageMetres?.let { metres >= it }
+                ?: true
             lastValidChainageText = text
             lastValidChainageMetres = metres
 
-            val reliableSide = normalizeBinarySide(matchResult.detectedSide)
-                ?: normalizeBinarySide(projectRoadSide.name)
+            val reliableSide = if (smartDir != null) {
+                smartDir.confirmedBinarySide
+            } else {
+                normalizeBinarySide(matchResult.detectedSide)
+                    ?: normalizeBinarySide(projectRoadSide.name)
+            }
+            val resolvedArrow = if (smartDir != null && reliableSide != null) {
+                smartDir.directionArrow.ifBlank { sideArrowFor(reliableSide) }
+            } else {
+                sideArrowFor(reliableSide)
+            }
 
             return ScreensaverDisplayState(
                 chainageText = text,
                 reliableSide = reliableSide,
-                directionArrow = sideArrowFor(reliableSide),
+                directionArrow = resolvedArrow,
                 isLiveGpsValid = true,
                 isIncreasingTrend = increasing,
                 locationName = resolvedLocationName,
                 speedText = formattedSpeed,
-                speedKmh = resolvedSpeed
+                speedKmh = resolvedSpeed,
+                directionState = smartDir?.detectionState ?: when (reliableSide) {
+                    "LHS" -> DirectionDetectionState.LHS_CONFIRMED
+                    "RHS" -> DirectionDetectionState.RHS_CONFIRMED
+                    else -> DirectionDetectionState.DIRECTION_UNCERTAIN
+                },
+                isDirectionManual = smartDir?.isManualOverride == true
             )
         }
 
@@ -3931,7 +4059,13 @@ class ScreensaverChainageStateHolder {
             isIncreasingTrend = true,
             locationName = resolvedLocationName,
             speedText = formattedSpeed,
-            speedKmh = resolvedSpeed
+            speedKmh = resolvedSpeed,
+            directionState = smartDir?.detectionState ?: if (route == null) {
+                DirectionDetectionState.ALIGNMENT_UNAVAILABLE
+            } else {
+                DirectionDetectionState.GPS_SIGNAL_WEAK
+            },
+            isDirectionManual = smartDir?.isManualOverride == true
         )
     }
 

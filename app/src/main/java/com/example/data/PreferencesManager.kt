@@ -23,6 +23,7 @@ import com.example.model.CaptureTimer
 import com.example.model.Chainage
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageLogEntry
+import com.example.model.ChainageVoiceAssistantSettings
 import com.example.model.CoordinateFormat
 import com.example.model.CtecsWidgetSettings
 import com.example.model.DefinedProject
@@ -38,6 +39,7 @@ import com.example.model.PermanentCalibrationProfile
 import com.example.model.PreviewRatio
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
+import com.example.model.SmartDirectionPreferences
 import com.example.model.SpeedUnit
 import com.example.model.VideoQualityOption
 import kotlinx.coroutines.CoroutineScope
@@ -274,6 +276,8 @@ class PreferencesManager(context: Context) {
         val KEY_NAV_NOTIFICATION_JSON = stringPreferencesKey("nav_notification_settings_json")
         val KEY_WIDGET_SETTINGS_JSON = stringPreferencesKey("widget_settings_config_json")
         val KEY_KM_STONE_ALERT_JSON = stringPreferencesKey("km_stone_alert_settings_json")
+        val KEY_CHAINAGE_VOICE_ASSISTANT_JSON = stringPreferencesKey("chainage_voice_assistant_settings_json")
+        val KEY_SMART_DIRECTION_PREFS_JSON = stringPreferencesKey("smart_direction_preferences_json")
 
         // Navigation & Survey persistent user preferences
         val KEY_PREFERRED_EXTERNAL_NAV_APP_ID = stringPreferencesKey("preferred_external_nav_app_id")
@@ -368,6 +372,12 @@ class PreferencesManager(context: Context) {
 
     fun getInitialKmStoneAlertSettings(): KmStoneAlertSettings =
         KmStoneAlertSettings.fromJsonString(getInitialPreferences()[KEY_KM_STONE_ALERT_JSON])
+
+    fun getInitialChainageVoiceAssistantSettings(): ChainageVoiceAssistantSettings =
+        ChainageVoiceAssistantSettings.fromJsonString(getInitialPreferences()[KEY_CHAINAGE_VOICE_ASSISTANT_JSON])
+
+    fun getInitialSmartDirectionPreferences(): SmartDirectionPreferences =
+        SmartDirectionPreferences.fromJsonString(getInitialPreferences()[KEY_SMART_DIRECTION_PREFS_JSON])
 
     fun getInitialCameraSettings(): CameraSettings =
         parseCameraSettingsFromPrefs(getInitialPreferences())
@@ -583,6 +593,28 @@ class PreferencesManager(context: Context) {
             prefs[KEY_KM_STONE_ALERT_JSON] = updated.toJsonString()
         }
         return updated
+    }
+
+    val chainageVoiceAssistantSettingsFlow: Flow<ChainageVoiceAssistantSettings> =
+        observedDataFlow.map { prefs ->
+            ChainageVoiceAssistantSettings.fromJsonString(prefs[KEY_CHAINAGE_VOICE_ASSISTANT_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateChainageVoiceAssistantSettings(settings: ChainageVoiceAssistantSettings) {
+        safeEdit { prefs ->
+            prefs[KEY_CHAINAGE_VOICE_ASSISTANT_JSON] = settings.toJsonString()
+        }
+    }
+
+    val smartDirectionPreferencesFlow: Flow<SmartDirectionPreferences> =
+        observedDataFlow.map { prefs ->
+            SmartDirectionPreferences.fromJsonString(prefs[KEY_SMART_DIRECTION_PREFS_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateSmartDirectionPreferences(preferences: SmartDirectionPreferences) {
+        safeEdit { prefs ->
+            prefs[KEY_SMART_DIRECTION_PREFS_JSON] = preferences.toJsonString()
+        }
     }
 
     val cameraSettingsFlow: Flow<CameraSettings> = observedDataFlow.map { prefs ->

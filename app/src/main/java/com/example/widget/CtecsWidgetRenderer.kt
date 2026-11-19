@@ -162,8 +162,16 @@ object CtecsWidgetRenderer {
         // Resolve telemetry strings with graceful GPS/route fallbacks
         val rawChainage = navState.chainageText.ifBlank { "--+---" }
         val displayChainage = if (instanceConfig.showChainage) rawChainage else "HIDDEN"
-        val sideStr = if (instanceConfig.showRoadSide && !navState.reliableSide.isNullOrBlank()) {
-            "${navState.reliableSide} ${navState.directionArrow}".trim()
+        val sideStr = if (instanceConfig.showRoadSide) {
+            when {
+                !navState.reliableSide.isNullOrBlank() ->
+                    "${navState.reliableSide} ${navState.directionArrow}".trim()
+                navState.directionState == com.example.model.DirectionDetectionState.DIRECTION_CHANGING ->
+                    "Changing"
+                navState.directionState == com.example.model.DirectionDetectionState.DIRECTION_UNCERTAIN && navState.hasRouteData ->
+                    "Uncertain"
+                else -> ""
+            }
         } else {
             ""
         }

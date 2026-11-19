@@ -321,6 +321,7 @@ fun CameraScreen(
     val currentZoomRatio by viewModel.currentZoomRatio.collectAsStateWithLifecycle()
     val exposureCompensation by viewModel.exposureCompensation.collectAsStateWithLifecycle()
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
+    val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
@@ -1148,8 +1149,9 @@ fun CameraScreen(
                                 .testTag("landscape_side_pill")
                         ) {
                             Row(modifier = Modifier.fillMaxSize()) {
-                                val isLhs = projectProfile.roadSide == RoadSide.LHS
-                                val isRhs = projectProfile.roadSide == RoadSide.RHS
+                                val effectiveCameraSide = smartDirectionState.confirmedSide
+                                val isLhs = effectiveCameraSide.equals("LHS", ignoreCase = true)
+                                val isRhs = effectiveCameraSide.equals("RHS", ignoreCase = true)
                                 val isOtherSide = !isLhs && !isRhs
 
                                 // LHS Segment
@@ -1171,12 +1173,12 @@ fun CameraScreen(
                                                 modifier = Modifier
                                                     .size(5.dp)
                                                     .clip(CircleShape)
-                                                    .background(HighlightYellow)
+                                                    .background(if (smartDirectionState.isManualOverride) HighlightYellow else Color(0xFF34D399))
                                             )
                                         }
                                         Text(
                                             text = "LHS",
-                                            color = if (isLhs) HighlightYellow else PrimaryText,
+                                            color = if (isLhs) (if (smartDirectionState.isManualOverride) HighlightYellow else Color(0xFF34D399)) else PrimaryText,
                                             fontSize = 11.sp,
                                             fontWeight = if (isLhs) FontWeight.Black else FontWeight.Medium
                                         )
@@ -1208,12 +1210,12 @@ fun CameraScreen(
                                                 modifier = Modifier
                                                     .size(5.dp)
                                                     .clip(CircleShape)
-                                                    .background(HighlightYellow)
+                                                    .background(if (smartDirectionState.isManualOverride) HighlightYellow else Color(0xFF38BDF8))
                                             )
                                         }
                                         Text(
                                             text = "RHS",
-                                            color = if (isRhs) HighlightYellow else PrimaryText,
+                                            color = if (isRhs) (if (smartDirectionState.isManualOverride) HighlightYellow else Color(0xFF38BDF8)) else PrimaryText,
                                             fontSize = 11.sp,
                                             fontWeight = if (isRhs) FontWeight.Black else FontWeight.Medium
                                         )
@@ -1227,7 +1229,7 @@ fun CameraScreen(
                                         .background(Color.White.copy(alpha = 0.25f))
                                 )
 
-                                // BHS / Median / None Dropdown Segment
+                                // Auto / BHS / Median / None Dropdown Segment
                                 Box(
                                     modifier = Modifier
                                         .weight(1.1f)
@@ -1238,10 +1240,15 @@ fun CameraScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = if (isOtherSide) projectProfile.roadSide.label else "BHS▾",
-                                        color = if (isOtherSide) HighlightYellow else PrimaryText,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = if (isOtherSide) FontWeight.Black else FontWeight.Medium,
+                                        text = when {
+                                            !smartDirectionState.isManualOverride && isOtherSide -> "AUTO▾"
+                                            isOtherSide -> effectiveCameraSide ?: "AUTO▾"
+                                            !smartDirectionState.isManualOverride -> "AUTO▾"
+                                            else -> "MAN▾"
+                                        },
+                                        color = if (!smartDirectionState.isManualOverride) Color(0xFF38BDF8) else HighlightYellow,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
                                         maxLines = 1
                                     )
                                 }
@@ -1252,12 +1259,26 @@ fun CameraScreen(
                             expanded = showSideMenu,
                             onDismissRequest = { showSideMenu = false }
                         ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "Auto (Smart Direction)",
+                                        fontWeight = if (!smartDirectionState.isManualOverride) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (!smartDirectionState.isManualOverride) Color(0xFF38BDF8) else Color.Unspecified
+                                    )
+                                },
+                                onClick = {
+                                    viewModel.resetSideToAuto()
+                                    showSideMenu = false
+                                },
+                                modifier = Modifier.testTag("camera_side_menu_auto")
+                            )
                             RoadSide.entries.forEach { sideOption ->
-                                val isSel = projectProfile.roadSide == sideOption
+                                val isSel = smartDirectionState.isManualOverride && projectProfile.roadSide == sideOption
                                 DropdownMenuItem(
                                     text = {
                                         Text(
-                                            text = sideOption.label,
+                                            text = "Manual: ${sideOption.label}",
                                             fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
                                             color = if (isSel) HighlightYellow else Color.Unspecified
                                         )
@@ -1641,7 +1662,9 @@ fun CameraScreen(
                     cameraMode = cameraSettings.cameraMode,
                     coordinateFormat = cameraSettings.coordinateFormat,
                     is24HourFormat = cameraSettings.is24HourFormat,
-                    timestamp = currentTimeMillis
+                    timestamp = currentTimeMillis,
+                    authoritativeSideOverride = smartDirectionState.confirmedSide,
+                    useAuthoritativeSide = true
                 )
 
                 LiveViewfinderWatermarkBlock(
@@ -2401,45 +2424,58 @@ fun CameraScreen(
                         horizontalArrangement = Arrangement.spacedBy(hGap, Alignment.CenterHorizontally),
                         verticalArrangement = Arrangement.spacedBy(vGap)
                     ) {
-                        // Side chip (RHS / LHS / BHS / Median / None)
-                        FloatingGlassCard(
-                            shape = RoundedCornerShape(14.dp),
-                            backgroundColor = Color(0x1A101726),
-                            borderColor = Color(0x35FFFFFF),
-                            onClick = {
-                                val nextSide = when (projectProfile.roadSide) {
-                                    RoadSide.RHS -> RoadSide.LHS
-                                    RoadSide.LHS -> RoadSide.BOTH
-                                    RoadSide.BOTH -> RoadSide.MEDIAN
-                                    RoadSide.MEDIAN -> RoadSide.NONE
-                                    RoadSide.NONE -> RoadSide.RHS
-                                }
-                                viewModel.updateSide(nextSide)
-                            },
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .wrapContentHeight()
-                                .testTag("side_chip")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(if (projectProfile.roadSide == RoadSide.NONE) Color.Gray else HighlightYellow)
-                                )
-                                Text(
-                                    text = projectProfile.roadSide.label,
-                                    color = if (projectProfile.roadSide == RoadSide.NONE) Color.White.copy(alpha = 0.75f) else HighlightYellow,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
-                                )
+                        // Smart Direction Side chip (Auto / LHS / RHS / BHS / Median / None)
+                        var showPortraitSideMenu by remember { mutableStateOf(false) }
+                        Box {
+                            val portraitSideText = smartDirectionState.confirmedSide?.let { side ->
+                                if (smartDirectionState.isManualOverride) "$side • M" else side
+                            } ?: "AUTO: ${smartDirectionState.detectionState.shortLabel}"
+                            val portraitSideTint = when {
+                                smartDirectionState.confirmedSide.equals("LHS", ignoreCase = true) ->
+                                    if (smartDirectionState.isManualOverride) HighlightYellow else Color(0xFF34D399)
+                                smartDirectionState.confirmedSide.equals("RHS", ignoreCase = true) ->
+                                    if (smartDirectionState.isManualOverride) HighlightYellow else Color(0xFF38BDF8)
+                                smartDirectionState.isManualOverride -> HighlightYellow
+                                else -> Color.White.copy(alpha = 0.85f)
                             }
+                            FloatingGlassCard(
+                                shape = RoundedCornerShape(14.dp),
+                                backgroundColor = Color(0x1A101726),
+                                borderColor = Color(0x35FFFFFF),
+                                onClick = { showPortraitSideMenu = true },
+                                modifier = Modifier
+                                    .wrapContentWidth()
+                                    .wrapContentHeight()
+                                    .testTag("side_chip")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .clip(CircleShape)
+                                            .background(portraitSideTint)
+                                    )
+                                    Text(
+                                        text = portraitSideText,
+                                        color = portraitSideTint,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            com.example.ui.components.SmartDirectionModePickerMenu(
+                                expanded = showPortraitSideMenu,
+                                directionState = smartDirectionState,
+                                onDismiss = { showPortraitSideMenu = false },
+                                onSelectAuto = { viewModel.resetSideToAuto() },
+                                onSelectManualSide = { viewModel.updateSide(it) },
+                                includeExtendedSides = true
+                            )
                         }
 
                         // Lane / Type chip

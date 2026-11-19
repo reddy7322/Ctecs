@@ -1,6 +1,7 @@
 package com.example.overlay
 
 import com.example.model.CameraMode
+import com.example.model.CaptureSnapshot
 import com.example.model.CoordinateFormat
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
@@ -12,6 +13,22 @@ import java.util.Locale
 import kotlin.math.abs
 
 object OverlayTextGenerator {
+
+    /**
+     * Resolves the authoritative road side for camera overlays, video stamps, EXIF, and gallery metadata.
+     * Returns `(sideLabelOrNull, useOverride)`. When [com.example.model.SmartDirectionState] is attached
+     * to the capture snapshot, only a confirmed or manually overridden side is stamped—uncertain or
+     * weak-GPS states intentionally omit a guessed LHS/RHS token.
+     */
+    fun resolveAuthoritativeCaptureSide(snapshot: CaptureSnapshot): Pair<String?, Boolean> {
+        val smartDir = snapshot.matchResult.smartDirectionState
+        if (smartDir != null) {
+            return smartDir.confirmedSide to true
+        }
+        val fallback = snapshot.projectProfile.roadSide.label
+            .takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
+        return fallback to false
+    }
 
     fun generateLines(
         config: OverlayConfig,
@@ -27,7 +44,9 @@ object OverlayTextGenerator {
         is24HourFormat: Boolean,
         timestamp: Long = System.currentTimeMillis(),
         isForCapture: Boolean = false,
-        locationName: String = ""
+        locationName: String = "",
+        authoritativeSideOverride: String? = null,
+        useAuthoritativeSide: Boolean = false
     ): List<String> {
         val lines = mutableListOf<String>()
 
@@ -145,7 +164,9 @@ object OverlayTextGenerator {
                 if (config.showProjectInfo || config.showChainage) {
                     val highwayLine = project.buildHighwayText(
                         chainageFormatted = if (config.showChainage) chainageStr else "",
-                        includeProjectName = config.showProjectInfo
+                        includeProjectName = config.showProjectInfo,
+                        sideOverride = authoritativeSideOverride,
+                        useSideOverride = useAuthoritativeSide
                     )
                     if (highwayLine.isNotBlank()) {
                         lines.add(highwayLine)

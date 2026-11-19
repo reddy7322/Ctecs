@@ -43,7 +43,12 @@ data class ProjectProfile(
      * Line 1: Project Name | Stretch | Work Type | {Chainage} { RHS } { I/L} {Activity} {SubActivity}
      * Line 2: { Custom Comment } (handled via getCustomCommentLine())
      */
-    fun buildHighwayText(chainageFormatted: String, includeProjectName: Boolean = true): String {
+    fun buildHighwayText(
+        chainageFormatted: String,
+        includeProjectName: Boolean = true,
+        sideOverride: String? = null,
+        useSideOverride: Boolean = false
+    ): String {
         fun isValid(s: String?): Boolean {
             if (s == null) return false
             val t = s.trim()
@@ -72,7 +77,8 @@ data class ProjectProfile(
         // Road segment telemetry: {Chainage} { RHS } { I/L} {Activity} {SubActivity}
         val roadDetails = mutableListOf<String>()
         if (isValid(chainageFormatted)) roadDetails.add(chainageFormatted.trim())
-        if (isValid(roadSide.label)) roadDetails.add(roadSide.label.trim())
+        val effectiveSideLabel = if (useSideOverride) sideOverride else roadSide.label
+        if (isValid(effectiveSideLabel)) roadDetails.add(effectiveSideLabel!!.trim())
         if (isValid(lane)) roadDetails.add(lane.trim())
 
         // Activity / Layer: e.g. DBM (ignore if it matches workType or is None)

@@ -61,10 +61,59 @@ enum class KmAdvanceWarningOption(val metres: Int, val label: String) {
     }
 }
 
+enum class KmVoiceAnnouncementStyle(val label: String, val description: String) {
+    SIMPLE("Simple", "Next kilometre stone ahead / in 500 metres"),
+    CHAINAGE("Chainage Announcement", "Includes upcoming KM Stone chainage"),
+    DIRECTION("Direction Announcement", "Includes LHS / RHS travel direction"),
+    DETAILED_NAVIGATION("Detailed Navigation", "Upcoming stone, current chainage, distance & side"),
+    SHORT_ALERT("Short Voice Alert", "Compact distance alert for fast scanning"),
+    CUSTOM("Custom Announcement", "Choose fields or build your own announcement format");
+
+    companion object {
+        fun fromString(raw: String?): KmVoiceAnnouncementStyle =
+            entries.firstOrNull {
+                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+            } ?: CHAINAGE
+    }
+}
+
+enum class KmVoiceSpeed(val label: String, val speechRate: Float) {
+    SLOW("Slow", 0.82f),
+    NORMAL("Normal", 1.0f),
+    FAST("Fast", 1.25f);
+
+    companion object {
+        fun fromString(raw: String?): KmVoiceSpeed =
+            entries.firstOrNull {
+                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+            } ?: NORMAL
+    }
+}
+
+enum class KmAlertOutputMode(
+    val label: String,
+    val includesVoice: Boolean,
+    val includesSound: Boolean,
+    val includesVibration: Boolean
+) {
+    VOICE_ONLY("Voice only", includesVoice = true, includesSound = false, includesVibration = false),
+    SOUND_ONLY("Sound only", includesVoice = false, includesSound = true, includesVibration = false),
+    VOICE_AND_SOUND("Voice + sound", includesVoice = true, includesSound = true, includesVibration = false),
+    VIBRATION_AND_VOICE("Vibration + voice", includesVoice = true, includesSound = false, includesVibration = true),
+    VOICE_SOUND_AND_VIBRATION("Voice + sound + vibration", includesVoice = true, includesSound = true, includesVibration = true);
+
+    companion object {
+        fun fromString(raw: String?): KmAlertOutputMode =
+            entries.firstOrNull {
+                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+            } ?: VOICE_SOUND_AND_VIBRATION
+    }
+}
+
 /**
  * Persistent settings for Settings -> Navigation Alerts -> KM Stone Arrival.
  * Supports independent arrival vs. advance warning feedback, vibration patterns & intensity,
- * sound selection & volume, and arrival detection thresholds.
+ * sound selection & volume, arrival detection thresholds, and dynamic TTS voice announcements.
  */
 data class KmStoneAlertSettings(
     // General & Monitoring Service
@@ -96,7 +145,30 @@ data class KmStoneAlertSettings(
     val advanceWarningVibrationEnabled: Boolean = true,
     val advanceWarningSoundEnabled: Boolean = true,
     val advanceWarningVibrationPattern: KmVibrationPattern = KmVibrationPattern.SHORT_PULSE,
-    val advanceWarningSoundOption: KmAlertSoundOption = KmAlertSoundOption.SOFT_ALERT
+    val advanceWarningSoundOption: KmAlertSoundOption = KmAlertSoundOption.SOFT_ALERT,
+    // Smart Next KM Stone Dynamic Voice Announcements (Android TTS)
+    val voiceAnnouncementEnabled: Boolean = false,
+    val voiceName: String = "",
+    val voiceLanguageTag: String = "",
+    val voiceStyle: KmVoiceAnnouncementStyle = KmVoiceAnnouncementStyle.CHAINAGE,
+    val voiceVolumePercent: Int = 90,
+    val voiceSpeed: KmVoiceSpeed = KmVoiceSpeed.NORMAL,
+    val voiceRepeatEnabled: Boolean = false,
+    val alertOutputMode: KmAlertOutputMode = KmAlertOutputMode.VOICE_SOUND_AND_VIBRATION,
+    // Configurable Dynamic Distance Intervals (multi-select)
+    val voiceInterval1000m: Boolean = false,
+    val voiceInterval500m: Boolean = true,
+    val voiceInterval200m: Boolean = true,
+    val voiceInterval100m: Boolean = true,
+    val voiceInterval50m: Boolean = false,
+    val voiceAnnounceAtArrival: Boolean = true,
+    // Style 6 – Custom Announcement Fields & Optional Template
+    val voiceCustomIncludeChainage: Boolean = true,
+    val voiceCustomIncludeDirectionSide: Boolean = true,
+    val voiceCustomIncludeDistance: Boolean = true,
+    val voiceCustomIncludeSpeed: Boolean = false,
+    val voiceCustomIncludeArrivalStatus: Boolean = true,
+    val voiceCustomTemplate: String = ""
 ) {
     /**
      * Determines whether the dedicated KM Stone Monitoring Foreground Service should stay active.
@@ -109,6 +181,36 @@ data class KmStoneAlertSettings(
             backgroundMonitoringEnabled &&
             persistentNotificationEnabled &&
             hasActiveRoute
+    }
+
+    fun isVoiceActiveForLiveAlerts(): Boolean {
+        return enabled && voiceAnnouncementEnabled && alertOutputMode.includesVoice
+    }
+
+    fun resolveEffectiveVibrationEnabled(): Boolean {
+        return if (voiceAnnouncementEnabled || alertOutputMode != KmAlertOutputMode.VOICE_SOUND_AND_VIBRATION) {
+            vibrationEnabled && alertOutputMode.includesVibration
+        } else {
+            vibrationEnabled
+        }
+    }
+
+    fun resolveEffectiveSoundEnabled(): Boolean {
+        return if (voiceAnnouncementEnabled || alertOutputMode != KmAlertOutputMode.VOICE_SOUND_AND_VIBRATION) {
+            soundEnabled && alertOutputMode.includesSound
+        } else {
+            soundEnabled
+        }
+    }
+
+    fun enabledVoiceIntervalsDescending(): List<Int> {
+        val list = mutableListOf<Int>()
+        if (voiceInterval1000m) list.add(1000)
+        if (voiceInterval500m) list.add(500)
+        if (voiceInterval200m) list.add(200)
+        if (voiceInterval100m) list.add(100)
+        if (voiceInterval50m) list.add(50)
+        return list
     }
 
     fun resolveAdvanceWarningDistanceMetres(): Int {
@@ -153,6 +255,27 @@ data class KmStoneAlertSettings(
             put("advanceWarningSoundEnabled", advanceWarningSoundEnabled)
             put("advanceWarningVibrationPattern", advanceWarningVibrationPattern.name)
             put("advanceWarningSoundOption", advanceWarningSoundOption.name)
+            // Voice announcement settings
+            put("voiceAnnouncementEnabled", voiceAnnouncementEnabled)
+            put("voiceName", voiceName)
+            put("voiceLanguageTag", voiceLanguageTag)
+            put("voiceStyle", voiceStyle.name)
+            put("voiceVolumePercent", voiceVolumePercent.coerceIn(0, 100))
+            put("voiceSpeed", voiceSpeed.name)
+            put("voiceRepeatEnabled", voiceRepeatEnabled)
+            put("alertOutputMode", alertOutputMode.name)
+            put("voiceInterval1000m", voiceInterval1000m)
+            put("voiceInterval500m", voiceInterval500m)
+            put("voiceInterval200m", voiceInterval200m)
+            put("voiceInterval100m", voiceInterval100m)
+            put("voiceInterval50m", voiceInterval50m)
+            put("voiceAnnounceAtArrival", voiceAnnounceAtArrival)
+            put("voiceCustomIncludeChainage", voiceCustomIncludeChainage)
+            put("voiceCustomIncludeDirectionSide", voiceCustomIncludeDirectionSide)
+            put("voiceCustomIncludeDistance", voiceCustomIncludeDistance)
+            put("voiceCustomIncludeSpeed", voiceCustomIncludeSpeed)
+            put("voiceCustomIncludeArrivalStatus", voiceCustomIncludeArrivalStatus)
+            put("voiceCustomTemplate", voiceCustomTemplate)
         }
         return obj.toString()
     }
@@ -161,6 +284,7 @@ data class KmStoneAlertSettings(
         val PROXIMITY_THRESHOLD_OPTIONS = listOf(10, 15, 20, 25, 35, 50)
         val GPS_ACCURACY_OPTIONS = listOf(15, 20, 25, 35, 50)
         val REPEAT_PREVENTION_DISTANCE_OPTIONS = listOf(40, 60, 80, 100, 150)
+        val VOICE_DISTANCE_INTERVAL_OPTIONS = listOf(1000, 500, 200, 100, 50)
 
         fun defaultSettings(): KmStoneAlertSettings = KmStoneAlertSettings()
 
@@ -178,7 +302,7 @@ data class KmStoneAlertSettings(
             if (parts.first() > 0L) {
                 normalized.add(0L)
             }
-            parts.forEachIndexed { idx, raw ->
+            parts.forEachIndexed { _, raw ->
                 val isDelay = (normalized.size % 2 == 0)
                 val clamped = if (isDelay) {
                     raw.coerceIn(0L, 400L)
@@ -226,7 +350,29 @@ data class KmStoneAlertSettings(
                     ),
                     advanceWarningSoundOption = KmAlertSoundOption.fromString(
                         obj.optString("advanceWarningSoundOption", "SOFT_ALERT")
-                    )
+                    ),
+                    voiceAnnouncementEnabled = obj.optBoolean("voiceAnnouncementEnabled", false),
+                    voiceName = obj.optString("voiceName", ""),
+                    voiceLanguageTag = obj.optString("voiceLanguageTag", ""),
+                    voiceStyle = KmVoiceAnnouncementStyle.fromString(obj.optString("voiceStyle", "CHAINAGE")),
+                    voiceVolumePercent = obj.optInt("voiceVolumePercent", 90).coerceIn(0, 100),
+                    voiceSpeed = KmVoiceSpeed.fromString(obj.optString("voiceSpeed", "NORMAL")),
+                    voiceRepeatEnabled = obj.optBoolean("voiceRepeatEnabled", false),
+                    alertOutputMode = KmAlertOutputMode.fromString(
+                        obj.optString("alertOutputMode", "VOICE_SOUND_AND_VIBRATION")
+                    ),
+                    voiceInterval1000m = obj.optBoolean("voiceInterval1000m", false),
+                    voiceInterval500m = obj.optBoolean("voiceInterval500m", true),
+                    voiceInterval200m = obj.optBoolean("voiceInterval200m", true),
+                    voiceInterval100m = obj.optBoolean("voiceInterval100m", true),
+                    voiceInterval50m = obj.optBoolean("voiceInterval50m", false),
+                    voiceAnnounceAtArrival = obj.optBoolean("voiceAnnounceAtArrival", true),
+                    voiceCustomIncludeChainage = obj.optBoolean("voiceCustomIncludeChainage", true),
+                    voiceCustomIncludeDirectionSide = obj.optBoolean("voiceCustomIncludeDirectionSide", true),
+                    voiceCustomIncludeDistance = obj.optBoolean("voiceCustomIncludeDistance", true),
+                    voiceCustomIncludeSpeed = obj.optBoolean("voiceCustomIncludeSpeed", false),
+                    voiceCustomIncludeArrivalStatus = obj.optBoolean("voiceCustomIncludeArrivalStatus", true),
+                    voiceCustomTemplate = obj.optString("voiceCustomTemplate", "")
                 )
             } catch (_: Exception) {
                 KmStoneAlertSettings()
@@ -234,3 +380,4 @@ data class KmStoneAlertSettings(
         }
     }
 }
+

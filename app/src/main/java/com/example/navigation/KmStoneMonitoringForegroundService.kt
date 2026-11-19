@@ -86,6 +86,8 @@ object KmStoneMonitoringNotificationFormatter {
                 append(" • CH ${navState.chainageText}")
                 if (!navState.reliableSide.isNullOrBlank()) {
                     append(" ${navState.reliableSide}")
+                } else if (navState.directionState == com.example.model.DirectionDetectionState.DIRECTION_CHANGING) {
+                    append(" Changing")
                 }
             } else if (!navState.hasRouteData) {
                 append(" • Waiting for Route")
@@ -123,7 +125,10 @@ object KmStoneMonitoringNotificationFormatter {
                 if (!navState.reliableSide.isNullOrBlank()) {
                     append(" (${navState.reliableSide}")
                     if (navState.directionArrow.isNotBlank()) append(" ${navState.directionArrow}")
+                    if (navState.isDirectionManual) append(" • Manual")
                     append(")")
+                } else if (validChainage) {
+                    append(" (${navState.directionState.shortLabel})")
                 }
             }
         )
@@ -309,12 +314,33 @@ class KmStoneMonitoringForegroundService : Service() {
 
                 // Fallback geometric matching only if hub has no live match yet (e.g. cold service recovery)
                 val effectiveMatch = if (match.chainage == null && route != null && loc.point != null && loc.isUsable) {
-                    ChainageMatcher.match(
+                    val rawRecovered = ChainageMatcher.match(
                         gpsPoint = loc.point,
                         gpsAccuracy = loc.accuracy,
                         bearing = loc.bearing,
                         routeData = route,
                         previousResult = match
+                    )
+                    val dirPrefs = CtecsNavigationTelemetryHub.directionPreferences.value
+                    val recoveredDir = CtecsNavigationTelemetryHub.sharedDirectionManager.evaluate(
+                        locationState = loc,
+                        matchResult = rawRecovered,
+                        routeData = route,
+                        preferences = dirPrefs
+                    )
+                    CtecsNavigationTelemetryHub.updateTelemetry(directionState = recoveredDir)
+                    if (recoveredDir.directionChangedFrom != null && !recoveredDir.isManualOverride) {
+                        KmStoneVoiceAnnouncementManager.announceDirectionChange(
+                            context = applicationContext,
+                            directionState = recoveredDir,
+                            settings = CtecsNavigationTelemetryHub.kmStoneAlertSettings.value,
+                            voiceDirectionEnabled = dirPrefs.voiceDirectionAnnouncementsEnabled,
+                            isRecordingActive = CtecsNavigationTelemetryHub.isCameraOrSurveyRecording.value
+                        )
+                    }
+                    rawRecovered.copy(
+                        detectedSide = recoveredDir.confirmedSide ?: "Unknown",
+                        smartDirectionState = recoveredDir
                     )
                 } else {
                     match
@@ -327,12 +353,15 @@ class KmStoneMonitoringForegroundService : Service() {
                     matchResult = effectiveMatch,
                     routeData = route,
                     projectRoadSide = profile.roadSide,
-                    settings = alertCfg
+                    settings = alertCfg,
+                    smartDirectionState = effectiveMatch.smartDirectionState
                 )
                 if (events.isNotEmpty()) {
                     val isRec = CtecsNavigationTelemetryHub.isCameraOrSurveyRecording.value
                     events.forEach { evt ->
-                        CtecsNavigationTelemetryHub.recordKmStoneAlertEvent(evt)
+                        if (evt.kind != KmStoneAlertKind.VOICE_DISTANCE) {
+                            CtecsNavigationTelemetryHub.recordKmStoneAlertEvent(evt)
+                        }
                         KmStoneAlertFeedbackManager.dispatchAlert(
                             context = applicationContext,
                             event = evt,

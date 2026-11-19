@@ -319,10 +319,23 @@ object ChainageNavigationResolver {
             }
         }
 
+        val smartDir = matchResult?.smartDirectionState
         val carriagewayNote: String? = if (travelDirection != null) {
             when {
                 travelDirection == ChainageTravelDirection.AT_DESTINATION ->
                     "You are currently at destination chainage $destFormatted ($currentSide)."
+                smartDir != null && !smartDir.hasConfirmedDirection ->
+                    "${travelDirection.label} (${smartDir.detectionState.shortLabel})"
+                smartDir != null && smartDir.isIncreasingChainage != null && (currentSide == "LHS" || currentSide == "RHS") -> {
+                    val forwardAlongCurrent =
+                        (smartDir.isIncreasingChainage && travelDirection == ChainageTravelDirection.INCREASING) ||
+                            (!smartDir.isIncreasingChainage && travelDirection == ChainageTravelDirection.DECREASING)
+                    if (forwardAlongCurrent) {
+                        "Forward along $currentSide (${travelDirection.label})"
+                    } else {
+                        "${travelDirection.label} (opposite to active $currentSide travel direction)"
+                    }
+                }
                 currentSide == "LHS" && travelDirection == ChainageTravelDirection.INCREASING ->
                     "Forward along LHS (Increasing Chainage)"
                 currentSide == "RHS" && travelDirection == ChainageTravelDirection.DECREASING ->
@@ -604,9 +617,29 @@ object ChainageNavigationResolver {
         projectRoadSide: RoadSide,
         detectedSideOverride: String?
     ): String {
-        val raw = detectedSideOverride?.trim()?.uppercase(Locale.ROOT)
+        val explicitOverride = detectedSideOverride?.trim()?.uppercase(Locale.ROOT)
             ?.takeIf { it.isNotEmpty() && it != "---" }
-            ?: matchResult?.detectedSide?.trim()?.uppercase(Locale.ROOT)
+        if (explicitOverride != null) {
+            return when (explicitOverride) {
+                "LHS" -> "LHS"
+                "RHS" -> "RHS"
+                "MEDIAN" -> "MEDIAN"
+                "BOTH", "BHS" -> "BHS"
+                else -> explicitOverride
+            }
+        }
+        val smartDir = matchResult?.smartDirectionState
+        if (smartDir != null) {
+            val confirmed = smartDir.confirmedSide?.uppercase(Locale.ROOT)
+            return when (confirmed) {
+                "LHS" -> "LHS"
+                "RHS" -> "RHS"
+                "MEDIAN" -> "MEDIAN"
+                "BOTH", "BHS" -> "BHS"
+                else -> smartDir.detectionState.shortLabel
+            }
+        }
+        val raw = matchResult?.detectedSide?.trim()?.uppercase(Locale.ROOT)
         return when {
             raw == "LHS" -> "LHS"
             raw == "RHS" -> "RHS"

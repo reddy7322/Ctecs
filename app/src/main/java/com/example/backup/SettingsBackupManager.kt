@@ -217,6 +217,8 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name,
                 PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name,
                 PreferencesManager.KEY_KM_STONE_ALERT_JSON.name,
+                PreferencesManager.KEY_CHAINAGE_VOICE_ASSISTANT_JSON.name,
+                PreferencesManager.KEY_SMART_DIRECTION_PREFS_JSON.name,
                 PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name,
                 PreferencesManager.KEY_SURVEY_SHOW_200M_LABELS.name,
                 PreferencesManager.KEY_SURVEY_SHOW_CENTRELINE.name,
@@ -397,6 +399,8 @@ class SettingsBackupManager(
         PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name,
         PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name,
         PreferencesManager.KEY_KM_STONE_ALERT_JSON.name,
+        PreferencesManager.KEY_CHAINAGE_VOICE_ASSISTANT_JSON.name,
+        PreferencesManager.KEY_SMART_DIRECTION_PREFS_JSON.name,
         PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name -> BackupCategory.GENERAL
 
         else -> BackupCategory.OTHER
@@ -579,10 +583,14 @@ class SettingsBackupManager(
         val navNotifSettings = preferencesManager.navigationNotificationSettingsFlow.first()
         val widgetSettings = preferencesManager.widgetSettingsFlow.first()
         val kmStoneAlertSettings = preferencesManager.kmStoneAlertSettingsFlow.first()
+        val voiceAssistantSettings = preferencesManager.chainageVoiceAssistantSettingsFlow.first()
+        val smartDirectionPrefs = preferencesManager.smartDirectionPreferencesFlow.first()
         putEntry(PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name, PrefValueType.STRING, screensaverSettings.toJsonString())
         putEntry(PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name, PrefValueType.STRING, navNotifSettings.toJsonString())
         putEntry(PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name, PrefValueType.STRING, widgetSettings.toJsonString())
         putEntry(PreferencesManager.KEY_KM_STONE_ALERT_JSON.name, PrefValueType.STRING, kmStoneAlertSettings.toJsonString())
+        putEntry(PreferencesManager.KEY_CHAINAGE_VOICE_ASSISTANT_JSON.name, PrefValueType.STRING, voiceAssistantSettings.toJsonString())
+        putEntry(PreferencesManager.KEY_SMART_DIRECTION_PREFS_JSON.name, PrefValueType.STRING, smartDirectionPrefs.toJsonString())
         preferencesManager.getInitialPreferredExternalNavAppId()?.let {
             putEntry(PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name, PrefValueType.STRING, it)
         }

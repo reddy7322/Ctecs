@@ -111,6 +111,8 @@ object CtecsWidgetUpdater {
                 put("isLiveGpsValid", navState.isLiveGpsValid)
                 put("hasRouteData", navState.hasRouteData)
                 put("lastUpdateStatusText", navState.lastUpdateStatusText ?: "")
+                put("directionState", navState.directionState.name)
+                put("isDirectionManual", navState.isDirectionManual)
             }
             val edit = context.applicationContext
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -176,7 +178,9 @@ object CtecsWidgetUpdater {
                     locationName = obj.optString("locationName", ""),
                     isLiveGpsValid = false,
                     hasRouteData = obj.optBoolean("hasRouteData", false),
-                    lastUpdateStatusText = "GPS unavailable"
+                    lastUpdateStatusText = "GPS unavailable",
+                    directionState = com.example.model.DirectionDetectionState.GPS_SIGNAL_WEAK,
+                    isDirectionManual = obj.optBoolean("isDirectionManual", false)
                 )
                 cachedState to cachedPt
             } else {

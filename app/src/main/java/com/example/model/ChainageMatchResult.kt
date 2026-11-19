@@ -36,7 +36,8 @@ data class ChainageMatchResult(
     val nearestReferenceMarkerLabel: String? = null,
     val bracketingMarkersInfo: String? = null,
     val sourceKmzReferenceStatus: String = "Valid",
-    val customChainageText: String? = null
+    val customChainageText: String? = null,
+    val smartDirectionState: SmartDirectionState? = null
 ) {
     val displayChainage: String
         get() = customChainageText?.takeIf { it.isNotBlank() }

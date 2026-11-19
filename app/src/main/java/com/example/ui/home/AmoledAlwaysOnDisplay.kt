@@ -149,7 +149,8 @@ fun resolveAodKmStoneStatusText(
             val sideSuffix = lastEvent.directionSide.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
             return when (lastEvent.kind) {
                 KmStoneAlertKind.ARRIVAL -> "Arrived KM ${lastEvent.stoneFormattedChainage}$sideSuffix"
-                KmStoneAlertKind.ADVANCE_WARNING -> "Approaching KM ${lastEvent.stoneFormattedChainage}$sideSuffix"
+                KmStoneAlertKind.ADVANCE_WARNING,
+                KmStoneAlertKind.VOICE_DISTANCE -> "Approaching KM ${lastEvent.stoneFormattedChainage}$sideSuffix"
             }
         }
     }
@@ -337,21 +338,43 @@ fun AmoledAlwaysOnDisplay(
                     )
                 }
 
-                if (settings.aodShowDirectionSide && !displayState.reliableSide.isNullOrBlank()) {
-                    val sideColor = if (displayState.reliableSide == "LHS") accentCyanDim else accentAmberDim
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.testTag("aod_direction_row")
+                if (settings.aodShowDirectionSide) {
+                    if (!displayState.reliableSide.isNullOrBlank()) {
+                        val sideColor = if (displayState.reliableSide == "LHS") accentCyanDim else accentAmberDim
+                        val manualTag = if (displayState.isDirectionManual) " • MAN" else ""
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.testTag("aod_direction_row")
+                        ) {
+                            Text(
+                                text = "${displayState.reliableSide} ${displayState.directionArrow}$manualTag".trim(),
+                                color = sideColor,
+                                fontSize = if (isCompactHeight) 15.sp else 18.sp,
+                                fontWeight = FontWeight.Normal,
+                                letterSpacing = 2.sp,
+                                maxLines = 1
+                            )
+                        }
+                    } else if (
+                        displayState.directionState == com.example.model.DirectionDetectionState.DIRECTION_CHANGING ||
+                        displayState.directionState == com.example.model.DirectionDetectionState.DIRECTION_UNCERTAIN ||
+                        displayState.directionState == com.example.model.DirectionDetectionState.GPS_SIGNAL_WEAK
                     ) {
-                        Text(
-                            text = "${displayState.reliableSide} ${displayState.directionArrow}".trim(),
-                            color = sideColor,
-                            fontSize = if (isCompactHeight) 15.sp else 18.sp,
-                            fontWeight = FontWeight.Normal,
-                            letterSpacing = 2.sp,
-                            maxLines = 1
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.testTag("aod_direction_status_row")
+                        ) {
+                            Text(
+                                text = displayState.directionState.shortLabel,
+                                color = secondaryTextColor,
+                                fontSize = if (isCompactHeight) 12.sp else 13.5.sp,
+                                fontWeight = FontWeight.Light,
+                                letterSpacing = 1.2.sp,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
 

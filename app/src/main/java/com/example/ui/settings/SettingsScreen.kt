@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LinearScale
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
@@ -195,6 +196,8 @@ fun SettingsScreen(
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val lastValidLocation by viewModel.lastValidLocation.collectAsStateWithLifecycle()
     val liveMatchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
+    val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
+    val smartDirectionPrefs by viewModel.smartDirectionPreferences.collectAsStateWithLifecycle()
     val screensaverSettings by viewModel.homeScreensaverSettings.collectAsStateWithLifecycle()
     val navNotificationSettings by viewModel.navigationNotificationSettings.collectAsStateWithLifecycle()
     val widgetSettings by viewModel.widgetSettings.collectAsStateWithLifecycle()
@@ -2980,6 +2983,152 @@ fun SettingsScreen(
                         onValueChange = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(routeMatchingRadiusMeters = it.toDouble())) },
                         valueText = "${currentCameraSettings.routeMatchingRadiusMeters.toInt()}m"
                     )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Smart LHS/RHS Auto Direction Controls
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Smart LHS/RHS Direction",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = smartDirectionState.detailReason,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        com.example.ui.components.SmartDirectionIndicatorBadge(
+                            directionState = smartDirectionState,
+                            isDark = isDark,
+                            isCompact = true,
+                            testTagName = "settings_smart_direction_status_badge"
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Direction Control Mode",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val isAutoMode = smartDirectionPrefs.controlMode == com.example.model.DirectionControlMode.AUTO
+                        val isManualLhs = !isAutoMode && smartDirectionPrefs.normalizedManualSide == "LHS"
+                        val isManualRhs = !isAutoMode && smartDirectionPrefs.normalizedManualSide == "RHS"
+
+                        listOf(
+                            Triple("Auto (Smart)", isAutoMode, "settings_dir_mode_auto") to { viewModel.resetSideToAuto() },
+                            Triple("Manual LHS", isManualLhs, "settings_dir_mode_lhs") to { viewModel.updateSide(RoadSide.LHS) },
+                            Triple("Manual RHS", isManualRhs, "settings_dir_mode_rhs") to { viewModel.updateSide(RoadSide.RHS) }
+                        ).forEach { (meta, action) ->
+                            val (label, selected, tag) = meta
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) primaryAccent.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = if (selected) 1.dp else 0.6.dp,
+                                    color = if (selected) primaryAccent else MaterialTheme.colorScheme.outlineVariant
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { action() }
+                                    .testTag(tag)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) primaryAccent else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Alignment Chainage Convention",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Defines which carriageway corresponds to increasing chainage when the active KMZ does not explicitly specify it.",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            Triple("Auto (KMZ)", com.example.model.AlignmentDirectionConvention.AUTO_FROM_ALIGNMENT, "settings_dir_conv_auto"),
+                            Triple("Inc = LHS", com.example.model.AlignmentDirectionConvention.INCREASING_IS_LHS, "settings_dir_conv_inc_lhs"),
+                            Triple("Inc = RHS", com.example.model.AlignmentDirectionConvention.INCREASING_IS_RHS, "settings_dir_conv_inc_rhs")
+                        ).forEach { (label, convention, tag) ->
+                            val selected = smartDirectionPrefs.alignmentConvention == convention
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) primaryAccent.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = if (selected) 1.dp else 0.6.dp,
+                                    color = if (selected) primaryAccent else MaterialTheme.colorScheme.outlineVariant
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.updateAlignmentDirectionConvention(convention) }
+                                    .testTag(tag)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) primaryAccent else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    CompactSwitchRow(
+                        title = "Announce Confirmed Direction Changes",
+                        checked = smartDirectionPrefs.voiceDirectionAnnouncementsEnabled,
+                        onCheckedChange = { viewModel.setVoiceDirectionAnnouncementsEnabled(it) },
+                        tag = "settings_dir_voice_switch"
+                    )
                 }
             }
 
@@ -3831,13 +3980,14 @@ fun SettingsScreen(
             // ====================================================
             // 13e. NAVIGATION ALERTS -> KM STONE MONITORING
             // ====================================================
-            if (matchesSearch("navigation alerts km stone monitoring arrival foreground service background persistent notification lock screen haptic vibration sound beep chime advance warning proximity threshold", searchQuery)) {
+            if (matchesSearch("navigation alerts km stone monitoring arrival foreground service background persistent notification lock screen haptic vibration sound beep chime advance warning proximity threshold voice announcement tts speech language speed style custom distance intervals", searchQuery)) {
                 val isKmStoneServiceRunning by viewModel.isKmStoneServiceRunning.collectAsStateWithLifecycle()
                 val kmStoneServiceStatusNote by viewModel.kmStoneServiceStatusNote.collectAsStateWithLifecycle()
                 val kmAlertSummary = buildString {
                     append(if (kmStoneAlertSettings.enabled) "ON" else "OFF")
                     if (isKmStoneServiceRunning) append(" • Service Running")
                     append(" • ±${kmStoneAlertSettings.proximityThresholdMetres}m")
+                    if (kmStoneAlertSettings.voiceAnnouncementEnabled) append(" • Voice (${kmStoneAlertSettings.voiceStyle.label})")
                     if (kmStoneAlertSettings.vibrationEnabled) append(" • ${kmStoneAlertSettings.vibrationPattern.label}")
                     if (kmStoneAlertSettings.soundEnabled) append(" • ${kmStoneAlertSettings.soundOption.label}")
                 }
@@ -3859,6 +4009,43 @@ fun SettingsScreen(
                         hasActiveRoute = activeRoute != null,
                         onUpdateSettings = { transform -> viewModel.updateKmStoneAlertSettings(transform) },
                         onResetDefaults = { viewModel.resetKmStoneAlertSettings() },
+                        onFeedbackMessage = { msg -> viewModel.showToast(msg, ToastType.INFO) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 13f. NAVIGATION -> CHAINAGE VOICE ASSISTANT
+            // ====================================================
+            if (matchesSearch("navigation chainage voice assistant speech recognition microphone search tts language english hindi telugu speed volume confirmation auto listen", searchQuery)) {
+                val voiceAssistantSettings by viewModel.chainageVoiceAssistantSettings.collectAsStateWithLifecycle()
+                val voiceAssistantSummary = buildString {
+                    append(if (voiceAssistantSettings.voiceAssistantEnabled) "ON" else "OFF")
+                    append(" • ${voiceAssistantSettings.voiceLanguage.label}")
+                    if (voiceAssistantSettings.voiceOutputEnabled) {
+                        append(" • ${voiceAssistantSettings.speechSpeed.label}")
+                    }
+                    if (voiceAssistantSettings.voiceConfirmationBeforeNav) {
+                        append(" • Confirm")
+                    }
+                }
+                SmartDropdownSection(
+                    title = "Navigation • Chainage Voice Assistant",
+                    subtitle = voiceAssistantSummary,
+                    icon = Icons.Default.Mic,
+                    accentColor = primaryAccent,
+                    isExpanded = expandedSections["chainage_voice_assistant"] ?: false,
+                    onToggleExpand = {
+                        expandedSections["chainage_voice_assistant"] = !(expandedSections["chainage_voice_assistant"] ?: false)
+                    }
+                ) {
+                    ChainageVoiceAssistantSettingsSectionContent(
+                        settings = voiceAssistantSettings,
+                        accentColor = primaryAccent,
+                        onUpdateSettings = { transform -> viewModel.updateChainageVoiceAssistantSettings(transform) },
+                        onResetDefaults = { viewModel.resetChainageVoiceAssistantSettings() },
                         onFeedbackMessage = { msg -> viewModel.showToast(msg, ToastType.INFO) }
                     )
                 }

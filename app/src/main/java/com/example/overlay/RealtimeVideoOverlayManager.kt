@@ -160,7 +160,12 @@ class RealtimeVideoOverlayManager(
             val currentAccuracy = baseSnapshot.gpsAccuracy.toInt()
             val currentSpeed = (baseSnapshot.speedMps ?: -1f).toInt()
             val currentHeading = baseSnapshot.compassHeading
-            val currentSide = baseSnapshot.projectProfile.roadSide.name + "_" + baseSnapshot.matchResult.detectedSide
+            val smartDir = baseSnapshot.matchResult.smartDirectionState
+            val currentSide = if (smartDir != null) {
+                "${smartDir.detectionState.name}_${smartDir.confirmedSide.orEmpty()}_${smartDir.isManualOverride}"
+            } else {
+                baseSnapshot.projectProfile.roadSide.name + "_" + baseSnapshot.matchResult.detectedSide
+            }
             val currentActivity = baseSnapshot.projectProfile.activity
             val currentLane = baseSnapshot.projectProfile.lane
             val currentBearingInt = effectiveBearingVal?.toInt() ?: Int.MIN_VALUE

@@ -1,19 +1,23 @@
 package com.example.ui.dialogs
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -24,6 +28,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +37,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -41,40 +48,32 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -92,19 +91,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.Chainage
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageMatchResult
+import com.example.model.ChainageVoiceAssistantSettings
 import com.example.model.GeoPoint
 import com.example.model.RoadSide
 import com.example.model.RouteData
 import com.example.navigation.ActiveChainageNavigationTarget
 import com.example.navigation.ChainageDestinationCalculation
 import com.example.navigation.ChainageNavigationResolver
-import com.example.navigation.ChainageTravelDirection
+import com.example.navigation.ChainageVoiceAssistantCallbacks
+import com.example.navigation.ChainageVoiceAssistantManager
+import com.example.navigation.ChainageVoiceAssistantStage
+import com.example.navigation.ChainageVoiceCommandParser
 import com.example.navigation.ExternalNavApp
 import com.example.navigation.ExternalNavigationLauncher
-import java.util.Locale
 
 /**
  * Compact, minimalist Home Page shortcut button placed immediately to the right of the Next KM Stone card.
@@ -213,15 +216,16 @@ fun NavigateToChainageQuickButton(
 }
 
 /**
- * Clean, minimalist Material-style popup for CTECS Navigate to Chainage.
+ * Premium minimalist, borderless Material 3 popup for CTECS Navigate to Chainage with
+ * intelligent Chainage Voice Search and Smart Voice Assistant confirmation workflow.
  *
- * Features:
- * - Numeric/chainage input field with automatic formatting, clear button, and prominent Search/Calculate button.
- * - Live calculation of Current Chainage, Destination Chainage, Current LHS/RHS, Chainage Difference,
- *   Travel Direction (Increasing/Decreasing), and Destination Location on the active KMZ/KML alignment.
- * - Compact route preview canvas showing current position and destination on the active alignment.
- * - Smart Google Maps and Mappls integration with preferred app selection and installed status detection.
- * - Prominent Direction and Start buttons enabled only after successful destination validation.
+ * Design & Functional Guarantees:
+ * - Borderless translucent surface with soft fading margins (no bulky cards or heavy shadows).
+ * - Responsive Portrait (vertical) & Landscape (two-column) layouts with IME keyboard protection.
+ * - Large, live-sanitized chainage input (`196+494`, `198+000`, `201+500`) + animated Mic button.
+ * - Reuses existing [ChainageNavigationResolver] and [ExternalNavigationLauncher] without duplicating
+ *   GPS, chainage, or alignment engines.
+ * - Never starts navigation from ambiguous or unconfirmed voice recognition.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -236,16 +240,21 @@ fun NavigateToChainageDialog(
     nextKmStoneSuggestion: String?,
     activeTarget: ActiveChainageNavigationTarget?,
     preferredExternalAppId: String?,
+    voiceAssistantSettings: ChainageVoiceAssistantSettings = ChainageVoiceAssistantSettings(),
     onSavePreferredExternalAppId: (String?) -> Unit,
     onStartInAppTarget: (ActiveChainageNavigationTarget) -> Unit,
     onClearActiveTarget: () -> Unit,
     onFeedbackMessage: (String) -> Unit,
     isDark: Boolean,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    externalVoiceManagerForTest: ChainageVoiceAssistantManager? = null
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    var popupVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { popupVisible = true }
 
     var chainageInput by remember {
         mutableStateOf(
@@ -261,9 +270,7 @@ fun NavigateToChainageDialog(
                 ?: ""
         )
     }
-    var hasCalculated by remember {
-        mutableStateOf(submittedQuery.isNotBlank())
-    }
+    var hasCalculated by remember { mutableStateOf(submittedQuery.isNotBlank()) }
     var statusBannerMessage by remember { mutableStateOf<String?>(null) }
     var isStatusError by remember { mutableStateOf(false) }
 
@@ -279,7 +286,6 @@ fun NavigateToChainageDialog(
     }
     val bothAppsInstalled = isGoogleMapsInstalled && isMapplsInstalled
 
-    // Selected navigation app ("google_maps", "mappls", or "ask" when both are installed)
     var selectedAppOption by remember(preferredExternalAppId, isGoogleMapsInstalled, isMapplsInstalled) {
         val saved = ExternalNavApp.fromId(preferredExternalAppId)
         val initial = when {
@@ -291,11 +297,9 @@ fun NavigateToChainageDialog(
         }
         mutableStateOf(initial)
     }
-
-    // Pending app chooser prompt when both apps are installed and user selected "Ask Every Time"
     var pendingChooserActionIsStart by remember { mutableStateOf<Boolean?>(null) }
 
-    // Recalculate automatically whenever submittedQuery, live matchResult, activeRoute, or side changes
+    // Live road-alignment destination calculation (strictly reuses existing ChainageNavigationResolver)
     val calculation: ChainageDestinationCalculation? = remember(
         hasCalculated,
         submittedQuery,
@@ -322,7 +326,29 @@ fun NavigateToChainageDialog(
         }
     }
 
-    fun triggerCalculate(rawToCalculate: String = chainageInput) {
+    val latestMatch by rememberUpdatedState(matchResult)
+    val latestRoute by rememberUpdatedState(activeRoute)
+    val latestCorrections by rememberUpdatedState(correctionPoints)
+    val latestCorrectionsEnabled by rememberUpdatedState(isCorrectionsEnabled)
+    val latestRoadSide by rememberUpdatedState(projectRoadSide)
+    val latestDetectedSide by rememberUpdatedState(detectedSideLabel)
+    val latestCalc by rememberUpdatedState(calculation)
+    val latestVoiceSettings by rememberUpdatedState(voiceAssistantSettings)
+    val latestSelectedApp by rememberUpdatedState(selectedAppOption)
+
+    fun evaluateForInput(raw: String): ChainageDestinationCalculation {
+        return ChainageNavigationResolver.calculateAndResolveDestination(
+            rawDestinationInput = raw,
+            matchResult = latestMatch,
+            activeRoute = latestRoute,
+            correctionPoints = latestCorrections,
+            isCorrectionsEnabled = latestCorrectionsEnabled,
+            projectRoadSide = latestRoadSide,
+            detectedSideOverride = latestDetectedSide
+        )
+    }
+
+    fun triggerCalculate(rawToCalculate: String = chainageInput): ChainageDestinationCalculation {
         val formatted = ChainageNavigationResolver.autoFormatChainageInput(rawToCalculate)
         chainageInput = formatted
         submittedQuery = formatted
@@ -332,24 +358,28 @@ fun NavigateToChainageDialog(
         pendingChooserActionIsStart = null
         focusManager.clearFocus()
         keyboardController?.hide()
+        return evaluateForInput(formatted)
     }
 
+    var voiceManagerRef: ChainageVoiceAssistantManager? = null
+
     fun executeNavigationWithApp(app: ExternalNavApp, isStartMode: Boolean) {
-        val calc = calculation ?: return
+        val calc = latestCalc ?: return
         val destPoint = calc.destinationPoint ?: return
         val destCh = calc.destinationChainage ?: return
 
-        if (isStartMode && activeRoute != null && calc.travelDirection != null) {
+        if (isStartMode && latestRoute != null && calc.travelDirection != null) {
             onStartInAppTarget(
                 ActiveChainageNavigationTarget(
                     destinationChainage = destCh,
                     destinationPoint = destPoint,
-                    alignmentName = calc.alignmentName.ifBlank { activeRoute.name },
-                    routeId = activeRoute.id,
+                    alignmentName = calc.alignmentName.ifBlank { latestRoute!!.name },
+                    routeId = latestRoute!!.id,
                     travelDirection = calc.travelDirection,
                     initialDistanceMetres = calc.chainageDifferenceMetres
                 )
             )
+            voiceManagerRef?.markNavigationStarted(destCh.format())
         }
 
         val launchResult = ExternalNavigationLauncher.launchExternalNavigation(
@@ -376,1047 +406,1079 @@ fun NavigateToChainageDialog(
         }
     }
 
-    val dialogBg = if (isDark) Color(0xFF0F172A) else Color(0xFFFFFFFF)
-    val cardBg = if (isDark) Color(0xFF1E293B).copy(alpha = 0.65f) else Color(0xFFF8FAFC)
-    val borderColor = if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0)
+    fun invokePrimaryNavAction(isStartMode: Boolean) {
+        if (bothAppsInstalled && latestSelectedApp == "ask") {
+            pendingChooserActionIsStart = isStartMode
+        } else {
+            val targetApp = ExternalNavApp.fromId(latestSelectedApp)
+                ?: if (isMapplsInstalled && !isGoogleMapsInstalled) {
+                    ExternalNavApp.MAPPLS
+                } else {
+                    ExternalNavApp.GOOGLE_MAPS
+                }
+            executeNavigationWithApp(targetApp, isStartMode = isStartMode)
+        }
+    }
+
+    // Dedicated single-instance Voice Assistant Manager scoped strictly to this popup's lifecycle
+    val voiceAssistantManager = remember(context, externalVoiceManagerForTest) {
+        externalVoiceManagerForTest ?: ChainageVoiceAssistantManager(
+            context = context,
+            callbacks = object : ChainageVoiceAssistantCallbacks {
+                override fun onDestinationRecognized(
+                    chainage: Chainage,
+                    rawTranscript: String
+                ): ChainageDestinationCalculation {
+                    return triggerCalculate(chainage.format())
+                }
+
+                override fun onRequestRepeatDestination(): ChainageDestinationCalculation? {
+                    return latestCalc
+                }
+
+                override fun onRequestClearDestination() {
+                    chainageInput = ""
+                    submittedQuery = ""
+                    hasCalculated = false
+                    statusBannerMessage = null
+                    pendingChooserActionIsStart = null
+                }
+
+                override fun onRequestStartNavigation() {
+                    invokePrimaryNavAction(isStartMode = true)
+                }
+
+                override fun onRequestCancelPopup() {
+                    onDismiss()
+                }
+            }
+        )
+    }
+    voiceManagerRef = voiceAssistantManager
+
+    LaunchedEffect(voiceAssistantSettings) {
+        voiceAssistantManager.updateSettings(voiceAssistantSettings)
+    }
+
+    val assistantState by voiceAssistantManager.state.collectAsStateWithLifecycle()
+
+    // Track whether user tapped Mic for initial search vs. confirmation reply
+    var pendingPermissionForConfirmation by remember { mutableStateOf(false) }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            voiceAssistantManager.startListening(
+                settings = latestVoiceSettings,
+                forConfirmation = pendingPermissionForConfirmation
+            )
+        } else {
+            voiceAssistantManager.onPermissionDenied()
+        }
+    }
+
+    fun requestOrStartVoiceListening(forConfirmation: Boolean) {
+        if (!latestVoiceSettings.effectiveVoiceSearchActive()) {
+            onFeedbackMessage("Voice Search is disabled in Settings → Navigation → Chainage Voice Assistant")
+            return
+        }
+        if (assistantState.stage == ChainageVoiceAssistantStage.LISTENING) {
+            voiceAssistantManager.stopListening()
+            return
+        }
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        if (voiceAssistantManager.hasRecordAudioPermission()) {
+            voiceAssistantManager.startListening(
+                settings = latestVoiceSettings,
+                forConfirmation = forConfirmation
+            )
+        } else {
+            pendingPermissionForConfirmation = forConfirmation
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // Optional automatic listening on popup open (OFF by default per Settings)
+    LaunchedEffect(Unit) {
+        if (voiceAssistantSettings.autoListenOnPopupOpen &&
+            voiceAssistantSettings.effectiveVoiceSearchActive() &&
+            voiceAssistantManager.hasRecordAudioPermission() &&
+            voiceAssistantManager.isSpeechServiceAvailable()
+        ) {
+            voiceAssistantManager.startListening(voiceAssistantSettings, forConfirmation = false)
+        }
+    }
+
+    // Guarantee microphone & TTS resources stop cleanly whenever popup closes
+    DisposableEffect(voiceAssistantManager) {
+        onDispose {
+            if (externalVoiceManagerForTest == null) {
+                voiceAssistantManager.release()
+            } else {
+                voiceAssistantManager.stopListening()
+            }
+        }
+    }
+
+    // Premium minimalist Light/Dark color palette (borderless translucent blending)
+    val baseGlass = if (isDark) Color(0xFF0B1324) else Color(0xFFFDFEFF)
+    val edgeGlass = if (isDark) Color(0xFF0F1A30).copy(alpha = 0.88f) else Color(0xFFF5F8FF).copy(alpha = 0.92f)
+    val subtleSurface = if (isDark) Color(0xFF17253D).copy(alpha = 0.45f) else Color(0xFFEFF4FB).copy(alpha = 0.72f)
+    val hairlineColor = if (isDark) Color(0xFF334155).copy(alpha = 0.35f) else Color(0xFFCBD5E1).copy(alpha = 0.48f)
     val primaryText = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
     val secondaryText = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
     val accentBlue = if (isDark) Color(0xFF38BDF8) else Color(0xFF2563EB)
     val accentEmerald = if (isDark) Color(0xFF10B981) else Color(0xFF059669)
     val errorColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626)
+    val warningColor = if (isDark) Color(0xFFFBBF24) else Color(0xFFD97706)
 
     val currentLiveFormatted = remember(matchResult) {
         if (matchResult.chainage != null) matchResult.displayChainage else "--+---"
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = dialogBg,
-            border = BorderStroke(1.dp, borderColor),
-            shadowElevation = 8.dp,
-            modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .widthIn(max = 460.dp)
-                .testTag("navigate_to_chainage_dialog")
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // 1. Minimalist Header Row
+    val quickPresets = remember(matchResult.chainage, nextKmStoneSuggestion, activeRoute?.id) {
+        buildList {
+            if (!nextKmStoneSuggestion.isNullOrBlank() && !nextKmStoneSuggestion.contains("-")) {
+                add("Next KM $nextKmStoneSuggestion" to nextKmStoneSuggestion)
+            }
+            val curM = matchResult.chainage?.metres
+            if (curM != null) {
+                val plus1Km = Chainage(curM + 1000L).format()
+                add("+1 km ($plus1Km)" to plus1Km)
+                if (curM >= 1000L) {
+                    val minus1Km = Chainage(curM - 1000L).format()
+                    add("-1 km ($minus1Km)" to minus1Km)
+                }
+            }
+        }.distinctBy { it.second }.take(3)
+    }
+
+    val buttonsEnabled = calculation?.canStartNavigation == true
+
+    // Reusable Left Pane (Destination Input + Voice Search + Quick Presets + Voice Status/Confirmation)
+    val destinationInputAndVoiceContent: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Active target subtle pill
+            if (activeTarget != null) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(accentEmerald.copy(alpha = 0.11f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(accentBlue.copy(alpha = 0.14f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AltRoute,
-                                contentDescription = null,
-                                tint = accentBlue,
-                                modifier = Modifier.size(19.dp)
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "Navigate to Chainage",
-                                color = primaryText,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = if (activeRoute != null) {
-                                    "Active Alignment: ${activeRoute.name}"
-                                } else {
-                                    "Enter target chainage (KM+MMM)"
-                                },
-                                color = secondaryText,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("navigate_chainage_close_btn")
+                        modifier = Modifier.weight(1f)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = secondaryText,
-                            modifier = Modifier.size(18.dp)
+                            imageVector = Icons.Default.Navigation,
+                            contentDescription = null,
+                            tint = accentEmerald,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Active: KM ${activeTarget.destinationChainage.format()}",
+                            color = primaryText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
+                    TextButton(
+                        onClick = {
+                            onClearActiveTarget()
+                            statusBannerMessage = "Cleared active destination target."
+                            isStatusError = false
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier
+                            .height(26.dp)
+                            .testTag("navigate_chainage_reset_target_btn")
+                    ) {
+                        Text("Reset", color = accentEmerald, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
+            }
 
-                // Active In-App Target Banner (with Clear/Reset option)
-                if (activeTarget != null) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = accentEmerald.copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, accentEmerald.copy(alpha = 0.35f)),
+            // Large, borderless Destination Chainage Input + Animated Voice Microphone Button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(subtleSurface)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = "DESTINATION CHAINAGE",
+                        color = secondaryText,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.7.sp
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Navigation,
-                                    contentDescription = null,
-                                    tint = accentEmerald,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (chainageInput.isEmpty()) {
                                 Text(
-                                    text = "Active Target: KM ${activeTarget.destinationChainage.format()}",
-                                    color = primaryText,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            TextButton(
-                                onClick = {
-                                    onClearActiveTarget()
-                                    statusBannerMessage = "Cleared active destination target."
-                                    isStatusError = false
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.testTag("navigate_chainage_reset_target_btn")
-                            ) {
-                                Text(
-                                    text = "Reset",
-                                    color = accentEmerald,
-                                    fontSize = 11.sp,
+                                    text = "196+494",
+                                    color = secondaryText.copy(alpha = 0.45f),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 22.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                            BasicTextField(
+                                value = chainageInput,
+                                onValueChange = { next ->
+                                    val sanitized = ChainageVoiceCommandParser.sanitizeTypingInput(next)
+                                    chainageInput = sanitized
+                                    statusBannerMessage = null
+                                    if (sanitized.isEmpty()) {
+                                        submittedQuery = ""
+                                        hasCalculated = false
+                                    } else if (ChainageNavigationResolver.parseAndValidateDestinationChainage(sanitized).first != null) {
+                                        submittedQuery = sanitized
+                                        hasCalculated = true
+                                    }
+                                },
+                                singleLine = true,
+                                textStyle = TextStyle(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = primaryText
+                                ),
+                                cursorBrush = SolidColor(accentBlue),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Text,
+                                    imeAction = ImeAction.Search
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { triggerCalculate() },
+                                    onDone = { triggerCalculate() }
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("navigate_chainage_input")
+                            )
                         }
-                    }
-                }
 
-                // 2. Destination Chainage Input + Prominent Calculate Button
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = chainageInput,
-                        onValueChange = { next ->
-                            chainageInput = next
-                            statusBannerMessage = null
-                        },
-                        label = { Text("Destination Chainage (e.g. 196+000, 201+500)") },
-                        placeholder = { Text("196+494") },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = primaryText
-                        ),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
-                            imeAction = ImeAction.Search
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onSearch = { triggerCalculate() },
-                            onDone = { triggerCalculate() }
-                        ),
-                        trailingIcon = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(end = 4.dp)
+                        // Quick '+' insertion helper while typing km digits
+                        if (!chainageInput.contains("+") && chainageInput.isNotEmpty()) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(accentBlue.copy(alpha = 0.16f))
+                                    .clickable { chainageInput = "$chainageInput+" }
+                                    .padding(horizontal = 9.dp, vertical = 4.dp)
+                                    .testTag("navigate_chainage_plus_btn")
                             ) {
-                                if (!chainageInput.contains("+") && chainageInput.isNotEmpty()) {
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = accentBlue.copy(alpha = 0.15f),
-                                        modifier = Modifier
-                                            .clickable {
-                                                chainageInput = "$chainageInput+"
-                                            }
-                                            .padding(horizontal = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = "+",
-                                            color = accentBlue,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                                if (chainageInput.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = {
-                                            chainageInput = ""
-                                            submittedQuery = ""
-                                            hasCalculated = false
-                                            statusBannerMessage = null
-                                            pendingChooserActionIsStart = null
-                                        },
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .testTag("navigate_chainage_clear_btn")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Clear,
-                                            contentDescription = "Clear destination chainage",
-                                            tint = secondaryText,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                }
+                                Text(
+                                    text = "+",
+                                    color = accentBlue,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Black
+                                )
                             }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = accentBlue,
-                            unfocusedBorderColor = borderColor,
-                            focusedLabelColor = accentBlue,
-                            unfocusedLabelColor = secondaryText
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("navigate_chainage_input")
-                    )
-
-                    // Quick Chainage Chips + Prominent Search/Calculate Button Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Button(
-                            onClick = { triggerCalculate() },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = accentBlue,
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                                .testTag("navigate_chainage_calculate_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = null,
-                                modifier = Modifier.size(17.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Search / Calculate",
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Spacer(modifier = Modifier.width(4.dp))
                         }
 
-                        if (hasCalculated || chainageInput.isNotEmpty()) {
-                            OutlinedButton(
+                        if (chainageInput.isNotEmpty()) {
+                            IconButton(
                                 onClick = {
                                     chainageInput = ""
                                     submittedQuery = ""
                                     hasCalculated = false
                                     statusBannerMessage = null
                                     pendingChooserActionIsStart = null
+                                    voiceAssistantManager.resetToIdle()
                                 },
-                                shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, borderColor),
-                                contentPadding = PaddingValues(horizontal = 12.dp),
                                 modifier = Modifier
-                                    .height(44.dp)
-                                    .testTag("navigate_chainage_reset_btn")
-                            ) {
-                                Text(
-                                    text = "Clear",
-                                    color = secondaryText,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-
-                    // Quick presets from current chainage / route bounds if available
-                    val quickPresets = remember(matchResult.chainage, nextKmStoneSuggestion, activeRoute?.id) {
-                        buildList {
-                            if (!nextKmStoneSuggestion.isNullOrBlank() && !nextKmStoneSuggestion.contains("-")) {
-                                add("Next KM ($nextKmStoneSuggestion)" to nextKmStoneSuggestion)
-                            }
-                            val curM = matchResult.chainage?.metres
-                            if (curM != null) {
-                                val plus1Km = Chainage(curM + 1000L).format()
-                                add("+1 km ($plus1Km)" to plus1Km)
-                                if (curM >= 1000L) {
-                                    val minus1Km = Chainage(curM - 1000L).format()
-                                    add("-1 km ($minus1Km)" to minus1Km)
-                                }
-                            }
-                        }.distinctBy { it.second }.take(3)
-                    }
-
-                    if (quickPresets.isNotEmpty()) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            quickPresets.forEach { (label, value) ->
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = cardBg,
-                                    border = BorderStroke(0.8.dp, borderColor),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            chainageInput = value
-                                            triggerCalculate(value)
-                                        }
-                                ) {
-                                    Text(
-                                        text = label,
-                                        color = secondaryText,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3. Validation Error or Calculation Results
-                if (calculation != null) {
-                    if (!calculation.isValidChainageInput) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = errorColor.copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, errorColor.copy(alpha = 0.4f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("navigate_chainage_error_banner")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .size(30.dp)
+                                    .testTag("navigate_chainage_clear_btn")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.ErrorOutline,
-                                    contentDescription = null,
-                                    tint = errorColor,
-                                    modifier = Modifier.size(18.dp)
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Clear chainage input",
+                                    tint = secondaryText,
+                                    modifier = Modifier.size(17.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = calculation.inputValidationError ?: "Invalid chainage value.",
-                                    color = errorColor,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    } else {
-                        // Valid Destination Chainage -> Show Telemetry & Distance Calculation Card
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = cardBg,
-                            border = BorderStroke(1.dp, borderColor),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("navigate_chainage_result_card")
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                // Current Chainage vs Destination Chainage Row
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "CURRENT CHAINAGE",
-                                            color = secondaryText,
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            letterSpacing = 0.5.sp
-                                        )
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                text = calculation.formattedCurrentChainage.ifBlank { currentLiveFormatted },
-                                                color = primaryText,
-                                                fontSize = 16.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                modifier = Modifier.testTag("navigate_chainage_current_value")
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                shape = RoundedCornerShape(5.dp),
-                                                color = accentBlue.copy(alpha = 0.14f),
-                                                border = BorderStroke(0.8.dp, accentBlue.copy(alpha = 0.35f))
-                                            ) {
-                                                Text(
-                                                    text = calculation.currentSideLabel,
-                                                    color = accentBlue,
-                                                    fontSize = 9.5.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Column(
-                                        horizontalAlignment = Alignment.End,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            text = "DESTINATION CHAINAGE",
-                                            color = secondaryText,
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            letterSpacing = 0.5.sp
-                                        )
-                                        Text(
-                                            text = calculation.formattedDestinationChainage,
-                                            color = accentEmerald,
-                                            fontSize = 16.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            modifier = Modifier.testTag("navigate_chainage_destination_value")
-                                        )
-                                    }
-                                }
-
-                                HorizontalDivider(color = borderColor.copy(alpha = 0.7f))
-
-                                // Distance & Travel Direction Row
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "DISTANCE",
-                                            color = secondaryText,
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            letterSpacing = 0.5.sp
-                                        )
-                                        Text(
-                                            text = calculation.formattedChainageDifference,
-                                            color = accentBlue,
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Black,
-                                            modifier = Modifier.testTag("navigate_chainage_distance_value")
-                                        )
-                                        if (calculation.formattedDifferenceMetresDetail.isNotBlank()) {
-                                            Text(
-                                                text = "Chainage Δ: ${calculation.formattedDifferenceMetresDetail}",
-                                                color = secondaryText,
-                                                fontSize = 10.sp
-                                            )
-                                        }
-                                    }
-
-                                    Column(
-                                        horizontalAlignment = Alignment.End,
-                                        modifier = Modifier.weight(1.1f)
-                                    ) {
-                                        Text(
-                                            text = "DIRECTION",
-                                            color = secondaryText,
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            letterSpacing = 0.5.sp
-                                        )
-                                        val dirText = calculation.travelDirection?.let {
-                                            "${it.shortArrow} ${it.label}"
-                                        } ?: "Awaiting Live Chainage"
-                                        Text(
-                                            text = dirText,
-                                            color = primaryText,
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            textAlign = TextAlign.End,
-                                            modifier = Modifier.testTag("navigate_chainage_direction_value")
-                                        )
-                                        if (!calculation.carriagewayCompatibilityNote.isNullOrBlank()) {
-                                            Text(
-                                                text = calculation.carriagewayCompatibilityNote,
-                                                color = secondaryText,
-                                                fontSize = 9.8.sp,
-                                                textAlign = TextAlign.End,
-                                                maxLines = 2
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Chainage Equation Warning if applicable
-                                if (!calculation.chainageEquationNote.isNullOrBlank()) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFFF59E0B).copy(alpha = 0.12f),
-                                        border = BorderStroke(0.8.dp, Color(0xFFF59E0B).copy(alpha = 0.4f)),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(
-                                            text = calculation.chainageEquationNote,
-                                            color = if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309),
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.padding(8.dp)
-                                        )
-                                    }
-                                }
-
-                                HorizontalDivider(color = borderColor.copy(alpha = 0.7f))
-
-                                // Destination Location Details or Unavailable Explanation
-                                if (calculation.isLocationResolved && calculation.destinationPoint != null) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Default.Place,
-                                                contentDescription = null,
-                                                tint = accentEmerald,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(5.dp))
-                                            Text(
-                                                text = calculation.locationDetailsText,
-                                                color = primaryText,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.testTag("navigate_chainage_location_value")
-                                            )
-                                        }
-                                        if (calculation.nearestMarkerInfo.isNotBlank()) {
-                                            Text(
-                                                text = calculation.nearestMarkerInfo,
-                                                color = secondaryText,
-                                                fontSize = 10.5.sp
-                                            )
-                                        }
-                                    }
-
-                                    // Small Route Preview Canvas showing Active Alignment, Current Position & Destination
-                                    if (activeRoute != null) {
-                                        ChainageRouteMiniPreview(
-                                            routeData = activeRoute,
-                                            currentPoint = matchResult.projectedPoint ?: currentGpsPoint,
-                                            destinationPoint = calculation.destinationPoint,
-                                            currentLabel = calculation.formattedCurrentChainage,
-                                            destinationLabel = calculation.formattedDestinationChainage,
-                                            isDark = isDark,
-                                            accentBlue = accentBlue,
-                                            accentEmerald = accentEmerald,
-                                            borderColor = borderColor
-                                        )
-                                    }
-                                } else {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = errorColor.copy(alpha = 0.12f),
-                                        border = BorderStroke(1.dp, errorColor.copy(alpha = 0.35f)),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("navigate_chainage_unavailable_banner")
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(10.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.ErrorOutline,
-                                                contentDescription = null,
-                                                tint = errorColor,
-                                                modifier = Modifier.size(17.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = calculation.unavailableReason
-                                                    ?: "Destination location cannot be reliably resolved on the active alignment.",
-                                                color = errorColor,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
                 }
 
-                // 4. Navigation App Selection (Google Maps / Mappls)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "NAVIGATION APP",
-                        color = secondaryText,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
+                // Prominent Animated Voice Search Microphone Button
+                VoiceSearchMicButton(
+                    assistantState = assistantState,
+                    voiceSearchEnabled = voiceAssistantSettings.effectiveVoiceSearchActive(),
+                    accentBlue = accentBlue,
+                    accentEmerald = accentEmerald,
+                    errorColor = errorColor,
+                    warningColor = warningColor,
+                    onClick = { requestOrStartVoiceListening(forConfirmation = false) }
+                )
+            }
+
+            // Voice Assistant Status, Transcript, Ambiguity & Confirmation Strip
+            VoiceAssistantStatusPanel(
+                assistantState = assistantState,
+                primaryText = primaryText,
+                secondaryText = secondaryText,
+                accentBlue = accentBlue,
+                accentEmerald = accentEmerald,
+                errorColor = errorColor,
+                warningColor = warningColor,
+                canStartNavigation = buttonsEnabled,
+                onSelectAmbiguousCandidate = { chosen ->
+                    voiceAssistantManager.selectDisambiguatedCandidate(chosen, voiceAssistantSettings)
+                },
+                onConfirmAndStart = {
+                    invokePrimaryNavAction(isStartMode = true)
+                },
+                onSpeakConfirmationReply = {
+                    requestOrStartVoiceListening(forConfirmation = true)
+                },
+                onRepeatDestination = {
+                    voiceAssistantManager.handleRecognitionHypotheses(
+                        hypotheses = listOf("repeat destination"),
+                        forConfirmation = true
                     )
+                },
+                onChangeDestination = {
+                    voiceAssistantManager.handleRecognitionHypotheses(
+                        hypotheses = listOf("change destination"),
+                        forConfirmation = true
+                    )
+                    requestOrStartVoiceListening(forConfirmation = false)
+                },
+                onRequestMicPermissionAgain = {
+                    pendingPermissionForConfirmation = false
+                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            )
+
+            // Compact Search / Validate + Quick Chainage Suggestions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = accentBlue.copy(alpha = 0.14f),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { triggerCalculate() }
+                        .testTag("navigate_chainage_calculate_btn")
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
                     ) {
-                        val gmapsSelected = selectedAppOption == ExternalNavApp.GOOGLE_MAPS.id
-                        FilterChip(
-                            selected = gmapsSelected,
-                            onClick = {
-                                selectedAppOption = ExternalNavApp.GOOGLE_MAPS.id
-                                onSavePreferredExternalAppId(ExternalNavApp.GOOGLE_MAPS.id)
-                                pendingChooserActionIsStart = null
-                            },
-                            label = {
-                                Text(
-                                    text = if (isGoogleMapsInstalled) "Google Maps ✓" else "Google Maps",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = accentBlue.copy(alpha = 0.18f),
-                                selectedLabelColor = accentBlue
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("navigate_app_google_maps")
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = accentBlue,
+                            modifier = Modifier.size(14.dp)
                         )
-
-                        val mapplsSelected = selectedAppOption == ExternalNavApp.MAPPLS.id
-                        FilterChip(
-                            selected = mapplsSelected,
-                            onClick = {
-                                selectedAppOption = ExternalNavApp.MAPPLS.id
-                                onSavePreferredExternalAppId(ExternalNavApp.MAPPLS.id)
-                                pendingChooserActionIsStart = null
-                            },
-                            label = {
-                                Text(
-                                    text = if (isMapplsInstalled) "Mappls ✓" else "Mappls",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = accentBlue.copy(alpha = 0.18f),
-                                selectedLabelColor = accentBlue
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("navigate_app_mappls")
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Validate",
+                            color = accentBlue,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold
                         )
-
-                        if (bothAppsInstalled) {
-                            val askSelected = selectedAppOption == "ask"
-                            FilterChip(
-                                selected = askSelected,
-                                onClick = {
-                                    selectedAppOption = "ask"
-                                    onSavePreferredExternalAppId("ask")
-                                },
-                                label = {
-                                    Text(
-                                        text = "Ask",
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = accentBlue.copy(alpha = 0.18f),
-                                    selectedLabelColor = accentBlue
-                                ),
-                                modifier = Modifier.testTag("navigate_app_ask")
-                            )
-                        }
                     }
                 }
 
-                // Inline Smart App Chooser when both Google Maps and Mappls are installed and "Ask" is active
-                AnimatedVisibility(
-                    visible = pendingChooserActionIsStart != null,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    val isStart = pendingChooserActionIsStart == true
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = accentBlue.copy(alpha = 0.10f),
-                        border = BorderStroke(1.dp, accentBlue.copy(alpha = 0.35f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("navigate_app_chooser_prompt")
+                if (quickPresets.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = if (isStart) "Start Navigation with:" else "Open Directions with:",
-                                color = primaryText,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        quickPresets.forEach { (label, value) ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(subtleSurface)
+                                    .clickable {
+                                        chainageInput = value
+                                        triggerCalculate(value)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
                             ) {
-                                Button(
-                                    onClick = {
-                                        pendingChooserActionIsStart = null
-                                        executeNavigationWithApp(ExternalNavApp.GOOGLE_MAPS, isStart)
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = accentBlue),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("Google Maps", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Button(
-                                    onClick = {
-                                        pendingChooserActionIsStart = null
-                                        executeNavigationWithApp(ExternalNavApp.MAPPLS, isStart)
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = accentEmerald),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("Mappls", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
+                                Text(
+                                    text = label,
+                                    color = secondaryText,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
-                    }
-                }
-
-                // Status feedback banner
-                if (!statusBannerMessage.isNullOrBlank()) {
-                    val bannerCol = if (isStatusError) errorColor else accentEmerald
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = bannerCol.copy(alpha = 0.12f),
-                        border = BorderStroke(0.8.dp, bannerCol.copy(alpha = 0.35f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("navigate_chainage_status_banner")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(9.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = if (isStatusError) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = bannerCol,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(7.dp))
-                            Text(
-                                text = statusBannerMessage!!,
-                                color = bannerCol,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-
-                // 5. Two Prominent Functional Buttons: Direction & Start
-                val buttonsEnabled = calculation?.canStartNavigation == true
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // A. Direction Button
-                    OutlinedButton(
-                        onClick = {
-                            if (bothAppsInstalled && selectedAppOption == "ask") {
-                                pendingChooserActionIsStart = false
-                            } else {
-                                val targetApp = ExternalNavApp.fromId(selectedAppOption)
-                                    ?: if (isMapplsInstalled && !isGoogleMapsInstalled) {
-                                        ExternalNavApp.MAPPLS
-                                    } else {
-                                        ExternalNavApp.GOOGLE_MAPS
-                                    }
-                                executeNavigationWithApp(targetApp, isStartMode = false)
-                            }
-                        },
-                        enabled = buttonsEnabled,
-                        shape = RoundedCornerShape(11.dp),
-                        border = BorderStroke(
-                            1.2.dp,
-                            if (buttonsEnabled) accentBlue else borderColor
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("navigate_chainage_direction_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Directions,
-                            contentDescription = null,
-                            tint = if (buttonsEnabled) accentBlue else secondaryText.copy(alpha = 0.5f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Direction",
-                            color = if (buttonsEnabled) accentBlue else secondaryText.copy(alpha = 0.5f),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
-
-                    // B. Start Button
-                    Button(
-                        onClick = {
-                            if (bothAppsInstalled && selectedAppOption == "ask") {
-                                pendingChooserActionIsStart = true
-                            } else {
-                                val targetApp = ExternalNavApp.fromId(selectedAppOption)
-                                    ?: if (isMapplsInstalled && !isGoogleMapsInstalled) {
-                                        ExternalNavApp.MAPPLS
-                                    } else {
-                                        ExternalNavApp.GOOGLE_MAPS
-                                    }
-                                executeNavigationWithApp(targetApp, isStartMode = true)
-                            }
-                        },
-                        enabled = buttonsEnabled,
-                        shape = RoundedCornerShape(11.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = accentEmerald,
-                            contentColor = Color.White,
-                            disabledContainerColor = borderColor.copy(alpha = 0.5f),
-                            disabledContentColor = secondaryText.copy(alpha = 0.5f)
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("navigate_chainage_start_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Navigation,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Start",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
                     }
                 }
             }
         }
     }
-}
 
-/**
- * Compact route preview displaying the active KMZ/KML alignment polyline,
- * the current device/chainage position, and the resolved destination chainage coordinate.
- */
-@Composable
-private fun ChainageRouteMiniPreview(
-    routeData: RouteData,
-    currentPoint: GeoPoint?,
-    destinationPoint: GeoPoint,
-    currentLabel: String,
-    destinationLabel: String,
-    isDark: Boolean,
-    accentBlue: Color,
-    accentEmerald: Color,
-    borderColor: Color
-) {
-    val activeAlign = routeData.activeAlignment ?: routeData.alignments.firstOrNull()
-    val alignPoints = remember(activeAlign?.id, routeData.markers.size) {
-        val pts = activeAlign?.points.orEmpty()
-        if (pts.size >= 2) pts else routeData.markers.map { it.point }
-    }
-
-    if (alignPoints.isEmpty()) return
-
-    val previewBg = if (isDark) Color(0xFF090D16) else Color(0xFFF1F5F9)
-
-    Surface(
-        shape = RoundedCornerShape(9.dp),
-        color = previewBg,
-        border = BorderStroke(0.8.dp, borderColor),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(92.dp)
-            .testTag("navigate_chainage_route_preview")
-    ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(10.dp)
-            ) {
-                val allPts = buildList {
-                    addAll(alignPoints)
-                    if (currentPoint != null) add(currentPoint)
-                    add(destinationPoint)
-                }
-                val minLat = allPts.minOf { it.latitude }
-                val maxLat = allPts.maxOf { it.latitude }
-                val minLng = allPts.minOf { it.longitude }
-                val maxLng = allPts.maxOf { it.longitude }
-
-                val latSpan = (maxLat - minLat).coerceAtLeast(0.0005)
-                val lngSpan = (maxLng - minLng).coerceAtLeast(0.0005)
-
-                fun project(pt: GeoPoint): Offset {
-                    val x = (((pt.longitude - minLng) / lngSpan).toFloat().coerceIn(0f, 1f)) * size.width
-                    val y = (1f - ((pt.latitude - minLat) / latSpan).toFloat().coerceIn(0f, 1f)) * size.height
-                    return Offset(x, y)
-                }
-
-                // Draw alignment polyline
-                if (alignPoints.size >= 2) {
-                    val path = Path()
-                    val step = (alignPoints.size / 120).coerceAtLeast(1)
-                    var started = false
-                    var idx = 0
-                    while (idx < alignPoints.size) {
-                        val o = project(alignPoints[idx])
-                        if (!started) {
-                            path.moveTo(o.x, o.y)
-                            started = true
-                        } else {
-                            path.lineTo(o.x, o.y)
-                        }
-                        idx += step
+    // Reusable Right / Bottom Telemetry & App Selection Pane
+    val navigationDetailsContent: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (calculation != null) {
+                if (!calculation.isValidChainageInput) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(errorColor.copy(alpha = 0.10f))
+                            .padding(horizontal = 12.dp, vertical = 9.dp)
+                            .testTag("navigate_chainage_error_banner")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = errorColor,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = calculation.inputValidationError ?: "Invalid chainage value.",
+                            color = errorColor,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
-                    val lastO = project(alignPoints.last())
-                    path.lineTo(lastO.x, lastO.y)
+                } else {
+                    // Clean Borderless Telemetry Layout
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(subtleSurface.copy(alpha = if (isDark) 0.36f else 0.58f))
+                            .padding(12.dp)
+                            .testTag("navigate_chainage_result_card")
+                    ) {
+                        // Current vs Destination Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "CURRENT",
+                                    color = secondaryText,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.6.sp
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = calculation.formattedCurrentChainage.ifBlank { currentLiveFormatted },
+                                        color = primaryText,
+                                        fontSize = 15.5.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        modifier = Modifier.testTag("navigate_chainage_current_value")
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    val smartDir = matchResult.smartDirectionState
+                                    if (smartDir != null) {
+                                        com.example.ui.components.SmartDirectionIndicatorBadge(
+                                            directionState = smartDir,
+                                            isDark = isDark,
+                                            isCompact = true,
+                                            testTagName = "navigate_chainage_side_badge"
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(accentBlue.copy(alpha = 0.14f))
+                                                .padding(horizontal = 5.dp, vertical = 1.5.dp)
+                                                .testTag("navigate_chainage_side_badge")
+                                        ) {
+                                            Text(
+                                                text = calculation.currentSideLabel,
+                                                color = accentBlue,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
 
-                    drawPath(
-                        path = path,
-                        color = accentBlue.copy(alpha = 0.45f),
-                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = "DESTINATION",
+                                    color = secondaryText,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.6.sp
+                                )
+                                Text(
+                                    text = calculation.formattedDestinationChainage,
+                                    color = accentEmerald,
+                                    fontSize = 15.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.testTag("navigate_chainage_destination_value")
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = hairlineColor)
+
+                        // Remaining Road-Alignment Distance & Travel Direction Row
+                        val displayDistanceText = remember(calculation) {
+                            if (calculation.hasChainageEquationOnSpan && calculation.alignmentTravelDistanceMetres != null) {
+                                ChainageNavigationResolver.formatChainageDifference(calculation.alignmentTravelDistanceMetres)
+                            } else {
+                                calculation.formattedChainageDifference
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "REMAINING DISTANCE",
+                                    color = secondaryText,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.6.sp
+                                )
+                                Text(
+                                    text = displayDistanceText,
+                                    color = accentBlue,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.testTag("navigate_chainage_distance_value")
+                                )
+                                if (calculation.formattedDifferenceMetresDetail.isNotBlank()) {
+                                    Text(
+                                        text = "Alignment Δ: ${calculation.formattedDifferenceMetresDetail}",
+                                        color = secondaryText,
+                                        fontSize = 9.5.sp
+                                    )
+                                }
+                            }
+
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                modifier = Modifier.weight(1.1f)
+                            ) {
+                                Text(
+                                    text = "TRAVEL DIRECTION",
+                                    color = secondaryText,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.6.sp
+                                )
+                                val dirText = calculation.travelDirection?.let {
+                                    "${it.shortArrow} ${it.label}"
+                                } ?: "Awaiting GPS Chainage"
+                                Text(
+                                    text = dirText,
+                                    color = primaryText,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    textAlign = TextAlign.End,
+                                    modifier = Modifier.testTag("navigate_chainage_direction_value")
+                                )
+                                if (!calculation.carriagewayCompatibilityNote.isNullOrBlank()) {
+                                    Text(
+                                        text = calculation.carriagewayCompatibilityNote,
+                                        color = secondaryText,
+                                        fontSize = 9.5.sp,
+                                        textAlign = TextAlign.End,
+                                        maxLines = 2
+                                    )
+                                }
+                            }
+                        }
+
+                        if (!calculation.chainageEquationNote.isNullOrBlank()) {
+                            Text(
+                                text = calculation.chainageEquationNote,
+                                color = warningColor,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(warningColor.copy(alpha = 0.10f))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            )
+                        }
+
+                        HorizontalDivider(color = hairlineColor)
+
+                        // Alignment Availability + Mini Route Preview
+                        if (calculation.isLocationResolved && calculation.destinationPoint != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Place,
+                                    contentDescription = null,
+                                    tint = accentEmerald,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = calculation.locationDetailsText,
+                                        color = primaryText,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.testTag("navigate_chainage_location_value")
+                                    )
+                                    if (calculation.nearestMarkerInfo.isNotBlank()) {
+                                        Text(
+                                            text = calculation.nearestMarkerInfo,
+                                            color = secondaryText,
+                                            fontSize = 9.8.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (activeRoute != null) {
+                                BorderlessChainageRouteMiniPreview(
+                                    routeData = activeRoute,
+                                    currentPoint = matchResult.projectedPoint ?: currentGpsPoint,
+                                    destinationPoint = calculation.destinationPoint,
+                                    currentLabel = calculation.formattedCurrentChainage,
+                                    destinationLabel = calculation.formattedDestinationChainage,
+                                    isDark = isDark,
+                                    accentBlue = accentBlue,
+                                    accentEmerald = accentEmerald
+                                )
+                            }
+                        } else {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(errorColor.copy(alpha = 0.10f))
+                                    .padding(9.dp)
+                                    .testTag("navigate_chainage_unavailable_banner")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = errorColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(7.dp))
+                                Text(
+                                    text = calculation.unavailableReason
+                                        ?: "Destination location cannot be resolved on the active alignment.",
+                                    color = errorColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                 }
-
-                // Draw line connecting current position to destination
-                val destOffset = project(destinationPoint)
-                if (currentPoint != null) {
-                    val curOffset = project(currentPoint)
-                    drawLine(
-                        color = accentEmerald.copy(alpha = 0.75f),
-                        start = curOffset,
-                        end = destOffset,
-                        strokeWidth = 2.dp.toPx(),
-                        cap = StrokeCap.Round
-                    )
-                    // Current point halo & dot
-                    drawCircle(
-                        color = accentBlue.copy(alpha = 0.28f),
-                        radius = 8.dp.toPx(),
-                        center = curOffset
-                    )
-                    drawCircle(
-                        color = accentBlue,
-                        radius = 4.2.dp.toPx(),
-                        center = curOffset
-                    )
-                }
-
-                // Destination point halo & pin dot
-                drawCircle(
-                    color = accentEmerald.copy(alpha = 0.30f),
-                    radius = 9.dp.toPx(),
-                    center = destOffset
-                )
-                drawCircle(
-                    color = accentEmerald,
-                    radius = 4.8.dp.toPx(),
-                    center = destOffset
-                )
             }
 
-            // Legend overlay
+            // Minimalist Borderless App Selector Row (Google Maps / Mappls)
             Row(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                val appChips = buildList {
+                    add(Triple(ExternalNavApp.GOOGLE_MAPS.id, if (isGoogleMapsInstalled) "Google Maps ✓" else "Google Maps", "navigate_app_google_maps"))
+                    add(Triple(ExternalNavApp.MAPPLS.id, if (isMapplsInstalled) "Mappls ✓" else "Mappls", "navigate_app_mappls"))
+                    if (bothAppsInstalled) {
+                        add(Triple("ask", "Ask", "navigate_app_ask"))
+                    }
+                }
+                appChips.forEach { (id, label, tag) ->
+                    val selected = selectedAppOption == id
                     Box(
+                        contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(accentBlue)
+                            .weight(if (id == "ask") 0.55f else 1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) accentBlue.copy(alpha = 0.16f) else subtleSurface)
+                            .clickable {
+                                selectedAppOption = id
+                                onSavePreferredExternalAppId(id)
+                                if (id != "ask") pendingChooserActionIsStart = null
+                            }
+                            .padding(vertical = 7.dp, horizontal = 8.dp)
+                            .testTag(tag)
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (selected) accentBlue else secondaryText,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            // Inline Smart App Chooser when both apps installed and "Ask" is selected
+            AnimatedVisibility(
+                visible = pendingChooserActionIsStart != null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                val isStart = pendingChooserActionIsStart == true
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(accentBlue.copy(alpha = 0.10f))
+                        .padding(8.dp)
+                        .testTag("navigate_app_chooser_prompt"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            pendingChooserActionIsStart = null
+                            executeNavigationWithApp(ExternalNavApp.GOOGLE_MAPS, isStart)
+                        },
+                        shape = RoundedCornerShape(9.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accentBlue),
+                        modifier = Modifier.weight(1f).height(36.dp)
+                    ) {
+                        Text("Google Maps", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            pendingChooserActionIsStart = null
+                            executeNavigationWithApp(ExternalNavApp.MAPPLS, isStart)
+                        },
+                        shape = RoundedCornerShape(9.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accentEmerald),
+                        modifier = Modifier.weight(1f).height(36.dp)
+                    ) {
+                        Text("Mappls", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // Status Feedback Pill
+            if (!statusBannerMessage.isNullOrBlank()) {
+                val bannerCol = if (isStatusError) errorColor else accentEmerald
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(bannerCol.copy(alpha = 0.11f))
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                        .testTag("navigate_chainage_status_banner")
+                ) {
+                    Icon(
+                        imageVector = if (isStatusError) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = bannerCol,
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Current: $currentLabel",
-                        color = if (isDark) Color(0xFFCBD5E1) else Color(0xFF334155),
-                        fontSize = 9.5.sp,
+                        text = statusBannerMessage!!,
+                        color = bannerCol,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(accentEmerald)
+            }
+        }
+    }
+
+    // Sticky Bottom Action Row: Direction, Start Navigation, Cancel
+    val actionsRowContent: @Composable () -> Unit = {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                onClick = {
+                    voiceAssistantManager.stopListening()
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier
+                    .height(44.dp)
+                    .testTag("navigate_chainage_cancel_btn")
+            ) {
+                Text(
+                    text = "Cancel",
+                    color = secondaryText,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (buttonsEnabled) accentBlue.copy(alpha = 0.15f) else subtleSurface.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = buttonsEnabled) { invokePrimaryNavAction(isStartMode = false) }
+                    .testTag("navigate_chainage_direction_btn")
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Directions,
+                        contentDescription = null,
+                        tint = if (buttonsEnabled) accentBlue else secondaryText.copy(alpha = 0.45f),
+                        modifier = Modifier.size(17.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = "Dest: $destinationLabel",
-                        color = accentEmerald,
-                        fontSize = 9.5.sp,
+                        text = "Direction",
+                        color = if (buttonsEnabled) accentBlue else secondaryText.copy(alpha = 0.45f),
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+            }
+
+            Button(
+                onClick = { invokePrimaryNavAction(isStartMode = true) },
+                enabled = buttonsEnabled,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accentEmerald,
+                    contentColor = Color.White,
+                    disabledContainerColor = subtleSurface.copy(alpha = 0.6f),
+                    disabledContentColor = secondaryText.copy(alpha = 0.45f)
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                modifier = Modifier
+                    .weight(1.15f)
+                    .height(44.dp)
+                    .testTag("navigate_chainage_start_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Navigation,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = "Start Navigation",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = {
+            voiceAssistantManager.stopListening()
+            onDismiss()
+        },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        BoxWithConstraints(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 14.dp)
+        ) {
+            val isLandscapeSplit = maxWidth >= 560.dp && maxWidth > maxHeight
+
+            AnimatedVisibility(
+                visible = popupVisible,
+                enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.95f, animationSpec = tween(200, easing = FastOutSlowInEasing)),
+                exit = fadeOut(tween(140))
+            ) {
+                // Soft fading borderless outer glass surface (zero heavy outlines or bulky shadows)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(if (isLandscapeSplit) 0.92f else 0.96f)
+                        .widthIn(max = if (isLandscapeSplit) 760.dp else 460.dp)
+                        .heightIn(max = (this@BoxWithConstraints.maxHeight * 0.92f).coerceAtLeast(320.dp))
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    edgeGlass,
+                                    baseGlass.copy(alpha = 0.96f),
+                                    baseGlass.copy(alpha = 0.96f),
+                                    edgeGlass
+                                )
+                            )
+                        )
+                        .testTag("navigate_to_chainage_dialog")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 15.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Minimalist Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(accentBlue.copy(alpha = 0.13f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AltRoute,
+                                        contentDescription = null,
+                                        tint = accentBlue,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = "Navigate to Chainage",
+                                        color = primaryText,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    Text(
+                                        text = if (activeRoute != null) {
+                                            activeRoute.name
+                                        } else {
+                                            "Type or speak destination (KM+MMM)"
+                                        },
+                                        color = secondaryText,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = {
+                                    voiceAssistantManager.stopListening()
+                                    onDismiss()
+                                },
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .testTag("navigate_chainage_close_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Navigate to Chainage",
+                                    tint = secondaryText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        // Scrollable responsive body (Portrait stack vs. Landscape 2-column split)
+                        if (isLandscapeSplit) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f, fill = false)
+                                    .testTag("navigate_chainage_landscape_layout"),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    destinationInputAndVoiceContent()
+                                }
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1.05f)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    navigationDetailsContent()
+                                }
+                            }
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f, fill = false)
+                                    .verticalScroll(rememberScrollState())
+                                    .testTag("navigate_chainage_portrait_layout"),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                destinationInputAndVoiceContent()
+                                navigationDetailsContent()
+                            }
+                        }
+
+                        // Sticky Bottom Action Bar (never hidden by keyboard)
+                        actionsRowContent()
+                    }
                 }
             }
         }

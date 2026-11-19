@@ -109,7 +109,8 @@ fun KmStoneAlertSettingsSectionContent(
             "vibration" to true,
             "sound" to true,
             "detection" to false,
-            "advance" to false
+            "advance" to false,
+            "voice" to true
         )
     }
 
@@ -995,7 +996,23 @@ fun KmStoneAlertSettingsSectionContent(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
 
         // ------------------------------------------------------------
-        // 6. RESET TO DEFAULT
+        // 6. SMART NEXT KM STONE VOICE ANNOUNCEMENT SUBSECTION
+        // ------------------------------------------------------------
+        KmStoneVoiceAnnouncementSettingsSubsection(
+            settings = settings,
+            expanded = expandedSubsections["voice"] == true,
+            accentColor = accentColor,
+            onToggleExpanded = {
+                expandedSubsections["voice"] = !(expandedSubsections["voice"] ?: false)
+            },
+            onUpdateSettings = onUpdateSettings,
+            onFeedbackMessage = onFeedbackMessage
+        )
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+
+        // ------------------------------------------------------------
+        // 7. RESET TO DEFAULT
         // ------------------------------------------------------------
         OutlinedButton(
             onClick = { showResetConfirmDialog = true },
@@ -1017,7 +1034,7 @@ fun KmStoneAlertSettingsSectionContent(
             onDismissRequest = { showResetConfirmDialog = false },
             title = { Text("Reset KM Stone Arrival Settings?") },
             text = {
-                Text("This will restore default KM Stone arrival detection thresholds, vibration pattern, sound tone, and advance warning settings.")
+                Text("This will restore default KM Stone arrival detection thresholds, vibration pattern, sound tone, voice announcements, and advance warning settings.")
             },
             confirmButton = {
                 TextButton(
@@ -1040,7 +1057,7 @@ fun KmStoneAlertSettingsSectionContent(
 }
 
 @Composable
-private fun KmFlatExpandableHeader(
+internal fun KmFlatExpandableHeader(
     title: String,
     subtitle: String,
     expanded: Boolean,
@@ -1086,7 +1103,7 @@ private fun KmFlatExpandableHeader(
 }
 
 @Composable
-private fun KmFlatDropdownRow(
+internal fun KmFlatDropdownRow(
     label: String,
     valueText: String,
     accentColor: Color,
@@ -1132,7 +1149,7 @@ private fun KmFlatDropdownRow(
 }
 
 @Composable
-private fun KmFlatSwitchRow(
+internal fun KmFlatSwitchRow(
     title: String,
     subtitle: String? = null,
     checked: Boolean,

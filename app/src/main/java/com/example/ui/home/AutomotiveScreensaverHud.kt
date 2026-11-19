@@ -1078,8 +1078,13 @@ private fun HeroChainageCard(
     includeLocationInside: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val hasStatusDirectionIndicator = displayState.reliableSide == null && (
+        displayState.directionState == com.example.model.DirectionDetectionState.DIRECTION_CHANGING ||
+            displayState.directionState == com.example.model.DirectionDetectionState.DIRECTION_UNCERTAIN ||
+            displayState.directionState == com.example.model.DirectionDetectionState.GPS_SIGNAL_WEAK
+        )
     val showHeroCard = screensaverSettings.showChainage ||
-        (screensaverSettings.showDirectionSide && displayState.reliableSide != null) ||
+        (screensaverSettings.showDirectionSide && (displayState.reliableSide != null || hasStatusDirectionIndicator)) ||
         (includeLocationInside && screensaverSettings.showLocation && displayState.locationName.isNotBlank())
 
     if (!showHeroCard) return
@@ -1089,7 +1094,7 @@ private fun HeroChainageCard(
         HudPanelSize.STANDARD -> 28.dp
         HudPanelSize.EXPANDED -> 32.dp
     }
-    val showSideBadge = screensaverSettings.showDirectionSide && displayState.reliableSide != null
+    val showSideBadge = screensaverSettings.showDirectionSide && (displayState.reliableSide != null || hasStatusDirectionIndicator)
     val showLocationRow = includeLocationInside && screensaverSettings.showLocation && displayState.locationName.isNotBlank()
 
     val glassBrush = if (palette.isHudMirror) {
@@ -1174,6 +1179,8 @@ private fun HeroChainageCard(
                     val arrowDp = (16f * screensaverSettings.directionSize.scaleFactor).coerceIn(12f, 22f).dp
                     AutomotiveDirectionBadge(
                         side = side,
+                        directionArrow = displayState.directionArrow,
+                        isManualOverride = displayState.isDirectionManual,
                         style = screensaverSettings.directionIndicatorStyle,
                         colorMode = screensaverSettings.directionColorPreset,
                         arrowsAnimated = screensaverSettings.directionArrowsAnimated,
@@ -1183,6 +1190,30 @@ private fun HeroChainageCard(
                         arrowSize = arrowDp,
                         modifier = Modifier.testTag("screensaver_direction_badge")
                     )
+                } else if (hasStatusDirectionIndicator) {
+                    val statusTint = when (displayState.directionState) {
+                        com.example.model.DirectionDetectionState.DIRECTION_CHANGING ->
+                            if (palette.isDark) Color(0xFFFBBF24) else Color(0xFFB45309)
+                        com.example.model.DirectionDetectionState.GPS_SIGNAL_WEAK ->
+                            if (palette.isDark) Color(0xFFF87171) else Color(0xFFDC2626)
+                        else -> palette.secondaryTextColor
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = statusTint.copy(alpha = if (palette.isDark || palette.isHudMirror) 0.14f else 0.11f),
+                        shadowElevation = 0.dp,
+                        modifier = Modifier.testTag("screensaver_direction_status_badge")
+                    ) {
+                        Text(
+                            text = displayState.directionState.shortLabel,
+                            color = statusTint,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.sp,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        )
+                    }
                 }
             }
         }
@@ -1996,6 +2027,8 @@ private fun AutomotiveOdometerChainage(
 @Composable
 private fun AutomotiveDirectionBadge(
     side: String,
+    directionArrow: String = if (side == "LHS") "↑" else "↓",
+    isManualOverride: Boolean = false,
     style: HudDirectionStyle,
     colorMode: HudDirectionColorMode,
     arrowsAnimated: Boolean,
@@ -2056,14 +2089,15 @@ private fun AutomotiveDirectionBadge(
         modifier = modifier
     ) {
         AnimatedContent(
-            targetState = side,
+            targetState = Triple(side, directionArrow, isManualOverride),
             transitionSpec = {
                 (fadeIn(tween(220)) + scaleIn(initialScale = 0.9f, animationSpec = tween(220))) togetherWith
                     (fadeOut(tween(150)) + scaleOut(targetScale = 0.9f, animationSpec = tween(150)))
             },
             label = "hud_direction_side"
-        ) { targetSide ->
+        ) { (targetSide, targetArrow, isManual) ->
             val targetLhs = targetSide == "LHS"
+            val arrowDesc = if (targetArrow == "↑") "Increasing" else "Decreasing"
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2075,34 +2109,34 @@ private fun AutomotiveDirectionBadge(
                 if (targetLhs) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Increasing",
+                        contentDescription = arrowDesc,
                         tint = accentColor,
                         modifier = Modifier
                             .size(arrowSize)
                             .offset(x = arrowOffsetX)
                     )
                     Text(
-                        text = targetSide,
+                        text = if (isManual) "$targetSide • M" else targetSide,
                         color = accentColor,
                         fontSize = fontSize,
                         fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 2.8.sp,
+                        letterSpacing = 2.4.sp,
                         maxLines = 1,
                         softWrap = false
                     )
                 } else {
                     Text(
-                        text = targetSide,
+                        text = if (isManual) "$targetSide • M" else targetSide,
                         color = accentColor,
                         fontSize = fontSize,
                         fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 2.8.sp,
+                        letterSpacing = 2.4.sp,
                         maxLines = 1,
                         softWrap = false
                     )
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Decreasing",
+                        contentDescription = arrowDesc,
                         tint = accentColor,
                         modifier = Modifier
                             .size(arrowSize)
