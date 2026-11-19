@@ -59,6 +59,7 @@ class KmStoneArrivalDetector {
     private var lastArrivalEventMs: Long = 0L
     private var lastAdvanceEventMs: Long = 0L
 
+    @Synchronized
     fun reset() {
         activeRouteId = null
         cachedMarkerCount = -1
@@ -71,6 +72,7 @@ class KmStoneArrivalDetector {
         lastAdvanceEventMs = 0L
     }
 
+    @Synchronized
     fun evaluate(
         locationState: LocationState?,
         matchResult: ChainageMatchResult,

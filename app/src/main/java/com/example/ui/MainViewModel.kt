@@ -253,15 +253,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _toastMessage.value = null
     }
 
-    // Page Loader State & Percentage Animations
-    private val _isPageLoading = MutableStateFlow(true)
+    // Page Loader State & Percentage Animations (instant cold launch; shown only for explicit heavy tasks)
+    private val _isPageLoading = MutableStateFlow(false)
     val isPageLoading: StateFlow<Boolean> = _isPageLoading.asStateFlow()
 
-    private val _pageLoadingProgress = MutableStateFlow(0.08f)
+    private val _pageLoadingProgress = MutableStateFlow(1f)
     val pageLoadingProgress: StateFlow<Float> = _pageLoadingProgress.asStateFlow()
 
-    private val _pageLoadingStatus = MutableStateFlow("Starting System Engine...")
+    private val _pageLoadingStatus = MutableStateFlow("Ready")
     val pageLoadingStatus: StateFlow<String> = _pageLoadingStatus.asStateFlow()
+
+    @Volatile
+    private var isAppForegrounded = false
 
     fun showPageLoader(status: String = "Loading...", initialProgress: Float = 0f) {
         _pageLoadingStatus.value = status
@@ -494,8 +497,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val homeScreensaverSettings: StateFlow<HomeScreensaverSettings> = _homeScreensaverSettings.asStateFlow()
     private val _isScreensaverActive = MutableStateFlow(false)
     val isScreensaverActive: StateFlow<Boolean> = _isScreensaverActive.asStateFlow()
+    private val _isScreensaverScreenOff = MutableStateFlow(false)
+    val isScreensaverScreenOff: StateFlow<Boolean> = _isScreensaverScreenOff.asStateFlow()
+    private val _isScreensaverAodActive = MutableStateFlow(false)
+    val isScreensaverAodActive: StateFlow<Boolean> = _isScreensaverAodActive.asStateFlow()
     private val _screensaverSensorPosture = MutableStateFlow<com.example.ui.home.ScreensaverSensorPosture?>(null)
     val screensaverSensorPosture: StateFlow<com.example.ui.home.ScreensaverSensorPosture?> = _screensaverSensorPosture.asStateFlow()
+    val isKmStoneServiceRunning: StateFlow<Boolean> = CtecsNavigationTelemetryHub.isKmStoneServiceRunning
+    val kmStoneServiceStatusNote: StateFlow<String?> = CtecsNavigationTelemetryHub.kmStoneServiceStatusNote
+    val lastKmStoneHubEvent: StateFlow<com.example.navigation.KmStoneAlertEvent?> = CtecsNavigationTelemetryHub.lastKmStoneEvent
     private val homeScreensaverMutationLock = Any()
     private var homeScreensaverWriteVersion = 0L
     private var homeScreensaverFlushedVersion = 0L
@@ -611,12 +621,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         transform: (com.example.model.KmStoneAlertSettings) -> com.example.model.KmStoneAlertSettings
     ) {
         updateKmStoneAlertState(transform)
+        val updated = _kmStoneAlertSettings.value
+        if (updated.enabled && updated.lockScreenNotificationsEnabled && activeRouteData.value != null) {
+            startLocation()
+        }
+        syncBackgroundNavigationService()
     }
 
     fun resetKmStoneAlertSettings() {
         val defaults = com.example.model.KmStoneAlertSettings.defaultSettings()
         updateKmStoneAlertState { defaults }
         CtecsNavigationTelemetryHub.sharedKmStoneDetector.reset()
+        syncBackgroundNavigationService()
         showToast("KM Stone Arrival alert settings reset to default", ToastType.SUCCESS)
     }
 
@@ -671,8 +687,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setScreensaverActive(active: Boolean) {
         _isScreensaverActive.value = active
         if (!active) {
+            val wasLowPower = _isScreensaverScreenOff.value || _isScreensaverAodActive.value
+            _isScreensaverScreenOff.value = false
+            _isScreensaverAodActive.value = false
             _screensaverSensorPosture.value = null
+            if (wasLowPower && isAppForegrounded) {
+                compassTracker.startTracking()
+            }
         }
+    }
+
+    fun setScreensaverScreenOff(screenOff: Boolean, forcePureBlack: Boolean = false) {
+        if (screenOff && _isScreensaverActive.value) {
+            val cfg = _homeScreensaverSettings.value
+            if (!forcePureBlack && cfg.aodEnabled && cfg.aodAutoActivateOnScreenOff) {
+                _isScreensaverScreenOff.value = false
+                _isScreensaverAodActive.value = true
+                compassTracker.stopTracking()
+                return
+            }
+            _isScreensaverAodActive.value = false
+            _isScreensaverScreenOff.value = true
+            // Pause compass/orientation hardware sensors during black Screen OFF mode to save battery
+            // while keeping live GPS, chainage, speed, and KM Stone monitoring fully active.
+            compassTracker.stopTracking()
+        } else {
+            _isScreensaverScreenOff.value = false
+            if (!_isScreensaverAodActive.value && isAppForegrounded) {
+                compassTracker.startTracking()
+            }
+        }
+    }
+
+    fun setScreensaverAodActive(active: Boolean) {
+        val next = active && _isScreensaverActive.value && _homeScreensaverSettings.value.aodEnabled
+        _isScreensaverAodActive.value = next
+        if (next) {
+            _isScreensaverScreenOff.value = false
+            // Pause compass sensor during AMOLED AOD while keeping GPS & KM Stone monitoring live
+            compassTracker.stopTracking()
+        } else if (!_isScreensaverScreenOff.value && isAppForegrounded) {
+            compassTracker.startTracking()
+        }
+    }
+
+    fun toggleScreensaverAod() {
+        setScreensaverAodActive(!_isScreensaverAodActive.value)
     }
 
     fun updateScreensaverSensorPosture(posture: com.example.ui.home.ScreensaverSensorPosture?) {
@@ -809,24 +869,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateNavNotificationState(transform)
     }
 
+    private fun syncBackgroundNavigationService() {
+        val hasRoute = activeRouteData.value != null
+        val alertCfg = _kmStoneAlertSettings.value
+        val navCfg = _navigationNotificationSettings.value
+
+        // Dedicated KM Stone Monitoring Foreground Service
+        val kmStoneServiceActive = com.example.navigation.KmStoneMonitoringForegroundService
+            .shouldServiceStayActive(alertCfg, hasRoute)
+        com.example.navigation.KmStoneMonitoringForegroundService.syncServiceState(
+            getApplication(),
+            kmStoneServiceActive
+        )
+
+        // Navigation Notification Foreground Service (only runs when Navigation Notification itself is enabled,
+        // preventing redundant dual monitoring services when KM Stone Monitoring service is active or disabled)
+        LockScreenNavigationService.syncServiceState(getApplication(), navCfg.enabled)
+    }
+
     fun setNavigationNotificationEnabled(enabled: Boolean) {
         updateNavNotificationState { current -> current.copy(enabled = enabled) }
         if (enabled) {
             startLocation()
         }
-        val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-            notifSettings = _navigationNotificationSettings.value
-        )
-        LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
+        syncBackgroundNavigationService()
     }
 
     fun resetNavigationNotificationSettings() {
         val defaults = com.example.model.NavigationNotificationSettings.defaultSettings()
         updateNavNotificationState { defaults }
-        val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-            notifSettings = defaults
-        )
-        LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
+        syncBackgroundNavigationService()
         showToast("Navigation notification settings reset", ToastType.SUCCESS)
     }
 
@@ -1305,10 +1377,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 resolvedNotif?.let { snap ->
                     CtecsNavigationTelemetryHub.updateTelemetry(navigationNotificationSettings = snap)
-                    val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-                        notifSettings = snap
-                    )
-                    LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
+                    syncBackgroundNavigationService()
                 }
             }
         }
@@ -1343,6 +1412,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 resolvedAlerts?.let { snap ->
                     CtecsNavigationTelemetryHub.updateTelemetry(kmStoneAlertSettings = snap)
+                    syncBackgroundNavigationService()
                 }
             }
         }
@@ -1367,6 +1437,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             activeRouteData.collect { route ->
                 CtecsNavigationTelemetryHub.updateTelemetry(routeData = route)
+                syncBackgroundNavigationService()
                 com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
             }
         }
@@ -1402,7 +1473,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _projectProfile,
                 _kmStoneAlertSettings
             ) { loc, match, route, profile, alertSettings ->
-                if (!CtecsNavigationTelemetryHub.isServiceRunning.value) {
+                if (!CtecsNavigationTelemetryHub.isServiceRunning.value &&
+                    !CtecsNavigationTelemetryHub.isKmStoneServiceRunning.value
+                ) {
                     val events = CtecsNavigationTelemetryHub.sharedKmStoneDetector.evaluate(
                         locationState = loc,
                         matchResult = match,
@@ -1569,9 +1642,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Silent background check for updates
+        // Silent background check for updates (deferred after startup & throttled to once every 12 hours)
         viewModelScope.launch {
-            checkForAppUpdate(isManual = false)
+            kotlinx.coroutines.delay(4_000L)
+            if (appUpdateManager.shouldRunAutomaticCheck()) {
+                checkForAppUpdate(isManual = false)
+            }
         }
 
         // Launch-time check: detect if a survey was interrupted and prompt user to resume
@@ -1583,34 +1659,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Auto-sync storage videos and photos into Room
-        viewModelScope.launch {
+        // Auto-sync storage videos and photos into Room (deferred on IO so first frame stays snappy)
+        viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(1_500L)
             photoRepository.syncMediaFilesFromStorage()
-        }
-
-        // Smart Startup Page Loader progression
-        viewModelScope.launch {
-            _pageLoadingProgress.value = 0.18f
-            _pageLoadingStatus.value = "Starting System Engine..."
-            kotlinx.coroutines.delay(220)
-
-            _pageLoadingProgress.value = 0.45f
-            _pageLoadingStatus.value = "Calibrating Sensors & GPS..."
-            kotlinx.coroutines.delay(260)
-
-            _pageLoadingProgress.value = 0.78f
-            _pageLoadingStatus.value = "Loading Route Alignments..."
-            kotlinx.coroutines.delay(280)
-
-            _pageLoadingProgress.value = 0.96f
-            _pageLoadingStatus.value = "Configuring Realtime Overlays..."
-            kotlinx.coroutines.delay(240)
-
-            _pageLoadingProgress.value = 1.0f
-            _pageLoadingStatus.value = "Ready"
-            kotlinx.coroutines.delay(260)
-
-            _isPageLoading.value = false
         }
     }
 
@@ -1618,7 +1670,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isCheckingUpdate.value = true
             val currentChannel = com.example.update.AppReleaseChannel.current()
-            val result = appUpdateManager.checkForUpdate(currentChannel)
+            val result = appUpdateManager.checkForUpdate(currentChannel, isManual = isManual)
             _isCheckingUpdate.value = false
 
             if (result.isSuccess) {
@@ -1686,6 +1738,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTab(tab: AppTab) {
         _currentTab.value = tab
+        locationTracker.setHighFrequencyMode(tab == AppTab.CAMERA || tab == AppTab.SURVEY)
     }
 
     fun toggleFlash() {
@@ -3312,19 +3365,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startLocation() {
+        isAppForegrounded = true
         locationTracker.startTracking()
-        compassTracker.startTracking()
+        if (!_isScreensaverScreenOff.value && !_isScreensaverAodActive.value) {
+            compassTracker.startTracking()
+        }
+        syncBackgroundNavigationService()
     }
 
     fun stopLocation() {
+        isAppForegrounded = false
         locationTracker.stopTracking()
         compassTracker.stopTracking()
     }
 
     fun stopLocationIfIdle() {
-        val navNotifRunning = _navigationNotificationSettings.value.enabled &&
-            CtecsNavigationTelemetryHub.isServiceRunning.value
-        if (!navNotifRunning) {
+        isAppForegrounded = false
+        val hasRoute = activeRouteData.value != null
+        val bgServiceActive = CtecsNavigationTelemetryHub.isServiceRunning.value ||
+            CtecsNavigationTelemetryHub.isKmStoneServiceRunning.value ||
+            _navigationNotificationSettings.value.enabled ||
+            com.example.navigation.KmStoneMonitoringForegroundService.shouldServiceStayActive(
+                settings = _kmStoneAlertSettings.value,
+                hasActiveRoute = hasRoute
+            )
+        if (!bgServiceActive) {
             locationTracker.stopTracking()
         }
         compassTracker.stopTracking()
@@ -3513,6 +3578,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        stopLocationIfIdle()
         calibrationMatchingScope.cancel()
     }
 }

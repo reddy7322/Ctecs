@@ -1241,15 +1241,7 @@ fun PhotoUncroppedGridCard(
         ) {
             val file = remember(photo.filePath) { File(photo.filePath) }
             val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
-            val videoThumbnail = remember(photo.filePath) {
-                if (isVideo) {
-                    try {
-                        ThumbnailUtils.createVideoThumbnail(photo.filePath, MediaStore.Images.Thumbnails.MINI_KIND)
-                    } catch (e: Exception) {
-                        null
-                    }
-                } else null
-            }
+            val videoThumbnail = rememberAsyncVideoThumbnail(photo.filePath, isVideo)
 
             // Display media thumbnail in complete original aspect ratio (ContentScale.Fit)
             if (isVideo && videoThumbnail != null) {
@@ -1390,12 +1382,24 @@ fun PhotoUncroppedListItem(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val file = remember(photo.filePath) { File(photo.filePath) }
-    val fileSizeMb = remember(file) { "%.1f MB".format(Locale.US, file.length() / (1024f * 1024f)) }
-    val resolution = remember(photo.filePath) {
-        val res = getImageResolution(photo.filePath)
-        val mp = "%.1f MP".format(Locale.US, (res.first * res.second) / 1_000_000f)
-        "${res.first}x${res.second} ($mp)"
+    val mediaSummary by androidx.compose.runtime.produceState(
+        initialValue = Pair("-- MB", ""),
+        key1 = photo.filePath
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val sizeLabel = "%.1f MB".format(Locale.US, file.length() / (1024f * 1024f))
+            val res = getImageResolution(photo.filePath)
+            val resLabel = if (res.first > 0 && res.second > 0) {
+                val mp = "%.1f MP".format(Locale.US, (res.first * res.second) / 1_000_000f)
+                "${res.first}x${res.second} ($mp)"
+            } else {
+                ""
+            }
+            Pair(sizeLabel, resLabel)
+        }
     }
+    val fileSizeMb = mediaSummary.first
+    val resolution = mediaSummary.second
     val sdf = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
 
     Card(
@@ -1430,15 +1434,7 @@ fun PhotoUncroppedListItem(
 
             // Proportional Thumbnail Container (ContentScale.Fit)
             val isVideo = photo.fileName.endsWith(".mp4", ignoreCase = true) || photo.filePath.endsWith(".mp4", ignoreCase = true)
-            val videoThumbnail = remember(photo.filePath) {
-                if (isVideo) {
-                    try {
-                        ThumbnailUtils.createVideoThumbnail(photo.filePath, MediaStore.Images.Thumbnails.MINI_KIND)
-                    } catch (e: Exception) {
-                        null
-                    }
-                } else null
-            }
+            val videoThumbnail = rememberAsyncVideoThumbnail(photo.filePath, isVideo)
 
             Box(
                 modifier = Modifier
@@ -2734,4 +2730,59 @@ private fun shareMultiplePhotos(context: Context, photos: List<PhotoRecordEntity
     } catch (e: Exception) {
         android.widget.Toast.makeText(context, "Error sharing media: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
     }
+}
+
+object VideoThumbnailCache {
+    private val cache = android.util.LruCache<String, android.graphics.Bitmap>(24)
+
+    fun get(path: String): android.graphics.Bitmap? {
+        val bmp = cache.get(path)
+        return if (bmp != null && !bmp.isRecycled) bmp else null
+    }
+
+    fun put(path: String, bitmap: android.graphics.Bitmap) {
+        cache.put(path, bitmap)
+    }
+
+    fun clear() {
+        cache.evictAll()
+    }
+}
+
+@Composable
+private fun rememberAsyncVideoThumbnail(
+    filePath: String,
+    isVideo: Boolean
+): android.graphics.Bitmap? {
+    val cached = remember(filePath, isVideo) {
+        if (isVideo) VideoThumbnailCache.get(filePath) else null
+    }
+    val loaded by androidx.compose.runtime.produceState<android.graphics.Bitmap?>(
+        initialValue = cached,
+        key1 = filePath,
+        key2 = isVideo
+    ) {
+        if (!isVideo) {
+            value = null
+            return@produceState
+        }
+        val existing = VideoThumbnailCache.get(filePath)
+        if (existing != null) {
+            value = existing
+            return@produceState
+        }
+        val decoded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                @Suppress("DEPRECATION")
+                ThumbnailUtils.createVideoThumbnail(filePath, MediaStore.Images.Thumbnails.MINI_KIND)
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        if (decoded != null) {
+            VideoThumbnailCache.put(filePath, decoded)
+            value = decoded
+        }
+    }
+    return loaded
 }

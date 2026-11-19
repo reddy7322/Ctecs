@@ -17,6 +17,8 @@ import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.data.PreferencesManager
+import com.example.geo.ChainageMatcher
+import com.example.model.KmStoneAlertSettings
 import com.example.model.NavigationNotificationSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +38,8 @@ data class LockScreenNotificationSummary(
 private data class NotificationRenderSignature(
     val summary: LockScreenNotificationSummary,
     val showOnLockScreen: Boolean,
-    val liveNotificationEnabled: Boolean
+    val liveNotificationEnabled: Boolean,
+    val isMonitoringOnlyMode: Boolean = false
 )
 
 object LockScreenNotificationFormatter {
@@ -153,11 +156,21 @@ class LockScreenNavigationService : Service() {
                 serviceScope.launch {
                     val pm = PreferencesManager(applicationContext)
                     val currentNotif = CtecsNavigationTelemetryHub.navigationNotificationSettings.value
-                    val updatedNotif = currentNotif.copy(enabled = false)
-                    CtecsNavigationTelemetryHub.updateTelemetry(
-                        navigationNotificationSettings = updatedNotif
-                    )
-                    pm.updateNavigationNotificationSettings(updatedNotif)
+                    val currentAlerts = CtecsNavigationTelemetryHub.kmStoneAlertSettings.value
+                    if (currentNotif.enabled) {
+                        val updatedNotif = currentNotif.copy(enabled = false)
+                        CtecsNavigationTelemetryHub.updateTelemetry(
+                            navigationNotificationSettings = updatedNotif
+                        )
+                        pm.updateNavigationNotificationSettings(updatedNotif)
+                    }
+                    if (currentAlerts.lockScreenNotificationsEnabled) {
+                        val updatedAlerts = currentAlerts.copy(lockScreenNotificationsEnabled = false)
+                        CtecsNavigationTelemetryHub.updateTelemetry(
+                            kmStoneAlertSettings = updatedAlerts
+                        )
+                        pm.updateKmStoneAlertSettings(updatedAlerts)
+                    }
                 }
                 stopNavigationService()
                 return START_NOT_STICKY
@@ -174,18 +187,23 @@ class LockScreenNavigationService : Service() {
         }
 
         val notifSettings = CtecsNavigationTelemetryHub.navigationNotificationSettings.value
-        if (!notifSettings.enabled) {
+        val alertSettings = CtecsNavigationTelemetryHub.kmStoneAlertSettings.value
+        val hasRoute = CtecsNavigationTelemetryHub.activeRoute.value != null
+        if (!shouldNotificationServiceStayActive(notifSettings, alertSettings, hasRoute)) {
             stopNavigationService()
             return START_NOT_STICKY
         }
 
         val initialState = currentSnapshotState()
+        val isMonitoringOnly = !notifSettings.enabled
+        val initialSummary = formatServiceNotificationSummary(initialState, notifSettings)
         val initialSignature = NotificationRenderSignature(
-            summary = LockScreenNotificationFormatter.format(initialState, notifSettings),
+            summary = initialSummary,
             showOnLockScreen = notifSettings.showOnLockScreen,
-            liveNotificationEnabled = notifSettings.liveNotificationEnabled
+            liveNotificationEnabled = notifSettings.liveNotificationEnabled,
+            isMonitoringOnlyMode = isMonitoringOnly
         )
-        val initialNotification = buildNotification(initialState, notifSettings)
+        val initialNotification = buildNotification(initialState, notifSettings, initialSummary)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -219,56 +237,80 @@ class LockScreenNavigationService : Service() {
         if (collectorJob?.isActive == true) return
         val tracker = CtecsNavigationTelemetryHub.getOrCreateLocationTracker(applicationContext)
         collectorJob = serviceScope.launch {
-            combine(
+            val baseTelemetryFlow = combine(
                 tracker.locationState,
                 CtecsNavigationTelemetryHub.matchResult,
                 CtecsNavigationTelemetryHub.activeRoute,
                 CtecsNavigationTelemetryHub.projectProfile,
                 CtecsNavigationTelemetryHub.locationName
             ) { loc, match, route, profile, locName ->
-                // Evaluate KM Stone arrival / advance warning alerts during active background navigation
-                val alertCfg = CtecsNavigationTelemetryHub.kmStoneAlertSettings.value
-                val events = CtecsNavigationTelemetryHub.sharedKmStoneDetector.evaluate(
-                    locationState = loc,
-                    matchResult = match,
-                    routeData = route,
-                    projectRoadSide = profile.roadSide,
-                    settings = alertCfg
-                )
-                if (events.isNotEmpty()) {
-                    val isRec = CtecsNavigationTelemetryHub.isCameraOrSurveyRecording.value
-                    events.forEach { evt ->
-                        KmStoneAlertFeedbackManager.dispatchAlert(
-                            context = applicationContext,
-                            event = evt,
-                            settings = alertCfg,
-                            isRecordingActive = isRec
-                        )
+                // Fallback geometric matching only if hub has no match yet (e.g., cold service restart)
+                val effectiveMatch = if (match.chainage == null && route != null && loc.point != null && loc.isUsable) {
+                    ChainageMatcher.match(
+                        gpsPoint = loc.point,
+                        gpsAccuracy = loc.accuracy ?: 15f,
+                        bearing = loc.bearing,
+                        routeData = route,
+                        previousResult = match
+                    )
+                } else {
+                    match
+                }
+                // Evaluate KM Stone arrival / advance warning alerts ONLY if dedicated KM Stone
+                // foreground service is not already running (prevents duplicate detector passes).
+                if (!CtecsNavigationTelemetryHub.isKmStoneServiceRunning.value) {
+                    val alertCfg = CtecsNavigationTelemetryHub.kmStoneAlertSettings.value
+                    val events = CtecsNavigationTelemetryHub.sharedKmStoneDetector.evaluate(
+                        locationState = loc,
+                        matchResult = effectiveMatch,
+                        routeData = route,
+                        projectRoadSide = profile.roadSide,
+                        settings = alertCfg
+                    )
+                    if (events.isNotEmpty()) {
+                        val isRec = CtecsNavigationTelemetryHub.isCameraOrSurveyRecording.value
+                        events.forEach { evt ->
+                            KmStoneAlertFeedbackManager.dispatchAlert(
+                                context = applicationContext,
+                                event = evt,
+                                settings = alertCfg,
+                                isRecordingActive = isRec
+                            )
+                        }
                     }
                 }
-                navResolver.resolve(
+                val resolvedUi = navResolver.resolve(
                     locationState = loc,
-                    matchResult = match,
+                    matchResult = effectiveMatch,
                     routeData = route,
                     projectProfile = profile,
                     locationName = locName,
                     is24HourFormat = CtecsNavigationTelemetryHub.is24HourFormat.value
                 )
-            }.combine(CtecsNavigationTelemetryHub.navigationNotificationSettings) { uiState, notifSettings ->
-                uiState to notifSettings
-            }.collect { (uiState, notifSettings) ->
+                resolvedUi to (route != null)
+            }
+
+            combine(
+                baseTelemetryFlow,
+                CtecsNavigationTelemetryHub.navigationNotificationSettings,
+                CtecsNavigationTelemetryHub.kmStoneAlertSettings
+            ) { (uiState, hasRoute), notifSettings, alertSettings ->
+                Triple(uiState, notifSettings, shouldNotificationServiceStayActive(notifSettings, alertSettings, hasRoute))
+            }.collect { (uiState, notifSettings, stayActive) ->
                 // Keep home-screen widgets synced while foreground service is active
                 com.example.widget.CtecsWidgetUpdater.updateAllWidgets(applicationContext)
 
-                if (!notifSettings.enabled) {
+                if (!stayActive) {
                     stopNavigationService()
                     return@collect
                 }
-                val summary = LockScreenNotificationFormatter.format(uiState, notifSettings)
+                val isMonitoringOnly = !notifSettings.enabled
+                val summary = formatServiceNotificationSummary(uiState, notifSettings)
                 val newSignature = NotificationRenderSignature(
                     summary = summary,
                     showOnLockScreen = notifSettings.showOnLockScreen,
-                    liveNotificationEnabled = notifSettings.liveNotificationEnabled
+                    liveNotificationEnabled = notifSettings.liveNotificationEnabled,
+                    isMonitoringOnlyMode = isMonitoringOnly
                 )
                 val previous = lastPostedSignature
                 if (newSignature == previous) {
@@ -278,7 +320,8 @@ class LockScreenNavigationService : Service() {
                 val coreTitleChanged = previous == null || previous.summary.title != summary.title
                 val settingsChanged = previous == null ||
                     previous.showOnLockScreen != newSignature.showOnLockScreen ||
-                    previous.liveNotificationEnabled != newSignature.liveNotificationEnabled
+                    previous.liveNotificationEnabled != newSignature.liveNotificationEnabled ||
+                    previous.isMonitoringOnlyMode != newSignature.isMonitoringOnlyMode
                 if (coreTitleChanged || settingsChanged || (now - lastMinorNotificationPostMs) >= MINOR_UPDATE_THROTTLE_MS) {
                     lastPostedSignature = newSignature
                     lastMinorNotificationPostMs = now
@@ -287,6 +330,24 @@ class LockScreenNavigationService : Service() {
                 }
             }
         }
+    }
+
+    private fun formatServiceNotificationSummary(
+        navState: LockScreenNavUiState,
+        settings: NavigationNotificationSettings
+    ): LockScreenNotificationSummary {
+        if (settings.enabled) {
+            return LockScreenNotificationFormatter.format(navState, settings)
+        }
+        val validChainage = navState.chainageText.isNotBlank() && navState.chainageText != "--+---"
+        val chPart = if (validChainage) "CH ${navState.chainageText}" else "Waiting for GPS alignment"
+        val sidePart = navState.reliableSide?.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty()
+        return LockScreenNotificationSummary(
+            title = "CTECS KM Stone Monitoring",
+            contentText = "$chPart$sidePart • Active for arrival alerts",
+            expandedText = "$chPart$sidePart\nMonitoring verified KM Stones in background & while locked.",
+            shortCriticalText = null
+        )
     }
 
     private fun currentSnapshotState(): LockScreenNavUiState {
@@ -328,7 +389,7 @@ class LockScreenNavigationService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val visibility = if (settings.showOnLockScreen) {
+        val visibility = if (settings.enabled && settings.showOnLockScreen) {
             NotificationCompat.VISIBILITY_PUBLIC
         } else {
             NotificationCompat.VISIBILITY_PRIVATE
@@ -349,7 +410,7 @@ class LockScreenNavigationService : Service() {
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setVisibility(visibility)
             .setPriority(
-                if (settings.liveNotificationEnabled) NotificationCompat.PRIORITY_DEFAULT
+                if (settings.enabled && settings.liveNotificationEnabled) NotificationCompat.PRIORITY_DEFAULT
                 else NotificationCompat.PRIORITY_LOW
             )
             .setContentIntent(openPending)
@@ -363,7 +424,7 @@ class LockScreenNavigationService : Service() {
             )
         }
 
-        if (settings.liveNotificationEnabled) {
+        if (settings.enabled && settings.liveNotificationEnabled) {
             builder.setRequestPromotedOngoing(true)
             if (!summary.shortCriticalText.isNullOrBlank()) {
                 builder.setShortCriticalText(summary.shortCriticalText)
@@ -436,9 +497,15 @@ class LockScreenNavigationService : Service() {
         private const val MINOR_UPDATE_THROTTLE_MS = 500L
 
         fun shouldNotificationServiceStayActive(
-            notifSettings: NavigationNotificationSettings
+            notifSettings: NavigationNotificationSettings,
+            kmStoneAlertSettings: KmStoneAlertSettings? = null,
+            hasActiveRoute: Boolean = false
         ): Boolean {
-            return notifSettings.enabled
+            if (notifSettings.enabled) return true
+            return kmStoneAlertSettings != null &&
+                kmStoneAlertSettings.enabled &&
+                kmStoneAlertSettings.lockScreenNotificationsEnabled &&
+                hasActiveRoute
         }
 
         fun hasLocationPermission(context: Context): Boolean {

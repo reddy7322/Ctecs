@@ -48,7 +48,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.NightlightRound
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.ScreenLockRotation
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.Icon
@@ -153,6 +155,9 @@ var SemanticsPropertyReceiver.miniMapRotationDeg by MiniMapRotationDegKey
 
 val ScreensaverThemeDarkKey = SemanticsPropertyKey<Boolean>("ScreensaverThemeDark")
 var SemanticsPropertyReceiver.screensaverThemeDark by ScreensaverThemeDarkKey
+
+val ScreensaverScreenOffKey = SemanticsPropertyKey<Boolean>("ScreensaverScreenOff")
+var SemanticsPropertyReceiver.screensaverScreenOff by ScreensaverScreenOffKey
 
 private data class HudClusterPalette(
     val rootBackground: Color,
@@ -266,8 +271,18 @@ fun AutomotiveChainageScreensaverContent(
     isSamplePreview: Boolean = false,
     sensorPosture: ScreensaverSensorPosture? = null,
     temporaryLandscapeOverride: Boolean = false,
+    isScreenOff: Boolean = false,
+    isAodActive: Boolean = false,
+    is24HourFormat: Boolean = true,
+    nextKmLabel: String? = null,
+    distanceToNextMetres: Long? = null,
+    lastKmStoneEvent: com.example.navigation.KmStoneAlertEvent? = null,
+    isKmStoneMonitoringActive: Boolean = false,
     onToggleMirrorQuickMode: ((enableMirror: Boolean, currentlyLandscape: Boolean) -> Unit)? = null,
-    onToggleOrientationLock: ((currentlyLandscape: Boolean) -> Unit)? = null
+    onToggleOrientationLock: ((currentlyLandscape: Boolean) -> Unit)? = null,
+    onToggleScreenOff: ((Boolean) -> Unit)? = null,
+    onToggleAod: ((Boolean) -> Unit)? = null,
+    onForceBlackScreenOff: (() -> Unit)? = null
 ) {
     val effectiveDarkInstrument = when (screensaverSettings.screensaverThemeMode) {
         ScreensaverThemeMode.LIGHT -> false
@@ -332,10 +347,20 @@ fun AutomotiveChainageScreensaverContent(
             0f
         }
 
+        // Smooth fade-to-black & fade-back blackout alpha; pauses heavy dashboard animations when opaque
+        val blackoutOverlayAlpha by animateFloatAsState(
+            targetValue = if (isScreenOff) 1f else 0f,
+            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+            label = "screensaver_blackout_fade"
+        )
+        val pauseDashboardRendering = (isScreenOff && blackoutOverlayAlpha >= 0.99f) || (isAodActive && !isScreenOff)
+        val showScreenOffBtn = onToggleScreenOff != null && screensaverSettings.showScreenOffControl
+        val showAodQuickBtn = onToggleAod != null && screensaverSettings.aodEnabled && !isScreenOff && !isAodActive
+
         // Subtle animated transition pulse when toggling Mirror <-> Normal
         val transitionAlphaPulse = remember { Animatable(1f) }
         LaunchedEffect(effectiveMode) {
-            if (transitionAlphaPulse.value == 1f) {
+            if (!isScreenOff && transitionAlphaPulse.value == 1f) {
                 transitionAlphaPulse.snapTo(0.84f)
                 transitionAlphaPulse.animateTo(1f, animationSpec = tween(210))
             }
@@ -346,7 +371,7 @@ fun AutomotiveChainageScreensaverContent(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(palette.rootBackground)
+                    .background(if (pauseDashboardRendering) Color.Black else palette.rootBackground)
             ) {
                 Box(
                     modifier = Modifier
@@ -358,117 +383,207 @@ fun AutomotiveChainageScreensaverContent(
                             dashboardLandscapeRotation = rotationDegrees
                             screensaverDisplayMode = effectiveMode.name
                             screensaverThemeDark = palette.isDark
+                            screensaverScreenOff = isScreenOff
                         }
                         .graphicsLayer {
                             scaleX = scaleXFactor
                             alpha = transitionAlphaPulse.value
                         }
                 ) {
-                    // Foreground instrument surface scaled by adjustable HUD brightness over opaque black
+                    if (!pauseDashboardRendering) {
+                        // Foreground instrument surface scaled by adjustable HUD brightness over opaque black
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(hudAlpha)
+                        ) {
+                            // Subtle automotive radial cluster ambient glow
+                            if (!isMirrorMode) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.radialGradient(
+                                                colors = listOf(
+                                                    palette.ambientGlowTop,
+                                                    palette.rootBackground.copy(alpha = 0.85f),
+                                                    palette.rootBackground
+                                                )
+                                            )
+                                        )
+                                )
+                            }
+
+                            // True immersive edge-to-edge: only pad around physical display cutouts (punch-holes/notches)
+                            val safeCutoutModifier = Modifier
+                                .fillMaxSize()
+                                .windowInsetsPadding(WindowInsets.displayCutout)
+
+                            if (isLandscapeMode) {
+                                LandscapeAutomotiveCluster(
+                                    displayState = displayState,
+                                    location = location,
+                                    bearing = bearing,
+                                    compassHeading = compassHeading,
+                                    routeData = routeData,
+                                    screensaverSettings = screensaverSettings,
+                                    palette = palette,
+                                    modifier = safeCutoutModifier
+                                )
+                            } else {
+                                PortraitAutomotiveCluster(
+                                    displayState = displayState,
+                                    location = location,
+                                    bearing = bearing,
+                                    compassHeading = compassHeading,
+                                    routeData = routeData,
+                                    screensaverSettings = screensaverSettings,
+                                    palette = palette,
+                                    modifier = safeCutoutModifier
+                                )
+                            }
+                        }
+
+                        // Sample badge ONLY inside explicit Settings preview mode (never during real Home screensaver)
+                        if (isSamplePreview) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFFF59E0B).copy(alpha = 0.20f),
+                                border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.7f)),
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(top = 8.dp)
+                                    .testTag("screensaver_preview_sample_badge")
+                            ) {
+                                Text(
+                                    text = "SAMPLE DATA",
+                                    color = Color(0xFFFCD34D),
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 0.8.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Top-corner quick controls kept outside scaleX mirror wrapper so icons and touch targets
+                // remain upright and never overlap chainage, speedometer, or Mini Map.
+                if (!pauseDashboardRendering) {
+                    if (onToggleOrientationLock != null) {
+                        ScreensaverOrientationLockToggle(
+                            isLocked = screensaverSettings.orientationLocked,
+                            isDarkPalette = palette.isDark,
+                            hudAlpha = hudAlpha,
+                            onToggle = { onToggleOrientationLock(isLandscapeMode) },
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .windowInsetsPadding(WindowInsets.displayCutout)
+                                .padding(top = 6.dp, start = 8.dp)
+                        )
+                    }
+
+                    if (onToggleMirrorQuickMode != null || (showScreenOffBtn && !isScreenOff) || showAodQuickBtn) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .windowInsetsPadding(WindowInsets.displayCutout)
+                                .padding(top = 6.dp, end = 8.dp)
+                        ) {
+                            if (showAodQuickBtn) {
+                                ScreensaverAodQuickToggle(
+                                    isDarkPalette = palette.isDark,
+                                    hudAlpha = hudAlpha,
+                                    onToggle = { onToggleAod?.invoke(true) }
+                                )
+                            }
+                            if (showScreenOffBtn && !isScreenOff) {
+                                ScreensaverScreenOffToggle(
+                                    isScreenOff = false,
+                                    isDarkPalette = palette.isDark,
+                                    hudAlpha = hudAlpha,
+                                    onToggle = { onToggleScreenOff?.invoke(true) }
+                                )
+                            }
+                            if (onToggleMirrorQuickMode != null) {
+                                ScreensaverMirrorQuickToggle(
+                                    isMirrorActive = isMirrorMode,
+                                    isDarkPalette = palette.isDark,
+                                    hudAlpha = hudAlpha,
+                                    onToggle = {
+                                        onToggleMirrorQuickMode(!isMirrorMode, isLandscapeMode)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Pure-black AMOLED Always-On Display (pauses map, speedometer & decorative animations;
+                // preserves orientation, Mirror flip, live chainage & KM Stone monitoring)
+                if (isAodActive && !isScreenOff) {
+                    AmoledAlwaysOnDisplay(
+                        displayState = displayState,
+                        settings = screensaverSettings,
+                        isMirrorMode = isMirrorMode,
+                        is24HourFormat = is24HourFormat,
+                        nextKmLabel = nextKmLabel,
+                        distanceToNextMetres = distanceToNextMetres,
+                        lastKmStoneEvent = lastKmStoneEvent,
+                        isKmStoneMonitoringActive = isKmStoneMonitoringActive,
+                        onExitAod = { onToggleAod?.invoke(false) },
+                        onSwitchToBlackScreenOff = if (showScreenOffBtn) {
+                            {
+                                if (onForceBlackScreenOff != null) {
+                                    onForceBlackScreenOff()
+                                } else {
+                                    onToggleAod?.invoke(false)
+                                    onToggleScreenOff?.invoke(true)
+                                }
+                            }
+                        } else {
+                            null
+                        }
+                    )
+                }
+
+                // Pure-black distraction-free Screen OFF overlay (keeps session, GPS, chainage, and KM Stone alerts active)
+                if (blackoutOverlayAlpha > 0.01f) {
+                    val wakeInteraction = remember { MutableInteractionSource() }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .alpha(hudAlpha)
-                    ) {
-                        // Subtle automotive radial cluster ambient glow
-                        if (!isMirrorMode) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.radialGradient(
-                                            colors = listOf(
-                                                palette.ambientGlowTop,
-                                                palette.rootBackground.copy(alpha = 0.85f),
-                                                palette.rootBackground
-                                            )
-                                        )
+                            .background(Color.Black.copy(alpha = blackoutOverlayAlpha))
+                            .testTag("screensaver_blackout_overlay")
+                            .then(
+                                if (isScreenOff && onToggleScreenOff != null) {
+                                    Modifier.clickable(
+                                        interactionSource = wakeInteraction,
+                                        indication = null,
+                                        onClickLabel = "Wake screensaver display",
+                                        onClick = { onToggleScreenOff(false) }
                                     )
+                                } else {
+                                    Modifier
+                                }
                             )
-                        }
-
-                        // True immersive edge-to-edge: only pad around physical display cutouts (punch-holes/notches)
-                        val safeCutoutModifier = Modifier
-                            .fillMaxSize()
-                            .windowInsetsPadding(WindowInsets.displayCutout)
-
-                        if (isLandscapeMode) {
-                            LandscapeAutomotiveCluster(
-                                displayState = displayState,
-                                location = location,
-                                bearing = bearing,
-                                compassHeading = compassHeading,
-                                routeData = routeData,
-                                screensaverSettings = screensaverSettings,
-                                palette = palette,
-                                modifier = safeCutoutModifier
-                            )
-                        } else {
-                            PortraitAutomotiveCluster(
-                                displayState = displayState,
-                                location = location,
-                                bearing = bearing,
-                                compassHeading = compassHeading,
-                                routeData = routeData,
-                                screensaverSettings = screensaverSettings,
-                                palette = palette,
-                                modifier = safeCutoutModifier
+                    ) {
+                        if (isScreenOff && showScreenOffBtn) {
+                            ScreensaverScreenOffToggle(
+                                isScreenOff = true,
+                                isDarkPalette = true,
+                                hudAlpha = 1f,
+                                onToggle = { onToggleScreenOff?.invoke(false) },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .windowInsetsPadding(WindowInsets.displayCutout)
+                                    .padding(top = 6.dp, end = 8.dp)
                             )
                         }
                     }
-
-                    // Sample badge ONLY inside explicit Settings preview mode (never during real Home screensaver)
-                    if (isSamplePreview) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFFF59E0B).copy(alpha = 0.20f),
-                            border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.7f)),
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 8.dp)
-                                .testTag("screensaver_preview_sample_badge")
-                        ) {
-                            Text(
-                                text = "SAMPLE DATA",
-                                color = Color(0xFFFCD34D),
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 0.8.sp,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Compact animated Orientation Lock / Unlock button kept outside scaleX mirror wrapper
-                if (onToggleOrientationLock != null) {
-                    ScreensaverOrientationLockToggle(
-                        isLocked = screensaverSettings.orientationLocked,
-                        isDarkPalette = palette.isDark,
-                        hudAlpha = hudAlpha,
-                        onToggle = { onToggleOrientationLock(isLandscapeMode) },
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .windowInsetsPadding(WindowInsets.displayCutout)
-                            .padding(top = 6.dp, start = 8.dp)
-                    )
-                }
-
-                // Compact animated Mirror / Normal quick-switch button kept outside scaleX mirror wrapper
-                // so its icon, text, and accessible tap target stay upright and unobtrusive.
-                if (onToggleMirrorQuickMode != null) {
-                    ScreensaverMirrorQuickToggle(
-                        isMirrorActive = isMirrorMode,
-                        isDarkPalette = palette.isDark,
-                        hudAlpha = hudAlpha,
-                        onToggle = {
-                            onToggleMirrorQuickMode(!isMirrorMode, isLandscapeMode)
-                        },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .windowInsetsPadding(WindowInsets.displayCutout)
-                            .padding(top = 6.dp, end = 8.dp)
-                    )
                 }
             }
         }
@@ -598,6 +713,166 @@ private fun ScreensaverOrientationLockToggle(
                         softWrap = false
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverScreenOffToggle(
+    isScreenOff: Boolean,
+    isDarkPalette: Boolean,
+    hudAlpha: Float,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bgColor by animateColorAsState(
+        targetValue = when {
+            isScreenOff -> Color(0xFF0A1412).copy(alpha = 0.78f)
+            isDarkPalette -> Color(0xFF0F172A).copy(alpha = 0.56f)
+            else -> Color(0xFFFFFFFF).copy(alpha = 0.85f)
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "screen_off_bg"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            isScreenOff -> Color(0xFF34D399).copy(alpha = 0.36f)
+            isDarkPalette -> Color(0xFF94A3B8).copy(alpha = 0.24f)
+            else -> Color(0xFFCBD5E1).copy(alpha = 0.65f)
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "screen_off_border"
+    )
+    val iconColor by animateColorAsState(
+        targetValue = when {
+            isScreenOff -> Color(0xFF34D399)
+            isDarkPalette -> Color(0xFFE2E8F0)
+            else -> Color(0xFF1E293B)
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "screen_off_icon_tint"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (isScreenOff) 1.08f else 1.0f,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "screen_off_scale"
+    )
+    val controlAlpha by animateFloatAsState(
+        targetValue = if (isScreenOff) 0.48f else hudAlpha.coerceIn(0.65f, 1f),
+        animationSpec = tween(durationMillis = 240),
+        label = "screen_off_alpha"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Box(
+        contentAlignment = Alignment.TopEnd,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .alpha(controlAlpha)
+            .testTag("screensaver_screen_off_toggle_btn")
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple(bounded = false, radius = 24.dp, color = Color(0xFF34D399)),
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onClickLabel = if (isScreenOff) "Screen ON" else "Screen OFF",
+                onClick = onToggle
+            )
+            .semantics {
+                contentDescription = if (isScreenOff) "Screen ON" else "Screen OFF"
+            }
+            .padding(2.dp)
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = bgColor,
+            border = BorderStroke(0.75.dp, borderColor),
+            shadowElevation = if (isScreenOff || isDarkPalette) 1.dp else 2.dp
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PowerSettingsNew,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverAodQuickToggle(
+    isDarkPalette: Boolean,
+    hudAlpha: Float,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bgColor = if (isDarkPalette) {
+        Color(0xFF0F172A).copy(alpha = 0.56f)
+    } else {
+        Color(0xFFFFFFFF).copy(alpha = 0.85f)
+    }
+    val borderColor = if (isDarkPalette) {
+        Color(0xFF38BDF8).copy(alpha = 0.30f)
+    } else {
+        Color(0xFFCBD5E1).copy(alpha = 0.65f)
+    }
+    val contentColor = if (isDarkPalette) Color(0xFF7DD3FC) else Color(0xFF0284C7)
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Box(
+        contentAlignment = Alignment.TopEnd,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .alpha(hudAlpha.coerceIn(0.65f, 1f))
+            .testTag("screensaver_aod_toggle_btn")
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple(bounded = false, radius = 24.dp, color = Color(0xFF38BDF8)),
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onClickLabel = "Enable AMOLED Always-On Display",
+                onClick = onToggle
+            )
+            .semantics {
+                contentDescription = "AMOLED Always-On Display"
+            }
+            .padding(2.dp)
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = bgColor,
+            border = BorderStroke(0.75.dp, borderColor),
+            shadowElevation = if (isDarkPalette) 1.dp else 2.dp
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.NightlightRound,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = "AOD",
+                    color = contentColor,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.3.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
     }

@@ -49,7 +49,18 @@ object CtecsWidgetUpdater {
     private val resolver = LockScreenNavStateResolver()
     private var lastUpdateSignature: String? = null
     private var lastUpdateEpochMs: Long = 0L
-    private const val MIN_AUTOMATIC_PUSH_INTERVAL_MS = 450L
+    private const val MIN_AUTOMATIC_PUSH_INTERVAL_MS = 1_500L
+    private const val WIDGET_INSTANCE_CACHE_TTL_MS = 15_000L
+
+    @Volatile
+    private var cachedWidgetInstances: List<Pair<Int, CtecsWidgetType>>? = null
+    @Volatile
+    private var cachedInstancesAtMs: Long = 0L
+
+    fun invalidateWidgetInstanceCache() {
+        cachedWidgetInstances = null
+        cachedInstancesAtMs = 0L
+    }
 
     fun cacheWidgetSettings(context: Context, settings: CtecsWidgetSettings) {
         try {
@@ -176,7 +187,12 @@ object CtecsWidgetUpdater {
         }
     }
 
-    fun getActiveWidgetInstances(context: Context): List<Pair<Int, CtecsWidgetType>> {
+    fun getActiveWidgetInstances(context: Context, bypassCache: Boolean = false): List<Pair<Int, CtecsWidgetType>> {
+        val now = System.currentTimeMillis()
+        val cached = cachedWidgetInstances
+        if (!bypassCache && cached != null && (now - cachedInstancesAtMs) < WIDGET_INSTANCE_CACHE_TTL_MS) {
+            return cached
+        }
         val appCtx = context.applicationContext
         val mgr = AppWidgetManager.getInstance(appCtx) ?: return emptyList()
         val result = mutableListOf<Pair<Int, CtecsWidgetType>>()
@@ -196,13 +212,20 @@ object CtecsWidgetUpdater {
                 result.add(id to type)
             }
         }
+        cachedWidgetInstances = result
+        cachedInstancesAtMs = now
         return result
     }
 
     fun updateAllWidgets(context: Context, force: Boolean = false) {
         val appCtx = context.applicationContext
-        val instances = getActiveWidgetInstances(appCtx)
+        val instances = getActiveWidgetInstances(appCtx, bypassCache = force)
         if (instances.isEmpty()) return
+
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastUpdateEpochMs) < MIN_AUTOMATIC_PUSH_INTERVAL_MS) {
+            return
+        }
 
         val (navState, point) = resolveCurrentNavState(appCtx)
         val settings = loadCachedWidgetSettings(appCtx)
@@ -219,13 +242,9 @@ object CtecsWidgetUpdater {
             append(navState.locationName).append('|')
             append(route?.id).append('|')
             append(isServiceRunning).append('|')
-            append(settings.toJsonString())
+            append(settings.hashCode())
         }
-        val now = System.currentTimeMillis()
         if (!force && sig == lastUpdateSignature && (now - lastUpdateEpochMs) < 15_000L) {
-            return
-        }
-        if (!force && (now - lastUpdateEpochMs) < MIN_AUTOMATIC_PUSH_INTERVAL_MS) {
             return
         }
         lastUpdateSignature = sig
@@ -420,11 +439,22 @@ abstract class BaseCtecsWidgetProvider(
         }
     }
 
+    override fun onEnabled(context: Context) {
+        super.onEnabled(context)
+        CtecsWidgetUpdater.invalidateWidgetInstanceCache()
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        CtecsWidgetUpdater.invalidateWidgetInstanceCache()
+    }
+
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
+        CtecsWidgetUpdater.invalidateWidgetInstanceCache()
         for (widgetId in appWidgetIds) {
             CtecsWidgetUpdater.updateSingleWidget(
                 context = context,
@@ -453,6 +483,7 @@ abstract class BaseCtecsWidgetProvider(
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         super.onDeleted(context, appWidgetIds)
+        CtecsWidgetUpdater.invalidateWidgetInstanceCache()
         var current = CtecsWidgetUpdater.loadCachedWidgetSettings(context)
         for (id in appWidgetIds) {
             current = current.withoutInstanceConfig(id)

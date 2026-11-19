@@ -1,5 +1,6 @@
 package com.example.geo
 
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -13,15 +14,25 @@ import com.example.model.GeoPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.atan
 import kotlin.math.cos
 import kotlin.math.floor
@@ -38,8 +49,9 @@ import kotlin.math.tan
  * - Standard OpenStreetMap street-map tiles
  * - Genuine Satellite imagery tiles (Esri World Imagery ArcGIS MapServer)
  * - Identifiable User-Agent
- * - Local disk and in-memory LRU caching to prevent redundant requests
- * - Asynchronous background fetching with loading state indicator
+ * - Dynamic memory-aware LRU cache + bounded disk cache with automatic pruning
+ * - Concurrency-capped asynchronous fetching with exponential offline/failure backoff
+ * - Coalesced tile redraw notifications and lazy bitmap allocation
  * - Graceful offline fallback with terrain grid
  * - Accurate attribution for both providers
  */
@@ -56,27 +68,117 @@ object OsmTileManager {
     const val MIN_VIEW_RANGE_METRES = 60.0
     const val MAX_VIEW_RANGE_METRES = 32_000_000.0
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private const val MAX_DISK_CACHE_BYTES = 50L * 1024L * 1024L // 50 MB bounded disk cache
+    private const val MAX_TILE_AGE_MS = 14L * 24L * 60L * 60L * 1000L // 14 days
+    private const val MAX_CONCURRENT_DOWNLOADS = 4
+    private const val BASE_FAILURE_BACKOFF_MS = 30_000L
+    private const val MAX_FAILURE_BACKOFF_MS = 300_000L
+    private const val OFFLINE_COOLDOWN_MS = 15_000L
+    private const val TILE_UPDATE_COALESCE_MS = 75L
 
-    private val okHttpClient = OkHttpClient.Builder()
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val fetchSemaphore = Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+    private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
+        .dispatcher(
+            Dispatcher().apply {
+                maxRequests = 12
+                maxRequestsPerHost = MAX_CONCURRENT_DOWNLOADS
+            }
+        )
         .connectTimeout(6, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
         .build()
 
-    // 24 MB in-memory cache for tile bitmaps (standard & satellite)
-    private val memoryCache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
+    // Adaptive in-memory cache capped at 24 MB (or 1/12th of JVM max heap on constrained devices)
+    private val maxMemoryCacheBytes: Int = run {
+        val heapShare = (Runtime.getRuntime().maxMemory() / 12L).coerceIn(4L * 1024L * 1024L, 24L * 1024L * 1024L)
+        heapShare.toInt()
+    }
+
+    private val memoryCache = object : LruCache<String, Bitmap>(maxMemoryCacheBytes) {
         override fun sizeOf(key: String, value: Bitmap): Int {
-            return value.byteCount
+            return value.byteCount.coerceAtLeast(1)
         }
     }
 
-    // State flow notifying UI whenever a tile has been downloaded so map can re-render
+    private data class TileFailureRecord(
+        val failureCount: Int,
+        val retryAfterMs: Long
+    )
+
+    private val tileFailureBackoff = ConcurrentHashMap<String, TileFailureRecord>()
+    private val globalOfflineUntilMs = AtomicLong(0L)
+    private val diskPruneScheduled = AtomicBoolean(false)
+    private val tileEventCoalesceScheduled = AtomicBoolean(false)
+
+    // State flow notifying UI whenever a batch of tiles has been downloaded so map can re-render
     private val _tileUpdateEvent = MutableStateFlow(0L)
     val tileUpdateEvent: StateFlow<Long> = _tileUpdateEvent.asStateFlow()
 
     // State flow tracking whether background tile downloads are currently in flight
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    fun trimMemory(level: Int) {
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+                level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND -> {
+                memoryCache.evictAll()
+            }
+            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE ||
+                level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
+                memoryCache.trimToSize(memoryCache.maxSize() / 2)
+            }
+        }
+    }
+
+    fun clearMemoryCache() {
+        memoryCache.evictAll()
+    }
+
+    fun memoryCacheSizeBytes(): Int = memoryCache.size()
+
+    internal fun putTileInMemoryCacheForTest(key: String, bitmap: Bitmap) {
+        memoryCache.put(key, bitmap)
+    }
+
+    internal fun clearFailureBackoff() {
+        tileFailureBackoff.clear()
+        globalOfflineUntilMs.set(0L)
+    }
+
+    internal fun recordTileFailure(key: String, nowMs: Long = System.currentTimeMillis(), isOfflineError: Boolean = false) {
+        val prev = tileFailureBackoff[key]
+        val nextCount = ((prev?.failureCount ?: 0) + 1).coerceAtMost(5)
+        val backoffMs = (BASE_FAILURE_BACKOFF_MS * (1L shl (nextCount - 1))).coerceAtMost(MAX_FAILURE_BACKOFF_MS)
+        tileFailureBackoff[key] = TileFailureRecord(nextCount, nowMs + backoffMs)
+        if (tileFailureBackoff.size > 512) {
+            tileFailureBackoff.entries.removeIf { it.value.retryAfterMs <= nowMs }
+        }
+        if (isOfflineError) {
+            globalOfflineUntilMs.set(nowMs + OFFLINE_COOLDOWN_MS)
+        }
+    }
+
+    internal fun isTileInBackoff(key: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (nowMs < globalOfflineUntilMs.get()) return true
+        val record = tileFailureBackoff[key] ?: return false
+        if (nowMs >= record.retryAfterMs) {
+            tileFailureBackoff.remove(key)
+            return false
+        }
+        return true
+    }
+
+    fun tileFileFor(context: Context, zoom: Int, x: Int, y: Int, isSatellite: Boolean): File {
+        val safeZoom = zoom.coerceIn(MIN_TILE_ZOOM, MAX_TILE_ZOOM)
+        val wrappedX = wrapTileX(x, safeZoom)
+        val typeFolder = if (isSatellite) "satellite" else "standard"
+        val ext = if (isSatellite) "jpg" else "png"
+        return File(context.cacheDir, "osm_tiles/$typeFolder/$safeZoom/$wrappedX/$y.$ext")
+    }
 
     fun wrapLongitude(lon: Double): Double {
         return ((((lon + 180.0) % 360.0) + 360.0) % 360.0) - 180.0
@@ -173,8 +275,7 @@ object OsmTileManager {
     /**
      * Stitches real map tiles (Standard street map or Satellite imagery) centered around [center]
      * into a target [Bitmap] of dimensions [widthPx] x [heightPx], accounting for interactive pan offsets.
-     * Supports full-Earth navigation with seamless antimeridian tile wrapping and polar bounds clamping.
-     * Returns null if no cached tiles are ready. Enqueues missing tiles for background download.
+     * Allocates the destination bitmap lazily only when at least one cached tile is available.
      */
     fun renderMapBitmap(
         context: Context,
@@ -206,19 +307,38 @@ object OsmTileManager {
         val maxTileY = floor(maxPxY / TILE_SIZE).toInt().coerceAtMost(numTiles - 1)
         if (minTileY > maxTileY) return null
 
-        var hasAnyTile = false
-        val destBitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(destBitmap)
-        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        var destBitmap: Bitmap? = null
+        var canvas: Canvas? = null
+        var paint: Paint? = null
 
-        if (isSatellite) {
-            // Satellite imagery: natural aerial photography without inverted colors
-            val satMatrix = ColorMatrix().apply {
-                setSaturation(1.05f)
+        for (tx in minTileX..maxTileX) {
+            val wrappedTx = ((tx % numTiles) + numTiles) % numTiles
+            for (ty in minTileY..maxTileY) {
+                val tile = getTile(context, safeZoom, wrappedTx, ty, isSatellite)
+                if (tile != null && !tile.isRecycled) {
+                    if (destBitmap == null) {
+                        destBitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+                        canvas = Canvas(destBitmap)
+                        paint = createTilePaint(isSatellite = isSatellite, darkTheme = darkTheme)
+                    }
+                    val tileWorldLeft = tx * TILE_SIZE.toDouble()
+                    val tileWorldTop = ty * TILE_SIZE.toDouble()
+                    val screenLeft = (tileWorldLeft - minPxX).toFloat()
+                    val screenTop = (tileWorldTop - minPxY).toFloat()
+                    canvas?.drawBitmap(tile, screenLeft, screenTop, paint)
+                }
             }
+        }
+
+        return destBitmap
+    }
+
+    private fun createTilePaint(isSatellite: Boolean, darkTheme: Boolean): Paint {
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        if (isSatellite) {
+            val satMatrix = ColorMatrix().apply { setSaturation(1.05f) }
             paint.colorFilter = ColorMatrixColorFilter(satMatrix)
         } else if (darkTheme) {
-            // Standard Street Map (Dark Mode): invert brightness into a deep slate palette while preserving road clarity
             val darkMatrix = ColorMatrix(floatArrayOf(
                 -0.85f,  0.00f,  0.00f, 0.0f, 215f,
                  0.00f, -0.85f,  0.00f, 0.0f, 215f,
@@ -227,31 +347,10 @@ object OsmTileManager {
             ))
             paint.colorFilter = ColorMatrixColorFilter(darkMatrix)
         } else {
-            // Standard Street Map (Light Mode): crisp, natural OpenStreetMap palette with vibrant roads and clear labels
-            val lightMatrix = ColorMatrix().apply {
-                setSaturation(1.08f)
-            }
+            val lightMatrix = ColorMatrix().apply { setSaturation(1.08f) }
             paint.colorFilter = ColorMatrixColorFilter(lightMatrix)
         }
-
-        for (tx in minTileX..maxTileX) {
-            val wrappedTx = ((tx % numTiles) + numTiles) % numTiles
-            for (ty in minTileY..maxTileY) {
-                val tile = getTile(context, safeZoom, wrappedTx, ty, isSatellite)
-                if (tile != null) {
-                    hasAnyTile = true
-                    val tileWorldLeft = tx * TILE_SIZE.toDouble()
-                    val tileWorldTop = ty * TILE_SIZE.toDouble()
-
-                    val screenLeft = (tileWorldLeft - minPxX).toFloat()
-                    val screenTop = (tileWorldTop - minPxY).toFloat()
-
-                    canvas.drawBitmap(tile, screenLeft, screenTop, paint)
-                }
-            }
-        }
-
-        return if (hasAnyTile) destBitmap else null
+        return paint
     }
 
     private fun getTile(context: Context, zoom: Int, x: Int, y: Int, isSatellite: Boolean): Bitmap? {
@@ -261,14 +360,13 @@ object OsmTileManager {
         val key = "$typeKey/$zoom/$wrappedX/$y"
 
         // 1. In-memory LRU cache
-        memoryCache.get(key)?.let { return it }
+        memoryCache.get(key)?.let { cached ->
+            if (!cached.isRecycled) return cached
+            memoryCache.remove(key)
+        }
 
-        // 2. Disk cache
-        val ext = if (isSatellite) "jpg" else "png"
-        val typeFolder = if (isSatellite) "satellite" else "standard"
-        val cacheDir = File(context.cacheDir, "osm_tiles/$typeFolder")
-        val tileFile = File(cacheDir, "$zoom/$wrappedX/$y.$ext")
-
+        // 2. Disk cache (always keyed by wrappedX for antimeridian consistency)
+        val tileFile = tileFileFor(context, zoom, wrappedX, y, isSatellite)
         if (tileFile.exists() && tileFile.length() > 0) {
             try {
                 val bmp = BitmapFactory.decodeFile(tileFile.absolutePath)
@@ -291,16 +389,73 @@ object OsmTileManager {
                         memoryCache.put(key, bmp)
                         return bmp
                     }
-                } catch (ignored: Exception) {}
+                } catch (_: Exception) {}
             }
         }
 
-        // 3. Fetch asynchronously
-        fetchTileAsync(context, zoom, wrappedX, y, isSatellite)
+        // 3. Fetch asynchronously with concurrency limit and failure backoff
+        fetchTileAsync(context.applicationContext, zoom, wrappedX, y, isSatellite)
         return null
     }
 
     private val pendingFetches = mutableSetOf<String>()
+
+    private fun notifyTileUpdatedCoalesced() {
+        if (tileEventCoalesceScheduled.compareAndSet(false, true)) {
+            scope.launch {
+                try {
+                    delay(TILE_UPDATE_COALESCE_MS)
+                    _tileUpdateEvent.value = System.currentTimeMillis()
+                } finally {
+                    tileEventCoalesceScheduled.set(false)
+                }
+            }
+        }
+    }
+
+    private fun scheduleDiskCachePruneIfNeeded(appContext: Context) {
+        if (!diskPruneScheduled.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                pruneDiskCache(File(appContext.cacheDir, "osm_tiles"))
+            } catch (_: Exception) {}
+        }
+    }
+
+    internal fun pruneDiskCache(
+        rootDir: File,
+        maxBytes: Long = MAX_DISK_CACHE_BYTES,
+        maxAgeMs: Long = MAX_TILE_AGE_MS,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        if (!rootDir.exists() || !rootDir.isDirectory) return
+        val files = rootDir.walkTopDown().filter { it.isFile }.toList()
+        if (files.isEmpty()) return
+
+        var totalBytes = 0L
+        val surviving = mutableListOf<File>()
+        for (f in files) {
+            val age = nowMs - f.lastModified()
+            if (age > maxAgeMs) {
+                f.delete()
+            } else {
+                totalBytes += f.length()
+                surviving.add(f)
+            }
+        }
+
+        if (totalBytes > maxBytes) {
+            val targetBytes = (maxBytes * 8L) / 10L
+            val oldestFirst = surviving.sortedBy { it.lastModified() }
+            for (f in oldestFirst) {
+                if (totalBytes <= targetBytes) break
+                val len = f.length()
+                if (f.delete()) {
+                    totalBytes -= len
+                }
+            }
+        }
+    }
 
     private fun fetchTileAsync(context: Context, zoom: Int, x: Int, y: Int, isSatellite: Boolean) {
         if (!isValidTileY(y, zoom)) return
@@ -308,50 +463,71 @@ object OsmTileManager {
         val typeKey = if (isSatellite) "satellite" else "standard"
         val key = "$typeKey/$zoom/$wrappedX/$y"
 
+        val nowMs = System.currentTimeMillis()
+        if (isTileInBackoff(key, nowMs)) return
+
         synchronized(pendingFetches) {
             if (pendingFetches.contains(key)) return
             pendingFetches.add(key)
             _isLoading.value = true
         }
 
+        scheduleDiskCachePruneIfNeeded(context)
+
         scope.launch {
             try {
-                val url = if (isSatellite) {
-                    // ArcGIS World Imagery tile URL format: {zoom}/{row_y}/{col_x}
-                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$zoom/$y/$wrappedX"
-                } else {
-                    // OpenStreetMap tile URL format: {zoom}/{col_x}/{row_y}.png
-                    "https://tile.openstreetmap.org/$zoom/$wrappedX/$y.png"
-                }
+                fetchSemaphore.withPermit {
+                    if (isTileInBackoff(key)) return@withPermit
 
-                val request = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", USER_AGENT)
-                    .build()
+                    val url = if (isSatellite) {
+                        // ArcGIS World Imagery tile URL format: {zoom}/{row_y}/{col_x}
+                        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$zoom/$y/$wrappedX"
+                    } else {
+                        // OpenStreetMap tile URL format: {zoom}/{col_x}/{row_y}.png
+                        "https://tile.openstreetmap.org/$zoom/$wrappedX/$y.png"
+                    }
 
-                val response = okHttpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val bytes = response.body?.bytes()
-                    if (bytes != null && bytes.isNotEmpty()) {
-                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        if (bmp != null) {
-                            memoryCache.put(key, bmp)
+                    val request = Request.Builder()
+                        .url(url)
+                        .header("User-Agent", USER_AGENT)
+                        .build()
 
-                            // Save to disk cache
-                            val typeFolder = if (isSatellite) "satellite" else "standard"
-                            val ext = if (isSatellite) "jpg" else "png"
-                            val cacheDir = File(context.cacheDir, "osm_tiles/$typeFolder/$zoom/$x")
-                            cacheDir.mkdirs()
-                            val tileFile = File(cacheDir, "$y.$ext")
-                            FileOutputStream(tileFile).use { it.write(bytes) }
+                    okHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val bytes = response.body?.bytes()
+                            if (bytes != null && bytes.isNotEmpty()) {
+                                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                if (bmp != null) {
+                                    memoryCache.put(key, bmp)
+                                    tileFailureBackoff.remove(key)
 
-                            // Trigger UI update
-                            _tileUpdateEvent.value = System.currentTimeMillis()
+                                    // Save to disk cache atomically using wrappedX
+                                    val tileFile = tileFileFor(context, zoom, wrappedX, y, isSatellite)
+                                    tileFile.parentFile?.mkdirs()
+                                    val tmpFile = File(tileFile.parentFile, "${tileFile.name}.tmp")
+                                    FileOutputStream(tmpFile).use { it.write(bytes) }
+                                    if (!tmpFile.renameTo(tileFile)) {
+                                        tmpFile.copyTo(tileFile, overwrite = true)
+                                        tmpFile.delete()
+                                    }
+
+                                    notifyTileUpdatedCoalesced()
+                                } else {
+                                    recordTileFailure(key)
+                                }
+                            } else {
+                                recordTileFailure(key)
+                            }
+                        } else {
+                            recordTileFailure(key)
                         }
                     }
                 }
             } catch (e: Exception) {
-                // Graceful offline behavior: missing tiles do not crash the app
+                val isOffline = e is UnknownHostException ||
+                    e is ConnectException ||
+                    e is SocketTimeoutException
+                recordTileFailure(key, isOfflineError = isOffline)
             } finally {
                 synchronized(pendingFetches) {
                     pendingFetches.remove(key)

@@ -1,15 +1,22 @@
 package com.example.ui.home
 
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
+import android.view.KeyEvent as AndroidKeyEvent
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.Window
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -238,6 +245,12 @@ fun HomeScreen(
             screensaverSettings.autoOrientationEnabled &&
             !screensaverSettings.orientationLocked
     )
+    val isScreensaverScreenOff by viewModel.isScreensaverScreenOff.collectAsStateWithLifecycle()
+    val isScreensaverAodActive by viewModel.isScreensaverAodActive.collectAsStateWithLifecycle()
+    val isKmStoneServiceRunning by viewModel.isKmStoneServiceRunning.collectAsStateWithLifecycle()
+    val lastKmStoneHubEvent by viewModel.lastKmStoneHubEvent.collectAsStateWithLifecycle()
+    val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
+    val kmStoneAlertSettings by viewModel.kmStoneAlertSettings.collectAsStateWithLifecycle()
     LaunchedEffect(isScreensaverVisible) {
         viewModel.setScreensaverActive(isScreensaverVisible)
     }
@@ -289,14 +302,19 @@ fun HomeScreen(
         label = "home_sub_text"
     )
 
-    // Pulse transition for live GPS status dot
-    val infiniteTransition = rememberInfiniteTransition(label = "gps_dot")
-    val gpsPulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(tween(750), repeatMode = RepeatMode.Reverse),
-        label = "gps_dot_pulse"
-    )
+    // Pulse transition for live GPS status dot (paused while full-screen Screensaver / Screen OFF / AOD is active)
+    val gpsPulseAlpha: Float = if (!isScreensaverVisible && !isScreensaverScreenOff && !isScreensaverAodActive) {
+        val infiniteTransition = rememberInfiniteTransition(label = "gps_dot")
+        val animated by infiniteTransition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(tween(750), repeatMode = RepeatMode.Reverse),
+            label = "gps_dot_pulse"
+        )
+        animated
+    } else {
+        0.7f
+    }
 
     val vmLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
     val screensaverContext = LocalContext.current
@@ -305,9 +323,11 @@ fun HomeScreen(
     var lastScreensaverGeocodeAttemptMs by remember { mutableLongStateOf(0L) }
     var screensaverClockMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-    // Throttled cached reverse-geocoding for active screensaver only (never blocks UI or calls Geocoder on every GPS tick)
+    // Throttled cached reverse-geocoding for active screensaver only (paused in Screen OFF and AMOLED AOD)
     LaunchedEffect(
         isScreensaverVisible,
+        isScreensaverScreenOff,
+        isScreensaverAodActive,
         locationState.point,
         vmLocationName,
         screensaverSettings.locationDynamicUpdates
@@ -317,6 +337,8 @@ fun HomeScreen(
         }
         val pt = locationState.point
         if (isScreensaverVisible &&
+            !isScreensaverScreenOff &&
+            !isScreensaverAodActive &&
             screensaverSettings.locationDynamicUpdates &&
             pt != null &&
             LocationTracker.isValidCoordinate(pt.latitude, pt.longitude)
@@ -373,6 +395,28 @@ fun HomeScreen(
         )
     }
 
+    val aodNextKmTracker = remember { NextKmStoneTracker() }
+    val aodNextKmState = remember(
+        isScreensaverAodActive,
+        matchResult,
+        activeRoute?.id,
+        screensaverDisplayState.reliableSide,
+        projectProfile.roadSide
+    ) {
+        if (!isScreensaverAodActive || activeRoute == null || screensaverDisplayState.reliableSide == null) {
+            null
+        } else {
+            val isExplicitSide = projectProfile.roadSide == com.example.model.RoadSide.LHS ||
+                projectProfile.roadSide == com.example.model.RoadSide.RHS
+            aodNextKmTracker.evaluate(
+                matchResult = matchResult,
+                route = activeRoute,
+                detectedSide = screensaverDisplayState.reliableSide,
+                isAutoDetectedSide = !isExplicitSide
+            )
+        }
+    }
+
     HomeScreensaverCoordinator(
         isBlockingUiOpen = isBlockingScreensaverModal,
         inactivityTimeoutMs = screensaverSettings.effectiveTimeoutMs(),
@@ -384,6 +428,11 @@ fun HomeScreen(
         touchToDismiss = screensaverSettings.touchToDismiss,
         autoRestartTimer = screensaverSettings.autoRestartTimer,
         keepScreenAwake = screensaverSettings.keepScreenAwake,
+        isScreenOff = isScreensaverScreenOff,
+        isAodActive = isScreensaverAodActive,
+        aodDimLevel = screensaverSettings.aodDimLevel,
+        onWakeFromScreenOff = { viewModel.setScreensaverScreenOff(false) },
+        onExitAod = { viewModel.setScreensaverAodActive(false) },
         screensaverContent = { dismissScreensaver ->
             ChainageScreensaverOverlay(
                 displayState = screensaverDisplayState,
@@ -396,6 +445,13 @@ fun HomeScreen(
                 isDarkAppTheme = isDark,
                 screensaverSettings = screensaverSettings,
                 sensorPostureOverride = activeScreensaverSensorPosture,
+                isScreenOff = isScreensaverScreenOff,
+                isAodActive = isScreensaverAodActive,
+                is24HourFormat = cameraSettings.is24HourFormat,
+                nextKmLabel = aodNextKmState?.takeIf { it.isReliable }?.let { "Next KM ${it.nextChainage}" },
+                distanceToNextMetres = aodNextKmState?.takeIf { it.isReliable }?.distanceMetres,
+                lastKmStoneEvent = lastKmStoneHubEvent,
+                isKmStoneMonitoringActive = isKmStoneServiceRunning || kmStoneAlertSettings.enabled,
                 onToggleMirrorQuickMode = { enableMirror, currentlyLandscape ->
                     viewModel.toggleScreensaverMirrorQuickMode(
                         enableMirror = enableMirror,
@@ -407,6 +463,15 @@ fun HomeScreen(
                         locked = !screensaverSettings.orientationLocked,
                         currentIsLandscape = currentlyLandscape
                     )
+                },
+                onToggleScreenOff = { screenOff ->
+                    viewModel.setScreensaverScreenOff(screenOff)
+                },
+                onToggleAod = { active ->
+                    viewModel.setScreensaverAodActive(active)
+                },
+                onForceBlackScreenOff = {
+                    viewModel.setScreensaverScreenOff(screenOff = true, forcePureBlack = true)
                 },
                 onDismiss = dismissScreensaver
             )
@@ -3953,11 +4018,24 @@ internal fun applyScreensaverImmersiveMode(
     }
 }
 
+internal fun isDeviceScreenOffOrLocked(context: Context): Boolean {
+    return try {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val screenNotInteractive = powerManager != null && !powerManager.isInteractive
+        val keyguardLocked = keyguardManager?.isKeyguardLocked == true
+        screenNotInteractive || keyguardLocked
+    } catch (_: Exception) {
+        false
+    }
+}
+
 /**
  * Coordinates the configurable inactivity countdown for the Home Page, tracks foreground
  * lifecycle, detects pointer/key activity cleanly without consuming child gestures, blocks while
  * dialogs/keyboard are active, respects Master/Auto-Activate/Touch-to-Dismiss/Auto-Restart toggles,
- * and hosts the true immersive edge-to-edge Dialog without disturbing Home Page scroll position or state.
+ * supports Screen OFF/ON power-saving mode, cleanly resumes the Screensaver after locking/unlocking
+ * the phone, and hosts the true immersive edge-to-edge Dialog without disturbing Home Page scroll state.
  */
 @Composable
 fun HomeScreensaverCoordinator(
@@ -3972,6 +4050,11 @@ fun HomeScreensaverCoordinator(
     touchToDismiss: Boolean = true,
     autoRestartTimer: Boolean = true,
     keepScreenAwake: Boolean = true,
+    isScreenOff: Boolean = false,
+    isAodActive: Boolean = false,
+    aodDimLevel: Float = com.example.model.HomeScreensaverSettings.DEFAULT_AOD_DIM_LEVEL,
+    onWakeFromScreenOff: (() -> Unit)? = null,
+    onExitAod: (() -> Unit)? = null,
     content: @Composable (interactionModifier: Modifier) -> Unit
 ) {
     val context = LocalContext.current
@@ -3983,6 +4066,18 @@ fun HomeScreensaverCoordinator(
     var interactionEpoch by remember { mutableLongStateOf(0L) }
     var lastMoveBumpUptimeMs by remember { mutableLongStateOf(0L) }
     var hasDismissedInSession by remember { mutableStateOf(false) }
+    var resumeScreensaverOnUnlock by remember { mutableStateOf(false) }
+
+    val latestIsScreensaverVisible by rememberUpdatedState(isScreensaverVisible)
+    val latestMasterEnabled by rememberUpdatedState(masterEnabled)
+    val latestIsBlockingUiOpen by rememberUpdatedState(isBlockingUiOpen)
+    val latestOnShowScreensaver by rememberUpdatedState(onShowScreensaver)
+    val latestTouchToDismiss by rememberUpdatedState(touchToDismiss)
+    val latestOnDismissScreensaver by rememberUpdatedState(onDismissScreensaver)
+    val latestIsScreenOff by rememberUpdatedState(isScreenOff)
+    val latestIsAodActive by rememberUpdatedState(isAodActive)
+    val latestOnWakeFromScreenOff by rememberUpdatedState(onWakeFromScreenOff)
+    val latestOnExitAod by rememberUpdatedState(onExitAod)
 
     fun notifyUserInteraction(force: Boolean) {
         val nowMs = SystemClock.uptimeMillis()
@@ -4004,12 +4099,24 @@ fun HomeScreensaverCoordinator(
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     isLifecycleResumed = true
-                    hasDismissedInSession = false
-                    interactionEpoch += 1L
+                    if (resumeScreensaverOnUnlock) {
+                        resumeScreensaverOnUnlock = false
+                        if (latestMasterEnabled && !latestIsBlockingUiOpen && !latestIsScreensaverVisible) {
+                            latestOnShowScreensaver()
+                        }
+                    } else {
+                        hasDismissedInSession = false
+                        interactionEpoch += 1L
+                    }
                 }
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
                     isLifecycleResumed = false
-                    onDismissScreensaver()
+                    if (latestIsScreensaverVisible && isDeviceScreenOffOrLocked(context)) {
+                        // Phone locked normally while Screensaver was active -> preserve session to resume on unlock
+                        resumeScreensaverOnUnlock = true
+                    } else if (!resumeScreensaverOnUnlock) {
+                        latestOnDismissScreensaver()
+                    }
                 }
                 else -> Unit
             }
@@ -4037,9 +4144,9 @@ fun HomeScreensaverCoordinator(
         isAutoActivateEnabled = autoActivateEnabled
     )
 
-    // Dismiss immediately if disabled, dialog opens, keyboard opens, or background transition occurs
-    LaunchedEffect(canAllowWhenVisible, isScreensaverVisible) {
-        if (!canAllowWhenVisible && isScreensaverVisible) {
+    // Dismiss immediately if disabled, dialog opens, keyboard opens, or normal background transition occurs
+    LaunchedEffect(canAllowWhenVisible, isScreensaverVisible, resumeScreensaverOnUnlock) {
+        if (!canAllowWhenVisible && isScreensaverVisible && !resumeScreensaverOnUnlock) {
             onDismissScreensaver()
         }
     }
@@ -4085,30 +4192,64 @@ fun HomeScreensaverCoordinator(
 
     content(interactionModifier)
 
-    val latestTouchToDismiss by rememberUpdatedState(touchToDismiss)
-    val latestOnDismissScreensaver by rememberUpdatedState(onDismissScreensaver)
-
     if (isScreensaverVisible && canAllowWhenVisible) {
         val hostActivityWindow = remember(context) { context.findHostActivityWindow() }
         Dialog(
             onDismissRequest = {
-                notifyUserInteraction(force = true)
-                hasDismissedInSession = true
-                latestOnDismissScreensaver()
+                when {
+                    latestIsScreenOff -> latestOnWakeFromScreenOff?.invoke()
+                    latestIsAodActive -> latestOnExitAod?.invoke()
+                    else -> {
+                        notifyUserInteraction(force = true)
+                        hasDismissedInSession = true
+                        latestOnDismissScreensaver()
+                    }
+                }
             },
             properties = DialogProperties(
                 usePlatformDefaultWidth = false,
                 decorFitsSystemWindows = false,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = latestTouchToDismiss
+                dismissOnBackPress = !isScreenOff && !isAodActive,
+                dismissOnClickOutside = latestTouchToDismiss && !isScreenOff && !isAodActive
             )
         ) {
+            BackHandler(enabled = isScreenOff || isAodActive) {
+                if (latestIsScreenOff) {
+                    latestOnWakeFromScreenOff?.invoke()
+                } else if (latestIsAodActive) {
+                    latestOnExitAod?.invoke()
+                }
+            }
             com.example.util.KeepScreenOn(
                 enabled = keepScreenAwake,
                 requesterId = "HomeScreensaver"
             )
             val localView = LocalView.current
             val dialogWindow = (localView.parent as? DialogWindowProvider)?.window
+            val powerThermalSnapshot = remember(context, isAodActive) {
+                com.example.navigation.DevicePowerThermalMonitor.snapshot(context)
+            }
+            DisposableEffect(dialogWindow, isScreenOff, isAodActive, aodDimLevel, powerThermalSnapshot.shouldConserveUiResources) {
+                if (dialogWindow != null) {
+                    val attrs = dialogWindow.attributes
+                    attrs.screenBrightness = when {
+                        isScreenOff -> 0.01f
+                        isAodActive -> AmoledBurnInProtection.resolveWindowBrightness(
+                            dimLevel = aodDimLevel,
+                            conservePower = powerThermalSnapshot.shouldConserveUiResources
+                        )
+                        else -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                    }
+                    dialogWindow.attributes = attrs
+                }
+                onDispose {
+                    if (dialogWindow != null) {
+                        val attrs = dialogWindow.attributes
+                        attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                        dialogWindow.attributes = attrs
+                    }
+                }
+            }
             DisposableEffect(dialogWindow, localView, hostActivityWindow, keepScreenAwake) {
                 if (dialogWindow != null) {
                     dialogWindow.setDimAmount(0f)
@@ -4154,10 +4295,14 @@ fun HomeScreensaverCoordinator(
             }
 
             screensaverContent {
-                if (latestTouchToDismiss) {
-                    notifyUserInteraction(force = true)
-                    hasDismissedInSession = true
-                    latestOnDismissScreensaver()
+                when {
+                    latestIsScreenOff -> latestOnWakeFromScreenOff?.invoke()
+                    latestIsAodActive -> latestOnExitAod?.invoke()
+                    latestTouchToDismiss -> {
+                        notifyUserInteraction(force = true)
+                        hasDismissedInSession = true
+                        latestOnDismissScreensaver()
+                    }
                 }
             }
         }
@@ -4166,8 +4311,9 @@ fun HomeScreensaverCoordinator(
 
 /**
  * Full-Screen Automotive HUD & Chainage Screensaver Overlay.
- * Minimal HUD layout featuring compact Mirror/Normal and Orientation Lock controls in safe corners.
- * Tapping anywhere outside quick controls dismisses immediately when Touch-to-Dismiss is active.
+ * Minimal HUD layout featuring compact Mirror/Normal, Orientation Lock, and Screen OFF/ON
+ * controls in safe corners. Tapping anywhere outside quick controls dismisses immediately
+ * when Touch-to-Dismiss is active (or wakes smoothly from Screen OFF blackout mode).
  */
 @Composable
 fun ChainageScreensaverOverlay(
@@ -4182,8 +4328,18 @@ fun ChainageScreensaverOverlay(
     screensaverSettings: HomeScreensaverSettings = HomeScreensaverSettings(),
     isSamplePreview: Boolean = false,
     sensorPostureOverride: ScreensaverSensorPosture? = null,
+    isScreenOff: Boolean = false,
+    isAodActive: Boolean = false,
+    is24HourFormat: Boolean = true,
+    nextKmLabel: String? = null,
+    distanceToNextMetres: Long? = null,
+    lastKmStoneEvent: com.example.navigation.KmStoneAlertEvent? = null,
+    isKmStoneMonitoringActive: Boolean = false,
     onToggleMirrorQuickMode: ((enableMirror: Boolean, isCurrentlyLandscape: Boolean) -> Unit)? = null,
     onToggleOrientationLock: ((isCurrentlyLandscape: Boolean) -> Unit)? = null,
+    onToggleScreenOff: ((Boolean) -> Unit)? = null,
+    onToggleAod: ((Boolean) -> Unit)? = null,
+    onForceBlackScreenOff: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val resolvedSettings = remember(screensaverSettings, mapTypePreference, mapThemePreference) {
@@ -4196,10 +4352,22 @@ fun ChainageScreensaverOverlay(
         }
     }
     val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val currentOnToggleScreenOff by rememberUpdatedState(onToggleScreenOff)
+    val currentOnToggleAod by rememberUpdatedState(onToggleAod)
+    val isLowPowerDisplayMode = isScreenOff || isAodActive
     val hardwareSensorPosture = rememberScreensaverSensorPosture(
-        enabled = resolvedSettings.autoOrientationEnabled && sensorPostureOverride == null
+        enabled = resolvedSettings.autoOrientationEnabled && sensorPostureOverride == null && !isLowPowerDisplayMode
     )
     val activeSensorPosture = sensorPostureOverride ?: hardwareSensorPosture
+    val blackoutFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(isLowPowerDisplayMode) {
+        if (isLowPowerDisplayMode) {
+            try {
+                blackoutFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
 
     var temporaryLandscapeOverride by remember { mutableStateOf(false) }
     LaunchedEffect(activeSensorPosture) {
@@ -4234,8 +4402,34 @@ fun ChainageScreensaverOverlay(
         modifier = Modifier
             .fillMaxSize()
             .testTag("home_chainage_screensaver")
-            .pointerInput(resolvedSettings.touchToDismiss) {
-                if (!resolvedSettings.touchToDismiss) return@pointerInput
+            .focusRequester(blackoutFocusRequester)
+            .focusable()
+            .onPreviewKeyEvent { keyEvent ->
+                if (isLowPowerDisplayMode &&
+                    keyEvent.nativeKeyEvent.action == AndroidKeyEvent.ACTION_DOWN
+                ) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_VOLUME_UP,
+                        AndroidKeyEvent.KEYCODE_VOLUME_DOWN,
+                        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                        AndroidKeyEvent.KEYCODE_ENTER,
+                        AndroidKeyEvent.KEYCODE_SPACE,
+                        AndroidKeyEvent.KEYCODE_BACK -> {
+                            if (isScreenOff) {
+                                currentOnToggleScreenOff?.invoke(false)
+                            } else if (isAodActive) {
+                                currentOnToggleAod?.invoke(false)
+                            }
+                            true
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            }
+            .pointerInput(resolvedSettings.touchToDismiss, isLowPowerDisplayMode) {
+                if (isLowPowerDisplayMode || !resolvedSettings.touchToDismiss) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val downPos = down.position
@@ -4261,7 +4455,7 @@ fun ChainageScreensaverOverlay(
                 }
             }
             .then(
-                if (resolvedSettings.touchToDismiss) {
+                if (!isLowPowerDisplayMode && resolvedSettings.touchToDismiss) {
                     Modifier.semantics {
                         onClick(label = "Dismiss screensaver") {
                             currentOnDismiss()
@@ -4286,8 +4480,18 @@ fun ChainageScreensaverOverlay(
             isSamplePreview = isSamplePreview,
             sensorPosture = activeSensorPosture,
             temporaryLandscapeOverride = temporaryLandscapeOverride,
+            isScreenOff = isScreenOff,
+            isAodActive = isAodActive,
+            is24HourFormat = is24HourFormat,
+            nextKmLabel = nextKmLabel,
+            distanceToNextMetres = distanceToNextMetres,
+            lastKmStoneEvent = lastKmStoneEvent,
+            isKmStoneMonitoringActive = isKmStoneMonitoringActive,
             onToggleMirrorQuickMode = handleQuickToggle,
-            onToggleOrientationLock = onToggleOrientationLock
+            onToggleOrientationLock = onToggleOrientationLock,
+            onToggleScreenOff = onToggleScreenOff,
+            onToggleAod = onToggleAod,
+            onForceBlackScreenOff = onForceBlackScreenOff
         )
     }
 }

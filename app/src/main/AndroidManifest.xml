@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -25,7 +26,6 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <!-- Touchscreen required: Explicitly removes Android TV support -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
-    <uses-feature android:name="android.software.leanback" android:required="false" tools:node="remove" />
 
     <queries>
         <package android:name="com.google.android.apps.maps" />
@@ -70,6 +70,11 @@
 
         <service
             android:name=".navigation.LockScreenNavigationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <service
+            android:name=".navigation.KmStoneMonitoringForegroundService"
             android:exported="false"
             android:foregroundServiceType="location" />
 

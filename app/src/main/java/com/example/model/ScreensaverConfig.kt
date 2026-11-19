@@ -258,7 +258,19 @@ data class HomeScreensaverSettings(
     val autoOrientationEnabled: Boolean = true,
     val orientationLocked: Boolean = false,
     val lockedOrientationIsLandscape: Boolean? = null,
+    // AMOLED Always-On Display (AOD) Settings (In-App Low-Power Screensaver Mode)
+    val aodEnabled: Boolean = true,
+    val aodAutoActivateOnScreenOff: Boolean = false,
+    val aodShowChainage: Boolean = true,
+    val aodShowDirectionSide: Boolean = true,
+    val aodShowTime: Boolean = true,
+    val aodShowGpsStatus: Boolean = true,
+    val aodShowKmStoneStatus: Boolean = true,
+    val aodShowNextKmStone: Boolean = true,
+    val aodDimLevel: Float = DEFAULT_AOD_DIM_LEVEL,
+    val aodBurnInProtectionEnabled: Boolean = true,
     val keepScreenAwake: Boolean = true,
+    val showScreenOffControl: Boolean = true,
     val screensaverThemeMode: ScreensaverThemeMode = ScreensaverThemeMode.SYSTEM,
     val mirrorModePreferred: Boolean = (displayMode == ScreensaverDisplayMode.MIRROR),
     val hudBrightness: Float = DEFAULT_HUD_BRIGHTNESS,
@@ -370,6 +382,9 @@ data class HomeScreensaverSettings(
     fun withKeepScreenAwake(enabled: Boolean): HomeScreensaverSettings =
         copy(keepScreenAwake = enabled)
 
+    fun withShowScreenOffControl(enabled: Boolean): HomeScreensaverSettings =
+        copy(showScreenOffControl = enabled)
+
     fun withThemeMode(mode: ScreensaverThemeMode): HomeScreensaverSettings =
         copy(screensaverThemeMode = mode)
 
@@ -419,6 +434,18 @@ data class HomeScreensaverSettings(
     fun withRecenter(): HomeScreensaverSettings =
         copy(recenterEpoch = recenterEpoch + 1L)
 
+    fun withAodEnabled(enabled: Boolean): HomeScreensaverSettings =
+        copy(aodEnabled = enabled)
+
+    fun withAodAutoActivateOnScreenOff(autoActivate: Boolean): HomeScreensaverSettings =
+        copy(aodAutoActivateOnScreenOff = autoActivate)
+
+    fun withAodDimLevel(level: Float): HomeScreensaverSettings =
+        copy(aodDimLevel = level.coerceIn(MIN_AOD_DIM_LEVEL, MAX_AOD_DIM_LEVEL))
+
+    fun withAodBurnInProtection(enabled: Boolean): HomeScreensaverSettings =
+        copy(aodBurnInProtectionEnabled = enabled)
+
     fun toJsonString(): String {
         val obj = JSONObject()
         // General
@@ -437,9 +464,22 @@ data class HomeScreensaverSettings(
             obj.put("lockedOrientationIsLandscape", lockedOrientationIsLandscape)
         }
         obj.put("keepScreenAwake", keepScreenAwake)
+        obj.put("showScreenOffControl", showScreenOffControl)
         obj.put("screensaverThemeMode", screensaverThemeMode.name)
         obj.put("mirrorModePreferred", mirrorModePreferred)
         obj.put("hudBrightness", hudBrightness.toDouble())
+
+        // AMOLED Always-On Display
+        obj.put("aodEnabled", aodEnabled)
+        obj.put("aodAutoActivateOnScreenOff", aodAutoActivateOnScreenOff)
+        obj.put("aodShowChainage", aodShowChainage)
+        obj.put("aodShowDirectionSide", aodShowDirectionSide)
+        obj.put("aodShowTime", aodShowTime)
+        obj.put("aodShowGpsStatus", aodShowGpsStatus)
+        obj.put("aodShowKmStoneStatus", aodShowKmStoneStatus)
+        obj.put("aodShowNextKmStone", aodShowNextKmStone)
+        obj.put("aodDimLevel", aodDimLevel.coerceIn(MIN_AOD_DIM_LEVEL, MAX_AOD_DIM_LEVEL).toDouble())
+        obj.put("aodBurnInProtectionEnabled", aodBurnInProtectionEnabled)
 
         // Chainage
         obj.put("showChainage", showChainage)
@@ -494,6 +534,10 @@ data class HomeScreensaverSettings(
         const val MAX_HUD_BRIGHTNESS = 1.0f
         const val DEFAULT_HUD_BRIGHTNESS = 0.90f
 
+        const val MIN_AOD_DIM_LEVEL = 0.18f
+        const val MAX_AOD_DIM_LEVEL = 0.78f
+        const val DEFAULT_AOD_DIM_LEVEL = 0.38f
+
         const val MIN_ZOOM_LEVEL = 2.0f
         const val MAX_ZOOM_LEVEL = 19.0f
         const val DEFAULT_ZOOM_LEVEL = 16.0f
@@ -532,7 +576,20 @@ data class HomeScreensaverSettings(
                     } else {
                         null
                     },
+                    aodEnabled = obj.optBoolean("aodEnabled", true),
+                    aodAutoActivateOnScreenOff = obj.optBoolean("aodAutoActivateOnScreenOff", false),
+                    aodShowChainage = obj.optBoolean("aodShowChainage", true),
+                    aodShowDirectionSide = obj.optBoolean("aodShowDirectionSide", true),
+                    aodShowTime = obj.optBoolean("aodShowTime", true),
+                    aodShowGpsStatus = obj.optBoolean("aodShowGpsStatus", true),
+                    aodShowKmStoneStatus = obj.optBoolean("aodShowKmStoneStatus", true),
+                    aodShowNextKmStone = obj.optBoolean("aodShowNextKmStone", true),
+                    aodDimLevel = obj.optDouble("aodDimLevel", DEFAULT_AOD_DIM_LEVEL.toDouble())
+                        .toFloat()
+                        .coerceIn(MIN_AOD_DIM_LEVEL, MAX_AOD_DIM_LEVEL),
+                    aodBurnInProtectionEnabled = obj.optBoolean("aodBurnInProtectionEnabled", true),
                     keepScreenAwake = obj.optBoolean("keepScreenAwake", true),
+                    showScreenOffControl = obj.optBoolean("showScreenOffControl", true),
                     screensaverThemeMode = ScreensaverThemeMode.fromString(
                         obj.optString("screensaverThemeMode", ScreensaverThemeMode.SYSTEM.name)
                     ),

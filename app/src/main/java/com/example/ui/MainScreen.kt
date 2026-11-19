@@ -119,13 +119,24 @@ fun MainScreen(
                 Manifest.permission.ACCESS_COARSE_LOCATION
             )
         )
-        viewModel.startLocation()
     }
 
-    // Lifecycle-aware location management
+    // True lifecycle-aware GPS & sensor management: starts on ON_START and cleanly stops
+    // hardware sensors + idle GPS on ON_STOP when app enters background or screen locks.
     DisposableEffect(lifecycleOwner) {
-        viewModel.startLocation()
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START -> viewModel.startLocation()
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> viewModel.stopLocationIfIdle()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+            viewModel.startLocation()
+        }
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             viewModel.stopLocationIfIdle()
         }
     }
@@ -374,18 +385,6 @@ fun AnimatedGlassToast(
         ToastType.INFO, null -> Color(0xFF818CF8)     // Indigo
     }
 
-    // Micro pulsing breathing animation for the status indicator
-    val infiniteTransition = rememberInfiniteTransition(label = "toast_glow")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.85f,
-        animationSpec = infiniteRepeatable(
-            animation = androidx.compose.animation.core.tween(durationMillis = 850, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "toast_pulse"
-    )
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -417,6 +416,17 @@ fun AnimatedGlassToast(
             )
         ) {
             displayMessage?.let { msg ->
+                // Only run breathing pulse animation while a toast is actually visible
+                val infiniteTransition = rememberInfiniteTransition(label = "toast_glow")
+                val pulseAlpha by infiniteTransition.animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 0.85f,
+                    animationSpec = infiniteRepeatable(
+                        animation = androidx.compose.animation.core.tween(durationMillis = 850, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "toast_pulse"
+                )
                 val smartText = remember(msg.message, msg.type) {
                     formatSmartTinyFeedback(msg.message, msg.type)
                 }

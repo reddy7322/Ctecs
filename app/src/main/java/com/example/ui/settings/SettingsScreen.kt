@@ -3053,11 +3053,7 @@ fun SettingsScreen(
                         // User Uploaded Logo - Show full, simplified custom logo settings
                         val logoFile = File(currentOverlay.logoUri!!)
                         val logoBitmap = remember(currentOverlay.logoUri) {
-                            try {
-                                android.graphics.BitmapFactory.decodeFile(logoFile.absolutePath)
-                            } catch (e: Exception) {
-                                null
-                            }
+                            com.example.overlay.LogoProvider.decodeSampledBitmapFromFile(logoFile.absolutePath, 256)
                         }
 
                         // Preview & Actions Card
@@ -3275,9 +3271,7 @@ fun SettingsScreen(
                             val pdfLogoFile = File(currentOverlay.pdfLogoUri ?: "")
                             if (pdfLogoFile.exists()) {
                                 val pdfLogoBmp = remember(currentOverlay.pdfLogoUri) {
-                                    try {
-                                        android.graphics.BitmapFactory.decodeFile(pdfLogoFile.absolutePath)
-                                    } catch (e: Exception) { null }
+                                    com.example.overlay.LogoProvider.decodeSampledBitmapFromFile(pdfLogoFile.absolutePath, 256)
                                 }
                                 if (pdfLogoBmp != null) {
                                     Box(
@@ -3358,9 +3352,7 @@ fun SettingsScreen(
                             val pdfSigFile = File(currentOverlay.pdfSignatureUri ?: "")
                             if (pdfSigFile.exists()) {
                                 val pdfSigBmp = remember(currentOverlay.pdfSignatureUri) {
-                                    try {
-                                        android.graphics.BitmapFactory.decodeFile(pdfSigFile.absolutePath)
-                                    } catch (e: Exception) { null }
+                                    com.example.overlay.LogoProvider.decodeSampledBitmapFromFile(pdfSigFile.absolutePath, 256)
                                 }
                                 if (pdfSigBmp != null) {
                                     Box(
@@ -3702,11 +3694,12 @@ fun SettingsScreen(
             // ====================================================
             // 13b. SCREENSAVER
             // ====================================================
-            if (matchesSearch("screensaver hud mirror portrait landscape speedometer chainage direction mini map", searchQuery)) {
+            if (matchesSearch("screensaver hud mirror portrait landscape speedometer chainage direction mini map amoled always on display aod burn-in dim", searchQuery)) {
                 val screensaverSummary = buildString {
                     append(if (screensaverSettings.masterEnabled) "ON" else "OFF")
                     append(" • ")
                     append(screensaverSettings.displayMode.label)
+                    if (screensaverSettings.aodEnabled) append(" • AOD")
                     append(" • ")
                     append("${screensaverSettings.inactivityTimeoutSeconds}s")
                 }
@@ -3836,17 +3829,20 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 13e. NAVIGATION ALERTS -> KM STONE ARRIVAL
+            // 13e. NAVIGATION ALERTS -> KM STONE MONITORING
             // ====================================================
-            if (matchesSearch("navigation alerts km stone arrival haptic vibration sound beep chime advance warning proximity threshold", searchQuery)) {
+            if (matchesSearch("navigation alerts km stone monitoring arrival foreground service background persistent notification lock screen haptic vibration sound beep chime advance warning proximity threshold", searchQuery)) {
+                val isKmStoneServiceRunning by viewModel.isKmStoneServiceRunning.collectAsStateWithLifecycle()
+                val kmStoneServiceStatusNote by viewModel.kmStoneServiceStatusNote.collectAsStateWithLifecycle()
                 val kmAlertSummary = buildString {
                     append(if (kmStoneAlertSettings.enabled) "ON" else "OFF")
+                    if (isKmStoneServiceRunning) append(" • Service Running")
                     append(" • ±${kmStoneAlertSettings.proximityThresholdMetres}m")
                     if (kmStoneAlertSettings.vibrationEnabled) append(" • ${kmStoneAlertSettings.vibrationPattern.label}")
                     if (kmStoneAlertSettings.soundEnabled) append(" • ${kmStoneAlertSettings.soundOption.label}")
                 }
                 SmartDropdownSection(
-                    title = "Navigation Alerts • KM Stone Arrival",
+                    title = "Navigation Alerts • KM Stone Monitoring",
                     subtitle = kmAlertSummary,
                     icon = Icons.Default.Vibration,
                     accentColor = primaryAccent,
@@ -3858,6 +3854,9 @@ fun SettingsScreen(
                     KmStoneAlertSettingsSectionContent(
                         settings = kmStoneAlertSettings,
                         accentColor = primaryAccent,
+                        isMonitoringServiceRunning = isKmStoneServiceRunning,
+                        serviceStatusNote = kmStoneServiceStatusNote,
+                        hasActiveRoute = activeRoute != null,
                         onUpdateSettings = { transform -> viewModel.updateKmStoneAlertSettings(transform) },
                         onResetDefaults = { viewModel.resetKmStoneAlertSettings() },
                         onFeedbackMessage = { msg -> viewModel.showToast(msg, ToastType.INFO) }

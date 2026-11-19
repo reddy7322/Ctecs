@@ -59,6 +59,11 @@ object MiniMapRenderer {
     @Volatile
     private var cachedTileBitmap: Bitmap? = null
 
+    fun clearCache() {
+        cachedTileKey = null
+        cachedTileBitmap = null
+    }
+
     fun parseColorSafe(hex: String?, fallback: Int): Int {
         if (hex.isNullOrBlank()) return fallback
         return try {

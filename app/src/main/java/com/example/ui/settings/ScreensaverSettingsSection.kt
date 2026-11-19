@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LinearScale
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.NightlightRound
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RestartAlt
@@ -110,6 +111,8 @@ import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.ScreensaverDisplayMode
 import com.example.model.ScreensaverThemeMode
+import com.example.ui.home.AmoledAodPreviewBox
+import com.example.ui.home.AmoledBurnInProtection
 import com.example.ui.home.ChainageScreensaverOverlay
 import com.example.ui.home.ScreensaverChainageStateHolder
 import com.example.ui.home.ScreensaverDisplayState
@@ -158,6 +161,7 @@ fun ScreensaverSettingsSectionContent(
         mutableStateMapOf(
             "general" to true,
             "display_mode" to false,
+            "aod" to false,
             "chainage" to false,
             "direction" to false,
             "speedometer" to false,
@@ -168,6 +172,7 @@ fun ScreensaverSettingsSectionContent(
     }
 
     var previewScreensaverMode by remember { mutableStateOf<ScreensaverDisplayMode?>(null) }
+    var previewStartInAod by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
 
     var customTimeoutText by remember(settings.inactivityTimeoutSeconds) {
@@ -464,6 +469,17 @@ fun ScreensaverSettingsSectionContent(
             )
 
             ScreensaverSwitchRow(
+                title = "Screen OFF / ON Quick Control",
+                subtitle = "Show power-saving black-screen button on the active Screensaver",
+                checked = settings.showScreenOffControl,
+                onCheckedChange = { show ->
+                    onUpdateSettings { it.withShowScreenOffControl(show) }
+                },
+                accentColor = accentColor,
+                tag = "screensaver_screen_off_control_switch"
+            )
+
+            ScreensaverSwitchRow(
                 title = "Orientation Lock",
                 subtitle = "Hold current Portrait or Landscape orientation",
                 checked = settings.orientationLocked,
@@ -492,6 +508,148 @@ fun ScreensaverSettingsSectionContent(
                 accentColor = accentColor,
                 onValueChange = onHudBrightnessChange,
                 tag = "screensaver_brightness_slider"
+            )
+        }
+
+        // ============================================================
+        // 2b. AMOLED ALWAYS-ON DISPLAY (IN-APP LOW-POWER MODE)
+        // ============================================================
+        ScreensaverSubDropdown(
+            title = "AMOLED Always-On Display",
+            subtitle = if (settings.aodEnabled) {
+                buildString {
+                    append("ON • Dim ${(settings.aodDimLevel * 100).roundToInt()}%")
+                    if (settings.aodBurnInProtectionEnabled) append(" • Burn-in Safe")
+                    if (settings.aodAutoActivateOnScreenOff) append(" • Auto")
+                }
+            } else {
+                "Disabled"
+            },
+            icon = Icons.Default.NightlightRound,
+            accentColor = secondaryColor,
+            isExpanded = subExpanded["aod"] == true,
+            onToggle = { subExpanded["aod"] = !(subExpanded["aod"] ?: false) },
+            headerTag = "screensaver_section_aod"
+        ) {
+            ScreensaverSwitchRow(
+                title = "Enable AMOLED Always-On Display",
+                subtitle = "Pure-black #000000 low-power display mode inside active Screensaver",
+                checked = settings.aodEnabled,
+                onCheckedChange = { enabled ->
+                    onUpdateSettings { it.withAodEnabled(enabled) }
+                },
+                accentColor = secondaryColor,
+                tag = "screensaver_aod_enabled_switch"
+            )
+
+            ScreensaverSwitchRow(
+                title = "Automatic AOD on Screen OFF",
+                subtitle = "Switch directly into AMOLED AOD when tapping Screen OFF on the Screensaver",
+                checked = settings.aodAutoActivateOnScreenOff,
+                enabled = settings.aodEnabled,
+                onCheckedChange = { auto ->
+                    onUpdateSettings { it.withAodAutoActivateOnScreenOff(auto) }
+                },
+                accentColor = secondaryColor,
+                tag = "screensaver_aod_auto_activate_switch"
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Display Information Selection",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val aodItems = listOf(
+                    Triple("Current Chainage", settings.aodShowChainage, "screensaver_aod_show_chainage_chip") to
+                        { v: Boolean -> onUpdateSettings { it.copy(aodShowChainage = v) } },
+                    Triple("LHS / RHS", settings.aodShowDirectionSide, "screensaver_aod_show_direction_chip") to
+                        { v: Boolean -> onUpdateSettings { it.copy(aodShowDirectionSide = v) } },
+                    Triple("Current Time", settings.aodShowTime, "screensaver_aod_show_time_chip") to
+                        { v: Boolean -> onUpdateSettings { it.copy(aodShowTime = v) } },
+                    Triple("GPS Status", settings.aodShowGpsStatus, "screensaver_aod_show_gps_chip") to
+                        { v: Boolean -> onUpdateSettings { it.copy(aodShowGpsStatus = v) } },
+                    Triple("KM Stone Status", settings.aodShowKmStoneStatus, "screensaver_aod_show_km_status_chip") to
+                        { v: Boolean -> onUpdateSettings { it.copy(aodShowKmStoneStatus = v) } },
+                    Triple("Next KM Stone", settings.aodShowNextKmStone, "screensaver_aod_show_next_km_chip") to
+                        { v: Boolean -> onUpdateSettings { it.copy(aodShowNextKmStone = v) } }
+                )
+                aodItems.forEach { (meta, onToggleItem) ->
+                    val (label, checked, chipTag) = meta
+                    FilterChip(
+                        selected = checked,
+                        enabled = settings.aodEnabled,
+                        onClick = { onToggleItem(!checked) },
+                        label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = secondaryColor,
+                            selectedLabelColor = if (isDark) Color.Black else Color.White
+                        ),
+                        modifier = Modifier.testTag(chipTag)
+                    )
+                }
+            }
+
+            ScreensaverSliderRow(
+                title = "AOD Dim Display Level",
+                value = settings.aodDimLevel,
+                valueRange = HomeScreensaverSettings.MIN_AOD_DIM_LEVEL..HomeScreensaverSettings.MAX_AOD_DIM_LEVEL,
+                valueText = "${(settings.aodDimLevel * 100).roundToInt()}%",
+                accentColor = secondaryColor,
+                onValueChange = { level -> onUpdateSettings { it.withAodDimLevel(level) } },
+                tag = "screensaver_aod_dim_slider"
+            )
+
+            ScreensaverSwitchRow(
+                title = "AMOLED Burn-In Protection",
+                subtitle = "Periodically shifts minimal AOD text to protect OLED pixels from static wear",
+                checked = settings.aodBurnInProtectionEnabled,
+                enabled = settings.aodEnabled,
+                onCheckedChange = { enabled ->
+                    onUpdateSettings { it.withAodBurnInProtection(enabled) }
+                },
+                accentColor = secondaryColor,
+                tag = "screensaver_aod_burn_in_switch"
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+            AmoledAodPreviewBox(
+                settings = settings,
+                chainageText = matchResult.chainage?.format() ?: "204+320",
+                sideText = (matchResult.detectedSide ?: "LHS") + " ↑",
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+            OutlinedButton(
+                onClick = {
+                    previewStartInAod = true
+                    previewScreensaverMode = settings.displayMode
+                },
+                enabled = settings.aodEnabled,
+                border = BorderStroke(1.dp, secondaryColor.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("screensaver_preview_aod_btn")
+            ) {
+                Icon(Icons.Default.NightlightRound, contentDescription = null, tint = secondaryColor, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Preview Full-Screen AMOLED AOD", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = secondaryColor)
+            }
+
+            Text(
+                text = "Runs as an in-app AMOLED low-power display while CTECS Screensaver is active. Android hardware lock-screen AOD remains controlled by system settings.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
             )
         }
 
@@ -1037,13 +1195,33 @@ fun ScreensaverSettingsSectionContent(
             )
         }
 
+        var previewScreenOff by remember(activePreviewMode) { mutableStateOf(false) }
+        var previewAodActive by remember(activePreviewMode, previewStartInAod) {
+            mutableStateOf(previewStartInAod && settings.aodEnabled)
+        }
+
         Dialog(
-            onDismissRequest = { previewScreensaverMode = null },
+            onDismissRequest = {
+                when {
+                    previewScreenOff -> previewScreenOff = false
+                    previewAodActive -> {
+                        previewAodActive = false
+                        if (previewStartInAod) {
+                            previewStartInAod = false
+                            previewScreensaverMode = null
+                        }
+                    }
+                    else -> {
+                        previewStartInAod = false
+                        previewScreensaverMode = null
+                    }
+                }
+            },
             properties = DialogProperties(
                 usePlatformDefaultWidth = false,
                 decorFitsSystemWindows = false,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = true
+                dismissOnBackPress = !previewScreenOff && !previewAodActive,
+                dismissOnClickOutside = !previewScreenOff && !previewAodActive
             )
         ) {
             val localView = LocalView.current
@@ -1052,6 +1230,27 @@ fun ScreensaverSettingsSectionContent(
                 enabled = previewSettings.keepScreenAwake,
                 requesterId = "ScreensaverPreview"
             )
+            DisposableEffect(dialogWindow, previewScreenOff, previewAodActive, previewSettings.aodDimLevel) {
+                if (dialogWindow != null) {
+                    val attrs = dialogWindow.attributes
+                    attrs.screenBrightness = when {
+                        previewScreenOff -> 0.01f
+                        previewAodActive -> AmoledBurnInProtection.resolveWindowBrightness(
+                            dimLevel = previewSettings.aodDimLevel,
+                            conservePower = false
+                        )
+                        else -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                    }
+                    dialogWindow.attributes = attrs
+                }
+                onDispose {
+                    if (dialogWindow != null) {
+                        val attrs = dialogWindow.attributes
+                        attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                        dialogWindow.attributes = attrs
+                    }
+                }
+            }
             DisposableEffect(dialogWindow, localView, previewSettings.keepScreenAwake) {
                 if (dialogWindow != null) {
                     dialogWindow.setDimAmount(0f)
@@ -1090,6 +1289,11 @@ fun ScreensaverSettingsSectionContent(
                 isDarkAppTheme = isDark,
                 screensaverSettings = previewSettings,
                 isSamplePreview = !hasRealData,
+                isScreenOff = previewScreenOff,
+                isAodActive = previewAodActive,
+                nextKmLabel = "Next KM 205+000",
+                distanceToNextMetres = 680L,
+                isKmStoneMonitoringActive = true,
                 onToggleMirrorQuickMode = { enableMirror, currentlyLandscape ->
                     onUpdateSettings {
                         it.withMirrorQuickToggle(
@@ -1108,7 +1312,27 @@ fun ScreensaverSettingsSectionContent(
                         it.withOrientationLock(!it.orientationLocked, currentlyLandscape)
                     }
                 },
-                onDismiss = { previewScreensaverMode = null }
+                onToggleScreenOff = { screenOff ->
+                    if (screenOff && previewSettings.aodEnabled && previewSettings.aodAutoActivateOnScreenOff) {
+                        previewScreenOff = false
+                        previewAodActive = true
+                    } else {
+                        previewAodActive = false
+                        previewScreenOff = screenOff
+                    }
+                },
+                onToggleAod = { active ->
+                    previewScreenOff = false
+                    previewAodActive = active
+                },
+                onForceBlackScreenOff = {
+                    previewAodActive = false
+                    previewScreenOff = true
+                },
+                onDismiss = {
+                    previewStartInAod = false
+                    previewScreensaverMode = null
+                }
             )
         }
     }

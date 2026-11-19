@@ -5,11 +5,13 @@ import android.location.Address
 import android.location.Geocoder
 import android.os.Build
 import android.util.Log
+import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -19,14 +21,19 @@ import kotlin.math.sqrt
  * Intelligent Reverse Geocoding and Location Name Engine for CTECS.
  * Automatically resolves GPS coordinates into concise, meaningful location names
  * (e.g. "Dehradun, Uttarakhand" or "Rehmadpur, Roorkee"), avoiding long postal addresses.
- * Features smart spatial caching to prevent unnecessary network and battery consumption.
+ * Features bounded LRU spatial caching, in-flight deduplication, and offline failure backoff
+ * to prevent unnecessary network, data, and battery consumption.
  */
 object LocationNameResolver {
 
     private const val TAG = "LocationNameResolver"
+    private const val MAX_CACHE_ENTRIES = 256
+    const val FAILURE_BACKOFF_MS = 30_000L
 
-    // In-memory cache keyed by ~100m coordinate grid cells (lat*1000, lng*1000)
-    private val locationCache = ConcurrentHashMap<Pair<Long, Long>, String>()
+    // Bounded LRU cache keyed by ~100m coordinate grid cells ("lat*1000:lng*1000")
+    private val locationCache = LruCache<String, String>(MAX_CACHE_ENTRIES)
+    private val inFlightCells = ConcurrentHashMap.newKeySet<String>()
+    private val failureBackoffUntilMs = AtomicLong(0L)
 
     @Volatile
     private var lastResolvedLat: Double? = null
@@ -36,6 +43,24 @@ object LocationNameResolver {
     private var lastResolvedName: String = ""
     @Volatile
     private var lastResolveTimeMs: Long = 0L
+
+    internal fun cellKeyFor(latitude: Double, longitude: Double): String {
+        return "${(latitude * 1000).toLong()}:${(longitude * 1000).toLong()}"
+    }
+
+    internal fun cacheSize(): Int = locationCache.size()
+
+    internal fun putCachedLocationForTest(latitude: Double, longitude: Double, name: String) {
+        locationCache.put(cellKeyFor(latitude, longitude), name)
+    }
+
+    internal fun isInFailureBackoff(nowMs: Long = System.currentTimeMillis()): Boolean {
+        return nowMs < failureBackoffUntilMs.get()
+    }
+
+    internal fun recordFailureBackoff(nowMs: Long = System.currentTimeMillis()) {
+        failureBackoffUntilMs.set(nowMs + FAILURE_BACKOFF_MS)
+    }
 
     /**
      * Resolves the current location name from GPS coordinates.
@@ -58,9 +83,9 @@ object LocationNameResolver {
             }
         }
 
-        // 2. Grid cell cache check (~100m cell)
-        val cellKey = Pair((latitude * 1000).toLong(), (longitude * 1000).toLong())
-        val cached = locationCache[cellKey]
+        // 2. Bounded grid cell cache check (~100m cell)
+        val cellKey = cellKeyFor(latitude, longitude)
+        val cached = locationCache.get(cellKey)
         if (!cached.isNullOrBlank()) {
             lastResolvedLat = latitude
             lastResolvedLng = longitude
@@ -68,17 +93,26 @@ object LocationNameResolver {
             return@withContext cached
         }
 
-        // 3. Geocode with Geocoder
-        if (!Geocoder.isPresent()) {
+        // 3. Offline / failure backoff guard to avoid repeated 4s Geocoder blocks when offline
+        val nowMs = System.currentTimeMillis()
+        if (isInFailureBackoff(nowMs)) {
             return@withContext lastResolvedName
         }
 
+        // 4. Geocode with Geocoder (deduplicated per grid cell)
+        if (!Geocoder.isPresent()) {
+            return@withContext lastResolvedName
+        }
+        if (!inFlightCells.add(cellKey)) {
+            return@withContext lastResolvedName
+        }
+
+        val appContext = context.applicationContext
         val resolved = try {
             withTimeoutOrNull(4000L) {
-                val geocoder = Geocoder(context, Locale.getDefault())
+                val geocoder = Geocoder(appContext, Locale.getDefault())
                 val addresses: List<Address>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     try {
-                        // On Android 13+, synchronous getFromLocation is still valid on background thread
                         @Suppress("DEPRECATION")
                         geocoder.getFromLocation(latitude, longitude, 1)
                     } catch (e: Exception) {
@@ -99,17 +133,21 @@ object LocationNameResolver {
         } catch (e: Exception) {
             Log.w(TAG, "Reverse geocode failed: ${e.message}")
             null
+        } finally {
+            inFlightCells.remove(cellKey)
         }
 
         if (!resolved.isNullOrBlank()) {
-            locationCache[cellKey] = resolved
+            locationCache.put(cellKey, resolved)
             lastResolvedLat = latitude
             lastResolvedLng = longitude
             lastResolvedName = resolved
             lastResolveTimeMs = System.currentTimeMillis()
+            failureBackoffUntilMs.set(0L)
             return@withContext resolved
         }
 
+        recordFailureBackoff()
         // Return last valid cached result or empty string (never return 'None')
         return@withContext lastResolvedName
     }
@@ -171,9 +209,11 @@ object LocationNameResolver {
     }
 
     fun invalidateCache() {
-        locationCache.clear()
+        locationCache.evictAll()
         lastResolvedLat = null
         lastResolvedLng = null
+        lastResolvedName = ""
+        failureBackoffUntilMs.set(0L)
     }
 
     private fun calculateDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

@@ -1,5 +1,6 @@
 package com.example.ui.settings
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.media.RingtoneManager
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Vibration
@@ -75,12 +77,14 @@ import com.example.model.KmStoneAlertSettings
 import com.example.model.KmVibrationIntensity
 import com.example.model.KmVibrationPattern
 import com.example.navigation.KmStoneAlertFeedbackManager
+import com.example.navigation.KmStoneMonitoringForegroundService
+import com.example.navigation.LockScreenNavigationService
 import kotlin.math.roundToInt
 
 /**
- * Settings → Navigation Alerts → KM Stone Arrival
+ * Settings → Navigation Alerts → KM Stone Monitoring
  * Clean minimalist Flat UI section with expandable subsections:
- * - General
+ * - Monitoring & General (Foreground Service, Background Monitoring, Persistent Notification, Lock-Screen Visibility, Arrival Alerts)
  * - Vibration Customisation
  * - Sound Customisation
  * - Arrival Detection
@@ -91,6 +95,9 @@ import kotlin.math.roundToInt
 fun KmStoneAlertSettingsSectionContent(
     settings: KmStoneAlertSettings,
     accentColor: Color,
+    isMonitoringServiceRunning: Boolean = false,
+    serviceStatusNote: String? = null,
+    hasActiveRoute: Boolean = true,
     onUpdateSettings: ((KmStoneAlertSettings) -> KmStoneAlertSettings) -> Unit,
     onResetDefaults: () -> Unit,
     onFeedbackMessage: (String) -> Unit = {}
@@ -159,6 +166,50 @@ fun KmStoneAlertSettingsSectionContent(
         }
     }
 
+    var pendingTestNotificationAfterPerm by remember { mutableStateOf(false) }
+    var pendingPersistentNotifAfterPerm by remember { mutableStateOf(false) }
+    var hasBgLocationPerm by remember {
+        mutableStateOf(KmStoneMonitoringForegroundService.hasBackgroundLocationPermission(context))
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            when {
+                pendingTestNotificationAfterPerm -> {
+                    pendingTestNotificationAfterPerm = false
+                    KmStoneAlertFeedbackManager.testArrivalNotification(context, settings)
+                    onFeedbackMessage("Sent test KM Stone arrival notification")
+                }
+                pendingPersistentNotifAfterPerm -> {
+                    pendingPersistentNotifAfterPerm = false
+                    onUpdateSettings { it.copy(persistentNotificationEnabled = true) }
+                    onFeedbackMessage("Persistent KM Stone monitoring notification enabled")
+                }
+                else -> {
+                    onUpdateSettings { it.copy(lockScreenNotificationsEnabled = true) }
+                    onFeedbackMessage("Lock-screen KM Stone notifications enabled")
+                }
+            }
+        } else {
+            pendingTestNotificationAfterPerm = false
+            pendingPersistentNotifAfterPerm = false
+            onFeedbackMessage("Notification permission denied by Android")
+        }
+    }
+
+    val backgroundLocationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasBgLocationPerm = granted || KmStoneMonitoringForegroundService.hasBackgroundLocationPermission(context)
+        if (granted) {
+            onFeedbackMessage("Background location permission granted for continuous monitoring")
+        } else {
+            onFeedbackMessage("Background location not granted; monitoring will rely on active foreground session")
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -166,11 +217,19 @@ fun KmStoneAlertSettingsSectionContent(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // ------------------------------------------------------------
-        // 1. GENERAL SUBSECTION
+        // 1. MONITORING & GENERAL SUBSECTION
         // ------------------------------------------------------------
+        val monitoringSubtitle = when {
+            !settings.enabled -> "Monitoring disabled"
+            isMonitoringServiceRunning -> "Foreground Service active"
+            settings.backgroundMonitoringEnabled && settings.persistentNotificationEnabled && !hasActiveRoute ->
+                "Standby • Load a route to start service"
+            settings.backgroundMonitoringEnabled -> "Background monitoring enabled"
+            else -> "In-app monitoring only"
+        }
         KmFlatExpandableHeader(
-            title = "General",
-            subtitle = if (settings.enabled) "Arrival alerts enabled" else "Disabled",
+            title = "KM Stone Monitoring & Alerts",
+            subtitle = monitoringSubtitle,
             expanded = expandedSubsections["general"] == true,
             accentColor = accentColor,
             tag = "km_alert_sub_general",
@@ -184,13 +243,150 @@ fun KmStoneAlertSettingsSectionContent(
                     .padding(horizontal = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                // Live Foreground Service Status Strip
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isMonitoringServiceRunning) {
+                        Color(0xFF10B981).copy(alpha = 0.12f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    },
+                    border = BorderStroke(
+                        0.75.dp,
+                        if (isMonitoringServiceRunning) {
+                            Color(0xFF10B981).copy(alpha = 0.40f)
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("km_alert_service_status_banner")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = when {
+                                isMonitoringServiceRunning -> "Dedicated KM Stone Foreground Service: RUNNING"
+                                settings.shouldRunBackgroundForegroundService(hasActiveRoute) ->
+                                    "Dedicated KM Stone Foreground Service: STARTING"
+                                settings.enabled && settings.backgroundMonitoringEnabled && !hasActiveRoute ->
+                                    "Foreground Service: STANDBY (load a KMZ/KML route)"
+                                else -> "Dedicated KM Stone Foreground Service: STOPPED"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isMonitoringServiceRunning) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface
+                        )
+                        if (!serviceStatusNote.isNullOrBlank()) {
+                            Text(
+                                text = serviceStatusNote,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
                 KmFlatSwitchRow(
-                    title = "Enable KM Stone Arrival Alerts",
-                    subtitle = "Trigger alert when reaching or passing a verified KM Stone",
+                    title = "Enable KM Stone Monitoring",
+                    subtitle = "Continuously track verified KM Stone progress using CTECS GPS & calibrated chainage",
                     checked = settings.enabled,
                     accentColor = accentColor,
                     tag = "km_alert_switch_enabled",
                     onCheckedChange = { enabled -> onUpdateSettings { it.copy(enabled = enabled) } }
+                )
+
+                KmFlatSwitchRow(
+                    title = "Background Monitoring (Foreground Service)",
+                    subtitle = "Keep monitoring active in background and while screen is locked (subject to Android permissions)",
+                    checked = settings.backgroundMonitoringEnabled,
+                    accentColor = accentColor,
+                    tag = "km_alert_switch_background_monitoring",
+                    onCheckedChange = { enabled ->
+                        onUpdateSettings { it.copy(backgroundMonitoringEnabled = enabled) }
+                    }
+                )
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    settings.enabled &&
+                    settings.backgroundMonitoringEnabled &&
+                    !hasBgLocationPerm
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            if (KmStoneMonitoringForegroundService.hasLocationPermission(context)) {
+                                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                            } else {
+                                onFeedbackMessage("Grant Foreground Location permission first before enabling All-the-Time access")
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(0.8.dp, accentColor.copy(alpha = 0.55f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("km_alert_request_bg_location_btn")
+                    ) {
+                        Text(
+                            text = "Allow Background Location (Optional for Locked Screen)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                KmFlatSwitchRow(
+                    title = "Persistent Monitoring Notification",
+                    subtitle = "Show live chainage, next KM Stone, distance, GPS & speed while foreground service runs",
+                    checked = settings.persistentNotificationEnabled,
+                    accentColor = accentColor,
+                    tag = "km_alert_switch_persistent_notif",
+                    onCheckedChange = { enabled ->
+                        if (enabled &&
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            !KmStoneMonitoringForegroundService.hasNotificationPermission(context)
+                        ) {
+                            pendingTestNotificationAfterPerm = false
+                            pendingPersistentNotifAfterPerm = true
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            onUpdateSettings { it.copy(persistentNotificationEnabled = enabled) }
+                        }
+                    }
+                )
+
+                KmFlatSwitchRow(
+                    title = "Lock-Screen Notification Visibility",
+                    subtitle = "Display chainage & KM Stone details on the lock screen (respects Android lock-screen privacy)",
+                    checked = settings.lockScreenNotificationsEnabled,
+                    accentColor = accentColor,
+                    tag = "km_alert_switch_lock_screen_notif",
+                    onCheckedChange = { enabled ->
+                        if (enabled &&
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            !LockScreenNavigationService.hasNotificationPermission(context)
+                        ) {
+                            pendingTestNotificationAfterPerm = false
+                            pendingPersistentNotifAfterPerm = false
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            onUpdateSettings { it.copy(lockScreenNotificationsEnabled = enabled) }
+                        }
+                    }
+                )
+
+                KmFlatSwitchRow(
+                    title = "KM Stone Arrival Alerts",
+                    subtitle = "Deliver immediate arrival notification, sound & vibration upon confirmed KM Stone arrival",
+                    checked = settings.arrivalAlertsEnabled,
+                    accentColor = accentColor,
+                    tag = "km_alert_switch_arrival_alerts",
+                    onCheckedChange = { enabled ->
+                        onUpdateSettings { it.copy(arrivalAlertsEnabled = enabled) }
+                    }
                 )
 
                 KmFlatSwitchRow(
@@ -219,6 +415,34 @@ fun KmStoneAlertSettingsSectionContent(
                     tag = "km_alert_switch_sound",
                     onCheckedChange = { enabled -> onUpdateSettings { it.copy(soundEnabled = enabled) } }
                 )
+
+                OutlinedButton(
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            !LockScreenNavigationService.hasNotificationPermission(context)
+                        ) {
+                            pendingTestNotificationAfterPerm = true
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            val record = KmStoneAlertFeedbackManager.testArrivalNotification(context, settings)
+                            if (record.notificationPosted) {
+                                onFeedbackMessage("Sent test KM Stone arrival notification")
+                            } else {
+                                onFeedbackMessage("Grant notification permission to preview arrival banners")
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("km_alert_test_notification_btn")
+                ) {
+                    Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Test Arrival Notification", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
 

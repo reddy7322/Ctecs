@@ -189,4 +189,29 @@ class MainActivity : ComponentActivity() {
         }
         intent.removeExtra(CtecsWidgetUpdater.EXTRA_WIDGET_OPEN_TARGET)
     }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        com.example.geo.OsmTileManager.trimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            com.example.overlay.MiniMapRenderer.clearCache()
+            com.example.overlay.LogoProvider.clearCache()
+            com.example.ui.photos.VideoThumbnailCache.clear()
+            try {
+                coil.Coil.imageLoader(applicationContext).memoryCache?.trimMemory(level)
+            } catch (_: Throwable) {}
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onLowMemory() {
+        super.onLowMemory()
+        com.example.geo.OsmTileManager.clearMemoryCache()
+        com.example.overlay.MiniMapRenderer.clearCache()
+        com.example.overlay.LogoProvider.clearCache()
+        com.example.ui.photos.VideoThumbnailCache.clear()
+        try {
+            coil.Coil.imageLoader(applicationContext).memoryCache?.clear()
+        } catch (_: Throwable) {}
+    }
 }

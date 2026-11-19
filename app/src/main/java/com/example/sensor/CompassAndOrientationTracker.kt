@@ -39,8 +39,17 @@ class CompassAndOrientationTracker(context: Context) {
     val rotationDegrees: StateFlow<Float> = _rotationDegrees.asStateFlow()
 
     private var isTracking = false
+    private var lastEmittedAzimuth = Float.NaN
+    private var lastEmitTimeMs = 0L
 
-    private val orientationListener = object : OrientationEventListener(context) {
+    companion object {
+        const val MIN_AZIMUTH_DELTA_DEG = 1.5f
+        const val MIN_EMIT_INTERVAL_MS = 120L
+    }
+
+    fun isTrackingActive(): Boolean = isTracking
+
+    private val orientationListener = object : OrientationEventListener(context.applicationContext) {
         override fun onOrientationChanged(orientation: Int) {
             if (orientation == ORIENTATION_UNKNOWN) return
 
@@ -71,17 +80,18 @@ class CompassAndOrientationTracker(context: Context) {
     private val sensorListener = object : SensorEventListener {
         private val gravity = FloatArray(3)
         private val geomagnetic = FloatArray(3)
+        private val rotationMatrix = FloatArray(9)
+        private val inclinationMatrix = FloatArray(9)
+        private val orientationAngles = FloatArray(3)
         private var hasGravity = false
         private var hasGeomagnetic = false
 
         override fun onSensorChanged(event: SensorEvent) {
             when (event.sensor.type) {
                 Sensor.TYPE_ROTATION_VECTOR -> {
-                    val rotationMatrix = FloatArray(9)
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                    val orientation = FloatArray(3)
-                    SensorManager.getOrientation(rotationMatrix, orientation)
-                    val azimuth = Math.toDegrees(orientation[0].toDouble()).toFloat()
+                    SensorManager.getOrientation(rotationMatrix, orientationAngles)
+                    val azimuth = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
                     val normalizedAzimuth = (azimuth + 360f) % 360f
                     updateCompass(normalizedAzimuth)
                 }
@@ -100,12 +110,9 @@ class CompassAndOrientationTracker(context: Context) {
 
         private fun computeOrientationFallback() {
             if (hasGravity && hasGeomagnetic) {
-                val r = FloatArray(9)
-                val i = FloatArray(9)
-                if (SensorManager.getRotationMatrix(r, i, gravity, geomagnetic)) {
-                    val orientation = FloatArray(3)
-                    SensorManager.getOrientation(r, orientation)
-                    val azimuth = Math.toDegrees(orientation[0].toDouble()).toFloat()
+                if (SensorManager.getRotationMatrix(rotationMatrix, inclinationMatrix, gravity, geomagnetic)) {
+                    SensorManager.getOrientation(rotationMatrix, orientationAngles)
+                    val azimuth = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
                     val normalizedAzimuth = (azimuth + 360f) % 360f
                     updateCompass(normalizedAzimuth)
                 }
@@ -115,7 +122,7 @@ class CompassAndOrientationTracker(context: Context) {
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
 
-    private fun updateCompass(azimuth: Float) {
+    internal fun updateCompass(azimuth: Float, nowMs: Long = System.currentTimeMillis()): Boolean {
         val cardinal = when (azimuth) {
             in 348.75f..360f, in 0f..11.25f -> "N"
             in 11.25f..33.75f -> "NNE"
@@ -135,11 +142,27 @@ class CompassAndOrientationTracker(context: Context) {
             in 326.25f..348.75f -> "NNW"
             else -> "N"
         }
+
+        val current = _compassState.value
+        if (current.isAvailable && !lastEmittedAzimuth.isNaN()) {
+            val rawDiff = kotlin.math.abs(azimuth - lastEmittedAzimuth)
+            val angularDiff = minOf(rawDiff, 360f - rawDiff)
+            val elapsed = nowMs - lastEmitTimeMs
+            if (cardinal == current.cardinalDirection &&
+                (angularDiff < MIN_AZIMUTH_DELTA_DEG || elapsed < MIN_EMIT_INTERVAL_MS)
+            ) {
+                return false
+            }
+        }
+
+        lastEmittedAzimuth = azimuth
+        lastEmitTimeMs = nowMs
         _compassState.value = CompassState(
             azimuthDegrees = azimuth,
             cardinalDirection = cardinal,
             isAvailable = true
         )
+        return true
     }
 
     fun startTracking() {

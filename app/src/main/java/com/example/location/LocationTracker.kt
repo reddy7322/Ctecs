@@ -58,19 +58,41 @@ class LocationTracker(private val context: Context) {
     private val _locationState = MutableStateFlow(LocationState())
     val locationState: StateFlow<LocationState> = _locationState.asStateFlow()
 
+    private val appContext = context.applicationContext
     private val fusedClient: FusedLocationProviderClient =
-        LocationServices.getFusedLocationProviderClient(context)
+        LocationServices.getFusedLocationProviderClient(appContext)
     private val locationManager =
-        context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
 
     @Volatile
     private var isTracking = false
+
+    @Volatile
+    private var highFrequencyMode = false
+
+    @Volatile
+    private var isStationaryMode = false
+
+    @Volatile
+    private var currentIntervalMs = ACTIVE_INTERVAL_MS
+
+    private var stationaryAnchorLat: Double? = null
+    private var stationaryAnchorLng: Double? = null
+    private var stationarySinceMs: Long = 0L
 
     private val lastCallbackMillis = AtomicLong(0L)
     private val stallRecoveries = AtomicLong(0L)
 
     companion object {
         const val DEFAULT_GPS_FRESH_AGE_MS = 20_000L
+        const val ACTIVE_INTERVAL_MS = 1_000L
+        const val ACTIVE_MIN_INTERVAL_MS = 500L
+        const val STATIONARY_INTERVAL_MS = 3_500L
+        const val STATIONARY_MIN_INTERVAL_MS = 1_500L
+        const val STATIONARY_DWELL_MS = 30_000L
+        const val STATIONARY_SPEED_THRESHOLD_MPS = 0.5f
+        const val MOVEMENT_WAKE_SPEED_MPS = 0.8f
+        const val STATIONARY_DISPLACEMENT_METRES = 4.0
 
         fun isValidCoordinate(lat: Double, lng: Double): Boolean {
             if (lat.isNaN() || lng.isNaN() || lat.isInfinite() || lng.isInfinite()) return false
@@ -81,6 +103,24 @@ class LocationTracker(private val context: Context) {
     }
 
     fun getStallRecoveriesCount(): Long = stallRecoveries.get()
+
+    fun getCurrentPollingIntervalMs(): Long = currentIntervalMs
+
+    fun isStationaryPowerSaveActive(): Boolean = isStationaryMode
+
+    fun isTrackingActive(): Boolean = isTracking
+
+    /**
+     * Forces active 1Hz polling during precision capture/survey screens.
+     * When disabled, allows automatic stationary step-down to save battery while vehicle is parked.
+     */
+    fun setHighFrequencyMode(enabled: Boolean) {
+        if (highFrequencyMode == enabled) return
+        highFrequencyMode = enabled
+        if (enabled && isStationaryMode) {
+            switchPollingInterval(stationary = false)
+        }
+    }
 
     fun validateLocationState(
         state: LocationState = _locationState.value,
@@ -154,6 +194,7 @@ class LocationTracker(private val context: Context) {
             checkAndRecoverIfStale()
             return
         }
+        resetStationaryState()
         if (_locationState.value.point == null) {
             _locationState.value = _locationState.value.copy(status = LocationStatus.ACQUIRING)
         }
@@ -162,19 +203,32 @@ class LocationTracker(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
+    private fun removeAllLocationListeners() {
+        try {
+            fusedClient.removeLocationUpdates(locationCallback)
+        } catch (_: Exception) {}
+        try {
+            locationManager?.removeUpdates(legacyListener)
+        } catch (_: Exception) {}
+    }
+
+    @SuppressLint("MissingPermission")
     private fun registerLocationCallbacks() {
+        val intervalMs = if (isStationaryMode && !highFrequencyMode) STATIONARY_INTERVAL_MS else ACTIVE_INTERVAL_MS
+        val minIntervalMs = if (isStationaryMode && !highFrequencyMode) STATIONARY_MIN_INTERVAL_MS else ACTIVE_MIN_INTERVAL_MS
+        currentIntervalMs = intervalMs
         try {
             // Setup continuous high-accuracy fused location request with 0m min distance
             // so OEM stationary sleep filters never freeze the location stream.
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-                .setMinUpdateIntervalMillis(500L)
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
+                .setMinUpdateIntervalMillis(minIntervalMs)
                 .setMinUpdateDistanceMeters(0f)
                 .setWaitForAccurateLocation(false)
                 .build()
 
             fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
                 .addOnFailureListener {
-                    startLegacyFallback()
+                    startLegacyFallback(intervalMs)
                 }
 
             fusedClient.lastLocation.addOnSuccessListener { loc ->
@@ -190,12 +244,12 @@ class LocationTracker(private val context: Context) {
         } catch (e: SecurityException) {
             _locationState.value = _locationState.value.copy(status = LocationStatus.PERMISSION_DENIED)
         } catch (e: Exception) {
-            startLegacyFallback()
+            startLegacyFallback(intervalMs)
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun startLegacyFallback() {
+    private fun startLegacyFallback(intervalMs: Long = ACTIVE_INTERVAL_MS) {
         try {
             val provider = if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
                 LocationManager.GPS_PROVIDER
@@ -204,7 +258,7 @@ class LocationTracker(private val context: Context) {
             }
             locationManager?.requestLocationUpdates(
                 provider,
-                1000L,
+                intervalMs,
                 0f,
                 legacyListener,
                 Looper.getMainLooper()
@@ -218,6 +272,70 @@ class LocationTracker(private val context: Context) {
         }
     }
 
+    private fun resetStationaryState() {
+        isStationaryMode = false
+        currentIntervalMs = ACTIVE_INTERVAL_MS
+        stationaryAnchorLat = null
+        stationaryAnchorLng = null
+        stationarySinceMs = 0L
+    }
+
+    private fun switchPollingInterval(stationary: Boolean) {
+        val targetStationary = stationary && !highFrequencyMode
+        val targetInterval = if (targetStationary) STATIONARY_INTERVAL_MS else ACTIVE_INTERVAL_MS
+        if (isStationaryMode == targetStationary && currentIntervalMs == targetInterval) return
+        isStationaryMode = targetStationary
+        currentIntervalMs = targetInterval
+        if (isTracking) {
+            removeAllLocationListeners()
+            registerLocationCallbacks()
+        }
+    }
+
+    internal fun evaluateAdaptivePolling(lat: Double, lng: Double, speedMps: Float?, nowMs: Long) {
+        if (highFrequencyMode) {
+            if (isStationaryMode) switchPollingInterval(stationary = false)
+            stationaryAnchorLat = lat
+            stationaryAnchorLng = lng
+            stationarySinceMs = nowMs
+            return
+        }
+
+        val anchorLat = stationaryAnchorLat
+        val anchorLng = stationaryAnchorLng
+        val movedMetres = if (anchorLat != null && anchorLng != null) {
+            com.example.geo.GeoUtils.distanceMetres(GeoPoint(anchorLat, anchorLng), GeoPoint(lat, lng))
+        } else {
+            Double.MAX_VALUE
+        }
+
+        val isMovingFast = (speedMps != null && speedMps >= MOVEMENT_WAKE_SPEED_MPS) ||
+            (anchorLat != null && movedMetres >= STATIONARY_DISPLACEMENT_METRES)
+
+        if (anchorLat == null || isMovingFast) {
+            stationaryAnchorLat = lat
+            stationaryAnchorLng = lng
+            stationarySinceMs = nowMs
+            if (isStationaryMode) {
+                switchPollingInterval(stationary = false)
+            }
+            return
+        }
+
+        val isSlow = speedMps == null || speedMps < STATIONARY_SPEED_THRESHOLD_MPS
+        if (isSlow && movedMetres < STATIONARY_DISPLACEMENT_METRES) {
+            if (stationarySinceMs <= 0L) {
+                stationarySinceMs = nowMs
+            } else if (!isStationaryMode && (nowMs - stationarySinceMs) >= STATIONARY_DWELL_MS) {
+                switchPollingInterval(stationary = true)
+            }
+        } else {
+            stationaryAnchorLat = lat
+            stationaryAnchorLng = lng
+            stationarySinceMs = nowMs
+        }
+    }
+
     /**
      * Automatic watchdog check: if tracking is active and no location callback has arrived
      * within the stall threshold (e.g. after provider transition or temporary GPS drop),
@@ -226,14 +344,14 @@ class LocationTracker(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun checkAndRecoverIfStale(stallThresholdMs: Long = 8_000L): Boolean {
         if (!isTracking) return false
+        val effectiveThreshold = maxOf(stallThresholdMs, currentIntervalMs * 2L + 4_000L)
         val lastMs = lastCallbackMillis.get()
         val now = System.currentTimeMillis()
-        if (lastMs > 0L && (now - lastMs) > stallThresholdMs) {
+        if (lastMs > 0L && (now - lastMs) > effectiveThreshold) {
             stallRecoveries.incrementAndGet()
             lastCallbackMillis.set(now)
-            try {
-                fusedClient.removeLocationUpdates(locationCallback)
-            } catch (_: Exception) {}
+            resetStationaryState()
+            removeAllLocationListeners()
             registerLocationCallbacks()
             forceRefreshLocation()
             return true
@@ -243,11 +361,9 @@ class LocationTracker(private val context: Context) {
 
     fun stopTracking() {
         if (!isTracking) return
-        try {
-            fusedClient.removeLocationUpdates(locationCallback)
-            locationManager?.removeUpdates(legacyListener)
-        } catch (ignored: Exception) {}
+        removeAllLocationListeners()
         isTracking = false
+        resetStationaryState()
         _locationState.value = _locationState.value.copy(status = LocationStatus.IDLE)
     }
 
@@ -260,6 +376,8 @@ class LocationTracker(private val context: Context) {
         val point = GeoPoint(loc.latitude, loc.longitude, loc.altitude)
         val validBearing = if (loc.hasBearing() && !loc.bearing.isNaN()) loc.bearing else null
         val validSpeed = if (loc.hasSpeed() && !loc.speed.isNaN() && loc.speed >= 0f) loc.speed else null
+
+        evaluateAdaptivePolling(loc.latitude, loc.longitude, validSpeed, now)
 
         _locationState.value = LocationState(
             point = point,
@@ -277,6 +395,9 @@ class LocationTracker(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     fun forceRefreshLocation(onComplete: ((Boolean) -> Unit)? = null) {
+        if (isStationaryMode) {
+            switchPollingInterval(stationary = false)
+        }
         try {
             val cts = CancellationTokenSource()
             fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
@@ -321,13 +442,15 @@ class LocationTracker(private val context: Context) {
             return true
         }
 
+        if (isStationaryMode) {
+            switchPollingInterval(stationary = false)
+        }
+
         // If tracking is active and listener looks stale, rebind cleanly without creating duplicate listeners
         if (isTracking) {
             val lastCb = lastCallbackMillis.get()
             if (lastCb > 0L && (System.currentTimeMillis() - lastCb) > maxFreshAgeMs) {
-                try {
-                    fusedClient.removeLocationUpdates(locationCallback)
-                } catch (_: Exception) {}
+                removeAllLocationListeners()
                 registerLocationCallbacks()
             }
         }

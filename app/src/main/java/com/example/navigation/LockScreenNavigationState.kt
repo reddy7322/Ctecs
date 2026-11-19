@@ -117,7 +117,16 @@ object CtecsNavigationTelemetryHub {
     private val _serviceStatusNote = MutableStateFlow<String?>(null)
     val serviceStatusNote: StateFlow<String?> = _serviceStatusNote.asStateFlow()
 
-    // Shared single KM Stone Arrival Detector instance across Foreground Service & ViewModel
+    private val _isKmStoneServiceRunning = MutableStateFlow(false)
+    val isKmStoneServiceRunning: StateFlow<Boolean> = _isKmStoneServiceRunning.asStateFlow()
+
+    private val _kmStoneServiceStatusNote = MutableStateFlow<String?>(null)
+    val kmStoneServiceStatusNote: StateFlow<String?> = _kmStoneServiceStatusNote.asStateFlow()
+
+    private val _lastKmStoneEvent = MutableStateFlow<KmStoneAlertEvent?>(null)
+    val lastKmStoneEvent: StateFlow<KmStoneAlertEvent?> = _lastKmStoneEvent.asStateFlow()
+
+    // Shared single KM Stone Arrival Detector instance across Foreground Services & ViewModel
     val sharedKmStoneDetector = KmStoneArrivalDetector()
 
     fun updateTelemetry(
@@ -149,6 +158,58 @@ object CtecsNavigationTelemetryHub {
     fun setServiceRunning(running: Boolean, note: String? = null) {
         _isServiceRunning.value = running
         _serviceStatusNote.value = note
+    }
+
+    fun setKmStoneServiceRunning(running: Boolean, note: String? = null) {
+        _isKmStoneServiceRunning.value = running
+        _kmStoneServiceStatusNote.value = note
+    }
+
+    fun recordKmStoneAlertEvent(event: KmStoneAlertEvent?) {
+        _lastKmStoneEvent.value = event
+    }
+}
+
+/**
+ * Snapshot of current device battery-saver & thermal pressure used to gracefully trim non-essential
+ * UI/notification redraws without ever disabling essential KM Stone monitoring.
+ */
+data class DevicePowerThermalState(
+    val isPowerSaveMode: Boolean = false,
+    val batteryPercent: Int = 100,
+    val isLowBattery: Boolean = false,
+    val isThermalThrottled: Boolean = false
+) {
+    val shouldConserveUiResources: Boolean
+        get() = isPowerSaveMode || isLowBattery || isThermalThrottled
+}
+
+object DevicePowerThermalMonitor {
+    const val LOW_BATTERY_THRESHOLD_PERCENT = 20
+
+    fun snapshot(context: Context): DevicePowerThermalState {
+        return try {
+            val powerMgr = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            val batteryMgr = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+            val powerSave = powerMgr?.isPowerSaveMode == true
+            val rawPct = batteryMgr?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                ?.takeIf { it in 1..100 }
+                ?: 100
+            val thermalHot = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                (powerMgr?.currentThermalStatus ?: android.os.PowerManager.THERMAL_STATUS_NONE) >=
+                    android.os.PowerManager.THERMAL_STATUS_MODERATE
+            } else {
+                false
+            }
+            DevicePowerThermalState(
+                isPowerSaveMode = powerSave,
+                batteryPercent = rawPct,
+                isLowBattery = rawPct <= LOW_BATTERY_THRESHOLD_PERCENT,
+                isThermalThrottled = thermalHot
+            )
+        } catch (_: Exception) {
+            DevicePowerThermalState()
+        }
     }
 }
 

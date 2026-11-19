@@ -67,8 +67,12 @@ enum class KmAdvanceWarningOption(val metres: Int, val label: String) {
  * sound selection & volume, and arrival detection thresholds.
  */
 data class KmStoneAlertSettings(
-    // General
+    // General & Monitoring Service
     val enabled: Boolean = true,
+    val backgroundMonitoringEnabled: Boolean = true,
+    val persistentNotificationEnabled: Boolean = true,
+    val lockScreenNotificationsEnabled: Boolean = true,
+    val arrivalAlertsEnabled: Boolean = true,
     val hapticFeedbackEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val soundEnabled: Boolean = true,
@@ -94,6 +98,19 @@ data class KmStoneAlertSettings(
     val advanceWarningVibrationPattern: KmVibrationPattern = KmVibrationPattern.SHORT_PULSE,
     val advanceWarningSoundOption: KmAlertSoundOption = KmAlertSoundOption.SOFT_ALERT
 ) {
+    /**
+     * Determines whether the dedicated KM Stone Monitoring Foreground Service should stay active.
+     * Android requires an ongoing foreground notification for a location foreground service, so
+     * disabling [enabled], [backgroundMonitoringEnabled], or [persistentNotificationEnabled] stops
+     * the background foreground service cleanly without keeping unnecessary services alive.
+     */
+    fun shouldRunBackgroundForegroundService(hasActiveRoute: Boolean): Boolean {
+        return enabled &&
+            backgroundMonitoringEnabled &&
+            persistentNotificationEnabled &&
+            hasActiveRoute
+    }
+
     fun resolveAdvanceWarningDistanceMetres(): Int {
         return when (advanceWarningOption) {
             KmAdvanceWarningOption.DISABLED -> 0
@@ -112,6 +129,10 @@ data class KmStoneAlertSettings(
     fun toJsonString(): String {
         val obj = JSONObject().apply {
             put("enabled", enabled)
+            put("backgroundMonitoringEnabled", backgroundMonitoringEnabled)
+            put("persistentNotificationEnabled", persistentNotificationEnabled)
+            put("lockScreenNotificationsEnabled", lockScreenNotificationsEnabled)
+            put("arrivalAlertsEnabled", arrivalAlertsEnabled)
             put("hapticFeedbackEnabled", hapticFeedbackEnabled)
             put("vibrationEnabled", vibrationEnabled)
             put("soundEnabled", soundEnabled)
@@ -178,6 +199,10 @@ data class KmStoneAlertSettings(
                 val obj = JSONObject(raw)
                 KmStoneAlertSettings(
                     enabled = obj.optBoolean("enabled", true),
+                    backgroundMonitoringEnabled = obj.optBoolean("backgroundMonitoringEnabled", true),
+                    persistentNotificationEnabled = obj.optBoolean("persistentNotificationEnabled", true),
+                    lockScreenNotificationsEnabled = obj.optBoolean("lockScreenNotificationsEnabled", true),
+                    arrivalAlertsEnabled = obj.optBoolean("arrivalAlertsEnabled", true),
                     hapticFeedbackEnabled = obj.optBoolean("hapticFeedbackEnabled", true),
                     vibrationEnabled = obj.optBoolean("vibrationEnabled", true),
                     soundEnabled = obj.optBoolean("soundEnabled", true),

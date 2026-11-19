@@ -430,12 +430,18 @@ class PhotoRepository(
             }
 
             // 3. Save to local file with full EXIF metadata
-            val savedOk = OverlayRenderer.saveBitmapWithExif(
-                bitmap = bitmapToSave,
-                destinationFile = localFile,
-                snapshot = snapshot,
-                context = context
-            )
+            val savedOk = try {
+                OverlayRenderer.saveBitmapWithExif(
+                    bitmap = bitmapToSave,
+                    destinationFile = localFile,
+                    snapshot = snapshot,
+                    context = context
+                )
+            } finally {
+                if (bitmapToSave !== sourceBitmap && !bitmapToSave.isRecycled) {
+                    bitmapToSave.recycle()
+                }
+            }
 
             if (!savedOk) {
                 return@withContext Result.failure(Exception("Failed to encode or save JPEG to disk"))

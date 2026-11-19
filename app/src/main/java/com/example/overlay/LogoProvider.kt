@@ -22,16 +22,48 @@ import kotlin.math.min
 
 object LogoProvider {
 
+    private val processedLogoCache = object : android.util.LruCache<String, Bitmap>(4) {}
+
+    fun clearCache() {
+        processedLogoCache.evictAll()
+    }
+
     /**
      * Resolves and returns the styled logo bitmap for drawing onto photos or canvas.
+     * Uses an in-memory LRU cache keyed by logo configuration and target width so
+     * continuous camera/video overlay rendering never re-decodes logos from disk every frame.
      */
     fun getProcessedLogo(
         context: Context,
         config: OverlayConfig,
         targetWidthPx: Int
     ): Bitmap? {
+        if (!config.showLogo || targetWidthPx <= 0) return null
+        val fileMod = if (config.logoPreset.equals("custom", ignoreCase = true) && !config.logoUri.isNullOrBlank()) {
+            try { File(config.logoUri).lastModified() } catch (_: Exception) { 0L }
+        } else 0L
+        val cacheKey = buildString {
+            append(config.logoPreset.lowercase()).append('|')
+            append(config.logoUri.orEmpty()).append('|')
+            append(fileMod).append('|')
+            append(config.logoShape.name).append('|')
+            append(config.logoBorderWidthDp).append('|')
+            append(config.logoBorderColorHex).append('|')
+            append(config.logoCornerRadiusDp).append('|')
+            append(targetWidthPx)
+        }
+        processedLogoCache.get(cacheKey)?.let { cached ->
+            if (!cached.isRecycled) return cached
+            processedLogoCache.remove(cacheKey)
+        }
+
         val rawBitmap = loadRawLogoBitmap(context, config, targetWidthPx) ?: return null
-        return processLogoBitmap(rawBitmap, config, targetWidthPx)
+        val processed = processLogoBitmap(rawBitmap, config, targetWidthPx)
+        if (rawBitmap !== processed && !rawBitmap.isRecycled) {
+            rawBitmap.recycle()
+        }
+        processedLogoCache.put(cacheKey, processed)
+        return processed
     }
 
     /**
@@ -46,7 +78,7 @@ object LogoProvider {
 
         if (config.logoPreset.equals("custom", ignoreCase = true)) {
             if (!config.logoUri.isNullOrBlank() && context != null) {
-                val customBitmap = loadCustomImage(context, config.logoUri)
+                val customBitmap = loadCustomImage(context, config.logoUri, targetWidthPx.coerceAtLeast(128))
                 if (customBitmap != null) {
                     return customBitmap
                 }
@@ -64,22 +96,63 @@ object LogoProvider {
         }
     }
 
-    private fun loadCustomImage(context: Context, uriString: String): Bitmap? {
+    /**
+     * Decodes a local image file with power-of-two downsampling so oversized images
+     * never allocate excessive heap memory.
+     */
+    fun decodeSampledBitmapFromFile(filePath: String, maxDimensionPx: Int): Bitmap? {
+        val safeMax = maxDimensionPx.coerceAtLeast(64)
+        return try {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(filePath, boundsOpts)
+            val srcW = boundsOpts.outWidth
+            val srcH = boundsOpts.outHeight
+            if (srcW <= 0 || srcH <= 0) {
+                return BitmapFactory.decodeFile(filePath)
+            }
+            var inSampleSize = 1
+            while ((srcW / (inSampleSize * 2)) >= safeMax || (srcH / (inSampleSize * 2)) >= safeMax) {
+                inSampleSize *= 2
+            }
+            val decodeOpts = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+            }
+            BitmapFactory.decodeFile(filePath, decodeOpts)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun loadCustomImage(context: Context, uriString: String, targetWidthPx: Int = 512): Bitmap? {
+        val maxDim = (targetWidthPx * 2).coerceIn(256, 1024)
         return try {
             val file = File(uriString)
             if (file.exists() && file.isFile && file.length() > 0) {
-                val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                val bitmap = decodeSampledBitmapFromFile(file.absolutePath, maxDim)
                 if (bitmap != null) return bitmap
             }
             val uri = Uri.parse(uriString)
             if (uri.scheme == "file") {
                 val f = File(uri.path ?: uriString)
                 if (f.exists()) {
-                    BitmapFactory.decodeFile(f.absolutePath)
+                    decodeSampledBitmapFromFile(f.absolutePath, maxDim)
                 } else null
             } else {
+                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 context.contentResolver.openInputStream(uri)?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
+                    BitmapFactory.decodeStream(stream, null, boundsOpts)
+                }
+                var sampleSize = 1
+                if (boundsOpts.outWidth > 0 && boundsOpts.outHeight > 0) {
+                    while ((boundsOpts.outWidth / (sampleSize * 2)) >= maxDim ||
+                        (boundsOpts.outHeight / (sampleSize * 2)) >= maxDim
+                    ) {
+                        sampleSize *= 2
+                    }
+                }
+                val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, decodeOpts)
                 }
             }
         } catch (e: Exception) {
@@ -96,10 +169,14 @@ object LogoProvider {
         config: OverlayConfig,
         targetWidthPx: Int
     ): Bitmap {
-        val aspect = source.height.toFloat() / source.width.toFloat()
+        val aspect = source.height.toFloat() / source.width.toFloat().coerceAtLeast(1f)
         val targetHeightPx = (targetWidthPx * aspect).toInt().coerceAtLeast(1)
 
-        val scaled = Bitmap.createScaledBitmap(source, targetWidthPx, targetHeightPx, true)
+        val scaled = if (source.width == targetWidthPx && source.height == targetHeightPx) {
+            source
+        } else {
+            Bitmap.createScaledBitmap(source, targetWidthPx, targetHeightPx, true)
+        }
 
         val output = Bitmap.createBitmap(targetWidthPx, targetHeightPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
@@ -162,6 +239,10 @@ object LogoProvider {
             }
         }
 
+        if (scaled !== source && !scaled.isRecycled) {
+            scaled.recycle()
+        }
+
         return output
     }
 
@@ -176,6 +257,7 @@ object LogoProvider {
                     input.copyTo(output)
                 }
             }
+            clearCache()
             Uri.fromFile(destinationFile).toString()
         } catch (e: Exception) {
             null

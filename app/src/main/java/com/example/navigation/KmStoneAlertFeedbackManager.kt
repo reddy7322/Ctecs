@@ -1,8 +1,11 @@
 package com.example.navigation
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -16,6 +19,7 @@ import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.core.app.NotificationCompat
+import com.example.MainActivity
 import com.example.R
 import com.example.model.KmAlertSoundOption
 import com.example.model.KmStoneAlertSettings
@@ -40,7 +44,8 @@ data class KmStoneAlertDispatchRecord(
     val soundTriggered: Boolean,
     val vibrationPattern: KmVibrationPattern,
     val soundOption: KmAlertSoundOption,
-    val timestampMs: Long
+    val timestampMs: Long,
+    val notificationPosted: Boolean = false
 )
 
 /**
@@ -61,8 +66,9 @@ object KmStoneAlertFeedbackManager {
     private val _lastDispatchRecord = MutableStateFlow<KmStoneAlertDispatchRecord?>(null)
     val lastDispatchRecord: StateFlow<KmStoneAlertDispatchRecord?> = _lastDispatchRecord.asStateFlow()
 
-    private const val ALERT_CHANNEL_ID = "ctecs_km_stone_arrival_channel"
-    private const val ALERT_NOTIFICATION_ID = 4109
+    private const val LEGACY_ALERT_CHANNEL_ID = "ctecs_km_stone_arrival_channel"
+    const val ALERT_CHANNEL_ID = "ctecs_km_stone_arrival_alerts_v2"
+    const val ALERT_NOTIFICATION_ID = 4109
 
     fun dispatchAlert(
         context: Context,
@@ -71,19 +77,21 @@ object KmStoneAlertFeedbackManager {
         isRecordingActive: Boolean = false,
         hostView: View? = null
     ): KmStoneAlertDispatchRecord {
+        CtecsNavigationTelemetryHub.recordKmStoneAlertEvent(event)
         val isAdvance = event.kind == KmStoneAlertKind.ADVANCE_WARNING
+        val alertsActive = settings.enabled && settings.arrivalAlertsEnabled
 
         val shouldVibrate = if (isAdvance) {
-            settings.enabled && settings.vibrationEnabled && settings.advanceWarningVibrationEnabled && !isRecordingActive
+            alertsActive && settings.vibrationEnabled && settings.advanceWarningVibrationEnabled && !isRecordingActive
         } else {
-            settings.enabled && settings.vibrationEnabled && !isRecordingActive
+            alertsActive && settings.vibrationEnabled && !isRecordingActive
         }
 
         val shouldPlaySound = if (isAdvance) {
-            settings.enabled && settings.soundEnabled && settings.advanceWarningSoundEnabled && !isRecordingActive &&
+            alertsActive && settings.soundEnabled && settings.advanceWarningSoundEnabled && !isRecordingActive &&
                 canPlayAudibleAlert(context)
         } else {
-            settings.enabled && settings.soundEnabled && !isRecordingActive && canPlayAudibleAlert(context)
+            alertsActive && settings.soundEnabled && !isRecordingActive && canPlayAudibleAlert(context)
         }
 
         val chosenPattern = if (isAdvance) {
@@ -98,7 +106,7 @@ object KmStoneAlertFeedbackManager {
             settings.soundOption
         }
 
-        if (settings.hapticFeedbackEnabled && !isRecordingActive) {
+        if (alertsActive && settings.hapticFeedbackEnabled && !isRecordingActive) {
             try {
                 hostView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             } catch (_: Exception) {}
@@ -124,8 +132,10 @@ object KmStoneAlertFeedbackManager {
             )
         }
 
-        if (!isRecordingActive) {
-            postHeadsUpBannerIfPermitted(context, event)
+        val didPostNotification = if (alertsActive && !isRecordingActive) {
+            postArrivalNotificationIfPermitted(context, event, settings)
+        } else {
+            false
         }
 
         val record = KmStoneAlertDispatchRecord(
@@ -136,7 +146,8 @@ object KmStoneAlertFeedbackManager {
             soundTriggered = didSound,
             vibrationPattern = chosenPattern,
             soundOption = chosenSound,
-            timestampMs = event.timestampMs
+            timestampMs = event.timestampMs,
+            notificationPosted = didPostNotification
         )
         _lastDispatchRecord.value = record
         return record
@@ -191,6 +202,43 @@ object KmStoneAlertFeedbackManager {
             timestampMs = System.currentTimeMillis()
         )
         return ok
+    }
+
+    /**
+     * Dispatches a sample KM Stone Arrival notification (along with configured vibration/sound
+     * feedback) from Settings so users can verify lock-screen and notification shade delivery.
+     */
+    fun testArrivalNotification(
+        context: Context,
+        settings: KmStoneAlertSettings
+    ): KmStoneAlertDispatchRecord {
+        val liveMatch = CtecsNavigationTelemetryHub.matchResult.value
+        val currentMetres = liveMatch.chainage?.metres ?: 168_500L
+        val currentFormatted = liveMatch.chainage?.format() ?: "168+500"
+        val roundedKmMetres = ((currentMetres + 500L) / 1000L) * 1000L
+        val stoneFormatted = com.example.model.Chainage.fromMetres(roundedKmMetres).format()
+        val rawSide = liveMatch.detectedSide.trim().uppercase()
+        val side = if (rawSide == "LHS" || rawSide == "RHS") rawSide else "LHS"
+        val distanceM = kotlin.math.abs(roundedKmMetres - currentMetres).coerceAtMost(15L)
+
+        val testEvent = KmStoneAlertEvent(
+            kind = KmStoneAlertKind.ARRIVAL,
+            stoneChainageMetres = roundedKmMetres,
+            stoneFormattedChainage = stoneFormatted,
+            currentChainageMetres = currentMetres,
+            currentFormattedChainage = currentFormatted,
+            directionSide = side,
+            distanceMetres = distanceM,
+            routeId = CtecsNavigationTelemetryHub.activeRoute.value?.id ?: "test_route",
+            timestampMs = System.currentTimeMillis()
+        )
+        val previewSettings = settings.copy(enabled = true)
+        return dispatchAlert(
+            context = context,
+            event = testEvent,
+            settings = previewSettings,
+            isRecordingActive = false
+        )
     }
 
     fun canPlayAudibleAlert(context: Context): Boolean {
@@ -345,40 +393,105 @@ object KmStoneAlertFeedbackManager {
         }
     }
 
-    private fun postHeadsUpBannerIfPermitted(context: Context, event: KmStoneAlertEvent) {
-        if (!LockScreenNavigationService.hasNotificationPermission(context)) return
-        try {
-            val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                mgr.getNotificationChannel(ALERT_CHANNEL_ID) == null
-            ) {
-                val ch = NotificationChannel(
-                    ALERT_CHANNEL_ID,
-                    "KM Stone Arrival Alerts",
-                    NotificationManager.IMPORTANCE_DEFAULT
-                ).apply {
-                    description = "Alerts when reaching or approaching a verified highway KM Stone."
-                    setSound(null, null)
-                    enableVibration(false)
+    fun buildArrivalNotification(
+        context: Context,
+        event: KmStoneAlertEvent,
+        settings: KmStoneAlertSettings
+    ): Notification {
+        val isArrival = event.kind == KmStoneAlertKind.ARRIVAL
+        val title = if (isArrival) {
+            "KM Stone ${event.stoneFormattedChainage} Reached"
+        } else {
+            "Approaching KM ${event.stoneFormattedChainage}"
+        }
+        val statusText = if (isArrival) {
+            "Arrived (${event.distanceMetres} m)"
+        } else {
+            "${event.distanceMetres} m remaining"
+        }
+        val collapsedBody = "CH ${event.currentFormattedChainage} • ${event.directionSide} • $statusText"
+        val expandedBody = buildString {
+            append("KM Stone: ${event.stoneFormattedChainage} (${if (isArrival) "Arrived" else "Approaching"})")
+            append("\nCurrent Chainage: CH ${event.currentFormattedChainage} • ${event.directionSide}")
+            append("\nDistance: ${event.distanceMetres} m")
+        }
+
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val openPending = PendingIntent.getActivity(
+            context,
+            ALERT_NOTIFICATION_ID,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val visibility = if (settings.lockScreenNotificationsEnabled) {
+            NotificationCompat.VISIBILITY_PUBLIC
+        } else {
+            NotificationCompat.VISIBILITY_PRIVATE
+        }
+        val priority = if (settings.lockScreenNotificationsEnabled) {
+            NotificationCompat.PRIORITY_HIGH
+        } else {
+            NotificationCompat.PRIORITY_DEFAULT
+        }
+        val accentColor = if (isArrival) 0xFF10B981.toInt() else 0xFFF59E0B.toInt()
+
+        return NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_ctecs_nav)
+            .setColor(accentColor)
+            .setContentTitle(title)
+            .setContentText(collapsedBody)
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .setBigContentTitle(title)
+                    .bigText(expandedBody)
+            )
+            .setContentIntent(openPending)
+            .setAutoCancel(true)
+            .setSilent(true)
+            .setShowWhen(true)
+            .setWhen(event.timestampMs)
+            .setVisibility(visibility)
+            .setPriority(priority)
+            .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
+            .build()
+    }
+
+    private fun postArrivalNotificationIfPermitted(
+        context: Context,
+        event: KmStoneAlertEvent,
+        settings: KmStoneAlertSettings
+    ): Boolean {
+        if (!LockScreenNavigationService.hasNotificationPermission(context)) return false
+        return try {
+            val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (mgr.getNotificationChannel(LEGACY_ALERT_CHANNEL_ID) != null) {
+                    try {
+                        mgr.deleteNotificationChannel(LEGACY_ALERT_CHANNEL_ID)
+                    } catch (_: Exception) {}
                 }
-                mgr.createNotificationChannel(ch)
+                if (mgr.getNotificationChannel(ALERT_CHANNEL_ID) == null) {
+                    val ch = NotificationChannel(
+                        ALERT_CHANNEL_ID,
+                        "KM Stone Arrival Alerts",
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Immediate arrival and advance warning notifications when reaching verified highway KM Stones."
+                        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                        setSound(null, null)
+                        enableVibration(false)
+                    }
+                    mgr.createNotificationChannel(ch)
+                }
             }
-            val title = if (event.kind == KmStoneAlertKind.ARRIVAL) {
-                "KM Stone Reached: ${event.stoneFormattedChainage}"
-            } else {
-                "Approaching KM ${event.stoneFormattedChainage} (${event.distanceMetres} m)"
-            }
-            val body = "CH ${event.currentFormattedChainage} | ${event.directionSide}"
-            val notif = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_stat_ctecs_nav)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setAutoCancel(true)
-                .setSilent(true)
-                .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
-                .setTimeoutAfter(8_000L)
-                .build()
+            val notif = buildArrivalNotification(context, event, settings)
             mgr.notify(ALERT_NOTIFICATION_ID, notif)
-        } catch (_: Exception) {}
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 }
