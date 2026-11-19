@@ -642,7 +642,7 @@ fun MiniMapSettingsSection(
                         MiniMapSliderRow(
                             title = "Manual Zoom Level",
                             value = activeStyleConfig.zoomLevel,
-                            valueRange = 12.0f..18.0f,
+                            valueRange = 2.0f..19.0f,
                             valueText = String.format(Locale.US, "Z %.1f", activeStyleConfig.zoomLevel),
                             accentColor = accentColor,
                             onValueChange = { z -> updateActiveStyle { it.copy(zoomLevel = z) } }

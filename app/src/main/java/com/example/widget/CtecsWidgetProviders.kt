@@ -62,12 +62,14 @@ object CtecsWidgetUpdater {
     }
 
     fun loadCachedWidgetSettings(context: Context): CtecsWidgetSettings {
+        val appCtx = context.applicationContext
+        CtecsNavigationTelemetryHub.ensureInitialized(appCtx)
         val hubSettings = CtecsNavigationTelemetryHub.widgetSettings.value
         if (hubSettings != CtecsWidgetSettings.defaultSettings()) {
             return hubSettings
         }
         return try {
-            val raw = context.applicationContext
+            val raw = appCtx
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(KEY_CACHED_WIDGET_SETTINGS_JSON, null)
             CtecsWidgetSettings.fromJsonString(raw)
@@ -114,6 +116,7 @@ object CtecsWidgetUpdater {
 
     fun resolveCurrentNavState(context: Context): Pair<LockScreenNavUiState, GeoPoint?> {
         val appCtx = context.applicationContext
+        CtecsNavigationTelemetryHub.ensureInitialized(appCtx)
         val tracker = CtecsNavigationTelemetryHub.getOrCreateLocationTracker(appCtx)
         val locState = tracker.locationState.value
         val match = CtecsNavigationTelemetryHub.matchResult.value
@@ -456,6 +459,16 @@ abstract class BaseCtecsWidgetProvider(
         }
         CtecsNavigationTelemetryHub.updateTelemetry(widgetSettings = current)
         CtecsWidgetUpdater.cacheWidgetSettings(context, current)
+        val prefsManager = com.example.data.PreferencesManager(context.applicationContext)
+        prefsManager.launchSafeEdit {
+            prefsManager.editWidgetSettings { persisted ->
+                var next = persisted
+                for (id in appWidgetIds) {
+                    next = next.withoutInstanceConfig(id)
+                }
+                next
+            }
+        }
     }
 }
 

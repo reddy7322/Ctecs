@@ -6,16 +6,15 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.example.MainActivity
 import com.example.R
 import com.example.data.PreferencesManager
 import com.example.model.NavigationNotificationSettings
@@ -127,10 +126,9 @@ object LockScreenNotificationFormatter {
 }
 
 /**
- * Battery-conscious Foreground Location Service keeping live chainage navigation synced while
- * locked, exposing an ongoing lock-screen & Android Live Update / Samsung Now Bar compatible
- * notification, and optionally launching [LockScreenNavigationActivity] when the device locks
- * (never bypassing keyguard security).
+ * Battery-conscious Foreground Location Service keeping live chainage navigation synced for
+ * Home-Screen Widgets, KM Stone arrival alerts, and the ongoing Status-Bar / Android Live Update /
+ * Samsung Now Bar Navigation Notification.
  */
 class LockScreenNavigationService : Service() {
 
@@ -139,44 +137,26 @@ class LockScreenNavigationService : Service() {
     private var collectorJob: Job? = null
     private var lastPostedSignature: NotificationRenderSignature? = null
     private var lastMinorNotificationPostMs = 0L
-    private var screenReceiverRegistered = false
-
-    private val screenOffReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                val cfg = CtecsNavigationTelemetryHub.screensaverSettings.value
-                val notifCfg = CtecsNavigationTelemetryHub.navigationNotificationSettings.value
-                if (cfg.lockScreenNavEnabled &&
-                    cfg.lockScreenOpenActivityOnLock &&
-                    notifCfg.showOnLockScreen
-                ) {
-                    launchLockScreenActivitySafely(this@LockScreenNavigationService)
-                }
-            }
-        }
-    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        CtecsNavigationTelemetryHub.ensureInitialized(applicationContext)
         ensureNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        CtecsNavigationTelemetryHub.ensureInitialized(applicationContext)
         when (intent?.action) {
             ACTION_STOP_NAVIGATION -> {
                 serviceScope.launch {
                     val pm = PreferencesManager(applicationContext)
-                    val current = CtecsNavigationTelemetryHub.screensaverSettings.value
-                    val updated = current.copy(lockScreenNavEnabled = false)
                     val currentNotif = CtecsNavigationTelemetryHub.navigationNotificationSettings.value
                     val updatedNotif = currentNotif.copy(enabled = false)
                     CtecsNavigationTelemetryHub.updateTelemetry(
-                        screensaverSettings = updated,
                         navigationNotificationSettings = updatedNotif
                     )
-                    pm.updateHomeScreensaverSettings(updated)
                     pm.updateNavigationNotificationSettings(updatedNotif)
                 }
                 stopNavigationService()
@@ -187,22 +167,16 @@ class LockScreenNavigationService : Service() {
         if (!hasLocationPermission(this)) {
             CtecsNavigationTelemetryHub.setServiceRunning(
                 running = false,
-                note = "Location permission required for lock-screen navigation"
+                note = "Location permission required for live navigation updates"
             )
             stopSelf()
             return START_NOT_STICKY
         }
 
         val notifSettings = CtecsNavigationTelemetryHub.navigationNotificationSettings.value
-        val screensaverCfg = CtecsNavigationTelemetryHub.screensaverSettings.value
         if (!notifSettings.enabled) {
             stopNavigationService()
             return START_NOT_STICKY
-        }
-        if (!screensaverCfg.lockScreenNavEnabled) {
-            CtecsNavigationTelemetryHub.updateTelemetry(
-                screensaverSettings = screensaverCfg.copy(lockScreenNavEnabled = true)
-            )
         }
 
         val initialState = currentSnapshotState()
@@ -236,7 +210,6 @@ class LockScreenNavigationService : Service() {
         // Reuse the single shared LocationTracker instance (never registers a second GPS listener)
         CtecsNavigationTelemetryHub.getOrCreateLocationTracker(applicationContext).startTracking()
         CtecsNavigationTelemetryHub.setServiceRunning(running = true, note = null)
-        registerScreenReceiver()
         startTelemetryObserver()
 
         return START_STICKY
@@ -335,7 +308,7 @@ class LockScreenNavigationService : Service() {
     ): Notification {
         val summary = precomputedSummary ?: LockScreenNotificationFormatter.format(navState, settings)
 
-        val openIntent = Intent(this, LockScreenNavigationActivity::class.java).apply {
+        val openIntent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val openPending = PendingIntent.getActivity(
@@ -427,29 +400,10 @@ class LockScreenNavigationService : Service() {
         }
     }
 
-    private fun registerScreenReceiver() {
-        if (screenReceiverRegistered) return
-        try {
-            val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                registerReceiver(screenOffReceiver, filter)
-            }
-            screenReceiverRegistered = true
-        } catch (_: Exception) {}
-    }
-
     private fun stopNavigationService() {
         collectorJob?.cancel()
         collectorJob = null
         lastPostedSignature = null
-        if (screenReceiverRegistered) {
-            try {
-                unregisterReceiver(screenOffReceiver)
-            } catch (_: Exception) {}
-            screenReceiverRegistered = false
-        }
         CtecsNavigationTelemetryHub.setServiceRunning(running = false, note = null)
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -464,12 +418,6 @@ class LockScreenNavigationService : Service() {
     override fun onDestroy() {
         collectorJob?.cancel()
         lastPostedSignature = null
-        if (screenReceiverRegistered) {
-            try {
-                unregisterReceiver(screenOffReceiver)
-            } catch (_: Exception) {}
-            screenReceiverRegistered = false
-        }
         CtecsNavigationTelemetryHub.setServiceRunning(running = false, note = null)
         try {
             val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -488,10 +436,9 @@ class LockScreenNavigationService : Service() {
         private const val MINOR_UPDATE_THROTTLE_MS = 500L
 
         fun shouldNotificationServiceStayActive(
-            screensaverSettings: com.example.model.HomeScreensaverSettings,
             notifSettings: NavigationNotificationSettings
         ): Boolean {
-            return notifSettings.enabled && screensaverSettings.lockScreenNavEnabled
+            return notifSettings.enabled
         }
 
         fun hasLocationPermission(context: Context): Boolean {
@@ -530,7 +477,7 @@ class LockScreenNavigationService : Service() {
             if (!hasLocationPermission(appCtx)) {
                 CtecsNavigationTelemetryHub.setServiceRunning(
                     running = false,
-                    note = "Grant location permission to start live lock-screen navigation."
+                    note = "Grant location permission to start live navigation updates."
                 )
                 return
             }
@@ -544,17 +491,6 @@ class LockScreenNavigationService : Service() {
                     running = false,
                     note = e.message ?: "Foreground service unavailable on this device state."
                 )
-            }
-        }
-
-        fun launchLockScreenActivitySafely(context: Context) {
-            try {
-                val intent = Intent(context, LockScreenNavigationActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                }
-                context.startActivity(intent)
-            } catch (_: Exception) {
-                // Restricted on certain OEM builds when launched from background; notification remains active.
             }
         }
     }

@@ -216,7 +216,7 @@ data class MiniMapStyleConfig(
                     directionMarkerStyle = MiniMapDirectionStyle.fromString(obj.optString("directionMarkerStyle", "ARROW")),
                     shadowEnabled = obj.optBoolean("shadowEnabled", true),
                     autoZoom = obj.optBoolean("autoZoom", true),
-                    zoomLevel = obj.optDouble("zoomLevel", 15.5).toFloat().coerceIn(11f, 18.5f),
+                    zoomLevel = obj.optDouble("zoomLevel", 15.5).toFloat().coerceIn(2f, 19f),
                     orientationMode = MiniMapOrientationMode.fromString(obj.optString("orientationMode", "NORTH_UP")),
                     showCurrentPositionMarker = obj.optBoolean("showCurrentPositionMarker", true),
                     showRoadAlignment = obj.optBoolean("showRoadAlignment", true),

@@ -68,15 +68,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".navigation.LockScreenNavigationActivity"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:excludeFromRecents="true"
-            android:showWhenLocked="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
-            android:theme="@style/Theme.MyApplication" />
-
         <service
             android:name=".navigation.LockScreenNavigationService"
             android:exported="false"

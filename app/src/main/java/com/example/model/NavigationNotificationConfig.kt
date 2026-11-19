@@ -3,11 +3,11 @@ package com.example.model
 import org.json.JSONObject
 
 /**
- * Dedicated preferences for CTECS Lock-Screen & Status-Bar Navigation Notifications
+ * Dedicated preferences for CTECS Status-Bar & Notification-Shade Navigation Notifications
  * (including Android 15/16 Live Updates & Samsung Now Bar compatibility).
  */
 data class NavigationNotificationSettings(
-    val enabled: Boolean = true,
+    val enabled: Boolean = false,
     val showChainage: Boolean = true,
     val showRoadSide: Boolean = true,
     val showNextKmMarker: Boolean = true,
@@ -41,7 +41,7 @@ data class NavigationNotificationSettings(
             return try {
                 val obj = JSONObject(json)
                 NavigationNotificationSettings(
-                    enabled = obj.optBoolean("enabled", true),
+                    enabled = obj.optBoolean("enabled", false),
                     showChainage = obj.optBoolean("showChainage", true),
                     showRoadSide = obj.optBoolean("showRoadSide", true),
                     showNextKmMarker = obj.optBoolean("showNextKmMarker", true),

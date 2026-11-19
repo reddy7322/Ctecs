@@ -44,7 +44,6 @@ import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.ScreensaverDisplayMode
 import com.example.navigation.LockScreenNavStateResolver
-import com.example.navigation.LockScreenNavigationContent
 import com.example.navigation.LockScreenNavigationService
 import com.example.navigation.LockScreenNotificationFormatter
 import com.example.ui.MainViewModel
@@ -213,54 +212,6 @@ class ScreensaverGlassAndNavNotificationTest {
     }
 
     @Test
-    fun `lock screen navigation chainage scales cleanly without clipping on narrow portrait viewports`() {
-        val resolver = LockScreenNavStateResolver()
-        val navState = resolver.resolve(
-            locationState = LocationState(
-                point = GeoPoint(29.855, 77.885),
-                accuracy = 4.0f,
-                speed = 0.0f,
-                status = LocationStatus.READY,
-                lastFixTime = 1_700_000_000_000L
-            ),
-            matchResult = ChainageMatchResult(
-                chainage = Chainage(201_860L),
-                confidence = MatchConfidence.HIGH,
-                detectedSide = "RHS",
-                source = ChainageSource.KMZ
-            ),
-            routeData = sampleRoute(),
-            projectProfile = ProjectProfile(highwayId = "NH-334", roadSide = RoadSide.RHS),
-            locationName = "Badrabad Corridor",
-            nowMs = 1_700_000_000_000L
-        )
-
-        composeTestRule.setContent {
-            Box(modifier = Modifier.size(width = 320.dp, height = 600.dp)) {
-                LockScreenNavigationContent(
-                    navState = navState,
-                    location = GeoPoint(29.855, 77.885),
-                    bearing = 180f,
-                    compassHeading = 180f,
-                    routeData = sampleRoute(),
-                    screensaverSettings = HomeScreensaverSettings()
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("lock_screen_chainage_text").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_chainage_text").assertTextEquals("201+860")
-
-        val cardRect = composeTestRule.onNodeWithTag("lock_screen_chainage_card").fetchSemanticsNode().boundsInRoot
-        val chainageRect = composeTestRule.onNodeWithTag("lock_screen_chainage_text").fetchSemanticsNode().boundsInRoot
-        val speedRect = composeTestRule.onNodeWithTag("lock_screen_speed_badge").fetchSemanticsNode().boundsInRoot
-
-        assertTrue(chainageRect.left >= cardRect.left)
-        assertTrue(chainageRect.right <= cardRect.right)
-        assertFalse(rectsOverlap(chainageRect, speedRect))
-    }
-
-    @Test
     fun `notification formatter produces exact structured text, zero-speed, stale-GPS status, and obeys all toggles`() {
         val resolver = LockScreenNavStateResolver()
         val t0 = 1_700_000_000_000L
@@ -422,7 +373,6 @@ class ScreensaverGlassAndNavNotificationTest {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 NavigationNotificationSettingsSectionContent(
                     notifSettings = uiNotif,
-                    isLockScreenNavActive = true,
                     accentColor = Color(0xFF0EA5E9),
                     onToggleNotificationEnabled = { en -> uiNotif = uiNotif.copy(enabled = en) },
                     onUpdateNotifSettings = { t -> uiNotif = t(uiNotif) },
@@ -443,73 +393,5 @@ class ScreensaverGlassAndNavNotificationTest {
         composeTestRule.waitForIdle()
         assertFalse(uiNotif.liveNotificationEnabled)
         composeTestRule.onNodeWithTag("nav_notif_preview_chip").assertDoesNotExist()
-    }
-
-    @Test
-    fun `lock screen navigation content displays current time when stationary and obeys navigation notification toggles`() {
-        val resolver = LockScreenNavStateResolver()
-        val t0 = 1_700_000_000_000L
-        val navState = resolver.resolve(
-            locationState = LocationState(
-                point = GeoPoint(29.855, 77.885),
-                accuracy = 4.0f,
-                speed = 0.0f,
-                status = LocationStatus.READY,
-                lastFixTime = t0
-            ),
-            matchResult = ChainageMatchResult(
-                chainage = Chainage(196_494L),
-                confidence = MatchConfidence.HIGH,
-                detectedSide = "RHS",
-                source = ChainageSource.KMZ
-            ),
-            routeData = sampleRoute(),
-            projectProfile = ProjectProfile(highwayId = "NH-334", roadSide = RoadSide.RHS),
-            locationName = "Roorkee Bypass",
-            is24HourFormat = false,
-            nowMs = t0
-        )
-
-        assertTrue(navState.currentTimeText.isNotBlank())
-
-        var notifCfg by mutableStateOf(NavigationNotificationSettings.defaultSettings())
-
-        composeTestRule.setContent {
-            Box(modifier = Modifier.size(width = 360.dp, height = 640.dp)) {
-                LockScreenNavigationContent(
-                    navState = navState,
-                    location = GeoPoint(29.855, 77.885),
-                    bearing = 180f,
-                    compassHeading = 180f,
-                    routeData = sampleRoute(),
-                    screensaverSettings = HomeScreensaverSettings(),
-                    notifSettings = notifCfg
-                )
-            }
-        }
-
-        // Bottom secondary bar includes distance + current time when stationary
-        val bottomSecondary = composeTestRule.onNodeWithTag("lock_screen_bottom_secondary").fetchSemanticsNode()
-        val secondaryText = bottomSecondary.config[androidx.compose.ui.semantics.SemanticsProperties.Text].first().text
-        assertTrue("Expected bottom secondary '$secondaryText' to contain currentTimeText '${navState.currentTimeText}'",
-            secondaryText.contains(navState.currentTimeText)
-        )
-
-        // Toggle off individual fields in NavigationNotificationSettings -> reflected on LockScreenNavigationContent
-        composeTestRule.runOnIdle {
-            notifCfg = notifCfg.copy(
-                showRoadSide = false,
-                showNextKmMarker = false,
-                showSpeed = false,
-                showLocation = false
-            )
-        }
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onNodeWithTag("lock_screen_chainage_text").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_side_badge").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("lock_screen_next_marker").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("lock_screen_speed_badge").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("lock_screen_location_name").assertDoesNotExist()
     }
 }

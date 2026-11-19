@@ -206,8 +206,8 @@ fun HomeScreen(
     onNavigateToSurvey: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    com.example.util.KeepScreenOn(enabled = true, requesterId = "HomeScreen")
-
+    // Normal Home Page obeys the device's system display sleep timeout;
+    // FLAG_KEEP_SCREEN_ON is acquired only while the Screensaver overlay is active.
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
@@ -229,9 +229,28 @@ fun HomeScreen(
     var showEditProjectStretchDialog by remember { mutableStateOf(false) }
     var showNavigateToChainageDialog by remember { mutableStateOf(false) }
     var activeChainageNavTarget by remember { mutableStateOf<ActiveChainageNavigationTarget?>(null) }
-    var preferredExternalNavAppId by remember { mutableStateOf<String?>(null) }
+    val preferredExternalNavAppId by viewModel.preferredExternalNavAppId.collectAsStateWithLifecycle()
     var isScreensaverVisible by remember { mutableStateOf(false) }
     val screensaverStateHolder = remember { ScreensaverChainageStateHolder() }
+
+    val activeScreensaverSensorPosture = rememberScreensaverSensorPosture(
+        enabled = isScreensaverVisible &&
+            screensaverSettings.autoOrientationEnabled &&
+            !screensaverSettings.orientationLocked
+    )
+    LaunchedEffect(isScreensaverVisible) {
+        viewModel.setScreensaverActive(isScreensaverVisible)
+    }
+    LaunchedEffect(isScreensaverVisible, activeScreensaverSensorPosture) {
+        viewModel.updateScreensaverSensorPosture(
+            if (isScreensaverVisible) activeScreensaverSensorPosture else null
+        )
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.setScreensaverActive(false)
+        }
+    }
 
     val isBlockingScreensaverModal = showChainageManagementDialog ||
         showEditProjectStretchDialog ||
@@ -364,6 +383,7 @@ fun HomeScreen(
         autoActivateEnabled = screensaverSettings.autoActivateEnabled,
         touchToDismiss = screensaverSettings.touchToDismiss,
         autoRestartTimer = screensaverSettings.autoRestartTimer,
+        keepScreenAwake = screensaverSettings.keepScreenAwake,
         screensaverContent = { dismissScreensaver ->
             ChainageScreensaverOverlay(
                 displayState = screensaverDisplayState,
@@ -375,10 +395,17 @@ fun HomeScreen(
                 mapTypePreference = mapTypePreference,
                 isDarkAppTheme = isDark,
                 screensaverSettings = screensaverSettings,
+                sensorPostureOverride = activeScreensaverSensorPosture,
                 onToggleMirrorQuickMode = { enableMirror, currentlyLandscape ->
                     viewModel.toggleScreensaverMirrorQuickMode(
                         enableMirror = enableMirror,
                         isCurrentlyLandscape = currentlyLandscape
+                    )
+                },
+                onToggleOrientationLock = { currentlyLandscape ->
+                    viewModel.setScreensaverOrientationLocked(
+                        locked = !screensaverSettings.orientationLocked,
+                        currentIsLandscape = currentlyLandscape
                     )
                 },
                 onDismiss = dismissScreensaver
@@ -687,7 +714,7 @@ fun HomeScreen(
                     nextKmStoneSuggestion = nextKmState.nextChainage.takeIf { nextKmState.isReliable },
                     activeTarget = activeChainageNavTarget?.takeIf { it.routeId == activeRoute?.id },
                     preferredExternalAppId = preferredExternalNavAppId,
-                    onSavePreferredExternalAppId = { preferredExternalNavAppId = it },
+                    onSavePreferredExternalAppId = { viewModel.setPreferredExternalNavAppId(it) },
                     onStartInAppTarget = { target ->
                         activeChainageNavTarget = target
                     },
@@ -2937,37 +2964,26 @@ fun InteractiveSmartMap(
     val isDark = com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
     val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
-    var panOffsetX by remember { mutableFloatStateOf(0f) }
-    var panOffsetY by remember { mutableFloatStateOf(0f) }
+    var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
     var viewRangeMetres by remember { mutableDoubleStateOf(1000.0) }
     var isFollowingUser by remember { mutableStateOf(true) }
 
     LaunchedEffect(sharedZoomLevel) {
         if (sharedZoomLevel != null) {
-            viewRangeMetres = when {
-                sharedZoomLevel >= 17.8f -> 250.0
-                sharedZoomLevel >= 16.8f -> 550.0
-                sharedZoomLevel >= 15.8f -> 1000.0
-                sharedZoomLevel >= 14.8f -> 2200.0
-                sharedZoomLevel >= 13.8f -> 4500.0
-                sharedZoomLevel >= 12.8f -> 8500.0
-                else -> 13000.0
-            }
+            viewRangeMetres = OsmTileManager.viewRangeMetresForZoom(sharedZoomLevel)
         }
     }
 
     LaunchedEffect(sharedRecenterEpoch) {
         if (sharedRecenterEpoch > 0L) {
             isFollowingUser = true
-            panOffsetX = 0f
-            panOffsetY = 0f
+            exploredCenter = null
         }
     }
 
     LaunchedEffect(location, isFollowingUser) {
         if (isFollowingUser) {
-            panOffsetX = 0f
-            panOffsetY = 0f
+            exploredCenter = null
         }
     }
 
@@ -2983,15 +2999,7 @@ fun InteractiveSmartMap(
     )
 
     val currentZoom = remember(viewRangeMetres) {
-        when {
-            viewRangeMetres <= 300.0 -> 18
-            viewRangeMetres <= 650.0 -> 17
-            viewRangeMetres <= 1300.0 -> 16
-            viewRangeMetres <= 2800.0 -> 15
-            viewRangeMetres <= 5500.0 -> 14
-            viewRangeMetres <= 10000.0 -> 13
-            else -> 12
-        }
+        OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
     }
 
     val controlSurfaceColor = if (mapTheme.isDark) Color(0xE60F172A) else Color(0xF5FFFFFF)
@@ -3044,9 +3052,27 @@ fun InteractiveSmartMap(
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         isFollowingUser = false
-                        viewRangeMetres = (viewRangeMetres / zoom).coerceIn(100.0, 15000.0)
-                        panOffsetX += pan.x
-                        panOffsetY += pan.y
+                        val prevZoom = OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
+                        val anchor = exploredCenter
+                            ?: location
+                            ?: routeData?.bounds?.center
+                            ?: GeoPoint(28.6139, 77.2090)
+                        if (pan.x != 0f || pan.y != 0f) {
+                            exploredCenter = OsmTileManager.offsetGeoPointByPixels(
+                                center = anchor,
+                                deltaPxX = pan.x,
+                                deltaPxY = pan.y,
+                                zoom = prevZoom
+                            )
+                        } else if (exploredCenter == null) {
+                            exploredCenter = anchor
+                        }
+                        if (zoom != 1f) {
+                            viewRangeMetres = (viewRangeMetres / zoom).coerceIn(
+                                OsmTileManager.MIN_VIEW_RANGE_METRES,
+                                OsmTileManager.MAX_VIEW_RANGE_METRES
+                            )
+                        }
                     }
                 }
         ) {
@@ -3057,7 +3083,12 @@ fun InteractiveSmartMap(
             val cx = w / 2f
             val cy = h / 2f
 
-            val anchorGeo = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+            val gpsOrRouteCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+            val anchorGeo = if (isFollowingUser) {
+                gpsOrRouteCenter
+            } else {
+                exploredCenter ?: gpsOrRouteCenter
+            }
 
             var hasOsmTiles = false
             val osmBmp = OsmTileManager.renderMapBitmap(
@@ -3066,8 +3097,8 @@ fun InteractiveSmartMap(
                 widthPx = w.toInt().coerceAtLeast(1),
                 heightPx = h.toInt().coerceAtLeast(1),
                 zoom = currentZoom,
-                panOffsetX = panOffsetX,
-                panOffsetY = panOffsetY,
+                panOffsetX = 0f,
+                panOffsetY = 0f,
                 darkTheme = mapTheme.isDark,
                 mapType = mapTypePreference
             )
@@ -3115,8 +3146,8 @@ fun InteractiveSmartMap(
                         widthPx = w,
                         heightPx = h,
                         zoom = currentZoom,
-                        panOffsetX = panOffsetX,
-                        panOffsetY = panOffsetY
+                        panOffsetX = 0f,
+                        panOffsetY = 0f
                     )
                     return Offset(sx, sy)
                 }
@@ -3357,8 +3388,7 @@ fun InteractiveSmartMap(
                     .clip(CircleShape)
                     .clickable {
                         isFollowingUser = true
-                        panOffsetX = 0f
-                        panOffsetY = 0f
+                        exploredCenter = null
                         onSharedRecenter?.invoke()
                     }
                     .testTag("map_follow_button")
@@ -3402,8 +3432,7 @@ fun InteractiveSmartMap(
                 .clip(CircleShape)
                 .clickable {
                     isFollowingUser = true
-                    panOffsetX = 0f
-                    panOffsetY = 0f
+                    exploredCenter = null
                 }
                 .testTag("map_compass_widget")
         ) {
@@ -3527,7 +3556,9 @@ fun InteractiveSmartMap(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 IconButton(
                     onClick = {
-                        viewRangeMetres = (viewRangeMetres * 0.7).coerceAtLeast(100.0)
+                        viewRangeMetres = (viewRangeMetres * 0.65).coerceAtLeast(
+                            OsmTileManager.MIN_VIEW_RANGE_METRES
+                        )
                         onSharedZoomIn?.invoke()
                     },
                     modifier = Modifier
@@ -3549,7 +3580,9 @@ fun InteractiveSmartMap(
                 )
                 IconButton(
                     onClick = {
-                        viewRangeMetres = (viewRangeMetres * 1.4).coerceAtMost(15000.0)
+                        viewRangeMetres = (viewRangeMetres * 1.6).coerceAtMost(
+                            OsmTileManager.MAX_VIEW_RANGE_METRES
+                        )
                         onSharedZoomOut?.invoke()
                     },
                     modifier = Modifier
@@ -3566,18 +3599,24 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Bottom-Right Dynamic Scale Badge
-        val dynamicScaleMetres = remember(viewRangeMetres) {
-            when {
-                viewRangeMetres <= 300.0 -> 25
-                viewRangeMetres <= 650.0 -> 50
-                viewRangeMetres <= 1300.0 -> 100
-                viewRangeMetres <= 2800.0 -> 200
-                viewRangeMetres <= 5500.0 -> 500
-                else -> 1000
+        // Bottom-Right Dynamic Scale Badge (Full-Earth aware)
+        val scaleText = remember(viewRangeMetres) {
+            val tenthRange = (viewRangeMetres / 10.0).coerceAtLeast(10.0)
+            val roundedMetres = when {
+                tenthRange <= 25.0 -> 25.0
+                tenthRange <= 50.0 -> 50.0
+                tenthRange <= 100.0 -> 100.0
+                tenthRange <= 250.0 -> 250.0
+                tenthRange <= 500.0 -> 500.0
+                tenthRange <= 1_000.0 -> 1_000.0
+                tenthRange <= 5_000.0 -> 5_000.0
+                tenthRange <= 25_000.0 -> 25_000.0
+                tenthRange <= 100_000.0 -> 100_000.0
+                tenthRange <= 500_000.0 -> 500_000.0
+                else -> 2_000_000.0
             }
+            OsmTileManager.formatScaleLabel(roundedMetres)
         }
-        val scaleText = if (dynamicScaleMetres >= 1000) "${dynamicScaleMetres / 1000} km" else "$dynamicScaleMetres m"
 
         Surface(
             shape = RoundedCornerShape(6.dp),
@@ -3932,6 +3971,7 @@ fun HomeScreensaverCoordinator(
     autoActivateEnabled: Boolean = true,
     touchToDismiss: Boolean = true,
     autoRestartTimer: Boolean = true,
+    keepScreenAwake: Boolean = true,
     content: @Composable (interactionModifier: Modifier) -> Unit
 ) {
     val context = LocalContext.current
@@ -4063,12 +4103,21 @@ fun HomeScreensaverCoordinator(
                 dismissOnClickOutside = latestTouchToDismiss
             )
         ) {
+            com.example.util.KeepScreenOn(
+                enabled = keepScreenAwake,
+                requesterId = "HomeScreensaver"
+            )
             val localView = LocalView.current
             val dialogWindow = (localView.parent as? DialogWindowProvider)?.window
-            DisposableEffect(dialogWindow, localView, hostActivityWindow) {
+            DisposableEffect(dialogWindow, localView, hostActivityWindow, keepScreenAwake) {
                 if (dialogWindow != null) {
                     dialogWindow.setDimAmount(0f)
                     dialogWindow.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+                    if (keepScreenAwake) {
+                        dialogWindow.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        dialogWindow.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
                 }
                 applyScreensaverImmersiveMode(
                     dialogWindow = dialogWindow,
@@ -4078,6 +4127,9 @@ fun HomeScreensaverCoordinator(
                 )
                 val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
                     if (hasFocus) {
+                        if (keepScreenAwake) {
+                            dialogWindow?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
                         applyScreensaverImmersiveMode(
                             dialogWindow = dialogWindow,
                             dialogView = localView,
@@ -4088,6 +4140,7 @@ fun HomeScreensaverCoordinator(
                 }
                 localView.viewTreeObserver.addOnWindowFocusChangeListener(focusListener)
                 onDispose {
+                    dialogWindow?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     if (localView.viewTreeObserver.isAlive) {
                         localView.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener)
                     }
@@ -4113,8 +4166,8 @@ fun HomeScreensaverCoordinator(
 
 /**
  * Full-Screen Automotive HUD & Chainage Screensaver Overlay.
- * Minimal HUD layout featuring only a compact Mirror/Normal quick-switch toggle in a safe corner.
- * Tapping anywhere outside the quick toggle dismisses immediately when Touch-to-Dismiss is active.
+ * Minimal HUD layout featuring compact Mirror/Normal and Orientation Lock controls in safe corners.
+ * Tapping anywhere outside quick controls dismisses immediately when Touch-to-Dismiss is active.
  */
 @Composable
 fun ChainageScreensaverOverlay(
@@ -4130,6 +4183,7 @@ fun ChainageScreensaverOverlay(
     isSamplePreview: Boolean = false,
     sensorPostureOverride: ScreensaverSensorPosture? = null,
     onToggleMirrorQuickMode: ((enableMirror: Boolean, isCurrentlyLandscape: Boolean) -> Unit)? = null,
+    onToggleOrientationLock: ((isCurrentlyLandscape: Boolean) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val resolvedSettings = remember(screensaverSettings, mapTypePreference, mapThemePreference) {
@@ -4232,7 +4286,8 @@ fun ChainageScreensaverOverlay(
             isSamplePreview = isSamplePreview,
             sensorPosture = activeSensorPosture,
             temporaryLandscapeOverride = temporaryLandscapeOverride,
-            onToggleMirrorQuickMode = handleQuickToggle
+            onToggleMirrorQuickMode = handleQuickToggle,
+            onToggleOrientationLock = onToggleOrientationLock
         )
     }
 }

@@ -351,7 +351,6 @@ class AutomotiveHudScreensaverTest {
                     onMiniMapZoomOut = { settingsState = settingsState.withZoomOut() },
                     onMiniMapRecenter = { settingsState = settingsState.withRecenter() },
                     onMiniMapStyleChange = { s -> settingsState = settingsState.withMiniMapStyle(s) },
-                    onToggleLockScreenNav = { en -> settingsState = settingsState.copy(lockScreenNavEnabled = en) },
                     onResetDefaults = { settingsState = HomeScreensaverSettings.defaultSettings() }
                 )
             }

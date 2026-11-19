@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,16 +15,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.model.resolveEffectiveScreensaverPresentation
 import com.example.sensor.DeviceOrientation
 import com.example.ui.AppTab
 import com.example.ui.MainScreen
 import com.example.ui.MainViewModel
+import com.example.ui.home.ScreensaverSensorPosture
 import com.example.ui.theme.MyApplicationTheme
 import com.example.widget.CtecsWidgetUpdater
 
@@ -41,33 +47,70 @@ class MainActivity : ComponentActivity() {
             val deviceOrientation by viewModel.deviceOrientation.collectAsStateWithLifecycle()
             val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
             val screensaverSettings by viewModel.homeScreensaverSettings.collectAsStateWithLifecycle()
+            val isScreensaverActive by viewModel.isScreensaverActive.collectAsStateWithLifecycle()
+            val screensaverSensorPosture by viewModel.screensaverSensorPosture.collectAsStateWithLifecycle()
             val navNotifSettings by viewModel.navigationNotificationSettings.collectAsStateWithLifecycle()
+            val windowIsLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+            var lastLandscapeOrientation by remember {
+                mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+            }
 
             // Automatic Orientation Override:
-            // Locks non-camera screens (Home, Photos, Routes, Settings) strictly to PORTRAIT mode.
-            // On Camera screen, dynamically adjusts between portrait and landscape for photo capture.
-            LaunchedEffect(currentTab, deviceOrientation, isRecording) {
-                if (currentTab == AppTab.CAMERA) {
-                    if (!isRecording) {
-                        val targetOrientation = when (deviceOrientation) {
-                            DeviceOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                            DeviceOrientation.LANDSCAPE_LEFT -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                            DeviceOrientation.REVERSE_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-                            DeviceOrientation.LANDSCAPE_RIGHT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-                        }
-                        if (requestedOrientation != targetOrientation) {
-                            try {
-                                requestedOrientation = targetOrientation
-                            } catch (ignored: Exception) {}
+            // - On Camera tab: follows sensor between portrait/landscape while not recording.
+            // - While Home Screensaver is active: rotates natively even if system Auto-Rotate is OFF,
+            //   respecting Mirror HUD preference and Orientation Lock.
+            // - Otherwise locks Home, Photos, Routes, Settings cleanly to PORTRAIT.
+            LaunchedEffect(
+                currentTab,
+                deviceOrientation,
+                isRecording,
+                isScreensaverActive,
+                screensaverSettings,
+                screensaverSensorPosture,
+                windowIsLandscape
+            ) {
+                val targetOrientation = when {
+                    currentTab == AppTab.CAMERA -> {
+                        if (isRecording) {
+                            null
+                        } else {
+                            when (deviceOrientation) {
+                                DeviceOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                DeviceOrientation.LANDSCAPE_LEFT -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                DeviceOrientation.REVERSE_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+                                DeviceOrientation.LANDSCAPE_RIGHT -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                            }
                         }
                     }
-                } else {
-                    // Force PORTRAIT on Home Page and all other non-camera screens
-                    if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
-                        try {
-                            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        } catch (ignored: Exception) {}
+                    currentTab == AppTab.HOME && isScreensaverActive -> {
+                        val presentation = resolveEffectiveScreensaverPresentation(
+                            settings = screensaverSettings,
+                            sensorIsLandscape = screensaverSensorPosture?.isLandscape,
+                            windowIsLandscape = windowIsLandscape
+                        )
+                        if (!presentation.isLandscape) {
+                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        } else if (presentation.isOrientationLocked) {
+                            lastLandscapeOrientation
+                        } else {
+                            val landscapeTarget = when (screensaverSensorPosture) {
+                                ScreensaverSensorPosture.LANDSCAPE_RIGHT ->
+                                    ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                                ScreensaverSensorPosture.LANDSCAPE_LEFT ->
+                                    ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                else -> lastLandscapeOrientation
+                            }
+                            lastLandscapeOrientation = landscapeTarget
+                            landscapeTarget
+                        }
                     }
+                    else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+
+                if (targetOrientation != null && requestedOrientation != targetOrientation) {
+                    try {
+                        requestedOrientation = targetOrientation
+                    } catch (ignored: Exception) {}
                 }
             }
 
@@ -78,7 +121,7 @@ class MainActivity : ComponentActivity() {
                     MainScreen(viewModel = viewModel)
 
                     if (showWidgetTrackingConfirmDialog) {
-                        val isCurrentlyTracking = navNotifSettings.enabled && screensaverSettings.lockScreenNavEnabled
+                        val isCurrentlyTracking = navNotifSettings.enabled
                         AlertDialog(
                             onDismissRequest = { showWidgetTrackingConfirmDialog = false },
                             title = {

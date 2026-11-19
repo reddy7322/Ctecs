@@ -68,7 +68,6 @@ import com.example.navigation.LockScreenNotificationFormatter
 @Composable
 fun NavigationNotificationSettingsSectionContent(
     notifSettings: NavigationNotificationSettings,
-    isLockScreenNavActive: Boolean,
     matchResult: ChainageMatchResult? = null,
     locationState: LocationState? = null,
     activeRoute: RouteData? = null,
@@ -105,7 +104,7 @@ fun NavigationNotificationSettingsSectionContent(
         }
     }
 
-    val effectiveEnabled = notifSettings.enabled && isLockScreenNavActive
+    val effectiveEnabled = notifSettings.enabled
 
     val resolver = remember { LockScreenNavStateResolver() }
     val resolvedNavState = remember(

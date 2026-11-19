@@ -135,17 +135,16 @@ fun SurveyScreen(
     var showSavedSurveysDialog by remember { mutableStateOf(false) }
     var reviewSessionTarget by remember { mutableStateOf<SurveySession?>(null) }
 
-    // Layer Visibility
-    var showGpsTrack by remember { mutableStateOf(true) }
-    var showCentreline by remember { mutableStateOf(true) }
-    var showLaneTrack by remember { mutableStateOf(true) }
-    var showMarkers by remember { mutableStateOf(true) }
-    var show200mLabels by remember { mutableStateOf(true) }
-    var mapType by remember { mutableStateOf("standard") }
+    // Layer Visibility (persisted across screen exits & app restarts)
+    val showGpsTrack by viewModel.surveyShowGpsTrack.collectAsStateWithLifecycle()
+    val showCentreline by viewModel.surveyShowCentreline.collectAsStateWithLifecycle()
+    val showLaneTrack by viewModel.surveyShowLaneTrack.collectAsStateWithLifecycle()
+    val showMarkers by viewModel.surveyShowMarkers.collectAsStateWithLifecycle()
+    val show200mLabels by viewModel.surveyShow200mLabels.collectAsStateWithLifecycle()
+    val mapType by viewModel.surveyMapType.collectAsStateWithLifecycle()
 
-    // Interactive Map State
-    var panOffsetX by remember { mutableFloatStateOf(0f) }
-    var panOffsetY by remember { mutableFloatStateOf(0f) }
+    // Interactive Map State (Full-Earth pan & zoom without automatic snapback)
+    var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
     var viewRangeMetres by remember { mutableDoubleStateOf(800.0) }
     var isFollowingLocation by remember { mutableStateOf(true) }
 
@@ -153,8 +152,7 @@ fun SurveyScreen(
 
     LaunchedEffect(currentGps, isFollowingLocation) {
         if (isFollowingLocation) {
-            panOffsetX = 0f
-            panOffsetY = 0f
+            exploredCenter = null
         }
     }
 
@@ -171,14 +169,7 @@ fun SurveyScreen(
     )
 
     val currentZoom = remember(viewRangeMetres) {
-        when {
-            viewRangeMetres <= 250.0 -> 18
-            viewRangeMetres <= 550.0 -> 17
-            viewRangeMetres <= 1100.0 -> 16
-            viewRangeMetres <= 2200.0 -> 15
-            viewRangeMetres <= 4500.0 -> 14
-            else -> 13
-        }
+        OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
     }
 
     // If review screen is open, show SurveyReviewScreen
@@ -206,9 +197,27 @@ fun SurveyScreen(
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         isFollowingLocation = false
-                        viewRangeMetres = (viewRangeMetres / zoom).coerceIn(80.0, 10000.0)
-                        panOffsetX += pan.x
-                        panOffsetY += pan.y
+                        val prevZoom = OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
+                        val anchor = exploredCenter
+                            ?: currentGps
+                            ?: activePoints.lastOrNull()?.geoPoint
+                            ?: GeoPoint(28.6139, 77.2090)
+                        if (pan.x != 0f || pan.y != 0f) {
+                            exploredCenter = OsmTileManager.offsetGeoPointByPixels(
+                                center = anchor,
+                                deltaPxX = pan.x,
+                                deltaPxY = pan.y,
+                                zoom = prevZoom
+                            )
+                        } else if (exploredCenter == null) {
+                            exploredCenter = anchor
+                        }
+                        if (zoom != 1f) {
+                            viewRangeMetres = (viewRangeMetres / zoom).coerceIn(
+                                OsmTileManager.MIN_VIEW_RANGE_METRES,
+                                OsmTileManager.MAX_VIEW_RANGE_METRES
+                            )
+                        }
                     }
                 }
         ) {
@@ -216,9 +225,16 @@ fun SurveyScreen(
             val w = size.width
             val h = size.height
 
-            val anchorPoint = currentGps
+            val gpsOrRoutePoint = currentGps
                 ?: activePoints.lastOrNull()?.geoPoint
                 ?: GeoPoint(28.6139, 77.2090)
+            val anchorPoint = if (isFollowingLocation) {
+                gpsOrRoutePoint
+            } else {
+                exploredCenter ?: gpsOrRoutePoint
+            }
+            val panOffsetX = 0f
+            val panOffsetY = 0f
 
             // Render OSM Street or Satellite tile background with active theme
             val osmBitmap = OsmTileManager.renderMapBitmap(
@@ -543,7 +559,10 @@ fun SurveyScreen(
                         SurveyGlassIconButton(
                             icon = Icons.Default.Map,
                             contentDescription = "Map Style",
-                            onClick = { mapType = if (mapType == "standard") "satellite" else "standard" },
+                            onClick = {
+                                val nextType = if (mapType == "standard") "satellite" else "standard"
+                                viewModel.updateSurveyMapPreferences(mapType = nextType)
+                            },
                             variant = if (mapType == "satellite") GlassButtonVariant.GOLD else GlassButtonVariant.NEUTRAL,
                             active = mapType == "satellite",
                             size = 36.dp,
@@ -641,7 +660,10 @@ fun SurveyScreen(
             SurveyGlassIconButton(
                 icon = Icons.Default.MyLocation,
                 contentDescription = "Center Location",
-                onClick = { isFollowingLocation = true },
+                onClick = {
+                    isFollowingLocation = true
+                    exploredCenter = null
+                },
                 variant = if (isFollowingLocation) GlassButtonVariant.SKY else GlassButtonVariant.NEUTRAL,
                 active = isFollowingLocation,
                 size = 38.dp,
@@ -652,7 +674,11 @@ fun SurveyScreen(
             SurveyGlassIconButton(
                 icon = Icons.Default.ZoomIn,
                 contentDescription = "Zoom In",
-                onClick = { viewRangeMetres = (viewRangeMetres * 0.65).coerceAtLeast(80.0) },
+                onClick = {
+                    viewRangeMetres = (viewRangeMetres * 0.65).coerceAtLeast(
+                        OsmTileManager.MIN_VIEW_RANGE_METRES
+                    )
+                },
                 variant = GlassButtonVariant.NEUTRAL,
                 size = 38.dp,
                 iconSize = 18.dp
@@ -662,7 +688,11 @@ fun SurveyScreen(
             SurveyGlassIconButton(
                 icon = Icons.Default.ZoomOut,
                 contentDescription = "Zoom Out",
-                onClick = { viewRangeMetres = (viewRangeMetres * 1.5).coerceAtMost(10000.0) },
+                onClick = {
+                    viewRangeMetres = (viewRangeMetres * 1.6).coerceAtMost(
+                        OsmTileManager.MAX_VIEW_RANGE_METRES
+                    )
+                },
                 variant = GlassButtonVariant.NEUTRAL,
                 size = 38.dp,
                 iconSize = 18.dp
@@ -673,8 +703,10 @@ fun SurveyScreen(
                 icon = Icons.Default.Layers,
                 contentDescription = "Toggle 200m Labels & Centreline",
                 onClick = {
-                    show200mLabels = !show200mLabels
-                    showCentreline = !showCentreline
+                    viewModel.updateSurveyMapPreferences(
+                        show200mLabels = !show200mLabels,
+                        showCentreline = !showCentreline
+                    )
                 },
                 variant = if (show200mLabels) GlassButtonVariant.GOLD else GlassButtonVariant.NEUTRAL,
                 active = show200mLabels,

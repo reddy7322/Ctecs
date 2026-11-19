@@ -24,6 +24,21 @@ enum class ScreensaverDisplayMode(val label: String) {
     }
 }
 
+enum class ScreensaverThemeMode(val label: String) {
+    SYSTEM("System"),
+    LIGHT("Light"),
+    DARK("Dark");
+
+    companion object {
+        fun fromString(raw: String?): ScreensaverThemeMode {
+            return entries.firstOrNull {
+                it.name.equals(raw?.trim(), ignoreCase = true) ||
+                    it.label.equals(raw?.trim(), ignoreCase = true)
+            } ?: SYSTEM
+        }
+    }
+}
+
 enum class HudElementSize(val label: String, val scaleFactor: Float) {
     SMALL("Small", 0.84f),
     MEDIUM("Medium", 1.0f),
@@ -227,8 +242,7 @@ enum class HudMapMarkerStyle(val label: String) {
  * 1. General Home Screensaver behavior (enable/disable, timeout, touch-to-dismiss, timer restart)
  * 2. Display Modes (Portrait / Landscape / Car Dashboard Mirror HUD & brightness)
  * 3. Dashboard Element Customization (Chainage, LHS/RHS Direction, Speedometer, Location)
- * 4. Shared Mini Map behavior across Home Page, In-App Screensaver, and Lock-Screen Navigation
- * 5. Google Maps-style Live Lock-Screen Chainage Navigation preferences
+ * 4. Shared Mini Map behavior across Home Page and In-App Screensaver
  */
 data class HomeScreensaverSettings(
     // General Screensaver Settings
@@ -242,6 +256,10 @@ data class HomeScreensaverSettings(
     // Display Mode & Orientation Settings
     val displayMode: ScreensaverDisplayMode = ScreensaverDisplayMode.PORTRAIT,
     val autoOrientationEnabled: Boolean = true,
+    val orientationLocked: Boolean = false,
+    val lockedOrientationIsLandscape: Boolean? = null,
+    val keepScreenAwake: Boolean = true,
+    val screensaverThemeMode: ScreensaverThemeMode = ScreensaverThemeMode.SYSTEM,
     val mirrorModePreferred: Boolean = (displayMode == ScreensaverDisplayMode.MIRROR),
     val hudBrightness: Float = DEFAULT_HUD_BRIGHTNESS,
 
@@ -277,7 +295,7 @@ data class HomeScreensaverSettings(
     val locationPosition: HudLocationPosition = HudLocationPosition.BELOW_SIDE,
     val locationDynamicUpdates: Boolean = true,
 
-    // Shared Mini Map Settings (Home + In-App Screensaver + Lock-Screen Navigation)
+    // Shared Mini Map Settings (Home + In-App Screensaver)
     val miniMapVisible: Boolean = true,
     val miniMapOrientation: MiniMapOrientationMode = MiniMapOrientationMode.NORTH_UP,
     val miniMapZoomLevel: Float = DEFAULT_ZOOM_LEVEL,
@@ -290,14 +308,7 @@ data class HomeScreensaverSettings(
     val miniMapBorderColorPreset: HudColorPreset = HudColorPreset.CYAN,
     val miniMapMarkerStyle: HudMapMarkerStyle = HudMapMarkerStyle.NAVIGATION_ARROW,
     val miniMapShowRouteAlignment: Boolean = true,
-    val recenterEpoch: Long = 0L,
-
-    // Lock-Screen Navigation Settings
-    val lockScreenNavEnabled: Boolean = false,
-    val lockScreenOpenActivityOnLock: Boolean = true,
-    val lockScreenShowNextMarker: Boolean = true,
-    val lockScreenShowEta: Boolean = true,
-    val lockScreenShowSpeed: Boolean = true
+    val recenterEpoch: Long = 0L
 ) {
     val isLandscapeLayout: Boolean
         get() = displayMode == ScreensaverDisplayMode.LANDSCAPE ||
@@ -337,7 +348,30 @@ data class HomeScreensaverSettings(
         )
 
     fun withAutoOrientation(enabled: Boolean): HomeScreensaverSettings =
-        copy(autoOrientationEnabled = enabled)
+        copy(
+            autoOrientationEnabled = enabled,
+            orientationLocked = if (enabled) false else orientationLocked
+        )
+
+    fun withOrientationLock(locked: Boolean, currentIsLandscape: Boolean? = null): HomeScreensaverSettings {
+        val resolvedLandscape = currentIsLandscape ?: lockedOrientationIsLandscape ?: displayMode.isLandscape
+        return copy(
+            orientationLocked = locked,
+            lockedOrientationIsLandscape = if (locked) resolvedLandscape else null,
+            displayMode = when {
+                !locked -> displayMode
+                mirrorModePreferred && resolvedLandscape -> ScreensaverDisplayMode.MIRROR
+                resolvedLandscape -> ScreensaverDisplayMode.LANDSCAPE
+                else -> ScreensaverDisplayMode.PORTRAIT
+            }
+        )
+    }
+
+    fun withKeepScreenAwake(enabled: Boolean): HomeScreensaverSettings =
+        copy(keepScreenAwake = enabled)
+
+    fun withThemeMode(mode: ScreensaverThemeMode): HomeScreensaverSettings =
+        copy(screensaverThemeMode = mode)
 
     fun withMirrorQuickToggle(
         enableMirror: Boolean,
@@ -398,6 +432,12 @@ data class HomeScreensaverSettings(
         // Display Mode & Orientation
         obj.put("displayMode", displayMode.name)
         obj.put("autoOrientationEnabled", autoOrientationEnabled)
+        obj.put("orientationLocked", orientationLocked)
+        if (lockedOrientationIsLandscape != null) {
+            obj.put("lockedOrientationIsLandscape", lockedOrientationIsLandscape)
+        }
+        obj.put("keepScreenAwake", keepScreenAwake)
+        obj.put("screensaverThemeMode", screensaverThemeMode.name)
         obj.put("mirrorModePreferred", mirrorModePreferred)
         obj.put("hudBrightness", hudBrightness.toDouble())
 
@@ -446,13 +486,6 @@ data class HomeScreensaverSettings(
         obj.put("miniMapBorderColorPreset", miniMapBorderColorPreset.name)
         obj.put("miniMapMarkerStyle", miniMapMarkerStyle.name)
         obj.put("miniMapShowRouteAlignment", miniMapShowRouteAlignment)
-
-        // Lock-Screen Navigation
-        obj.put("lockScreenNavEnabled", lockScreenNavEnabled)
-        obj.put("lockScreenOpenActivityOnLock", lockScreenOpenActivityOnLock)
-        obj.put("lockScreenShowNextMarker", lockScreenShowNextMarker)
-        obj.put("lockScreenShowEta", lockScreenShowEta)
-        obj.put("lockScreenShowSpeed", lockScreenShowSpeed)
         return obj.toString()
     }
 
@@ -461,8 +494,8 @@ data class HomeScreensaverSettings(
         const val MAX_HUD_BRIGHTNESS = 1.0f
         const val DEFAULT_HUD_BRIGHTNESS = 0.90f
 
-        const val MIN_ZOOM_LEVEL = 12.0f
-        const val MAX_ZOOM_LEVEL = 18.5f
+        const val MIN_ZOOM_LEVEL = 2.0f
+        const val MAX_ZOOM_LEVEL = 19.0f
         const val DEFAULT_ZOOM_LEVEL = 16.0f
         const val ZOOM_STEP = 0.75f
         const val MIN_MINI_MAP_OPACITY = 0.35f
@@ -493,6 +526,16 @@ data class HomeScreensaverSettings(
 
                     displayMode = parsedDisplayMode,
                     autoOrientationEnabled = obj.optBoolean("autoOrientationEnabled", true),
+                    orientationLocked = obj.optBoolean("orientationLocked", false),
+                    lockedOrientationIsLandscape = if (obj.has("lockedOrientationIsLandscape")) {
+                        obj.optBoolean("lockedOrientationIsLandscape")
+                    } else {
+                        null
+                    },
+                    keepScreenAwake = obj.optBoolean("keepScreenAwake", true),
+                    screensaverThemeMode = ScreensaverThemeMode.fromString(
+                        obj.optString("screensaverThemeMode", ScreensaverThemeMode.SYSTEM.name)
+                    ),
                     mirrorModePreferred = obj.optBoolean(
                         "mirrorModePreferred",
                         parsedDisplayMode == ScreensaverDisplayMode.MIRROR
@@ -595,13 +638,7 @@ data class HomeScreensaverSettings(
                     miniMapMarkerStyle = HudMapMarkerStyle.fromString(
                         obj.optString("miniMapMarkerStyle", HudMapMarkerStyle.NAVIGATION_ARROW.name)
                     ),
-                    miniMapShowRouteAlignment = obj.optBoolean("miniMapShowRouteAlignment", true),
-
-                    lockScreenNavEnabled = obj.optBoolean("lockScreenNavEnabled", false),
-                    lockScreenOpenActivityOnLock = obj.optBoolean("lockScreenOpenActivityOnLock", true),
-                    lockScreenShowNextMarker = obj.optBoolean("lockScreenShowNextMarker", true),
-                    lockScreenShowEta = obj.optBoolean("lockScreenShowEta", true),
-                    lockScreenShowSpeed = obj.optBoolean("lockScreenShowSpeed", true)
+                    miniMapShowRouteAlignment = obj.optBoolean("miniMapShowRouteAlignment", true)
                 )
             } catch (_: Exception) {
                 HomeScreensaverSettings()
@@ -612,13 +649,14 @@ data class HomeScreensaverSettings(
 
 /**
  * Resolved live presentation state for the active Screensaver.
- * Combines saved settings, auto-orientation sensor state, and Mirror Mode landscape coupling.
+ * Combines saved settings, auto-orientation sensor state, orientation lock, and Mirror Mode landscape coupling.
  */
 data class EffectiveScreensaverPresentation(
     val activeMode: ScreensaverDisplayMode,
     val isLandscape: Boolean,
     val isMirror: Boolean,
-    val mirrorPreferenceEnabled: Boolean
+    val mirrorPreferenceEnabled: Boolean,
+    val isOrientationLocked: Boolean = false
 )
 
 fun resolveEffectiveScreensaverPresentation(
@@ -628,13 +666,30 @@ fun resolveEffectiveScreensaverPresentation(
     temporaryLandscapeOverride: Boolean = false
 ): EffectiveScreensaverPresentation {
     val mirrorPref = settings.mirrorModePreferred || settings.displayMode == ScreensaverDisplayMode.MIRROR
+    if (settings.orientationLocked) {
+        val lockedLandscape = settings.lockedOrientationIsLandscape ?: settings.displayMode.isLandscape
+        val lockedMode = when {
+            !lockedLandscape -> ScreensaverDisplayMode.PORTRAIT
+            mirrorPref -> ScreensaverDisplayMode.MIRROR
+            else -> ScreensaverDisplayMode.LANDSCAPE
+        }
+        return EffectiveScreensaverPresentation(
+            activeMode = lockedMode,
+            isLandscape = lockedLandscape,
+            isMirror = lockedMode == ScreensaverDisplayMode.MIRROR,
+            mirrorPreferenceEnabled = mirrorPref,
+            isOrientationLocked = true
+        )
+    }
+
     if (!settings.autoOrientationEnabled) {
         val manualMode = settings.displayMode
         return EffectiveScreensaverPresentation(
             activeMode = manualMode,
             isLandscape = manualMode.isLandscape,
             isMirror = manualMode == ScreensaverDisplayMode.MIRROR,
-            mirrorPreferenceEnabled = mirrorPref
+            mirrorPreferenceEnabled = mirrorPref,
+            isOrientationLocked = false
         )
     }
 
@@ -655,6 +710,7 @@ fun resolveEffectiveScreensaverPresentation(
         activeMode = activeMode,
         isLandscape = isLandscape,
         isMirror = activeMode == ScreensaverDisplayMode.MIRROR,
-        mirrorPreferenceEnabled = mirrorPref
+        mirrorPreferenceEnabled = mirrorPref,
+        isOrientationLocked = false
     )
 }

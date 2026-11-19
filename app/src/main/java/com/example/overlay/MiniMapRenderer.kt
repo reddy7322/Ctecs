@@ -243,9 +243,9 @@ object MiniMapRenderer {
         val effectiveZoom = if (config.autoZoom) {
             computeAutoZoom(centerGeo, routeData)
         } else {
-            config.zoomLevel.coerceIn(11.0f, 18.5f)
+            config.zoomLevel.coerceIn(2.0f, 19.0f)
         }
-        val baseZoom = floor(effectiveZoom).toInt().coerceIn(10, 18)
+        val baseZoom = floor(effectiveZoom).toInt().coerceIn(2, 19)
         val zoomScale = 2.0.pow((effectiveZoom - baseZoom).toDouble()).toFloat().coerceIn(0.5f, 2.5f)
         val effectiveBearing = resolveEffectiveBearing(centerGeo, bearing, routeData)
         val mapRotationDeg = resolveMapRotationDegrees(config.orientationMode, effectiveBearing)
@@ -258,7 +258,7 @@ object MiniMapRenderer {
         // 4. Real map tiles background when available
         var hasOsmTiles = false
         if (context != null && centerGeo != null && config.backgroundAlpha > 0.04f) {
-            val diagPx = ceil(hypot(w.toDouble(), h.toDouble()) / zoomScale).toInt().coerceIn(32, 768)
+            val diagPx = ceil(hypot(w.toDouble(), h.toDouble()) / zoomScale).toInt().coerceIn(32, 1024)
             val osmMapType = if (config.mapStyle == MiniMapStyle.SATELLITE) "satellite" else "standard"
             val osmBitmap = getOrRenderCachedTileBitmap(
                 context = context,

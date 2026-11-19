@@ -22,6 +22,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,7 +47,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.ScreenLockRotation
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -77,6 +81,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -119,12 +124,14 @@ import com.example.model.HudVerticalPosition
 import com.example.model.MiniMapStyle
 import com.example.model.RouteData
 import com.example.model.ScreensaverDisplayMode
+import com.example.model.ScreensaverThemeMode
 import com.example.model.resolveEffectiveScreensaverPresentation
 import com.example.overlay.MiniMapRenderer
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.sin
 
@@ -143,6 +150,9 @@ var SemanticsPropertyReceiver.screensaverDisplayMode by ScreensaverDisplayModeKe
 
 val MiniMapRotationDegKey = SemanticsPropertyKey<Float>("MiniMapRotationDeg")
 var SemanticsPropertyReceiver.miniMapRotationDeg by MiniMapRotationDegKey
+
+val ScreensaverThemeDarkKey = SemanticsPropertyKey<Boolean>("ScreensaverThemeDark")
+var SemanticsPropertyReceiver.screensaverThemeDark by ScreensaverThemeDarkKey
 
 private data class HudClusterPalette(
     val rootBackground: Color,
@@ -172,13 +182,13 @@ private fun resolveHudClusterPalette(
     return when {
         isMirrorMode -> HudClusterPalette(
             rootBackground = Color(0xFF000000),
-            ambientGlowTop = Color(0xFF0284C7).copy(alpha = 0.06f),
+            ambientGlowTop = Color.Transparent,
             panelBackground = Color.Transparent,
-            panelBorder = Color(0xFF38BDF8).copy(alpha = 0.24f),
+            panelBorder = Color.Transparent,
             primaryDigitColor = if (settings.chainageColorPreset == HudColorPreset.WHITE) Color.White else chainageTint,
-            chainageGlowColor = chainageGlow.copy(alpha = 0.42f),
+            chainageGlowColor = chainageGlow.copy(alpha = 0.28f),
             secondaryTextColor = Color(0xFFE0F2FE),
-            speedArcTrack = Color(0xFF1E293B).copy(alpha = 0.55f),
+            speedArcTrack = Color(0xFF1E293B).copy(alpha = 0.50f),
             speedArcStart = speedAccent,
             speedArcEnd = Color(0xFF34D399),
             needleColor = speedAccent,
@@ -186,42 +196,56 @@ private fun resolveHudClusterPalette(
             isHudMirror = true
         )
         useDarkInstrument -> HudClusterPalette(
-            rootBackground = Color(0xFF020612),
-            ambientGlowTop = Color(0xFF0EA5E9).copy(alpha = 0.14f),
-            panelBackground = Color(0xFF0B162C).copy(alpha = 0.30f),
-            panelBorder = Color(0xFF38BDF8).copy(alpha = 0.14f),
+            rootBackground = Color(0xFF030712),
+            ambientGlowTop = Color(0xFF0EA5E9).copy(alpha = 0.11f),
+            panelBackground = Color(0xFF0B1324).copy(alpha = 0.24f),
+            panelBorder = Color.Transparent,
             primaryDigitColor = chainageTint,
-            chainageGlowColor = chainageGlow.copy(alpha = 0.34f),
+            chainageGlowColor = chainageGlow.copy(alpha = 0.22f),
             secondaryTextColor = Color(0xFFE2E8F0),
-            speedArcTrack = Color(0xFF1E293B).copy(alpha = 0.50f),
+            speedArcTrack = Color(0xFF1E293B).copy(alpha = 0.48f),
             speedArcStart = speedAccent,
             speedArcEnd = Color(0xFF34D399),
             needleColor = speedAccent,
             isDark = true,
             isHudMirror = false
         )
-        else -> HudClusterPalette(
-            rootBackground = Color(0xFF061020),
-            ambientGlowTop = Color(0xFF38BDF8).copy(alpha = 0.14f),
-            panelBackground = Color(0xFF112240).copy(alpha = 0.32f),
-            panelBorder = Color(0xFF7DD3FC).copy(alpha = 0.16f),
-            primaryDigitColor = chainageTint,
-            chainageGlowColor = chainageGlow.copy(alpha = 0.30f),
-            secondaryTextColor = Color(0xFFE2E8F0),
-            speedArcTrack = Color(0xFF1E293B).copy(alpha = 0.50f),
-            speedArcStart = speedAccent,
-            speedArcEnd = Color(0xFF10B981),
-            needleColor = speedAccent,
-            isDark = true,
-            isHudMirror = false
-        )
+        else -> {
+            val lightChainageColor = when (settings.chainageColorPreset) {
+                HudColorPreset.WHITE -> Color(0xFF0F172A)
+                HudColorPreset.CYAN -> Color(0xFF0284C7)
+                HudColorPreset.EMERALD -> Color(0xFF059669)
+                HudColorPreset.AMBER -> Color(0xFFD97706)
+            }
+            val lightSpeedAccent = when (settings.speedometerColorPreset) {
+                HudColorPreset.WHITE -> Color(0xFF0F172A)
+                HudColorPreset.CYAN -> Color(0xFF0284C7)
+                HudColorPreset.EMERALD -> Color(0xFF059669)
+                HudColorPreset.AMBER -> Color(0xFFD97706)
+            }
+            HudClusterPalette(
+                rootBackground = Color(0xFFF4F7FB),
+                ambientGlowTop = Color(0xFF0EA5E9).copy(alpha = 0.08f),
+                panelBackground = Color(0xFFFFFFFF).copy(alpha = 0.58f),
+                panelBorder = Color.Transparent,
+                primaryDigitColor = lightChainageColor,
+                chainageGlowColor = lightSpeedAccent.copy(alpha = 0.12f),
+                secondaryTextColor = Color(0xFF334155),
+                speedArcTrack = Color(0xFFE2E8F0),
+                speedArcStart = lightSpeedAccent,
+                speedArcEnd = Color(0xFF059669),
+                needleColor = lightSpeedAccent,
+                isDark = false,
+                isHudMirror = false
+            )
+        }
     }
 }
 
 /**
  * Renders the redesigned Automotive Instrument Cluster & Windshield Mirror HUD Screensaver.
- * Keeps the HUD clean and minimal with only a tiny glassmorphic Mirror/Normal quick-switch toggle
- * in a screen-safe corner; touching anywhere else dismisses cleanly when enabled.
+ * Keeps the HUD clean, borderless, and minimal with compact Mirror/Normal and Orientation Lock
+ * controls in screen-safe corners; touching anywhere else dismisses cleanly when enabled.
  *
  * Notice that in [ScreensaverDisplayMode.MIRROR], horizontal flip (`scaleX = -1f`) is applied
  * ONCE at the root container wrapping the complete rendered Landscape dashboard so every digit,
@@ -242,12 +266,18 @@ fun AutomotiveChainageScreensaverContent(
     isSamplePreview: Boolean = false,
     sensorPosture: ScreensaverSensorPosture? = null,
     temporaryLandscapeOverride: Boolean = false,
-    onToggleMirrorQuickMode: ((enableMirror: Boolean, currentlyLandscape: Boolean) -> Unit)? = null
+    onToggleMirrorQuickMode: ((enableMirror: Boolean, currentlyLandscape: Boolean) -> Unit)? = null,
+    onToggleOrientationLock: ((currentlyLandscape: Boolean) -> Unit)? = null
 ) {
+    val effectiveDarkInstrument = when (screensaverSettings.screensaverThemeMode) {
+        ScreensaverThemeMode.LIGHT -> false
+        ScreensaverThemeMode.DARK -> true
+        ScreensaverThemeMode.SYSTEM -> isDarkAppTheme
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
     ) {
         val isWindowPortrait = maxWidth < maxHeight
         val presentation = remember(
@@ -268,15 +298,13 @@ fun AutomotiveChainageScreensaverContent(
         val effectiveMode = presentation.activeMode
 
         val palette = remember(
-            isDarkAppTheme,
+            effectiveDarkInstrument,
             isMirrorMode,
-            mapThemePreference,
             screensaverSettings.chainageColorPreset,
             screensaverSettings.speedometerColorPreset
         ) {
             resolveHudClusterPalette(
-                useDarkInstrument = isDarkAppTheme ||
-                    com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isDarkAppTheme),
+                useDarkInstrument = effectiveDarkInstrument,
                 isMirrorMode = isMirrorMode,
                 settings = screensaverSettings
             )
@@ -329,6 +357,7 @@ fun AutomotiveChainageScreensaverContent(
                             dashboardHudBrightness = targetHudAlpha
                             dashboardLandscapeRotation = rotationDegrees
                             screensaverDisplayMode = effectiveMode.name
+                            screensaverThemeDark = palette.isDark
                         }
                         .graphicsLayer {
                             scaleX = scaleXFactor
@@ -411,11 +440,26 @@ fun AutomotiveChainageScreensaverContent(
                     }
                 }
 
-                // Tiny glassmorphic Mirror / Normal quick-switch button kept outside scaleX mirror wrapper
+                // Compact animated Orientation Lock / Unlock button kept outside scaleX mirror wrapper
+                if (onToggleOrientationLock != null) {
+                    ScreensaverOrientationLockToggle(
+                        isLocked = screensaverSettings.orientationLocked,
+                        isDarkPalette = palette.isDark,
+                        hudAlpha = hudAlpha,
+                        onToggle = { onToggleOrientationLock(isLandscapeMode) },
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .windowInsetsPadding(WindowInsets.displayCutout)
+                            .padding(top = 6.dp, start = 8.dp)
+                    )
+                }
+
+                // Compact animated Mirror / Normal quick-switch button kept outside scaleX mirror wrapper
                 // so its icon, text, and accessible tap target stay upright and unobtrusive.
                 if (onToggleMirrorQuickMode != null) {
                     ScreensaverMirrorQuickToggle(
                         isMirrorActive = isMirrorMode,
+                        isDarkPalette = palette.isDark,
                         hudAlpha = hudAlpha,
                         onToggle = {
                             onToggleMirrorQuickMode(!isMirrorMode, isLandscapeMode)
@@ -463,32 +507,125 @@ fun AutomotiveChainageScreensaverContent(
 }
 
 @Composable
-private fun ScreensaverMirrorQuickToggle(
-    isMirrorActive: Boolean,
+private fun ScreensaverOrientationLockToggle(
+    isLocked: Boolean,
+    isDarkPalette: Boolean,
     hudAlpha: Float,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val bgColor by animateColorAsState(
-        targetValue = if (isMirrorActive) {
-            Color(0xFF0284C7).copy(alpha = 0.28f)
-        } else {
-            Color(0xFF0F172A).copy(alpha = 0.56f)
+        targetValue = when {
+            isLocked && isDarkPalette -> Color(0xFFF59E0B).copy(alpha = 0.24f)
+            isLocked -> Color(0xFFFEF3C7).copy(alpha = 0.92f)
+            isDarkPalette -> Color(0xFF0F172A).copy(alpha = 0.56f)
+            else -> Color(0xFFFFFFFF).copy(alpha = 0.85f)
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "orient_lock_bg"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            isLocked && isDarkPalette -> Color(0xFFFCD34D)
+            isLocked -> Color(0xFFB45309)
+            isDarkPalette -> Color(0xFFE2E8F0)
+            else -> Color(0xFF1E293B)
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "orient_lock_content"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (isLocked) 1.08f else 1.0f,
+        animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
+        label = "orient_lock_scale"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Box(
+        contentAlignment = Alignment.TopStart,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .alpha(hudAlpha.coerceIn(0.65f, 1f))
+            .testTag("screensaver_orientation_lock_btn")
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple(bounded = false, radius = 24.dp, color = Color(0xFF38BDF8)),
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onClickLabel = if (isLocked) "Unlock orientation" else "Lock orientation",
+                onClick = onToggle
+            )
+            .semantics {
+                contentDescription = if (isLocked) "Orientation locked" else "Orientation unlocked"
+            }
+            .padding(2.dp)
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = bgColor,
+            shadowElevation = if (isDarkPalette) 1.dp else 2.dp
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Icon(
+                    imageVector = if (isLocked) Icons.Default.ScreenLockRotation else Icons.Default.ScreenRotation,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier
+                        .size(13.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        }
+                )
+                AnimatedContent(
+                    targetState = if (isLocked) "Locked" else "Auto",
+                    transitionSpec = {
+                        (fadeIn(tween(180)) + scaleIn(initialScale = 0.9f, animationSpec = tween(180))) togetherWith
+                            fadeOut(tween(130))
+                    },
+                    label = "orient_lock_label"
+                ) { stateLabel ->
+                    Text(
+                        text = stateLabel,
+                        color = contentColor,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.3.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreensaverMirrorQuickToggle(
+    isMirrorActive: Boolean,
+    isDarkPalette: Boolean,
+    hudAlpha: Float,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bgColor by animateColorAsState(
+        targetValue = when {
+            isMirrorActive -> Color(0xFF0284C7).copy(alpha = 0.28f)
+            isDarkPalette -> Color(0xFF0F172A).copy(alpha = 0.56f)
+            else -> Color(0xFFFFFFFF).copy(alpha = 0.85f)
         },
         animationSpec = tween(durationMillis = 220),
         label = "quick_toggle_bg"
     )
-    val borderColor by animateColorAsState(
-        targetValue = if (isMirrorActive) {
-            Color(0xFF38BDF8).copy(alpha = 0.72f)
-        } else {
-            Color.White.copy(alpha = 0.22f)
-        },
-        animationSpec = tween(durationMillis = 220),
-        label = "quick_toggle_border"
-    )
     val contentColor by animateColorAsState(
-        targetValue = if (isMirrorActive) Color(0xFF7DD3FC) else Color(0xFFE2E8F0),
+        targetValue = when {
+            isMirrorActive -> Color(0xFF7DD3FC)
+            isDarkPalette -> Color(0xFFE2E8F0)
+            else -> Color(0xFF1E293B)
+        },
         animationSpec = tween(durationMillis = 220),
         label = "quick_toggle_content"
     )
@@ -513,15 +650,14 @@ private fun ScreensaverMirrorQuickToggle(
                 onClick = onToggle
             )
             .semantics {
-                contentDescription = if (isMirrorActive) "Mirror Mode active, tap for Normal Mode" else "Normal Mode active, tap for Mirror Mode"
+                contentDescription = if (isMirrorActive) "Mirror Mode active, toggle for Normal Mode" else "Normal Mode active, toggle for Mirror Mode"
             }
             .padding(2.dp)
     ) {
         Surface(
             shape = CircleShape,
             color = bgColor,
-            border = BorderStroke(0.8.dp, borderColor),
-            shadowElevation = 2.dp
+            shadowElevation = if (isDarkPalette) 1.dp else 2.dp
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -767,6 +903,7 @@ private fun HeroChainageCard(
                         colorMode = screensaverSettings.directionColorPreset,
                         arrowsAnimated = screensaverSettings.directionArrowsAnimated,
                         isHudMirror = palette.isHudMirror,
+                        isDarkPalette = palette.isDark,
                         fontSize = dirSp,
                         arrowSize = arrowDp,
                         modifier = Modifier.testTag("screensaver_direction_badge")
@@ -869,18 +1006,15 @@ private fun GlassMiniMapContainer(
     modifier: Modifier = Modifier
 ) {
     val edgeShape = RoundedCornerShape(24.dp)
-    val softRimColor = if (screensaverSettings.miniMapShowBorder) {
-        Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(alpha = 0.22f)
-    } else {
-        Color.Transparent
-    }
 
     Box(
         modifier = modifier
             .alpha(screensaverSettings.miniMapOpacity.coerceIn(0.35f, 1f))
             .clip(edgeShape)
             .background(
-                if (palette.isHudMirror) Color.Black else Color(0xFF060E1D).copy(alpha = 0.42f)
+                if (palette.isHudMirror) Color.Black
+                else if (palette.isDark) Color(0xFF060E1D).copy(alpha = 0.38f)
+                else Color(0xFFE2E8F0).copy(alpha = 0.42f)
             )
     ) {
         ScreensaverLiveMiniMapPanel(
@@ -890,14 +1024,17 @@ private fun GlassMiniMapContainer(
             routeData = routeData,
             screensaverSettings = screensaverSettings,
             isHudMirror = palette.isHudMirror,
+            isDarkPalette = palette.isDark,
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("screensaver_glass_map")
         )
 
-        // Soft peripheral glass edge fade so map integrates seamlessly without rigid box framing
+        // Soft peripheral fade so map blends seamlessly into the screensaver surface with zero borders
         val edgeGlowColor = if (screensaverSettings.miniMapShowBorder) {
-            Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(alpha = 0.14f)
+            Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(
+                alpha = if (palette.isDark) 0.10f else 0.06f
+            )
         } else {
             Color.Transparent
         }
@@ -908,8 +1045,9 @@ private fun GlassMiniMapContainer(
                     Brush.radialGradient(
                         colors = listOf(
                             Color.Transparent,
+                            Color.Transparent,
                             edgeGlowColor,
-                            palette.rootBackground.copy(alpha = if (palette.isHudMirror) 0.45f else 0.36f)
+                            palette.rootBackground.copy(alpha = if (palette.isHudMirror) 0.48f else 0.42f)
                         )
                     )
                 )
@@ -1328,10 +1466,16 @@ private fun AutomotiveCircularSpeedometer(
                 brush = Brush.radialGradient(
                     colors = if (palette.isHudMirror) {
                         listOf(Color.Black, Color.Black)
+                    } else if (palette.isDark) {
+                        listOf(
+                            Color(0xFF0A162B).copy(alpha = 0.36f),
+                            Color(0xFF040A17).copy(alpha = 0.12f),
+                            Color.Transparent
+                        )
                     } else {
                         listOf(
-                            Color(0xFF0A162B).copy(alpha = 0.42f),
-                            Color(0xFF040A17).copy(alpha = 0.16f),
+                            Color(0xFFFFFFFF).copy(alpha = 0.72f),
+                            Color(0xFFE2E8F0).copy(alpha = 0.22f),
                             Color.Transparent
                         )
                     },
@@ -1340,12 +1484,6 @@ private fun AutomotiveCircularSpeedometer(
                 ),
                 radius = outerR,
                 center = Offset(cx, cy)
-            )
-            drawCircle(
-                color = palette.panelBorder.copy(alpha = if (palette.isHudMirror) 0.20f else 0.12f),
-                radius = outerR,
-                center = Offset(cx, cy),
-                style = Stroke(width = 0.75.dp.toPx())
             )
             drawArc(
                 color = palette.speedArcTrack,
@@ -1587,17 +1725,22 @@ private fun AutomotiveDirectionBadge(
     colorMode: HudDirectionColorMode,
     arrowsAnimated: Boolean,
     isHudMirror: Boolean,
+    isDarkPalette: Boolean,
     fontSize: TextUnit,
     arrowSize: Dp,
     modifier: Modifier = Modifier
 ) {
     val isLhs = side == "LHS"
     val targetColor = when (colorMode) {
-        HudDirectionColorMode.AUTO_SIDE -> if (isLhs) Color(0xFF34D399) else Color(0xFF38BDF8)
-        HudDirectionColorMode.CYAN -> Color(0xFF38BDF8)
-        HudDirectionColorMode.EMERALD -> Color(0xFF34D399)
-        HudDirectionColorMode.AMBER -> Color(0xFFFBBF24)
-        HudDirectionColorMode.WHITE -> Color(0xFFF8FAFC)
+        HudDirectionColorMode.AUTO_SIDE -> if (isDarkPalette) {
+            if (isLhs) Color(0xFF34D399) else Color(0xFF38BDF8)
+        } else {
+            if (isLhs) Color(0xFF059669) else Color(0xFF0284C7)
+        }
+        HudDirectionColorMode.CYAN -> if (isDarkPalette) Color(0xFF38BDF8) else Color(0xFF0284C7)
+        HudDirectionColorMode.EMERALD -> if (isDarkPalette) Color(0xFF34D399) else Color(0xFF059669)
+        HudDirectionColorMode.AMBER -> if (isDarkPalette) Color(0xFFFBBF24) else Color(0xFFD97706)
+        HudDirectionColorMode.WHITE -> if (isDarkPalette) Color(0xFFF8FAFC) else Color(0xFF0F172A)
     }
     val accentColor by animateColorAsState(
         targetValue = targetColor,
@@ -1605,12 +1748,12 @@ private fun AutomotiveDirectionBadge(
         label = "hud_direction_accent"
     )
     val glassBg = when (style) {
-        HudDirectionStyle.PILL -> if (isHudMirror) accentColor.copy(alpha = 0.16f) else accentColor.copy(alpha = 0.14f)
+        HudDirectionStyle.PILL -> accentColor.copy(alpha = if (isDarkPalette || isHudMirror) 0.14f else 0.12f)
         HudDirectionStyle.OUTLINE, HudDirectionStyle.MINIMAL -> Color.Transparent
     }
     val borderStroke = when (style) {
         HudDirectionStyle.PILL -> null
-        HudDirectionStyle.OUTLINE -> BorderStroke(0.8.dp, accentColor.copy(alpha = 0.55f))
+        HudDirectionStyle.OUTLINE -> BorderStroke(0.6.dp, accentColor.copy(alpha = 0.36f))
         HudDirectionStyle.MINIMAL -> null
     }
 
@@ -1749,6 +1892,7 @@ private fun ScreensaverLiveMiniMapPanel(
     routeData: RouteData?,
     screensaverSettings: HomeScreensaverSettings,
     isHudMirror: Boolean,
+    isDarkPalette: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1756,15 +1900,26 @@ private fun ScreensaverLiveMiniMapPanel(
     val reusableRoutePath = remember { Path() }
 
     val mapStyle = screensaverSettings.miniMapStyle
-    val darkTiles = isHudMirror || mapStyle == MiniMapStyle.DARK || mapStyle == MiniMapStyle.SATELLITE
+    val darkTiles = isHudMirror ||
+        mapStyle == MiniMapStyle.DARK ||
+        mapStyle == MiniMapStyle.SATELLITE ||
+        (mapStyle == MiniMapStyle.STANDARD && isDarkPalette)
     val mapTheme = com.example.ui.map.rememberMapThemeColors(darkTiles)
     val osmMapType = if (mapStyle == MiniMapStyle.SATELLITE) "satellite" else "standard"
 
-    val continuousZoom = screensaverSettings.miniMapZoomLevel.coerceIn(
+    var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
+    var localZoomOffset by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(screensaverSettings.recenterEpoch) {
+        exploredCenter = null
+        localZoomOffset = 0f
+    }
+
+    val continuousZoom = (screensaverSettings.miniMapZoomLevel + localZoomOffset).coerceIn(
         HomeScreensaverSettings.MIN_ZOOM_LEVEL,
         HomeScreensaverSettings.MAX_ZOOM_LEVEL
     )
-    val baseZoom = floor(continuousZoom).toInt().coerceIn(12, 18)
+    val baseZoom = floor(continuousZoom).toInt().coerceIn(2, 19)
     val fractionalScale = 2.0.pow((continuousZoom - baseZoom).toDouble()).toFloat().coerceIn(0.6f, 2.2f)
 
     var lastValidLocation by remember { mutableStateOf(location) }
@@ -1774,7 +1929,7 @@ private fun ScreensaverLiveMiniMapPanel(
         }
     }
 
-    val targetAnchor = location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+    val targetAnchor = exploredCenter ?: location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
 
     var startAnchor by remember { mutableStateOf(targetAnchor) }
     var endAnchor by remember { mutableStateOf(targetAnchor) }
@@ -1782,9 +1937,14 @@ private fun ScreensaverLiveMiniMapPanel(
     LaunchedEffect(
         targetAnchor.latitude,
         targetAnchor.longitude,
-        screensaverSettings.recenterEpoch
+        screensaverSettings.recenterEpoch,
+        exploredCenter
     ) {
-        if (targetAnchor.latitude != endAnchor.latitude ||
+        if (exploredCenter != null) {
+            startAnchor = targetAnchor
+            endAnchor = targetAnchor
+            glideAnim.snapTo(1f)
+        } else if (targetAnchor.latitude != endAnchor.latitude ||
             targetAnchor.longitude != endAnchor.longitude ||
             screensaverSettings.recenterEpoch > 0L
         ) {
@@ -1837,12 +1997,33 @@ private fun ScreensaverLiveMiniMapPanel(
     )
 
     val outerGlowColor = Color(0xFF38BDF8)
-    val routeCoreColor = if (isHudMirror) Color(0xFF7DD3FC) else Color(0xFF38BDF8)
+    val routeCoreColor = if (isHudMirror) Color(0xFF7DD3FC) else if (isDarkPalette) Color(0xFF38BDF8) else Color(0xFF0284C7)
     val markerColor = if (isHudMirror) Color(0xFF34D399) else Color(0xFF38BDF8)
 
     Box(
         modifier = modifier
             .clipToBounds()
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    val currentAnchor = exploredCenter ?: location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+                    val curZ = floor((screensaverSettings.miniMapZoomLevel + localZoomOffset).coerceIn(2f, 19f)).toInt()
+                    if (pan.x != 0f || pan.y != 0f) {
+                        exploredCenter = OsmTileManager.offsetGeoPointByPixels(
+                            center = currentAnchor,
+                            deltaPxX = pan.x,
+                            deltaPxY = pan.y,
+                            zoom = curZ
+                        )
+                    }
+                    if (zoom != 1f) {
+                        localZoomOffset = (localZoomOffset + (ln(zoom.toDouble()) / ln(2.0)).toFloat())
+                            .coerceIn(
+                                HomeScreensaverSettings.MIN_ZOOM_LEVEL - screensaverSettings.miniMapZoomLevel,
+                                HomeScreensaverSettings.MAX_ZOOM_LEVEL - screensaverSettings.miniMapZoomLevel
+                            )
+                    }
+                }
+            }
             .semantics {
                 miniMapRotationDeg = rawTargetRotationDeg
             }
@@ -1855,7 +2036,7 @@ private fun ScreensaverLiveMiniMapPanel(
             val cy = h / 2f
             val diagPx = ceil(hypot(w.toDouble(), h.toDouble()) / fractionalScale)
                 .toInt()
-                .coerceIn(64, 768)
+                .coerceIn(64, 1024)
 
             val osmBmp = OsmTileManager.renderMapBitmap(
                 context = context,
@@ -1992,7 +2173,7 @@ private fun ScreensaverLiveMiniMapPanel(
         // Subtle North orientation pip top-right (non-interactive pure instrument indicator)
         Surface(
             shape = CircleShape,
-            color = Color(0xFF020617).copy(alpha = 0.52f),
+            color = if (isDarkPalette || isHudMirror) Color(0xFF020617).copy(alpha = 0.52f) else Color.White.copy(alpha = 0.85f),
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(8.dp)
@@ -2002,7 +2183,7 @@ private fun ScreensaverLiveMiniMapPanel(
             Box(contentAlignment = Alignment.Center) {
                 Text(
                     text = "N",
-                    color = Color(0xFF38BDF8),
+                    color = if (isDarkPalette || isHudMirror) Color(0xFF38BDF8) else Color(0xFF0284C7),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 1

@@ -3700,18 +3700,15 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 13b. SCREENSAVER & LOCK-SCREEN NAVIGATION
+            // 13b. SCREENSAVER
             // ====================================================
-            if (matchesSearch("screensaver hud mirror portrait landscape speedometer chainage direction lock screen navigation mini map", searchQuery)) {
+            if (matchesSearch("screensaver hud mirror portrait landscape speedometer chainage direction mini map", searchQuery)) {
                 val screensaverSummary = buildString {
                     append(if (screensaverSettings.masterEnabled) "ON" else "OFF")
                     append(" • ")
                     append(screensaverSettings.displayMode.label)
                     append(" • ")
                     append("${screensaverSettings.inactivityTimeoutSeconds}s")
-                    if (screensaverSettings.lockScreenNavEnabled) {
-                        append(" • Lock-Screen Nav")
-                    }
                 }
                 SmartDropdownSection(
                     title = "Screensaver",
@@ -3742,7 +3739,6 @@ fun SettingsScreen(
                         onMiniMapZoomOut = { viewModel.zoomOutHomeMiniMap() },
                         onMiniMapRecenter = { viewModel.recenterHomeMiniMap() },
                         onMiniMapStyleChange = { style -> viewModel.setHomeMiniMapStyle(style) },
-                        onToggleLockScreenNav = { enabled -> viewModel.setLockScreenNavigationEnabled(enabled) },
                         onResetDefaults = { viewModel.resetScreensaverSettings() }
                     )
                 }
@@ -3754,7 +3750,7 @@ fun SettingsScreen(
             // 13c. NAVIGATION NOTIFICATIONS (STATUS BAR / NOW BAR / LOCK SCREEN)
             // ====================================================
             if (matchesSearch("navigation notifications lock screen status bar now bar live update chainage speed location", searchQuery)) {
-                val navNotifActive = navNotificationSettings.enabled && screensaverSettings.lockScreenNavEnabled
+                val navNotifActive = navNotificationSettings.enabled
                 val navNotifSummary = if (navNotifActive) {
                     buildString {
                         append("ON")
@@ -3776,7 +3772,6 @@ fun SettingsScreen(
                 ) {
                     NavigationNotificationSettingsSectionContent(
                         notifSettings = navNotificationSettings,
-                        isLockScreenNavActive = screensaverSettings.lockScreenNavEnabled,
                         matchResult = liveMatchResult,
                         locationState = locationState,
                         activeRoute = activeRoute,
@@ -3827,7 +3822,7 @@ fun SettingsScreen(
                         projectProfile = currentProject,
                         currentLocationName = currentLocationName,
                         compassHeading = compassState.azimuthDegrees,
-                        isTrackingActive = navNotificationSettings.enabled && screensaverSettings.lockScreenNavEnabled,
+                        isTrackingActive = navNotificationSettings.enabled,
                         accentColor = primaryAccent,
                         onUpdateSettings = { transform -> viewModel.updateWidgetSettings(transform) },
                         onUpdateInstanceConfig = { cfg -> viewModel.updateWidgetInstanceConfig(cfg) },

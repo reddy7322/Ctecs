@@ -1,9 +1,12 @@
 package com.example.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -12,31 +15,94 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backup.PrefValueType
 import com.example.backup.TypedPrefEntry
+import com.example.model.CameraGridMode
+import com.example.model.CameraMode
+import com.example.model.CameraSettings
+import com.example.model.CaptureMode
+import com.example.model.CaptureTimer
 import com.example.model.Chainage
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageLogEntry
+import com.example.model.CoordinateFormat
+import com.example.model.CtecsWidgetSettings
 import com.example.model.DefinedProject
 import com.example.model.HomeScreensaverSettings
+import com.example.model.KmStoneAlertSettings
 import com.example.model.LogoPosition
 import com.example.model.LogoShape
 import com.example.model.MiniMapStyleConfig
+import com.example.model.NavigationNotificationSettings
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.PermanentCalibrationProfile
+import com.example.model.PreviewRatio
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
+import com.example.model.SpeedUnit
+import com.example.model.VideoQualityOption
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 private val Context.dataStore by preferencesDataStore(name = "ctecs_user_preferences")
 
-class PreferencesManager(private val context: Context) {
+class PreferencesManager(context: Context) {
+
+    private val appContext: Context = context.applicationContext ?: context
 
     companion object {
+        /**
+         * Single-threaded FIFO coroutine dispatcher & process-wide scope for preference persistence.
+         * Guarantees strict write ordering and prevents closing an Activity or clearing a ViewModel
+         * from cancelling or reordering in-flight DataStore transactions.
+         */
+        private val persistenceDispatcher = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "ctecs-prefs-persistence").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+
+        val persistenceScope = CoroutineScope(SupervisorJob() + persistenceDispatcher)
+        private val persistenceMutex = Mutex()
+        private val activeEditCount = AtomicInteger(0)
+
+        @Volatile
+        private var cachedPreferences: Preferences? = null
+
+        /**
+         * Clears the in-memory preferences snapshot cache (used to simulate cold process death in tests).
+         */
+        fun clearMemoryCacheForProcessRestart() {
+            cachedPreferences = null
+        }
+
+        /**
+         * Suspends until all queued/in-flight DataStore write transactions have finished committing.
+         */
+        suspend fun awaitPendingWrites() {
+            while (activeEditCount.get() > 0) {
+                delay(10L)
+            }
+            withContext(persistenceDispatcher) {
+                persistenceMutex.withLock { }
+            }
+        }
+
         val KEY_HIGHWAY_ID = stringPreferencesKey("highway_id")
         val KEY_PACKAGE_SECTION = stringPreferencesKey("package_section")
         val KEY_PROJECT_START_CHAINAGE = stringPreferencesKey("project_start_chainage")
@@ -110,6 +176,11 @@ class PreferencesManager(private val context: Context) {
         val KEY_LINE_SPACING_FACTOR = floatPreferencesKey("line_spacing_factor")
         val KEY_TEXT_STROKE_WIDTH_DP = floatPreferencesKey("text_stroke_width_dp")
 
+        // Additional OverlayConfig keys previously missing from persistence
+        val KEY_SAVE_ORIGINAL_IMAGE = booleanPreferencesKey("save_original_image")
+        val KEY_TIMESTAMP_MARGIN_MODE = stringPreferencesKey("timestamp_margin_mode")
+        val KEY_SHOW_INDEX_NUMBER = booleanPreferencesKey("show_index_number")
+
         // Dynamic Location Name Keys
         val KEY_SHOW_LOCATION_NAME = booleanPreferencesKey("show_location_name")
         val KEY_LAST_DETECTED_LOCATION_NAME = stringPreferencesKey("last_detected_location_name")
@@ -137,6 +208,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_PDF_DEFAULT_PREPARED_BY = stringPreferencesKey("pdf_default_prepared_by")
 
         val KEY_ACTIVE_ROUTE_ID = stringPreferencesKey("active_route_id")
+        val KEY_SELECTED_ALIGNMENT_ID = stringPreferencesKey("selected_alignment_id")
 
         // Camera settings keys
         val KEY_CAPTURE_TIMER = intPreferencesKey("camera_capture_timer")
@@ -160,6 +232,12 @@ class PreferencesManager(private val context: Context) {
         val KEY_EXPOSURE_COMP = intPreferencesKey("camera_exposure_comp")
         val KEY_CAMERA_MODE = stringPreferencesKey("camera_mode")
         val KEY_SPEED_UNIT = stringPreferencesKey("speed_unit")
+        val KEY_DEFAULT_LENS_ZOOM = floatPreferencesKey("camera_default_lens_zoom")
+
+        // Persisted Camera hardware & capture mode state
+        val KEY_IS_FLASH_ON = booleanPreferencesKey("camera_is_flash_on")
+        val KEY_IS_FRONT_CAMERA = booleanPreferencesKey("camera_is_front_camera")
+        val KEY_CAPTURE_MODE = stringPreferencesKey("camera_capture_mode")
 
         // New functional camera settings
         val KEY_TOUCH_TO_CAPTURE = booleanPreferencesKey("touch_to_capture")
@@ -196,124 +274,346 @@ class PreferencesManager(private val context: Context) {
         val KEY_NAV_NOTIFICATION_JSON = stringPreferencesKey("nav_notification_settings_json")
         val KEY_WIDGET_SETTINGS_JSON = stringPreferencesKey("widget_settings_config_json")
         val KEY_KM_STONE_ALERT_JSON = stringPreferencesKey("km_stone_alert_settings_json")
+
+        // Navigation & Survey persistent user preferences
+        val KEY_PREFERRED_EXTERNAL_NAV_APP_ID = stringPreferencesKey("preferred_external_nav_app_id")
+        val KEY_SURVEY_SHOW_200M_LABELS = booleanPreferencesKey("survey_show_200m_labels")
+        val KEY_SURVEY_SHOW_CENTRELINE = booleanPreferencesKey("survey_show_centreline")
+        val KEY_SURVEY_SHOW_GPS_TRACK = booleanPreferencesKey("survey_show_gps_track")
+        val KEY_SURVEY_SHOW_LANE_TRACK = booleanPreferencesKey("survey_show_lane_track")
+        val KEY_SURVEY_SHOW_MARKERS = booleanPreferencesKey("survey_show_markers")
+        val KEY_SURVEY_MAP_TYPE = stringPreferencesKey("survey_map_type")
     }
 
-    val galleryViewModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+    private val observedDataFlow: Flow<Preferences> = appContext.dataStore.data.onEach { prefs ->
+        cachedPreferences = prefs
+    }
+
+    /**
+     * Synchronously returns the current persisted DataStore preferences snapshot.
+     * Ensures that startup StateFlows and ViewModels immediately receive persisted user settings
+     * instead of emitting temporary defaults that could overwrite saved data.
+     */
+    fun getInitialPreferences(): Preferences {
+        cachedPreferences?.let { return it }
+        return try {
+            runBlocking(Dispatchers.IO) {
+                appContext.dataStore.data.first()
+            }.also { cachedPreferences = it }
+        } catch (_: Exception) {
+            emptyPreferences()
+        }
+    }
+
+    /**
+     * Executes a DataStore edit inside the process-wide single-threaded non-cancellable scope,
+     * serialized by persistenceMutex so concurrent callers never write out of order.
+     */
+    private suspend fun safeEdit(block: (MutablePreferences) -> Unit): Preferences {
+        activeEditCount.incrementAndGet()
+        return try {
+            withContext(persistenceDispatcher + NonCancellable) {
+                persistenceMutex.withLock {
+                    val updated = appContext.dataStore.edit { prefs ->
+                        block(prefs)
+                    }
+                    cachedPreferences = updated
+                    updated
+                }
+            }
+        } finally {
+            activeEditCount.decrementAndGet()
+        }
+    }
+
+    /**
+     * Launches a fire-and-forget preference edit on the process-wide persistenceScope so it
+     * survives ViewModel clearing or Activity destruction and executes in strict FIFO order.
+     */
+    fun launchSafeEdit(block: suspend () -> Unit) {
+        activeEditCount.incrementAndGet()
+        persistenceScope.launch {
+            try {
+                withContext(NonCancellable) {
+                    block()
+                }
+            } finally {
+                activeEditCount.decrementAndGet()
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Synchronous Initial Getters for Immediate Startup Restoration
+    // -------------------------------------------------------------------------
+
+    fun getInitialGalleryViewMode(): String = getInitialPreferences()[KEY_GALLERY_VIEW_MODE] ?: "grid"
+    fun getInitialGallerySortOption(): String = getInitialPreferences()[KEY_GALLERY_SORT_OPTION] ?: "Newest first"
+    fun getInitialGalleryGroupOption(): String = getInitialPreferences()[KEY_GALLERY_GROUP_OPTION] ?: "None"
+    fun getInitialThemeMode(): String = getInitialPreferences()[KEY_THEME_MODE] ?: "system"
+    fun getInitialMapTheme(): String = getInitialPreferences()[KEY_MAP_THEME] ?: "system"
+    fun getInitialMapType(): String = getInitialPreferences()[KEY_MAP_TYPE] ?: "standard"
+    fun getInitialActiveRouteId(): String? = getInitialPreferences()[KEY_ACTIVE_ROUTE_ID]
+    fun getInitialSelectedAlignmentId(): String? =
+        getInitialPreferences()[KEY_SELECTED_ALIGNMENT_ID]?.takeIf { it.isNotBlank() }
+
+    fun getInitialHomeScreensaverSettings(): HomeScreensaverSettings =
+        HomeScreensaverSettings.fromJsonString(getInitialPreferences()[KEY_HOME_SCREENSAVER_JSON])
+
+    fun getInitialNavigationNotificationSettings(): NavigationNotificationSettings =
+        NavigationNotificationSettings.fromJsonString(getInitialPreferences()[KEY_NAV_NOTIFICATION_JSON])
+
+    fun getInitialWidgetSettings(): CtecsWidgetSettings =
+        CtecsWidgetSettings.fromJsonString(getInitialPreferences()[KEY_WIDGET_SETTINGS_JSON])
+
+    fun getInitialKmStoneAlertSettings(): KmStoneAlertSettings =
+        KmStoneAlertSettings.fromJsonString(getInitialPreferences()[KEY_KM_STONE_ALERT_JSON])
+
+    fun getInitialCameraSettings(): CameraSettings =
+        parseCameraSettingsFromPrefs(getInitialPreferences())
+
+    fun getInitialProjectProfile(): ProjectProfile =
+        parseProjectProfileFromPrefs(getInitialPreferences())
+
+    fun isProjectRoadSideExplicitlySaved(): Boolean =
+        !getInitialPreferences()[KEY_ROAD_SIDE].isNullOrBlank()
+
+    fun getInitialOverlayConfig(): OverlayConfig =
+        parseOverlayConfigFromPrefs(getInitialPreferences())
+
+    fun getInitialDefinedProjects(): List<DefinedProject> =
+        parseDefinedProjects(getInitialPreferences()[KEY_DEFINED_PROJECTS])
+
+    fun getInitialRouteCorrections(): Map<String, List<ChainageCorrectionPoint>> =
+        parseRouteCorrections(getInitialPreferences()[KEY_ROUTE_CORRECTIONS_JSON])
+
+    fun getInitialRouteCorrectionsEnabled(): Boolean =
+        getInitialPreferences()[KEY_ROUTE_CORRECTIONS_ENABLED] ?: true
+
+    fun getInitialManualChainageOverride(): Chainage? {
+        val raw = getInitialPreferences()[KEY_MANUAL_CHAINAGE_OVERRIDE]
+        return if (!raw.isNullOrBlank()) Chainage.parse(raw) else null
+    }
+
+    fun getInitialManualChainageText(): String? {
+        val prefs = getInitialPreferences()
+        val custom = prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT]
+        val raw = prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]
+        return when {
+            !custom.isNullOrBlank() -> custom
+            !raw.isNullOrBlank() -> raw
+            else -> null
+        }
+    }
+
+    fun getInitialSavedCustomChainages(): List<String> {
+        val raw = getInitialPreferences()[KEY_SAVED_CUSTOM_CHAINAGES].orEmpty()
+        return if (raw.isBlank()) emptyList()
+        else raw.split("||").map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    fun getInitialCalibrationProfiles(): List<PermanentCalibrationProfile> =
+        parseCalibrationProfiles(getInitialPreferences()[KEY_CALIBRATION_PROFILES_JSON])
+
+    fun getInitialChainageAuditLog(): List<ChainageLogEntry> =
+        parseChainageLogs(getInitialPreferences()[KEY_CHAINAGE_AUDIT_LOG_JSON])
+
+    fun getInitialIsFlashOn(): Boolean = getInitialPreferences()[KEY_IS_FLASH_ON] ?: false
+    fun getInitialIsFrontCamera(): Boolean = getInitialPreferences()[KEY_IS_FRONT_CAMERA] ?: false
+    fun getInitialCaptureMode(): CaptureMode {
+        val raw = getInitialPreferences()[KEY_CAPTURE_MODE]
+        return CaptureMode.entries.find { it.name.equals(raw, ignoreCase = true) } ?: CaptureMode.PHOTO
+    }
+
+    fun getInitialPreferredExternalNavAppId(): String? =
+        getInitialPreferences()[KEY_PREFERRED_EXTERNAL_NAV_APP_ID]?.takeIf { it.isNotBlank() }
+
+    fun getInitialSurveyShow200mLabels(): Boolean =
+        getInitialPreferences()[KEY_SURVEY_SHOW_200M_LABELS] ?: true
+
+    fun getInitialSurveyShowCentreline(): Boolean =
+        getInitialPreferences()[KEY_SURVEY_SHOW_CENTRELINE] ?: true
+
+    fun getInitialSurveyShowGpsTrack(): Boolean =
+        getInitialPreferences()[KEY_SURVEY_SHOW_GPS_TRACK] ?: true
+
+    fun getInitialSurveyShowLaneTrack(): Boolean =
+        getInitialPreferences()[KEY_SURVEY_SHOW_LANE_TRACK] ?: true
+
+    fun getInitialSurveyShowMarkers(): Boolean =
+        getInitialPreferences()[KEY_SURVEY_SHOW_MARKERS] ?: true
+
+    fun getInitialSurveyMapType(): String =
+        getInitialPreferences()[KEY_SURVEY_MAP_TYPE] ?: "standard"
+
+    // -------------------------------------------------------------------------
+    // Reactive Flows & Safe Mutations
+    // -------------------------------------------------------------------------
+
+    val galleryViewModeFlow: Flow<String> = observedDataFlow.map { prefs ->
         prefs[KEY_GALLERY_VIEW_MODE] ?: "grid"
-    }
+    }.distinctUntilChanged()
 
-    val gallerySortOptionFlow: Flow<String> = context.dataStore.data.map { prefs ->
+    val gallerySortOptionFlow: Flow<String> = observedDataFlow.map { prefs ->
         prefs[KEY_GALLERY_SORT_OPTION] ?: "Newest first"
-    }
+    }.distinctUntilChanged()
 
-    val galleryGroupOptionFlow: Flow<String> = context.dataStore.data.map { prefs ->
+    val galleryGroupOptionFlow: Flow<String> = observedDataFlow.map { prefs ->
         prefs[KEY_GALLERY_GROUP_OPTION] ?: "None"
-    }
+    }.distinctUntilChanged()
 
     suspend fun updateGalleryPreferences(viewMode: String? = null, sortOption: String? = null, groupOption: String? = null) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             if (viewMode != null) prefs[KEY_GALLERY_VIEW_MODE] = viewMode
             if (sortOption != null) prefs[KEY_GALLERY_SORT_OPTION] = sortOption
             if (groupOption != null) prefs[KEY_GALLERY_GROUP_OPTION] = groupOption
         }
     }
 
-    val themeModeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+    val themeModeFlow: Flow<String> = observedDataFlow.map { prefs ->
         prefs[KEY_THEME_MODE] ?: "system"
-    }
+    }.distinctUntilChanged()
 
     suspend fun updateThemeMode(mode: String) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs[KEY_THEME_MODE] = mode
         }
     }
 
-    val mapThemeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+    val mapThemeFlow: Flow<String> = observedDataFlow.map { prefs ->
         prefs[KEY_MAP_THEME] ?: "system"
-    }
+    }.distinctUntilChanged()
 
     suspend fun updateMapTheme(theme: String) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs[KEY_MAP_THEME] = theme
         }
     }
 
-    val mapTypeFlow: Flow<String> = context.dataStore.data.map { prefs ->
+    val mapTypeFlow: Flow<String> = observedDataFlow.map { prefs ->
         prefs[KEY_MAP_TYPE] ?: "standard"
-    }
+    }.distinctUntilChanged()
 
     suspend fun updateMapType(type: String) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs[KEY_MAP_TYPE] = type
         }
     }
 
-    val homeScreensaverSettingsFlow: Flow<HomeScreensaverSettings> = context.dataStore.data.map { prefs ->
+    val homeScreensaverSettingsFlow: Flow<HomeScreensaverSettings> = observedDataFlow.map { prefs ->
         HomeScreensaverSettings.fromJsonString(prefs[KEY_HOME_SCREENSAVER_JSON])
     }.distinctUntilChanged()
 
     suspend fun updateHomeScreensaverSettings(settings: HomeScreensaverSettings) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs[KEY_HOME_SCREENSAVER_JSON] = settings.toJsonString()
         }
     }
 
-    val navigationNotificationSettingsFlow: Flow<com.example.model.NavigationNotificationSettings> =
-        context.dataStore.data.map { prefs ->
-            com.example.model.NavigationNotificationSettings.fromJsonString(prefs[KEY_NAV_NOTIFICATION_JSON])
+    suspend fun editHomeScreensaverSettings(transform: (HomeScreensaverSettings) -> HomeScreensaverSettings): HomeScreensaverSettings {
+        var updated = HomeScreensaverSettings()
+        safeEdit { prefs ->
+            val current = HomeScreensaverSettings.fromJsonString(prefs[KEY_HOME_SCREENSAVER_JSON])
+            updated = transform(current)
+            prefs[KEY_HOME_SCREENSAVER_JSON] = updated.toJsonString()
+        }
+        return updated
+    }
+
+    val navigationNotificationSettingsFlow: Flow<NavigationNotificationSettings> =
+        observedDataFlow.map { prefs ->
+            NavigationNotificationSettings.fromJsonString(prefs[KEY_NAV_NOTIFICATION_JSON])
         }.distinctUntilChanged()
 
-    suspend fun updateNavigationNotificationSettings(settings: com.example.model.NavigationNotificationSettings) {
-        context.dataStore.edit { prefs ->
+    suspend fun updateNavigationNotificationSettings(settings: NavigationNotificationSettings) {
+        safeEdit { prefs ->
             prefs[KEY_NAV_NOTIFICATION_JSON] = settings.toJsonString()
         }
     }
 
-    val widgetSettingsFlow: Flow<com.example.model.CtecsWidgetSettings> =
-        context.dataStore.data.map { prefs ->
-            com.example.model.CtecsWidgetSettings.fromJsonString(prefs[KEY_WIDGET_SETTINGS_JSON])
+    suspend fun editNavigationNotificationSettings(
+        transform: (NavigationNotificationSettings) -> NavigationNotificationSettings
+    ): NavigationNotificationSettings {
+        var updated = NavigationNotificationSettings()
+        safeEdit { prefs ->
+            val current = NavigationNotificationSettings.fromJsonString(prefs[KEY_NAV_NOTIFICATION_JSON])
+            updated = transform(current)
+            prefs[KEY_NAV_NOTIFICATION_JSON] = updated.toJsonString()
+        }
+        return updated
+    }
+
+    val widgetSettingsFlow: Flow<CtecsWidgetSettings> =
+        observedDataFlow.map { prefs ->
+            CtecsWidgetSettings.fromJsonString(prefs[KEY_WIDGET_SETTINGS_JSON])
         }.distinctUntilChanged()
 
-    suspend fun updateWidgetSettings(settings: com.example.model.CtecsWidgetSettings) {
-        context.dataStore.edit { prefs ->
+    suspend fun updateWidgetSettings(settings: CtecsWidgetSettings) {
+        safeEdit { prefs ->
             prefs[KEY_WIDGET_SETTINGS_JSON] = settings.toJsonString()
         }
     }
 
-    val kmStoneAlertSettingsFlow: Flow<com.example.model.KmStoneAlertSettings> =
-        context.dataStore.data.map { prefs ->
-            com.example.model.KmStoneAlertSettings.fromJsonString(prefs[KEY_KM_STONE_ALERT_JSON])
+    suspend fun editWidgetSettings(transform: (CtecsWidgetSettings) -> CtecsWidgetSettings): CtecsWidgetSettings {
+        var updated = CtecsWidgetSettings()
+        safeEdit { prefs ->
+            val current = CtecsWidgetSettings.fromJsonString(prefs[KEY_WIDGET_SETTINGS_JSON])
+            updated = transform(current)
+            prefs[KEY_WIDGET_SETTINGS_JSON] = updated.toJsonString()
+        }
+        return updated
+    }
+
+    val kmStoneAlertSettingsFlow: Flow<KmStoneAlertSettings> =
+        observedDataFlow.map { prefs ->
+            KmStoneAlertSettings.fromJsonString(prefs[KEY_KM_STONE_ALERT_JSON])
         }.distinctUntilChanged()
 
-    suspend fun updateKmStoneAlertSettings(settings: com.example.model.KmStoneAlertSettings) {
-        context.dataStore.edit { prefs ->
+    suspend fun updateKmStoneAlertSettings(settings: KmStoneAlertSettings) {
+        safeEdit { prefs ->
             prefs[KEY_KM_STONE_ALERT_JSON] = settings.toJsonString()
         }
     }
 
-    val cameraSettingsFlow: Flow<com.example.model.CameraSettings> = context.dataStore.data.map { prefs ->
-        com.example.model.CameraSettings(
-            captureTimer = com.example.model.CaptureTimer.fromSeconds(prefs[KEY_CAPTURE_TIMER] ?: 0),
-            gridMode = com.example.model.CameraGridMode.fromString(prefs[KEY_GRID_MODE]),
+    suspend fun editKmStoneAlertSettings(transform: (KmStoneAlertSettings) -> KmStoneAlertSettings): KmStoneAlertSettings {
+        var updated = KmStoneAlertSettings()
+        safeEdit { prefs ->
+            val current = KmStoneAlertSettings.fromJsonString(prefs[KEY_KM_STONE_ALERT_JSON])
+            updated = transform(current)
+            prefs[KEY_KM_STONE_ALERT_JSON] = updated.toJsonString()
+        }
+        return updated
+    }
+
+    val cameraSettingsFlow: Flow<CameraSettings> = observedDataFlow.map { prefs ->
+        parseCameraSettingsFromPrefs(prefs)
+    }.distinctUntilChanged()
+
+    private fun parseCameraSettingsFromPrefs(prefs: Preferences): CameraSettings {
+        val saveOriginalDual = prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] ?: false
+        return CameraSettings(
+            captureTimer = CaptureTimer.fromSeconds(prefs[KEY_CAPTURE_TIMER] ?: 0),
+            gridMode = CameraGridMode.fromString(prefs[KEY_GRID_MODE]),
             showHorizonLevel = prefs[KEY_SHOW_HORIZON_LEVEL] ?: true,
-            previewRatio = com.example.model.PreviewRatio.fromString(prefs[KEY_PREVIEW_RATIO]),
+            previewRatio = PreviewRatio.fromString(prefs[KEY_PREVIEW_RATIO]),
             captureSound = prefs[KEY_CAPTURE_SOUND] ?: true,
             volumeButtonShutter = prefs[KEY_VOLUME_SHUTTER] ?: true,
             frontCameraMirror = prefs[KEY_FRONT_MIRROR] ?: false,
             jpegQuality = prefs[KEY_JPEG_QUALITY] ?: 92,
-            saveOriginalAndStamped = prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] ?: false,
+            saveOriginalAndStamped = saveOriginalDual,
             preserveExif = prefs[KEY_PRESERVE_EXIF] ?: true,
-            videoQuality = com.example.model.VideoQualityOption.fromString(prefs[KEY_VIDEO_QUALITY]),
+            videoQuality = VideoQualityOption.fromString(prefs[KEY_VIDEO_QUALITY]),
             videoFps = prefs[KEY_VIDEO_FPS] ?: 30,
             recordAudio = prefs[KEY_RECORD_AUDIO] ?: true,
             gpsUpdateIntervalSec = prefs[KEY_GPS_INTERVAL] ?: 1,
             gpsAccuracyThresholdMeters = prefs[KEY_GPS_ACCURACY_THRESHOLD] ?: 15f,
             routeMatchingRadiusMeters = (prefs[KEY_ROUTE_RADIUS] ?: 100f).toDouble(),
-            coordinateFormat = com.example.model.CoordinateFormat.fromString(prefs[KEY_COORD_FORMAT]),
+            coordinateFormat = CoordinateFormat.fromString(prefs[KEY_COORD_FORMAT]),
             is24HourFormat = prefs[KEY_IS_24H] ?: false,
             exposureCompensationStep = prefs[KEY_EXPOSURE_COMP] ?: 0,
-            cameraMode = com.example.model.CameraMode.fromString(prefs[KEY_CAMERA_MODE]),
-            speedUnit = com.example.model.SpeedUnit.fromString(prefs[KEY_SPEED_UNIT]),
+            cameraMode = CameraMode.fromString(prefs[KEY_CAMERA_MODE]),
+            speedUnit = SpeedUnit.fromString(prefs[KEY_SPEED_UNIT]),
+            defaultLensZoom = prefs[KEY_DEFAULT_LENS_ZOOM] ?: 1.0f,
             touchToCapture = prefs[KEY_TOUCH_TO_CAPTURE] ?: false,
             alwaysDisplayZoomSlider = prefs[KEY_ALWAYS_DISPLAY_ZOOM_SLIDER] ?: true,
             batterySaveMode = prefs[KEY_BATTERY_SAVE_MODE] ?: false,
@@ -332,11 +632,11 @@ class PreferencesManager(private val context: Context) {
         )
     }
 
-    val projectProfileFlow: Flow<ProjectProfile> = context.dataStore.data.map { prefs ->
+    val projectProfileFlow: Flow<ProjectProfile> = observedDataFlow.map { prefs ->
         parseProjectProfileFromPrefs(prefs)
-    }
+    }.distinctUntilChanged()
 
-    private fun parseProjectProfileFromPrefs(prefs: androidx.datastore.preferences.core.Preferences): ProjectProfile {
+    private fun parseProjectProfileFromPrefs(prefs: Preferences): ProjectProfile {
         val savedActivity = prefs[KEY_ACTIVITY]
         val rawWorkType = prefs[KEY_WORK_TYPE] ?: if (
             savedActivity == "MM" || savedActivity == "RM" || savedActivity == "LIE"
@@ -362,10 +662,15 @@ class PreferencesManager(private val context: Context) {
         )
     }
 
-    val overlayConfigFlow: Flow<OverlayConfig> = context.dataStore.data.map { prefs ->
+    val overlayConfigFlow: Flow<OverlayConfig> = observedDataFlow.map { prefs ->
+        parseOverlayConfigFromPrefs(prefs)
+    }.distinctUntilChanged()
+
+    private fun parseOverlayConfigFromPrefs(prefs: Preferences): OverlayConfig {
         val templateName = prefs[KEY_TEMPLATE] ?: OverlayTemplate.HIGHWAY_CONSTRUCTION.name
-        val template = try { OverlayTemplate.valueOf(templateName) } catch (e: Exception) { OverlayTemplate.HIGHWAY_CONSTRUCTION }
-        OverlayConfig(
+        val template = try { OverlayTemplate.valueOf(templateName) } catch (_: Exception) { OverlayTemplate.HIGHWAY_CONSTRUCTION }
+        val saveOriginalDual = prefs[KEY_SAVE_ORIGINAL_IMAGE] ?: false
+        return OverlayConfig(
             template = template,
             timestampFormat = prefs[KEY_TIMESTAMP_FORMAT] ?: "dd MMMM yyyy h:mm a",
             coordinatePrecision = prefs[KEY_COORDINATE_PRECISION] ?: 4,
@@ -417,6 +722,9 @@ class PreferencesManager(private val context: Context) {
             customAddressText = prefs[KEY_CUSTOM_ADDRESS_TEXT] ?: "",
             customTag = prefs[KEY_CUSTOM_TAG] ?: "",
             gpsAccuracyMarginPreset = prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] ?: "±5m",
+            saveOriginalImage = saveOriginalDual,
+            timestampMarginMode = prefs[KEY_TIMESTAMP_MARGIN_MODE] ?: "One line",
+            showIndexNumber = prefs[KEY_SHOW_INDEX_NUMBER] ?: true,
             customFontPath = prefs[KEY_CUSTOM_FONT_PATH],
             customFontName = prefs[KEY_CUSTOM_FONT_NAME],
             textAlignment = prefs[KEY_TEXT_ALIGNMENT] ?: "Right",
@@ -443,25 +751,25 @@ class PreferencesManager(private val context: Context) {
         )
     }
 
-    val activeRouteIdFlow: Flow<String?> = context.dataStore.data.map { prefs ->
+    val activeRouteIdFlow: Flow<String?> = observedDataFlow.map { prefs ->
         prefs[KEY_ACTIVE_ROUTE_ID]
     }.distinctUntilChanged()
 
-    val definedProjectsFlow: Flow<List<DefinedProject>> = context.dataStore.data.map { prefs ->
+    val definedProjectsFlow: Flow<List<DefinedProject>> = observedDataFlow.map { prefs ->
         val jsonStr = prefs[KEY_DEFINED_PROJECTS]
         parseDefinedProjects(jsonStr)
-    }
+    }.distinctUntilChanged()
 
     suspend fun updateDefinedProjects(projects: List<DefinedProject>) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs[KEY_DEFINED_PROJECTS] = serializeDefinedProjects(projects)
         }
     }
 
     private fun serializeDefinedProjects(projects: List<DefinedProject>): String {
-        val array = org.json.JSONArray()
+        val array = JSONArray()
         for (p in projects) {
-            val obj = org.json.JSONObject()
+            val obj = JSONObject()
             obj.put("name", p.name)
             obj.put("stretch", p.stretch)
             obj.put("workType", p.workType)
@@ -475,7 +783,7 @@ class PreferencesManager(private val context: Context) {
     private fun parseDefinedProjects(jsonStr: String?): List<DefinedProject> {
         if (jsonStr.isNullOrBlank()) return emptyList()
         return try {
-            val array = org.json.JSONArray(jsonStr)
+            val array = JSONArray(jsonStr)
             val list = mutableListOf<DefinedProject>()
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
@@ -493,20 +801,20 @@ class PreferencesManager(private val context: Context) {
                 }
             }
             list
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
 
     suspend fun updateProjectProfile(profile: ProjectProfile) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             writeProjectProfileToPrefs(prefs, profile)
         }
     }
 
     suspend fun editProjectProfile(transform: (ProjectProfile) -> ProjectProfile): ProjectProfile {
         var updated = ProjectProfile()
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val current = parseProjectProfileFromPrefs(prefs)
             updated = transform(current)
             writeProjectProfileToPrefs(prefs, updated)
@@ -515,7 +823,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     private fun writeProjectProfileToPrefs(
-        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        prefs: MutablePreferences,
         profile: ProjectProfile
     ) {
         prefs[KEY_HIGHWAY_ID] = profile.highwayId
@@ -533,154 +841,272 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun updateOverlayConfig(config: OverlayConfig) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_TEMPLATE] = config.template.name
-            prefs[KEY_TIMESTAMP_FORMAT] = config.timestampFormat
-            prefs[KEY_COORDINATE_PRECISION] = config.coordinatePrecision
-            prefs[KEY_SHOW_TIMESTAMP] = config.showTimestamp
-            prefs[KEY_SHOW_COORDINATES] = config.showCoordinates
-            prefs[KEY_SHOW_CHAINAGE] = config.showChainage
-            prefs[KEY_SHOW_MAP_INSET] = config.showMapInset
-            prefs[KEY_SHOW_PROJECT_INFO] = config.showProjectInfo
-            prefs[KEY_SHOW_COMPASS] = config.showCompass
-            prefs[KEY_SHOW_ALTITUDE] = config.showAltitude
-            prefs[KEY_SHOW_ACCURACY] = config.showAccuracy
-            prefs[KEY_BURN_IN_TIMESTAMP] = config.burnInTimestamp
-
-            prefs[KEY_SHOW_SPEED_PREVIEW] = config.showSpeedOnPreview
-            prefs[KEY_INCLUDE_SPEED_CAPTURE] = config.includeSpeedInCapture
-            prefs[KEY_SHOW_DIRECTION_PREVIEW] = config.showDirectionOnPreview
-            prefs[KEY_INCLUDE_DIRECTION_CAPTURE] = config.includeDirectionInCapture
-
-            // Logo settings
-            prefs[KEY_SHOW_LOGO] = config.showLogo
-            prefs[KEY_LOGO_PRESET] = config.logoPreset
-            if (config.logoUri != null) {
-                prefs[KEY_LOGO_URI] = config.logoUri
-            } else {
-                prefs.remove(KEY_LOGO_URI)
-            }
-            prefs[KEY_LOGO_POSITION] = config.logoPosition.name
-            prefs[KEY_LOGO_SIZE_DP] = config.logoSizeDp
-            prefs[KEY_LOGO_OPACITY] = config.logoOpacity
-            prefs[KEY_LOGO_SHAPE] = config.logoShape.name
-            prefs[KEY_LOGO_CORNER_RADIUS_DP] = config.logoCornerRadiusDp
-            prefs[KEY_LOGO_BORDER_WIDTH_DP] = config.logoBorderWidthDp
-            prefs[KEY_LOGO_BORDER_COLOR_HEX] = config.logoBorderColorHex
-            prefs[KEY_LOGO_MARGIN_X_DP] = config.logoMarginXDp
-            prefs[KEY_LOGO_MARGIN_Y_DP] = config.logoMarginYDp
-            prefs[KEY_LOGO_SCALE] = config.logoScale
-            prefs[KEY_LOGO_ROTATION] = config.logoRotationDegrees
-
-            prefs[KEY_FONT_SIZE_SP] = config.fontSizeSp
-            prefs[KEY_FONT_SIZE_PRESET] = config.fontSizePreset
-            prefs[KEY_HAS_TEXT_SHADOW] = config.hasTextShadow
-            prefs[KEY_TEXT_COLOR_HEX] = config.textColorHex
-            prefs[KEY_TEXT_OPACITY] = config.textOpacity
-            prefs[KEY_FONT_FAMILY] = config.fontFamily
-            prefs[KEY_FONT_STYLE] = config.fontStyle
-            prefs[KEY_BACKGROUND_STYLE] = config.backgroundStyle
-            prefs[KEY_BACKGROUND_OPACITY] = config.backgroundOpacity
-            prefs[KEY_BACKGROUND_COLOR_HEX] = config.backgroundColorHex
-            prefs[KEY_WATERMARK_POSITION] = config.watermarkPosition
-            prefs[KEY_TIME_POSITION] = config.timePosition
-            prefs[KEY_RESOLUTION_OPTION] = config.resolutionOption
-            prefs[KEY_LOCATION_ADDRESS_OPTION] = config.locationAddressOption
-            prefs[KEY_CUSTOM_ADDRESS_TEXT] = config.customAddressText
-            prefs[KEY_CUSTOM_TAG] = config.customTag
-            prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] = config.gpsAccuracyMarginPreset
-            if (config.customFontPath != null) {
-                prefs[KEY_CUSTOM_FONT_PATH] = config.customFontPath
-            } else {
-                prefs.remove(KEY_CUSTOM_FONT_PATH)
-            }
-            if (config.customFontName != null) {
-                prefs[KEY_CUSTOM_FONT_NAME] = config.customFontName
-            } else {
-                prefs.remove(KEY_CUSTOM_FONT_NAME)
-            }
-            prefs[KEY_TEXT_ALIGNMENT] = config.textAlignment
-            prefs[KEY_LINE_SPACING_FACTOR] = config.lineSpacingFactor
-            prefs[KEY_TEXT_STROKE_WIDTH_DP] = config.textStrokeWidthDp
-            prefs[KEY_SHOW_LOCATION_NAME] = config.showLocationName
-            prefs[KEY_LAST_DETECTED_LOCATION_NAME] = config.lastDetectedLocationName
-            prefs[KEY_USE_SAME_PADDING_PHOTO_VIDEO] = config.useSamePaddingForPhotoAndVideo
-            prefs[KEY_PHOTO_PADDING_TOP_DP] = config.photoPaddingTopDp
-            prefs[KEY_PHOTO_PADDING_BOTTOM_DP] = config.photoPaddingBottomDp
-            prefs[KEY_PHOTO_PADDING_LEFT_DP] = config.photoPaddingLeftDp
-            prefs[KEY_PHOTO_PADDING_RIGHT_DP] = config.photoPaddingRightDp
-            prefs[KEY_VIDEO_PADDING_TOP_DP] = config.videoPaddingTopDp
-            prefs[KEY_VIDEO_PADDING_BOTTOM_DP] = config.videoPaddingBottomDp
-            prefs[KEY_VIDEO_PADDING_LEFT_DP] = config.videoPaddingLeftDp
-            prefs[KEY_VIDEO_PADDING_RIGHT_DP] = config.videoPaddingRightDp
-            if (config.pdfLogoUri != null) {
-                prefs[KEY_PDF_LOGO_URI] = config.pdfLogoUri
-            } else {
-                prefs.remove(KEY_PDF_LOGO_URI)
-            }
-            prefs[KEY_INCLUDE_PDF_LOGO_DEFAULT] = config.includePdfLogoDefault
-            if (config.pdfSignatureUri != null) {
-                prefs[KEY_PDF_SIGNATURE_URI] = config.pdfSignatureUri
-            } else {
-                prefs.remove(KEY_PDF_SIGNATURE_URI)
-            }
-            prefs[KEY_INCLUDE_PDF_SIGNATURE_DEFAULT] = config.includePdfSignatureDefault
-            prefs[KEY_PDF_DEFAULT_PREPARED_BY] = config.pdfDefaultPreparedBy
-            prefs[KEY_PHOTO_MINI_MAP_JSON] = config.photoMiniMap.toJsonString()
-            prefs[KEY_VIDEO_MINI_MAP_JSON] = config.videoMiniMap.toJsonString()
+        safeEdit { prefs ->
+            writeOverlayConfigToPrefs(prefs, config)
         }
     }
 
-    suspend fun updateCameraSettings(settings: com.example.model.CameraSettings) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_CAPTURE_TIMER] = settings.captureTimer.seconds
-            prefs[KEY_GRID_MODE] = settings.gridMode.name
-            prefs[KEY_SHOW_HORIZON_LEVEL] = settings.showHorizonLevel
-            prefs[KEY_PREVIEW_RATIO] = settings.previewRatio.name
-            prefs[KEY_CAPTURE_SOUND] = settings.captureSound
-            prefs[KEY_VOLUME_SHUTTER] = settings.volumeButtonShutter
-            prefs[KEY_FRONT_MIRROR] = settings.frontCameraMirror
-            prefs[KEY_JPEG_QUALITY] = settings.jpegQuality
-            prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] = settings.saveOriginalAndStamped
-            prefs[KEY_PRESERVE_EXIF] = settings.preserveExif
-            prefs[KEY_VIDEO_QUALITY] = settings.videoQuality.name
-            prefs[KEY_VIDEO_FPS] = settings.videoFps
-            prefs[KEY_RECORD_AUDIO] = settings.recordAudio
-            prefs[KEY_GPS_INTERVAL] = settings.gpsUpdateIntervalSec
-            prefs[KEY_GPS_ACCURACY_THRESHOLD] = settings.gpsAccuracyThresholdMeters
-            prefs[KEY_ROUTE_RADIUS] = settings.routeMatchingRadiusMeters.toFloat()
-            prefs[KEY_COORD_FORMAT] = settings.coordinateFormat.name
-            prefs[KEY_IS_24H] = settings.is24HourFormat
-            prefs[KEY_EXPOSURE_COMP] = settings.exposureCompensationStep
-            prefs[KEY_CAMERA_MODE] = settings.cameraMode.name
-            prefs[KEY_SPEED_UNIT] = settings.speedUnit.name
+    suspend fun editOverlayConfig(transform: (OverlayConfig) -> OverlayConfig): OverlayConfig {
+        var updated = OverlayConfig()
+        safeEdit { prefs ->
+            val current = parseOverlayConfigFromPrefs(prefs)
+            updated = transform(current)
+            writeOverlayConfigToPrefs(prefs, updated)
+        }
+        return updated
+    }
 
-            prefs[KEY_TOUCH_TO_CAPTURE] = settings.touchToCapture
-            prefs[KEY_ALWAYS_DISPLAY_ZOOM_SLIDER] = settings.alwaysDisplayZoomSlider
-            prefs[KEY_BATTERY_SAVE_MODE] = settings.batterySaveMode
-            prefs[KEY_BATTERY_SAVE_BRIGHTNESS] = settings.batterySaveBrightness
-            prefs[KEY_EASY_TOGGLE_CAMERAS] = settings.easyToggleCameras
-            prefs[KEY_WHITE_BALANCE] = settings.whiteBalance
-            prefs[KEY_VIDEO_SEGMENTATION] = settings.videoSegmentation
-            prefs[KEY_CUSTOM_FILENAME_PREFIX] = settings.customFilenamePrefix
-            prefs[KEY_FILENAME_FORMAT_PRESET] = settings.filenameFormatPreset
-            prefs[KEY_CUSTOM_STORAGE_PATH] = settings.customStoragePath
-            prefs[KEY_AUTO_ROTATE_UI] = settings.autoRotateUI
-            prefs[KEY_PHOTO_RESOLUTION] = settings.photoResolution
-            prefs[KEY_VIDEO_RESOLUTION] = settings.videoResolution
-            prefs[KEY_PHOTO_ASPECT_RATIO] = settings.photoAspectRatio
-            prefs[KEY_VIDEO_ASPECT_RATIO] = settings.videoAspectRatio
+    suspend fun updateLastDetectedLocationName(locationName: String) {
+        safeEdit { prefs ->
+            prefs[KEY_LAST_DETECTED_LOCATION_NAME] = locationName
+        }
+    }
+
+    private fun writeOverlayConfigToPrefs(
+        prefs: MutablePreferences,
+        config: OverlayConfig
+    ) {
+        prefs[KEY_TEMPLATE] = config.template.name
+        prefs[KEY_TIMESTAMP_FORMAT] = config.timestampFormat
+        prefs[KEY_COORDINATE_PRECISION] = config.coordinatePrecision
+        prefs[KEY_SHOW_TIMESTAMP] = config.showTimestamp
+        prefs[KEY_SHOW_COORDINATES] = config.showCoordinates
+        prefs[KEY_SHOW_CHAINAGE] = config.showChainage
+        prefs[KEY_SHOW_MAP_INSET] = config.showMapInset
+        prefs[KEY_SHOW_PROJECT_INFO] = config.showProjectInfo
+        prefs[KEY_SHOW_COMPASS] = config.showCompass
+        prefs[KEY_SHOW_ALTITUDE] = config.showAltitude
+        prefs[KEY_SHOW_ACCURACY] = config.showAccuracy
+        prefs[KEY_BURN_IN_TIMESTAMP] = config.burnInTimestamp
+
+        prefs[KEY_SHOW_SPEED_PREVIEW] = config.showSpeedOnPreview
+        prefs[KEY_INCLUDE_SPEED_CAPTURE] = config.includeSpeedInCapture
+        prefs[KEY_SHOW_DIRECTION_PREVIEW] = config.showDirectionOnPreview
+        prefs[KEY_INCLUDE_DIRECTION_CAPTURE] = config.includeDirectionInCapture
+
+        // Logo settings
+        prefs[KEY_SHOW_LOGO] = config.showLogo
+        prefs[KEY_LOGO_PRESET] = config.logoPreset
+        if (config.logoUri != null) {
+            prefs[KEY_LOGO_URI] = config.logoUri
+        } else {
+            prefs.remove(KEY_LOGO_URI)
+        }
+        prefs[KEY_LOGO_POSITION] = config.logoPosition.name
+        prefs[KEY_LOGO_SIZE_DP] = config.logoSizeDp
+        prefs[KEY_LOGO_OPACITY] = config.logoOpacity
+        prefs[KEY_LOGO_SHAPE] = config.logoShape.name
+        prefs[KEY_LOGO_CORNER_RADIUS_DP] = config.logoCornerRadiusDp
+        prefs[KEY_LOGO_BORDER_WIDTH_DP] = config.logoBorderWidthDp
+        prefs[KEY_LOGO_BORDER_COLOR_HEX] = config.logoBorderColorHex
+        prefs[KEY_LOGO_MARGIN_X_DP] = config.logoMarginXDp
+        prefs[KEY_LOGO_MARGIN_Y_DP] = config.logoMarginYDp
+        prefs[KEY_LOGO_SCALE] = config.logoScale
+        prefs[KEY_LOGO_ROTATION] = config.logoRotationDegrees
+
+        prefs[KEY_FONT_SIZE_SP] = config.fontSizeSp
+        prefs[KEY_FONT_SIZE_PRESET] = config.fontSizePreset
+        prefs[KEY_HAS_TEXT_SHADOW] = config.hasTextShadow
+        prefs[KEY_TEXT_COLOR_HEX] = config.textColorHex
+        prefs[KEY_TEXT_OPACITY] = config.textOpacity
+        prefs[KEY_FONT_FAMILY] = config.fontFamily
+        prefs[KEY_FONT_STYLE] = config.fontStyle
+        prefs[KEY_BACKGROUND_STYLE] = config.backgroundStyle
+        prefs[KEY_BACKGROUND_OPACITY] = config.backgroundOpacity
+        prefs[KEY_BACKGROUND_COLOR_HEX] = config.backgroundColorHex
+        prefs[KEY_WATERMARK_POSITION] = config.watermarkPosition
+        prefs[KEY_TIME_POSITION] = config.timePosition
+        prefs[KEY_RESOLUTION_OPTION] = config.resolutionOption
+        prefs[KEY_LOCATION_ADDRESS_OPTION] = config.locationAddressOption
+        prefs[KEY_CUSTOM_ADDRESS_TEXT] = config.customAddressText
+        prefs[KEY_CUSTOM_TAG] = config.customTag
+        prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] = config.gpsAccuracyMarginPreset
+        prefs[KEY_SAVE_ORIGINAL_IMAGE] = config.saveOriginalImage
+        prefs[KEY_TIMESTAMP_MARGIN_MODE] = config.timestampMarginMode
+        prefs[KEY_SHOW_INDEX_NUMBER] = config.showIndexNumber
+        if (config.customFontPath != null) {
+            prefs[KEY_CUSTOM_FONT_PATH] = config.customFontPath
+        } else {
+            prefs.remove(KEY_CUSTOM_FONT_PATH)
+        }
+        if (config.customFontName != null) {
+            prefs[KEY_CUSTOM_FONT_NAME] = config.customFontName
+        } else {
+            prefs.remove(KEY_CUSTOM_FONT_NAME)
+        }
+        prefs[KEY_TEXT_ALIGNMENT] = config.textAlignment
+        prefs[KEY_LINE_SPACING_FACTOR] = config.lineSpacingFactor
+        prefs[KEY_TEXT_STROKE_WIDTH_DP] = config.textStrokeWidthDp
+        prefs[KEY_SHOW_LOCATION_NAME] = config.showLocationName
+        prefs[KEY_LAST_DETECTED_LOCATION_NAME] = config.lastDetectedLocationName
+        prefs[KEY_USE_SAME_PADDING_PHOTO_VIDEO] = config.useSamePaddingForPhotoAndVideo
+        prefs[KEY_PHOTO_PADDING_TOP_DP] = config.photoPaddingTopDp
+        prefs[KEY_PHOTO_PADDING_BOTTOM_DP] = config.photoPaddingBottomDp
+        prefs[KEY_PHOTO_PADDING_LEFT_DP] = config.photoPaddingLeftDp
+        prefs[KEY_PHOTO_PADDING_RIGHT_DP] = config.photoPaddingRightDp
+        prefs[KEY_VIDEO_PADDING_TOP_DP] = config.videoPaddingTopDp
+        prefs[KEY_VIDEO_PADDING_BOTTOM_DP] = config.videoPaddingBottomDp
+        prefs[KEY_VIDEO_PADDING_LEFT_DP] = config.videoPaddingLeftDp
+        prefs[KEY_VIDEO_PADDING_RIGHT_DP] = config.videoPaddingRightDp
+        if (config.pdfLogoUri != null) {
+            prefs[KEY_PDF_LOGO_URI] = config.pdfLogoUri
+        } else {
+            prefs.remove(KEY_PDF_LOGO_URI)
+        }
+        prefs[KEY_INCLUDE_PDF_LOGO_DEFAULT] = config.includePdfLogoDefault
+        if (config.pdfSignatureUri != null) {
+            prefs[KEY_PDF_SIGNATURE_URI] = config.pdfSignatureUri
+        } else {
+            prefs.remove(KEY_PDF_SIGNATURE_URI)
+        }
+        prefs[KEY_INCLUDE_PDF_SIGNATURE_DEFAULT] = config.includePdfSignatureDefault
+        prefs[KEY_PDF_DEFAULT_PREPARED_BY] = config.pdfDefaultPreparedBy
+        prefs[KEY_PHOTO_MINI_MAP_JSON] = config.photoMiniMap.toJsonString()
+        prefs[KEY_VIDEO_MINI_MAP_JSON] = config.videoMiniMap.toJsonString()
+    }
+
+    suspend fun updateCameraSettings(settings: CameraSettings) {
+        safeEdit { prefs ->
+            writeCameraSettingsToPrefs(prefs, settings)
+        }
+    }
+
+    suspend fun editCameraSettings(transform: (CameraSettings) -> CameraSettings): CameraSettings {
+        var updated = CameraSettings()
+        safeEdit { prefs ->
+            val current = parseCameraSettingsFromPrefs(prefs)
+            updated = transform(current)
+            writeCameraSettingsToPrefs(prefs, updated)
+        }
+        return updated
+    }
+
+    private fun writeCameraSettingsToPrefs(
+        prefs: MutablePreferences,
+        settings: CameraSettings
+    ) {
+        prefs[KEY_CAPTURE_TIMER] = settings.captureTimer.seconds
+        prefs[KEY_GRID_MODE] = settings.gridMode.name
+        prefs[KEY_SHOW_HORIZON_LEVEL] = settings.showHorizonLevel
+        prefs[KEY_PREVIEW_RATIO] = settings.previewRatio.name
+        prefs[KEY_CAPTURE_SOUND] = settings.captureSound
+        prefs[KEY_VOLUME_SHUTTER] = settings.volumeButtonShutter
+        prefs[KEY_FRONT_MIRROR] = settings.frontCameraMirror
+        prefs[KEY_JPEG_QUALITY] = settings.jpegQuality
+        prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] = settings.saveOriginalAndStamped
+        prefs[KEY_PRESERVE_EXIF] = settings.preserveExif
+        prefs[KEY_VIDEO_QUALITY] = settings.videoQuality.name
+        prefs[KEY_VIDEO_FPS] = settings.videoFps
+        prefs[KEY_RECORD_AUDIO] = settings.recordAudio
+        prefs[KEY_GPS_INTERVAL] = settings.gpsUpdateIntervalSec
+        prefs[KEY_GPS_ACCURACY_THRESHOLD] = settings.gpsAccuracyThresholdMeters
+        prefs[KEY_ROUTE_RADIUS] = settings.routeMatchingRadiusMeters.toFloat()
+        prefs[KEY_COORD_FORMAT] = settings.coordinateFormat.name
+        prefs[KEY_IS_24H] = settings.is24HourFormat
+        prefs[KEY_EXPOSURE_COMP] = settings.exposureCompensationStep
+        prefs[KEY_CAMERA_MODE] = settings.cameraMode.name
+        prefs[KEY_SPEED_UNIT] = settings.speedUnit.name
+        prefs[KEY_DEFAULT_LENS_ZOOM] = settings.defaultLensZoom
+
+        prefs[KEY_TOUCH_TO_CAPTURE] = settings.touchToCapture
+        prefs[KEY_ALWAYS_DISPLAY_ZOOM_SLIDER] = settings.alwaysDisplayZoomSlider
+        prefs[KEY_BATTERY_SAVE_MODE] = settings.batterySaveMode
+        prefs[KEY_BATTERY_SAVE_BRIGHTNESS] = settings.batterySaveBrightness
+        prefs[KEY_EASY_TOGGLE_CAMERAS] = settings.easyToggleCameras
+        prefs[KEY_WHITE_BALANCE] = settings.whiteBalance
+        prefs[KEY_VIDEO_SEGMENTATION] = settings.videoSegmentation
+        prefs[KEY_CUSTOM_FILENAME_PREFIX] = settings.customFilenamePrefix
+        prefs[KEY_FILENAME_FORMAT_PRESET] = settings.filenameFormatPreset
+        prefs[KEY_CUSTOM_STORAGE_PATH] = settings.customStoragePath
+        prefs[KEY_AUTO_ROTATE_UI] = settings.autoRotateUI
+        prefs[KEY_PHOTO_RESOLUTION] = settings.photoResolution
+        prefs[KEY_VIDEO_RESOLUTION] = settings.videoResolution
+        prefs[KEY_PHOTO_ASPECT_RATIO] = settings.photoAspectRatio
+        prefs[KEY_VIDEO_ASPECT_RATIO] = settings.videoAspectRatio
+    }
+
+    suspend fun updateIsFlashOn(enabled: Boolean) {
+        safeEdit { prefs ->
+            prefs[KEY_IS_FLASH_ON] = enabled
+        }
+    }
+
+    suspend fun updateIsFrontCamera(isFront: Boolean) {
+        safeEdit { prefs ->
+            prefs[KEY_IS_FRONT_CAMERA] = isFront
+        }
+    }
+
+    suspend fun updateCaptureMode(mode: CaptureMode) {
+        safeEdit { prefs ->
+            prefs[KEY_CAPTURE_MODE] = mode.name
+        }
+    }
+
+    val preferredExternalNavAppIdFlow: Flow<String?> = observedDataFlow.map { prefs ->
+        prefs[KEY_PREFERRED_EXTERNAL_NAV_APP_ID]?.takeIf { it.isNotBlank() }
+    }.distinctUntilChanged()
+
+    suspend fun updatePreferredExternalNavAppId(appId: String?) {
+        safeEdit { prefs ->
+            if (!appId.isNullOrBlank()) {
+                prefs[KEY_PREFERRED_EXTERNAL_NAV_APP_ID] = appId
+            } else {
+                prefs.remove(KEY_PREFERRED_EXTERNAL_NAV_APP_ID)
+            }
+        }
+    }
+
+    val surveyShow200mLabelsFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
+        prefs[KEY_SURVEY_SHOW_200M_LABELS] ?: true
+    }.distinctUntilChanged()
+
+    val surveyShowCentrelineFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
+        prefs[KEY_SURVEY_SHOW_CENTRELINE] ?: true
+    }.distinctUntilChanged()
+
+    val surveyShowGpsTrackFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
+        prefs[KEY_SURVEY_SHOW_GPS_TRACK] ?: true
+    }.distinctUntilChanged()
+
+    val surveyShowLaneTrackFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
+        prefs[KEY_SURVEY_SHOW_LANE_TRACK] ?: true
+    }.distinctUntilChanged()
+
+    val surveyShowMarkersFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
+        prefs[KEY_SURVEY_SHOW_MARKERS] ?: true
+    }.distinctUntilChanged()
+
+    val surveyMapTypeFlow: Flow<String> = observedDataFlow.map { prefs ->
+        prefs[KEY_SURVEY_MAP_TYPE] ?: "standard"
+    }.distinctUntilChanged()
+
+    suspend fun updateSurveyMapPreferences(
+        show200mLabels: Boolean? = null,
+        showCentreline: Boolean? = null,
+        showGpsTrack: Boolean? = null,
+        showLaneTrack: Boolean? = null,
+        showMarkers: Boolean? = null,
+        mapType: String? = null
+    ) {
+        safeEdit { prefs ->
+            if (show200mLabels != null) prefs[KEY_SURVEY_SHOW_200M_LABELS] = show200mLabels
+            if (showCentreline != null) prefs[KEY_SURVEY_SHOW_CENTRELINE] = showCentreline
+            if (showGpsTrack != null) prefs[KEY_SURVEY_SHOW_GPS_TRACK] = showGpsTrack
+            if (showLaneTrack != null) prefs[KEY_SURVEY_SHOW_LANE_TRACK] = showLaneTrack
+            if (showMarkers != null) prefs[KEY_SURVEY_SHOW_MARKERS] = showMarkers
+            if (mapType != null) prefs[KEY_SURVEY_MAP_TYPE] = mapType
         }
     }
 
     suspend fun resetAllSettings() {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs.clear()
         }
     }
 
     suspend fun setActiveRouteId(routeId: String?) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             if (routeId != null) {
                 prefs[KEY_ACTIVE_ROUTE_ID] = routeId
             } else {
@@ -689,22 +1115,32 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
-    val routeCorrectionsFlow: Flow<Map<String, List<ChainageCorrectionPoint>>> = context.dataStore.data.map { prefs ->
+    suspend fun updateSelectedAlignmentId(alignmentId: String?) {
+        safeEdit { prefs ->
+            if (!alignmentId.isNullOrBlank()) {
+                prefs[KEY_SELECTED_ALIGNMENT_ID] = alignmentId
+            } else {
+                prefs.remove(KEY_SELECTED_ALIGNMENT_ID)
+            }
+        }
+    }
+
+    val routeCorrectionsFlow: Flow<Map<String, List<ChainageCorrectionPoint>>> = observedDataFlow.map { prefs ->
         prefs[KEY_ROUTE_CORRECTIONS_JSON]
     }.distinctUntilChanged().map { rawJson ->
         parseRouteCorrections(rawJson)
     }
 
-    val routeCorrectionsEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val routeCorrectionsEnabledFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
         prefs[KEY_ROUTE_CORRECTIONS_ENABLED] ?: true
     }.distinctUntilChanged()
 
-    val manualChainageOverrideFlow: Flow<Chainage?> = context.dataStore.data.map { prefs ->
+    val manualChainageOverrideFlow: Flow<Chainage?> = observedDataFlow.map { prefs ->
         val raw = prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]
         if (!raw.isNullOrBlank()) Chainage.parse(raw) else null
     }.distinctUntilChanged()
 
-    val manualChainageTextFlow: Flow<String?> = context.dataStore.data.map { prefs ->
+    val manualChainageTextFlow: Flow<String?> = observedDataFlow.map { prefs ->
         val custom = prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT]
         val raw = prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]
         when {
@@ -714,21 +1150,21 @@ class PreferencesManager(private val context: Context) {
         }
     }.distinctUntilChanged()
 
-    val savedCustomChainagesFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+    val savedCustomChainagesFlow: Flow<List<String>> = observedDataFlow.map { prefs ->
         prefs[KEY_SAVED_CUSTOM_CHAINAGES].orEmpty()
     }.distinctUntilChanged().map { raw ->
         if (raw.isBlank()) emptyList()
         else raw.split("||").map { it.trim() }.filter { it.isNotBlank() }
     }
 
-    val calibrationProfilesFlow: Flow<List<PermanentCalibrationProfile>> = context.dataStore.data.map { prefs ->
+    val calibrationProfilesFlow: Flow<List<PermanentCalibrationProfile>> = observedDataFlow.map { prefs ->
         prefs[KEY_CALIBRATION_PROFILES_JSON]
     }.distinctUntilChanged().map { rawJson ->
         parseCalibrationProfiles(rawJson)
     }
 
     suspend fun saveCalibrationProfile(profile: PermanentCalibrationProfile) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val current = parseCalibrationProfiles(prefs[KEY_CALIBRATION_PROFILES_JSON]).toMutableList()
             val existingIdx = current.indexOfFirst {
                 it.profileId == profile.profileId ||
@@ -748,7 +1184,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun deleteCalibrationProfile(profileId: String) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val current = parseCalibrationProfiles(prefs[KEY_CALIBRATION_PROFILES_JSON])
                 .filterNot { it.profileId == profileId }
             prefs[KEY_CALIBRATION_PROFILES_JSON] = serializeCalibrationProfiles(current)
@@ -775,7 +1211,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun setManualChainageOverride(chainage: Chainage?, customText: String? = null) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val formatted = customText?.trim()?.takeIf { it.isNotBlank() } ?: chainage?.format()
             if (formatted != null) {
                 prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT] = formatted
@@ -792,7 +1228,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun saveCustomChainagesList(items: List<String>) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val cleaned = items.map { it.trim() }.filter { it.isNotBlank() }.distinct()
             if (cleaned.isEmpty()) {
                 prefs.remove(KEY_SAVED_CUSTOM_CHAINAGES)
@@ -803,13 +1239,13 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun setRouteCorrectionsEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs[KEY_ROUTE_CORRECTIONS_ENABLED] = enabled
         }
     }
 
     suspend fun saveRouteCorrectionPoint(point: ChainageCorrectionPoint) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
             val list = currentMap[point.routeId]?.toMutableList() ?: mutableListOf()
             val existingIdx = list.indexOfFirst { it.id == point.id }
@@ -825,7 +1261,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun saveRouteCorrectionPointsList(routeId: String, points: List<ChainageCorrectionPoint>) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
             if (points.isEmpty()) {
                 currentMap.remove(routeId)
@@ -837,7 +1273,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun deleteRouteCorrectionPoint(routeId: String, pointId: String) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
             val list = currentMap[routeId]?.filter { it.id != pointId } ?: emptyList()
             if (list.isEmpty()) {
@@ -850,7 +1286,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun toggleRouteCorrectionPoint(routeId: String, pointId: String, isEnabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
             val list = currentMap[routeId]?.map {
                 if (it.id == pointId) it.copy(isEnabled = isEnabled) else it
@@ -861,7 +1297,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun resetRouteCorrections(routeId: String) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
             currentMap.remove(routeId)
             prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
@@ -885,7 +1321,7 @@ class PreferencesManager(private val context: Context) {
                 pts.sortBy { it.originalKmzMetres }
                 result[rId] = pts
             }
-        } catch (ignored: Exception) {}
+        } catch (_: Exception) {}
         return result
     }
 
@@ -899,14 +1335,14 @@ class PreferencesManager(private val context: Context) {
         return root.toString()
     }
 
-    val chainageAuditLogFlow: Flow<List<ChainageLogEntry>> = context.dataStore.data.map { prefs ->
+    val chainageAuditLogFlow: Flow<List<ChainageLogEntry>> = observedDataFlow.map { prefs ->
         prefs[KEY_CHAINAGE_AUDIT_LOG_JSON]
     }.distinctUntilChanged().map { raw ->
         parseChainageLogs(raw)
     }
 
     suspend fun addChainageLogEntry(entry: ChainageLogEntry) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             val list = parseChainageLogs(prefs[KEY_CHAINAGE_AUDIT_LOG_JSON]).toMutableList()
             list.add(0, entry) // Prepend newest first
             // Retain recent 50 entries
@@ -918,7 +1354,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun clearChainageAuditLog() {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs.remove(KEY_CHAINAGE_AUDIT_LOG_JSON)
         }
     }
@@ -932,7 +1368,7 @@ class PreferencesManager(private val context: Context) {
                 val obj = arr.optJSONObject(i) ?: continue
                 result.add(ChainageLogEntry.fromJson(obj))
             }
-        } catch (ignored: Exception) {}
+        } catch (_: Exception) {}
         return result
     }
 
@@ -940,7 +1376,8 @@ class PreferencesManager(private val context: Context) {
      * Reads every persisted entry from ctecs_user_preferences DataStore dynamically with runtime type.
      */
     suspend fun readRawPreferencesSnapshot(): Map<String, Pair<PrefValueType, Any>> {
-        val rawMap = context.dataStore.data.first().asMap()
+        val prefs = appContext.dataStore.data.first().also { cachedPreferences = it }
+        val rawMap = prefs.asMap()
         val snapshot = linkedMapOf<String, Pair<PrefValueType, Any>>()
         rawMap.forEach { (key, value) ->
             val name = key.name
@@ -964,7 +1401,7 @@ class PreferencesManager(private val context: Context) {
      * Atomically rolls back ctecs_user_preferences to a previously captured raw snapshot.
      */
     suspend fun restoreRawPreferencesSnapshot(snapshot: Map<String, Pair<PrefValueType, Any>>) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             prefs.clear()
             snapshot.forEach { (keyName, typedPair) ->
                 val (type, value) = typedPair
@@ -981,7 +1418,7 @@ class PreferencesManager(private val context: Context) {
         keysToRemove: Set<String> = emptySet(),
         beforeCommitHook: (() -> Unit)? = null
     ) {
-        context.dataStore.edit { prefs ->
+        safeEdit { prefs ->
             keysToRemove.forEach { keyName ->
                 removeAnyTypedKey(prefs, keyName)
             }
@@ -994,7 +1431,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     private fun removeAnyTypedKey(
-        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        prefs: MutablePreferences,
         keyName: String
     ) {
         prefs.remove(stringPreferencesKey(keyName))
@@ -1007,7 +1444,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     private fun writeTypedEntry(
-        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        prefs: MutablePreferences,
         keyName: String,
         type: PrefValueType,
         value: Any

@@ -22,14 +22,19 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import kotlin.math.atan
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.ln
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.sinh
 import kotlin.math.tan
 
 /**
  * OpenStreetMap & Satellite Tile Manager and Web Mercator Projection Engine.
  * Supports:
+ * - Full-Earth pan and zoom (Zoom 1..19) with seamless antimeridian longitude wrapping
  * - Standard OpenStreetMap street-map tiles
  * - Genuine Satellite imagery tiles (Esri World Imagery ArcGIS MapServer)
  * - Identifiable User-Agent
@@ -45,6 +50,11 @@ object OsmTileManager {
     const val ATTRIBUTION = ATTRIBUTION_STANDARD
     private const val USER_AGENT = "HighwayTimestampCameraPro/1.0 (CTECS Highway Survey Surveying App; Android)"
     private const val TILE_SIZE = 256
+    const val MIN_TILE_ZOOM = 1
+    const val MAX_TILE_ZOOM = 19
+    const val MAX_MERCATOR_LAT = 85.05112878
+    const val MIN_VIEW_RANGE_METRES = 60.0
+    const val MAX_VIEW_RANGE_METRES = 32_000_000.0
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -68,13 +78,70 @@ object OsmTileManager {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    fun wrapLongitude(lon: Double): Double {
+        return ((((lon + 180.0) % 360.0) + 360.0) % 360.0) - 180.0
+    }
+
+    fun wrapTileX(tx: Int, zoom: Int): Int {
+        val safeZoom = zoom.coerceIn(MIN_TILE_ZOOM, MAX_TILE_ZOOM)
+        val numTiles = 1 shl safeZoom
+        return ((tx % numTiles) + numTiles) % numTiles
+    }
+
+    fun isValidTileY(ty: Int, zoom: Int): Boolean {
+        val safeZoom = zoom.coerceIn(MIN_TILE_ZOOM, MAX_TILE_ZOOM)
+        val numTiles = 1 shl safeZoom
+        return ty in 0 until numTiles
+    }
+
     fun lonToTileX(lon: Double, zoom: Int): Double {
-        return (lon + 180.0) / 360.0 * (1 shl zoom)
+        return (wrapLongitude(lon) + 180.0) / 360.0 * (1 shl zoom.coerceIn(0, 22))
     }
 
     fun latToTileY(lat: Double, zoom: Int): Double {
-        val latRad = Math.toRadians(lat.coerceIn(-85.05112878, 85.05112878))
-        return (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / Math.PI) / 2.0 * (1 shl zoom)
+        val latRad = Math.toRadians(lat.coerceIn(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT))
+        return (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / Math.PI) / 2.0 * (1 shl zoom.coerceIn(0, 22))
+    }
+
+    /**
+     * Converts an interactive pixel pan delta into an updated geographic map center,
+     * seamlessly wrapping across +/-180 deg longitude and clamping latitude to Web Mercator limits.
+     */
+    fun offsetGeoPointByPixels(
+        center: GeoPoint,
+        deltaPxX: Float,
+        deltaPxY: Float,
+        zoom: Int
+    ): GeoPoint {
+        val safeZoom = zoom.coerceIn(MIN_TILE_ZOOM, MAX_TILE_ZOOM)
+        val worldPx = (1 shl safeZoom).toDouble() * TILE_SIZE
+        val newCenterPxX = lonToTileX(center.longitude, safeZoom) * TILE_SIZE - deltaPxX.toDouble()
+        val newCenterPxY = (latToTileY(center.latitude, safeZoom) * TILE_SIZE - deltaPxY.toDouble())
+            .coerceIn(0.0, worldPx)
+
+        val lonDeg = wrapLongitude((newCenterPxX / worldPx) * 360.0 - 180.0)
+        val n = Math.PI - 2.0 * Math.PI * (newCenterPxY / worldPx)
+        val latDeg = Math.toDegrees(atan(sinh(n))).coerceIn(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT)
+        return GeoPoint(latDeg, lonDeg)
+    }
+
+    fun zoomFromViewRangeMetres(viewRangeMetres: Double): Int {
+        val clamped = viewRangeMetres.coerceIn(MIN_VIEW_RANGE_METRES, MAX_VIEW_RANGE_METRES)
+        val ratio = (clamped / 125.0).coerceAtLeast(0.25)
+        return (19.0 - ln(ratio) / ln(2.0)).roundToInt().coerceIn(MIN_TILE_ZOOM, MAX_TILE_ZOOM)
+    }
+
+    fun viewRangeMetresForZoom(zoomLevel: Float): Double {
+        val clampedZoom = zoomLevel.coerceIn(MIN_TILE_ZOOM.toFloat(), MAX_TILE_ZOOM.toFloat())
+        return (125.0 * 2.0.pow((19.0f - clampedZoom).toDouble()))
+            .coerceIn(MIN_VIEW_RANGE_METRES, MAX_VIEW_RANGE_METRES)
+    }
+
+    fun formatScaleLabel(viewRangeMetres: Double): String {
+        return when {
+            viewRangeMetres >= 1000.0 -> "${(viewRangeMetres / 1000.0).roundToInt()} km"
+            else -> "${viewRangeMetres.roundToInt()} m"
+        }
     }
 
     fun geoToScreen(
@@ -86,22 +153,27 @@ object OsmTileManager {
         panOffsetX: Float = 0f,
         panOffsetY: Float = 0f
     ): Pair<Float, Float> {
-        val centerPxX = lonToTileX(center.longitude, zoom) * TILE_SIZE
-        val centerPxY = latToTileY(center.latitude, zoom) * TILE_SIZE
-        val minPxX = centerPxX - (widthPx / 2f) - panOffsetX
-        val minPxY = centerPxY - (heightPx / 2f) - panOffsetY
+        val safeZoom = zoom.coerceIn(MIN_TILE_ZOOM, MAX_TILE_ZOOM)
+        val worldPx = (1 shl safeZoom).toDouble() * TILE_SIZE
+        val centerPxX = lonToTileX(center.longitude, safeZoom) * TILE_SIZE
+        val centerPxY = latToTileY(center.latitude, safeZoom) * TILE_SIZE
+        val ptPxX = lonToTileX(pt.longitude, safeZoom) * TILE_SIZE
+        val ptPxY = latToTileY(pt.latitude, safeZoom) * TILE_SIZE
 
-        val ptPxX = lonToTileX(pt.longitude, zoom) * TILE_SIZE
-        val ptPxY = latToTileY(pt.latitude, zoom) * TILE_SIZE
-
-        val sx = (ptPxX - minPxX).toFloat()
-        val sy = (ptPxY - minPxY).toFloat()
+        var dxPx = ptPxX - centerPxX
+        if (worldPx > 0.0) {
+            if (dxPx > worldPx / 2.0) dxPx -= worldPx
+            if (dxPx < -worldPx / 2.0) dxPx += worldPx
+        }
+        val sx = (widthPx / 2.0 + panOffsetX + dxPx).toFloat()
+        val sy = (heightPx / 2.0 + panOffsetY + (ptPxY - centerPxY)).toFloat()
         return Pair(sx, sy)
     }
 
     /**
      * Stitches real map tiles (Standard street map or Satellite imagery) centered around [center]
      * into a target [Bitmap] of dimensions [widthPx] x [heightPx], accounting for interactive pan offsets.
+     * Supports full-Earth navigation with seamless antimeridian tile wrapping and polar bounds clamping.
      * Returns null if no cached tiles are ready. Enqueues missing tiles for background download.
      */
     fun renderMapBitmap(
@@ -117,9 +189,11 @@ object OsmTileManager {
     ): Bitmap? {
         if (widthPx <= 0 || heightPx <= 0) return null
 
+        val safeZoom = zoom.coerceIn(MIN_TILE_ZOOM, MAX_TILE_ZOOM)
+        val numTiles = 1 shl safeZoom
         val isSatellite = mapType.equals("satellite", ignoreCase = true)
-        val centerPxX = lonToTileX(center.longitude, zoom) * TILE_SIZE
-        val centerPxY = latToTileY(center.latitude, zoom) * TILE_SIZE
+        val centerPxX = lonToTileX(center.longitude, safeZoom) * TILE_SIZE
+        val centerPxY = latToTileY(center.latitude, safeZoom) * TILE_SIZE
 
         val minPxX = centerPxX - (widthPx / 2.0) - panOffsetX
         val maxPxX = centerPxX + (widthPx / 2.0) - panOffsetX
@@ -127,9 +201,10 @@ object OsmTileManager {
         val maxPxY = centerPxY + (heightPx / 2.0) - panOffsetY
 
         val minTileX = floor(minPxX / TILE_SIZE).toInt()
-        val maxTileX = floor(maxPxX / TILE_SIZE).toInt()
-        val minTileY = floor(minPxY / TILE_SIZE).toInt()
-        val maxTileY = floor(maxPxY / TILE_SIZE).toInt()
+        val maxTileX = floor(maxPxX / TILE_SIZE).toInt().coerceAtMost(minTileX + 24)
+        val minTileY = floor(minPxY / TILE_SIZE).toInt().coerceAtLeast(0)
+        val maxTileY = floor(maxPxY / TILE_SIZE).toInt().coerceAtMost(numTiles - 1)
+        if (minTileY > maxTileY) return null
 
         var hasAnyTile = false
         val destBitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
@@ -160,8 +235,9 @@ object OsmTileManager {
         }
 
         for (tx in minTileX..maxTileX) {
+            val wrappedTx = ((tx % numTiles) + numTiles) % numTiles
             for (ty in minTileY..maxTileY) {
-                val tile = getTile(context, zoom, tx, ty, isSatellite)
+                val tile = getTile(context, safeZoom, wrappedTx, ty, isSatellite)
                 if (tile != null) {
                     hasAnyTile = true
                     val tileWorldLeft = tx * TILE_SIZE.toDouble()
@@ -179,8 +255,10 @@ object OsmTileManager {
     }
 
     private fun getTile(context: Context, zoom: Int, x: Int, y: Int, isSatellite: Boolean): Bitmap? {
+        if (!isValidTileY(y, zoom)) return null
+        val wrappedX = wrapTileX(x, zoom)
         val typeKey = if (isSatellite) "satellite" else "standard"
-        val key = "$typeKey/$zoom/$x/$y"
+        val key = "$typeKey/$zoom/$wrappedX/$y"
 
         // 1. In-memory LRU cache
         memoryCache.get(key)?.let { return it }
@@ -189,7 +267,7 @@ object OsmTileManager {
         val ext = if (isSatellite) "jpg" else "png"
         val typeFolder = if (isSatellite) "satellite" else "standard"
         val cacheDir = File(context.cacheDir, "osm_tiles/$typeFolder")
-        val tileFile = File(cacheDir, "$zoom/$x/$y.$ext")
+        val tileFile = File(cacheDir, "$zoom/$wrappedX/$y.$ext")
 
         if (tileFile.exists() && tileFile.length() > 0) {
             try {
@@ -205,7 +283,7 @@ object OsmTileManager {
 
         // Backward compatibility fallback for standard tiles cached previously under root "osm_tiles"
         if (!isSatellite) {
-            val legacyFile = File(context.cacheDir, "osm_tiles/$zoom/$x/$y.png")
+            val legacyFile = File(context.cacheDir, "osm_tiles/$zoom/$wrappedX/$y.png")
             if (legacyFile.exists() && legacyFile.length() > 0) {
                 try {
                     val bmp = BitmapFactory.decodeFile(legacyFile.absolutePath)
@@ -218,15 +296,17 @@ object OsmTileManager {
         }
 
         // 3. Fetch asynchronously
-        fetchTileAsync(context, zoom, x, y, isSatellite)
+        fetchTileAsync(context, zoom, wrappedX, y, isSatellite)
         return null
     }
 
     private val pendingFetches = mutableSetOf<String>()
 
     private fun fetchTileAsync(context: Context, zoom: Int, x: Int, y: Int, isSatellite: Boolean) {
+        if (!isValidTileY(y, zoom)) return
+        val wrappedX = wrapTileX(x, zoom)
         val typeKey = if (isSatellite) "satellite" else "standard"
-        val key = "$typeKey/$zoom/$x/$y"
+        val key = "$typeKey/$zoom/$wrappedX/$y"
 
         synchronized(pendingFetches) {
             if (pendingFetches.contains(key)) return
@@ -238,10 +318,10 @@ object OsmTileManager {
             try {
                 val url = if (isSatellite) {
                     // ArcGIS World Imagery tile URL format: {zoom}/{row_y}/{col_x}
-                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$zoom/$y/$x"
+                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$zoom/$y/$wrappedX"
                 } else {
                     // OpenStreetMap tile URL format: {zoom}/{col_x}/{row_y}.png
-                    "https://tile.openstreetmap.org/$zoom/$x/$y.png"
+                    "https://tile.openstreetmap.org/$zoom/$wrappedX/$y.png"
                 }
 
                 val request = Request.Builder()

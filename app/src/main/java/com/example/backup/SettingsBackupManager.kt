@@ -77,6 +77,7 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_SEPARATOR.name,
                 PreferencesManager.KEY_DEFINED_PROJECTS.name,
                 PreferencesManager.KEY_ACTIVE_ROUTE_ID.name,
+                PreferencesManager.KEY_SELECTED_ALIGNMENT_ID.name,
                 // Timestamp & Watermark
                 PreferencesManager.KEY_TEMPLATE.name,
                 PreferencesManager.KEY_TIMESTAMP_FORMAT.name,
@@ -129,6 +130,9 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_TEXT_ALIGNMENT.name,
                 PreferencesManager.KEY_LINE_SPACING_FACTOR.name,
                 PreferencesManager.KEY_TEXT_STROKE_WIDTH_DP.name,
+                PreferencesManager.KEY_SAVE_ORIGINAL_IMAGE.name,
+                PreferencesManager.KEY_TIMESTAMP_MARGIN_MODE.name,
+                PreferencesManager.KEY_SHOW_INDEX_NUMBER.name,
                 PreferencesManager.KEY_SHOW_LOCATION_NAME.name,
                 PreferencesManager.KEY_LAST_DETECTED_LOCATION_NAME.name,
                 PreferencesManager.KEY_USE_SAME_PADDING_PHOTO_VIDEO.name,
@@ -162,6 +166,10 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_FRONT_MIRROR.name,
                 PreferencesManager.KEY_EXPOSURE_COMP.name,
                 PreferencesManager.KEY_CAMERA_MODE.name,
+                PreferencesManager.KEY_DEFAULT_LENS_ZOOM.name,
+                PreferencesManager.KEY_IS_FLASH_ON.name,
+                PreferencesManager.KEY_IS_FRONT_CAMERA.name,
+                PreferencesManager.KEY_CAPTURE_MODE.name,
                 PreferencesManager.KEY_TOUCH_TO_CAPTURE.name,
                 PreferencesManager.KEY_ALWAYS_DISPLAY_ZOOM_SLIDER.name,
                 PreferencesManager.KEY_BATTERY_SAVE_MODE.name,
@@ -204,11 +212,18 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_SAVED_CUSTOM_CHAINAGES.name,
                 PreferencesManager.KEY_CHAINAGE_AUDIT_LOG_JSON.name,
                 PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name,
-                // Screensaver, Lock-Screen Navigation, Widgets & KM Stone Alerts
+                // Screensaver, Navigation Notifications, Widgets, KM Stone Alerts, Nav & Survey
                 PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name,
                 PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name,
                 PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name,
-                PreferencesManager.KEY_KM_STONE_ALERT_JSON.name
+                PreferencesManager.KEY_KM_STONE_ALERT_JSON.name,
+                PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name,
+                PreferencesManager.KEY_SURVEY_SHOW_200M_LABELS.name,
+                PreferencesManager.KEY_SURVEY_SHOW_CENTRELINE.name,
+                PreferencesManager.KEY_SURVEY_SHOW_GPS_TRACK.name,
+                PreferencesManager.KEY_SURVEY_SHOW_LANE_TRACK.name,
+                PreferencesManager.KEY_SURVEY_SHOW_MARKERS.name,
+                PreferencesManager.KEY_SURVEY_MAP_TYPE.name
             )
         }
     }
@@ -251,6 +266,10 @@ class SettingsBackupManager(
         PreferencesManager.KEY_BATTERY_SAVE_BRIGHTNESS.name,
         PreferencesManager.KEY_EASY_TOGGLE_CAMERAS.name,
         PreferencesManager.KEY_WHITE_BALANCE.name,
+        PreferencesManager.KEY_DEFAULT_LENS_ZOOM.name,
+        PreferencesManager.KEY_IS_FLASH_ON.name,
+        PreferencesManager.KEY_IS_FRONT_CAMERA.name,
+        PreferencesManager.KEY_CAPTURE_MODE.name,
         PreferencesManager.KEY_AUTO_ROTATE_UI.name -> BackupCategory.CAMERA
 
         PreferencesManager.KEY_PHOTO_RESOLUTION.name,
@@ -260,6 +279,7 @@ class SettingsBackupManager(
         PreferencesManager.KEY_RESOLUTION_OPTION.name,
         PreferencesManager.KEY_JPEG_QUALITY.name,
         PreferencesManager.KEY_SAVE_ORIGINAL_AND_STAMPED.name,
+        PreferencesManager.KEY_SAVE_ORIGINAL_IMAGE.name,
         PreferencesManager.KEY_PRESERVE_EXIF.name,
         PreferencesManager.KEY_VIDEO_QUALITY.name,
         PreferencesManager.KEY_VIDEO_FPS.name,
@@ -310,6 +330,8 @@ class SettingsBackupManager(
         PreferencesManager.KEY_BACKGROUND_COLOR_HEX.name,
         PreferencesManager.KEY_WATERMARK_POSITION.name,
         PreferencesManager.KEY_TIME_POSITION.name,
+        PreferencesManager.KEY_TIMESTAMP_MARGIN_MODE.name,
+        PreferencesManager.KEY_SHOW_INDEX_NUMBER.name,
         PreferencesManager.KEY_CUSTOM_FONT_PATH.name,
         PreferencesManager.KEY_CUSTOM_FONT_NAME.name,
         PreferencesManager.KEY_TEXT_ALIGNMENT.name,
@@ -338,7 +360,8 @@ class SettingsBackupManager(
         PreferencesManager.KEY_INSPECTOR.name,
         PreferencesManager.KEY_SEPARATOR.name,
         PreferencesManager.KEY_DEFINED_PROJECTS.name,
-        PreferencesManager.KEY_ACTIVE_ROUTE_ID.name -> BackupCategory.HIGHWAY_CUSTOMISATION
+        PreferencesManager.KEY_ACTIVE_ROUTE_ID.name,
+        PreferencesManager.KEY_SELECTED_ALIGNMENT_ID.name -> BackupCategory.HIGHWAY_CUSTOMISATION
 
         PreferencesManager.KEY_ROUTE_CORRECTIONS_JSON.name,
         PreferencesManager.KEY_ROUTE_CORRECTIONS_ENABLED.name,
@@ -352,7 +375,13 @@ class SettingsBackupManager(
         PreferencesManager.KEY_PHOTO_MINI_MAP_JSON.name,
         PreferencesManager.KEY_VIDEO_MINI_MAP_JSON.name,
         PreferencesManager.KEY_MAP_THEME.name,
-        PreferencesManager.KEY_MAP_TYPE.name -> BackupCategory.MINI_MAP
+        PreferencesManager.KEY_MAP_TYPE.name,
+        PreferencesManager.KEY_SURVEY_SHOW_200M_LABELS.name,
+        PreferencesManager.KEY_SURVEY_SHOW_CENTRELINE.name,
+        PreferencesManager.KEY_SURVEY_SHOW_GPS_TRACK.name,
+        PreferencesManager.KEY_SURVEY_SHOW_LANE_TRACK.name,
+        PreferencesManager.KEY_SURVEY_SHOW_MARKERS.name,
+        PreferencesManager.KEY_SURVEY_MAP_TYPE.name -> BackupCategory.MINI_MAP
 
         PreferencesManager.KEY_GALLERY_VIEW_MODE.name,
         PreferencesManager.KEY_GALLERY_SORT_OPTION.name,
@@ -367,7 +396,8 @@ class SettingsBackupManager(
         PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name,
         PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name,
         PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name,
-        PreferencesManager.KEY_KM_STONE_ALERT_JSON.name -> BackupCategory.GENERAL
+        PreferencesManager.KEY_KM_STONE_ALERT_JSON.name,
+        PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name -> BackupCategory.GENERAL
 
         else -> BackupCategory.OTHER
     }
@@ -469,6 +499,9 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_CUSTOM_ADDRESS_TEXT.name, PrefValueType.STRING, overlay.customAddressText)
         putEntry(PreferencesManager.KEY_CUSTOM_TAG.name, PrefValueType.STRING, overlay.customTag)
         putEntry(PreferencesManager.KEY_GPS_ACCURACY_MARGIN_PRESET.name, PrefValueType.STRING, overlay.gpsAccuracyMarginPreset)
+        putEntry(PreferencesManager.KEY_SAVE_ORIGINAL_IMAGE.name, PrefValueType.BOOLEAN, overlay.saveOriginalImage)
+        putEntry(PreferencesManager.KEY_TIMESTAMP_MARGIN_MODE.name, PrefValueType.STRING, overlay.timestampMarginMode)
+        putEntry(PreferencesManager.KEY_SHOW_INDEX_NUMBER.name, PrefValueType.BOOLEAN, overlay.showIndexNumber)
         overlay.customFontPath?.let { putEntry(PreferencesManager.KEY_CUSTOM_FONT_PATH.name, PrefValueType.STRING, it) }
         overlay.customFontName?.let { putEntry(PreferencesManager.KEY_CUSTOM_FONT_NAME.name, PrefValueType.STRING, it) }
         putEntry(PreferencesManager.KEY_TEXT_ALIGNMENT.name, PrefValueType.STRING, overlay.textAlignment)
@@ -526,6 +559,10 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_FILENAME_FORMAT_PRESET.name, PrefValueType.STRING, camera.filenameFormatPreset)
         putEntry(PreferencesManager.KEY_CUSTOM_STORAGE_PATH.name, PrefValueType.STRING, camera.customStoragePath)
         putEntry(PreferencesManager.KEY_AUTO_ROTATE_UI.name, PrefValueType.BOOLEAN, camera.autoRotateUI)
+        putEntry(PreferencesManager.KEY_DEFAULT_LENS_ZOOM.name, PrefValueType.FLOAT, camera.defaultLensZoom)
+        putEntry(PreferencesManager.KEY_IS_FLASH_ON.name, PrefValueType.BOOLEAN, preferencesManager.getInitialIsFlashOn())
+        putEntry(PreferencesManager.KEY_IS_FRONT_CAMERA.name, PrefValueType.BOOLEAN, preferencesManager.getInitialIsFrontCamera())
+        putEntry(PreferencesManager.KEY_CAPTURE_MODE.name, PrefValueType.STRING, preferencesManager.getInitialCaptureMode().name)
         putEntry(PreferencesManager.KEY_PHOTO_RESOLUTION.name, PrefValueType.STRING, camera.photoResolution)
         putEntry(PreferencesManager.KEY_VIDEO_RESOLUTION.name, PrefValueType.STRING, camera.videoResolution)
         putEntry(PreferencesManager.KEY_PHOTO_ASPECT_RATIO.name, PrefValueType.STRING, camera.photoAspectRatio)
@@ -546,6 +583,18 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name, PrefValueType.STRING, navNotifSettings.toJsonString())
         putEntry(PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name, PrefValueType.STRING, widgetSettings.toJsonString())
         putEntry(PreferencesManager.KEY_KM_STONE_ALERT_JSON.name, PrefValueType.STRING, kmStoneAlertSettings.toJsonString())
+        preferencesManager.getInitialPreferredExternalNavAppId()?.let {
+            putEntry(PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name, PrefValueType.STRING, it)
+        }
+        preferencesManager.getInitialSelectedAlignmentId()?.let {
+            putEntry(PreferencesManager.KEY_SELECTED_ALIGNMENT_ID.name, PrefValueType.STRING, it)
+        }
+        putEntry(PreferencesManager.KEY_SURVEY_SHOW_200M_LABELS.name, PrefValueType.BOOLEAN, preferencesManager.getInitialSurveyShow200mLabels())
+        putEntry(PreferencesManager.KEY_SURVEY_SHOW_CENTRELINE.name, PrefValueType.BOOLEAN, preferencesManager.getInitialSurveyShowCentreline())
+        putEntry(PreferencesManager.KEY_SURVEY_SHOW_GPS_TRACK.name, PrefValueType.BOOLEAN, preferencesManager.getInitialSurveyShowGpsTrack())
+        putEntry(PreferencesManager.KEY_SURVEY_SHOW_LANE_TRACK.name, PrefValueType.BOOLEAN, preferencesManager.getInitialSurveyShowLaneTrack())
+        putEntry(PreferencesManager.KEY_SURVEY_SHOW_MARKERS.name, PrefValueType.BOOLEAN, preferencesManager.getInitialSurveyShowMarkers())
+        putEntry(PreferencesManager.KEY_SURVEY_MAP_TYPE.name, PrefValueType.STRING, preferencesManager.getInitialSurveyMapType())
 
         // Calibration defaults
         putEntry(PreferencesManager.KEY_ROUTE_CORRECTIONS_ENABLED.name, PrefValueType.BOOLEAN, correctionsEnabled)

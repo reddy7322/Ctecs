@@ -1,7 +1,6 @@
 package com.example
 
 import android.app.Application
-import android.content.pm.ActivityInfo
 import android.content.pm.ServiceInfo
 import android.os.Looper
 import android.view.Window
@@ -61,11 +60,7 @@ import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.RouteMarker
 import com.example.model.ScreensaverDisplayMode
-import com.example.navigation.LockNavMapRotationKey
 import com.example.navigation.LockScreenNavStateResolver
-import com.example.navigation.LockScreenNavigationActivity
-import com.example.navigation.LockScreenNavigationContent
-import com.example.navigation.LockScreenNavigationService
 import com.example.navigation.LockScreenNotificationFormatter
 import com.example.ui.MainViewModel
 import com.example.ui.home.AutomotiveChainageScreensaverContent
@@ -197,12 +192,7 @@ class ScreensaverRedesignAndLockScreenTest {
             miniMapShowBorder = false,
             miniMapBorderColorPreset = HudColorPreset.EMERALD,
             miniMapMarkerStyle = HudMapMarkerStyle.PULSE_DOT,
-            miniMapShowRouteAlignment = false,
-            lockScreenNavEnabled = true,
-            lockScreenOpenActivityOnLock = false,
-            lockScreenShowNextMarker = false,
-            lockScreenShowEta = false,
-            lockScreenShowSpeed = true
+            miniMapShowRouteAlignment = false
         )
 
         val restored = HomeScreensaverSettings.fromJsonString(customized.toJsonString())
@@ -217,7 +207,6 @@ class ScreensaverRedesignAndLockScreenTest {
         assertEquals(20, legacy.inactivityTimeoutSeconds)
         assertTrue(legacy.touchToDismiss)
         assertTrue(legacy.autoRestartTimer)
-        assertFalse(legacy.lockScreenNavEnabled)
 
         // Custom timeout bounds validation
         val clampedLow = HomeScreensaverSettings().withTimeoutSeconds(1, custom = true)
@@ -478,7 +467,6 @@ class ScreensaverRedesignAndLockScreenTest {
                     onMiniMapZoomOut = { settingsState = settingsState.withZoomOut() },
                     onMiniMapRecenter = { settingsState = settingsState.withRecenter() },
                     onMiniMapStyleChange = { s -> settingsState = settingsState.withMiniMapStyle(s) },
-                    onToggleLockScreenNav = { en -> settingsState = settingsState.copy(lockScreenNavEnabled = en) },
                     onResetDefaults = { settingsState = HomeScreensaverSettings.defaultSettings() }
                 )
             }
@@ -601,39 +589,7 @@ class ScreensaverRedesignAndLockScreenTest {
     }
 
     @Test
-    fun `lock screen navigation UI renders top card, chainage, bottom strip, and manifest declares foreground service safely`() {
-        val sampleState = LockScreenNavStateResolver.samplePreviewState()
-        val settings = HomeScreensaverSettings(
-            miniMapVisible = true,
-            miniMapOrientation = MiniMapOrientationMode.DIRECTION_UP
-        )
-
-        composeTestRule.setContent {
-            LockScreenNavigationContent(
-                navState = sampleState,
-                location = GeoPoint(29.504, 77.704),
-                bearing = 75f,
-                compassHeading = 75f,
-                routeData = sampleRoute(),
-                screensaverSettings = settings,
-                onClose = {}
-            )
-        }
-
-        composeTestRule.onNodeWithTag("lock_screen_nav_root").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_sample_badge").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_top_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_top_distance").assertTextEquals("680 m")
-        composeTestRule.onNodeWithTag("lock_screen_chainage_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_chainage_text").assertTextEquals("204+320")
-        composeTestRule.onNodeWithTag("lock_screen_side_badge").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_bottom_bar").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("lock_screen_close_btn").assertIsDisplayed()
-
-        val mapNode = composeTestRule.onNodeWithTag("lock_screen_nav_map").fetchSemanticsNode()
-        assertEquals(-75f, mapNode.config[LockNavMapRotationKey], 0.001f)
-
-        // Verify Manifest declares LockScreenNavigationService (foregroundServiceType="location") and showWhenLocked Activity
+    fun `manifest declares navigation foreground service safely without lock screen saver activity`() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val pm = app.packageManager
         val pkgInfo = pm.getPackageInfo(
@@ -658,10 +614,6 @@ class ScreensaverRedesignAndLockScreenTest {
         val activityInfo = pkgInfo.activities?.firstOrNull {
             it.name.endsWith("LockScreenNavigationActivity")
         }
-        assertNotNull("LockScreenNavigationActivity must be declared in AndroidManifest.xml", activityInfo)
-        assertEquals(ActivityInfo.LAUNCH_SINGLE_TOP, activityInfo!!.launchMode)
-        assertTrue((activityInfo.flags and ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS) != 0)
-        val lockActivity = Robolectric.buildActivity(LockScreenNavigationActivity::class.java).create().get()
-        assertNotNull(lockActivity)
+        assertNull("LockScreenNavigationActivity must be completely removed from AndroidManifest.xml", activityInfo)
     }
 }

@@ -1,13 +1,7 @@
 package com.example.ui.settings
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.drawable.ColorDrawable
-import android.os.Build
 import android.view.WindowManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
@@ -39,10 +33,8 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LinearScale
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RestartAlt
@@ -92,7 +84,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
-import androidx.core.content.ContextCompat
 import com.example.location.LocationState
 import com.example.model.Chainage
 import com.example.model.ChainageMatchResult
@@ -118,13 +109,12 @@ import com.example.model.ProjectProfile
 import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.ScreensaverDisplayMode
-import com.example.navigation.LockScreenNavStateResolver
-import com.example.navigation.LockScreenNavigationActivity
-import com.example.navigation.LockScreenNavigationContent
+import com.example.model.ScreensaverThemeMode
 import com.example.ui.home.ChainageScreensaverOverlay
 import com.example.ui.home.ScreensaverChainageStateHolder
 import com.example.ui.home.ScreensaverDisplayState
 import com.example.ui.home.applyScreensaverImmersiveMode
+import com.example.util.KeepScreenOn
 import kotlin.math.roundToInt
 
 /**
@@ -132,9 +122,8 @@ import kotlin.math.roundToInt
  * - General Screensaver behavior (Master, Auto-Activate, Timeout presets/custom, Touch-to-Dismiss, Auto-Restart)
  * - Display Modes (Portrait / Landscape / Car Dashboard Mirror HUD & Brightness)
  * - Dashboard element customization (Chainage, LHS/RHS Direction, Speedometer, Location)
- * - Shared Mini Map preferences (synchronized with Home Page, In-App Screensaver, and Lock-Screen)
- * - Google Maps-inspired Live Lock-Screen Chainage Navigation settings
- * - Real-time interactive Previews (Portrait, Landscape, Mirror HUD, Lock-Screen Navigation) & Reset Defaults
+ * - Shared Mini Map preferences (synchronized with Home Page and In-App Screensaver)
+ * - Real-time interactive Previews (Portrait, Landscape, Mirror HUD) & Reset Defaults
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -159,11 +148,9 @@ fun ScreensaverSettingsSectionContent(
     onMiniMapZoomOut: () -> Unit,
     onMiniMapRecenter: () -> Unit,
     onMiniMapStyleChange: (MiniMapStyle) -> Unit,
-    onToggleLockScreenNav: (Boolean) -> Unit,
     onResetDefaults: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val isDark = com.example.ui.theme.isAppDarkTheme()
 
@@ -176,43 +163,17 @@ fun ScreensaverSettingsSectionContent(
             "speedometer" to false,
             "location" to false,
             "mini_map" to false,
-            "lock_screen" to false,
             "previews_reset" to false
         )
     }
 
     var previewScreensaverMode by remember { mutableStateOf<ScreensaverDisplayMode?>(null) }
-    var showLockScreenPreview by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
 
     var customTimeoutText by remember(settings.inactivityTimeoutSeconds) {
         mutableStateOf(settings.inactivityTimeoutSeconds.toString())
     }
     var customTimeoutError by remember { mutableStateOf<String?>(null) }
-
-    // Android 13+ notification permission launcher so foreground lock-screen nav notification is visible
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) {
-        onToggleLockScreenNav(true)
-    }
-
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                onToggleLockScreenNav(true)
-            }
-        }
-    }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -491,6 +452,38 @@ fun ScreensaverSettingsSectionContent(
                 tag = "screensaver_mirror_switch"
             )
 
+            ScreensaverSwitchRow(
+                title = "Keep Screen Awake",
+                subtitle = "Prevent display sleep while Screensaver is active",
+                checked = settings.keepScreenAwake,
+                onCheckedChange = { awake ->
+                    onUpdateSettings { it.withKeepScreenAwake(awake) }
+                },
+                accentColor = accentColor,
+                tag = "screensaver_keep_awake_switch"
+            )
+
+            ScreensaverSwitchRow(
+                title = "Orientation Lock",
+                subtitle = "Hold current Portrait or Landscape orientation",
+                checked = settings.orientationLocked,
+                onCheckedChange = { locked ->
+                    onUpdateSettings { it.withOrientationLock(locked) }
+                },
+                accentColor = accentColor,
+                tag = "screensaver_orientation_lock_switch"
+            )
+
+            OptionChipGroup(
+                label = "Theme",
+                options = ScreensaverThemeMode.entries,
+                selected = settings.screensaverThemeMode,
+                labelFor = { it.label },
+                onSelect = { mode -> onUpdateSettings { it.withThemeMode(mode) } },
+                accentColor = accentColor,
+                tagPrefix = "screensaver_theme"
+            )
+
             ScreensaverSliderRow(
                 title = "Windshield HUD Brightness",
                 value = settings.hudBrightness,
@@ -766,7 +759,7 @@ fun ScreensaverSettingsSectionContent(
         }
 
         // ============================================================
-        // 7. SHARED MINI MAP SETTINGS (HOME + SCREENSAVER + LOCK-SCREEN)
+        // 7. SHARED MINI MAP SETTINGS (HOME + SCREENSAVER)
         // ============================================================
         ScreensaverSubDropdown(
             title = "Shared Mini Map",
@@ -779,7 +772,7 @@ fun ScreensaverSettingsSectionContent(
         ) {
             ScreensaverSwitchRow(
                 title = "Show Shared Mini Map",
-                subtitle = "Home Page, Screensaver & Lock-Screen",
+                subtitle = "Home Page & Screensaver",
                 checked = settings.miniMapVisible,
                 onCheckedChange = { v -> onUpdateSettings { it.withMiniMapVisible(v) } },
                 accentColor = accentColor,
@@ -930,140 +923,11 @@ fun ScreensaverSettingsSectionContent(
         }
 
         // ============================================================
-        // 8. LIVE LOCK-SCREEN CHAINAGE NAVIGATION
-        // ============================================================
-        ScreensaverSubDropdown(
-            title = "Lock-Screen Navigation",
-            subtitle = if (settings.lockScreenNavEnabled) "Active" else "Off",
-            icon = Icons.Default.Lock,
-            accentColor = secondaryColor,
-            isExpanded = subExpanded["lock_screen"] == true,
-            onToggle = { subExpanded["lock_screen"] = !(subExpanded["lock_screen"] ?: false) },
-            headerTag = "screensaver_section_lockscreen"
-        ) {
-            ScreensaverSwitchRow(
-                title = "Enable Lock-Screen Navigation",
-                subtitle = "Background GPS service & notification (never bypasses PIN/biometrics)",
-                checked = settings.lockScreenNavEnabled,
-                onCheckedChange = { enable ->
-                    if (!enable) {
-                        onToggleLockScreenNav(false)
-                    } else {
-                        val hasFineLoc = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.ACCESS_FINE_LOCATION
-                        ) == PackageManager.PERMISSION_GRANTED
-                        val hasCoarseLoc = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (!hasFineLoc && !hasCoarseLoc) {
-                            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                            ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.POST_NOTIFICATIONS
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        } else {
-                            onToggleLockScreenNav(true)
-                        }
-                    }
-                },
-                accentColor = secondaryColor,
-                tag = "lock_screen_nav_enable_switch"
-            )
-
-            ScreensaverSwitchRow(
-                title = "Auto-Open View When Screen Locks",
-                subtitle = null,
-                checked = settings.lockScreenOpenActivityOnLock,
-                enabled = settings.lockScreenNavEnabled,
-                onCheckedChange = { v -> onUpdateSettings { it.copy(lockScreenOpenActivityOnLock = v) } },
-                accentColor = secondaryColor,
-                tag = "lock_screen_nav_open_on_lock_switch"
-            )
-
-            ScreensaverSwitchRow(
-                title = "Show Next KM Marker Card",
-                subtitle = null,
-                checked = settings.lockScreenShowNextMarker,
-                enabled = settings.lockScreenNavEnabled,
-                onCheckedChange = { v -> onUpdateSettings { it.copy(lockScreenShowNextMarker = v) } },
-                accentColor = secondaryColor,
-                tag = "lock_screen_nav_next_marker_switch"
-            )
-
-            ScreensaverSwitchRow(
-                title = "Show Live Speed (km/h)",
-                subtitle = null,
-                checked = settings.lockScreenShowSpeed,
-                enabled = settings.lockScreenNavEnabled,
-                onCheckedChange = { v -> onUpdateSettings { it.copy(lockScreenShowSpeed = v) } },
-                accentColor = secondaryColor,
-                tag = "lock_screen_nav_speed_switch"
-            )
-
-            ScreensaverSwitchRow(
-                title = "Show Verified ETA",
-                subtitle = "Only computed while moving toward a marker",
-                checked = settings.lockScreenShowEta,
-                enabled = settings.lockScreenNavEnabled,
-                onCheckedChange = { v -> onUpdateSettings { it.copy(lockScreenShowEta = v) } },
-                accentColor = secondaryColor,
-                tag = "lock_screen_nav_eta_switch"
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { showLockScreenPreview = true },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("lock_screen_nav_preview_btn"),
-                    border = BorderStroke(1.dp, secondaryColor.copy(alpha = 0.65f))
-                ) {
-                    Icon(Icons.Default.Visibility, contentDescription = null, tint = secondaryColor, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Preview", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = secondaryColor)
-                }
-                Button(
-                    onClick = {
-                        try {
-                            val launchIntent = Intent(context, LockScreenNavigationActivity::class.java).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                            }
-                            context.startActivity(launchIntent)
-                        } catch (_: Exception) {
-                            showLockScreenPreview = true
-                        }
-                    },
-                    enabled = settings.lockScreenNavEnabled,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = secondaryColor,
-                        contentColor = if (isDark) Color.Black else Color.White
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("lock_screen_nav_launch_now_btn")
-                ) {
-                    Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Open Nav View", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // ============================================================
-        // 9. PREVIEWS & RESET SCREENSAVER SETTINGS
+        // 8. PREVIEWS & RESET SCREENSAVER SETTINGS
         // ============================================================
         ScreensaverSubDropdown(
             title = "Live Previews & Reset",
-            subtitle = "Portrait, Landscape, Mirror & Lock-Screen",
+            subtitle = "Portrait, Landscape & Mirror HUD",
             icon = Icons.Default.Tune,
             accentColor = accentColor,
             isExpanded = subExpanded["previews_reset"] == true,
@@ -1092,12 +956,6 @@ fun ScreensaverSettingsSectionContent(
                     modifier = Modifier.testTag("screensaver_preview_mirror_btn")
                 ) {
                     Text("Mirror HUD Preview", fontSize = 11.5.sp)
-                }
-                OutlinedButton(
-                    onClick = { showLockScreenPreview = true },
-                    modifier = Modifier.testTag("screensaver_preview_lockscreen_btn")
-                ) {
-                    Text("Lock-Screen Preview", fontSize = 11.5.sp)
                 }
             }
 
@@ -1190,10 +1048,19 @@ fun ScreensaverSettingsSectionContent(
         ) {
             val localView = LocalView.current
             val dialogWindow = (localView.parent as? DialogWindowProvider)?.window
-            DisposableEffect(dialogWindow, localView) {
+            KeepScreenOn(
+                enabled = previewSettings.keepScreenAwake,
+                requesterId = "ScreensaverPreview"
+            )
+            DisposableEffect(dialogWindow, localView, previewSettings.keepScreenAwake) {
                 if (dialogWindow != null) {
                     dialogWindow.setDimAmount(0f)
                     dialogWindow.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+                    if (previewSettings.keepScreenAwake) {
+                        dialogWindow.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        dialogWindow.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
                 }
                 applyScreensaverImmersiveMode(
                     dialogWindow = dialogWindow,
@@ -1202,6 +1069,7 @@ fun ScreensaverSettingsSectionContent(
                     enable = true
                 )
                 onDispose {
+                    dialogWindow?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     applyScreensaverImmersiveMode(
                         dialogWindow = dialogWindow,
                         dialogView = localView,
@@ -1235,68 +1103,12 @@ fun ScreensaverSettingsSectionContent(
                         else -> ScreensaverDisplayMode.PORTRAIT
                     }
                 },
+                onToggleOrientationLock = { currentlyLandscape ->
+                    onUpdateSettings {
+                        it.withOrientationLock(!it.orientationLocked, currentlyLandscape)
+                    }
+                },
                 onDismiss = { previewScreensaverMode = null }
-            )
-        }
-    }
-
-    // ============================================================
-    // LOCK-SCREEN NAVIGATION LIVE PREVIEW DIALOG
-    // ============================================================
-    if (showLockScreenPreview) {
-        val hasRealData = activeRoute != null && locationState.point != null
-        val previewRoute = activeRoute ?: PREVIEW_SAMPLE_ROUTE
-        val previewLocation = locationState.point ?: PREVIEW_SAMPLE_POINT
-        val previewNavState = remember(
-            hasRealData,
-            locationState,
-            matchResult,
-            activeRoute?.id,
-            projectProfile,
-            currentLocationName
-        ) {
-            if (hasRealData) {
-                LockScreenNavStateResolver().resolve(
-                    locationState = locationState,
-                    matchResult = matchResult,
-                    routeData = activeRoute,
-                    projectProfile = projectProfile,
-                    locationName = currentLocationName
-                )
-            } else {
-                LockScreenNavStateResolver.samplePreviewState()
-            }
-        }
-
-        Dialog(
-            onDismissRequest = { showLockScreenPreview = false },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = false
-            )
-        ) {
-            val localView = LocalView.current
-            val dialogWindow = (localView.parent as? DialogWindowProvider)?.window
-            DisposableEffect(dialogWindow) {
-                dialogWindow?.setLayout(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT
-                )
-                onDispose {}
-            }
-            LockScreenNavigationContent(
-                navState = previewNavState,
-                location = previewLocation,
-                bearing = locationState.bearing ?: 38f,
-                compassHeading = compassHeading,
-                routeData = previewRoute,
-                screensaverSettings = settings,
-                onClose = { showLockScreenPreview = false },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("lock_screen_preview_dialog")
             )
         }
     }
@@ -1313,7 +1125,7 @@ fun ScreensaverSettingsSectionContent(
             },
             text = {
                 Text(
-                    "This restores General Screensaver, Display Mode, Mirror HUD, Dashboard Elements, Shared Mini Map, and Lock-Screen Navigation preferences to default values.",
+                    "This restores General Screensaver, Display Mode, Mirror HUD, Dashboard Elements, and Shared Mini Map preferences to default values.",
                     fontSize = 13.sp
                 )
             },

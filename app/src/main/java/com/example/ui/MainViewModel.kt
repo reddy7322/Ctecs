@@ -303,60 +303,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     // Project & Overlay Settings (Authoritative in-memory StateFlow synced with DataStore)
-    private val _projectProfile = MutableStateFlow(ProjectProfile())
+    private val _projectProfile = MutableStateFlow(preferencesManager.getInitialProjectProfile())
     val projectProfile: StateFlow<ProjectProfile> = _projectProfile.asStateFlow()
 
     val definedProjects: StateFlow<List<DefinedProject>> = preferencesManager.definedProjectsFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialDefinedProjects()
     )
 
     val overlayConfig: StateFlow<OverlayConfig> = preferencesManager.overlayConfigFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = OverlayConfig()
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialOverlayConfig()
     )
 
     val galleryViewMode: StateFlow<String> = preferencesManager.galleryViewModeFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "grid"
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialGalleryViewMode()
     )
 
     val gallerySortOption: StateFlow<String> = preferencesManager.gallerySortOptionFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "Newest first"
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialGallerySortOption()
     )
 
     val galleryGroupOption: StateFlow<String> = preferencesManager.galleryGroupOptionFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "None"
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialGalleryGroupOption()
     )
 
     fun updateGalleryPrefs(viewMode: String? = null, sortOption: String? = null, groupOption: String? = null) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateGalleryPreferences(viewMode, sortOption, groupOption)
         }
     }
 
     val themeMode: StateFlow<String> = preferencesManager.themeModeFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "system"
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialThemeMode()
     )
 
     fun setThemeMode(mode: String) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateThemeMode(mode)
+        }
+        viewModelScope.launch {
             _uiMessages.emit(UiMessage.Info("Theme updated to ${mode.replaceFirstChar { it.uppercase() }}"))
         }
     }
 
     // Dynamic Location Name Detection & Resolution
-    private val _currentLocationName = MutableStateFlow("")
+    private val _currentLocationName = MutableStateFlow(
+        preferencesManager.getInitialOverlayConfig().lastDetectedLocationName
+    )
     val currentLocationName: StateFlow<String> = _currentLocationName.asStateFlow()
 
     fun refreshLocationName() {
@@ -371,7 +375,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 if (name.isNotBlank()) {
                     _currentLocationName.value = name
-                    saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
+                    preferencesManager.updateLastDetectedLocationName(name)
                     showToast("Location updated: $name", ToastType.SUCCESS)
                 } else {
                     showToast("Unable to resolve area name. Check network.", ToastType.WARNING)
@@ -384,13 +388,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val mapThemePreference: StateFlow<String> = preferencesManager.mapThemeFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "system"
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialMapTheme()
     )
 
     fun setMapTheme(theme: String) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateMapTheme(theme)
+        }
+        viewModelScope.launch {
             val label = when (theme.lowercase()) {
                 "light" -> "Light"
                 "dark" -> "Dark"
@@ -402,27 +408,101 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val mapTypePreference: StateFlow<String> = preferencesManager.mapTypeFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "standard"
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialMapType()
     )
 
     fun setMapType(type: String) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateMapType(type)
+        }
+        viewModelScope.launch {
             val label = if (type.equals("satellite", ignoreCase = true)) "Satellite" else "Standard (Street)"
             _uiMessages.emit(UiMessage.Info("Map Type: $label"))
         }
     }
 
-    private val _homeScreensaverSettings = MutableStateFlow(HomeScreensaverSettings())
+    val preferredExternalNavAppId: StateFlow<String?> = preferencesManager.preferredExternalNavAppIdFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialPreferredExternalNavAppId()
+    )
+
+    fun setPreferredExternalNavAppId(appId: String?) {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updatePreferredExternalNavAppId(appId)
+        }
+    }
+
+    val surveyShow200mLabels: StateFlow<Boolean> = preferencesManager.surveyShow200mLabelsFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialSurveyShow200mLabels()
+    )
+
+    val surveyShowCentreline: StateFlow<Boolean> = preferencesManager.surveyShowCentrelineFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialSurveyShowCentreline()
+    )
+
+    val surveyShowGpsTrack: StateFlow<Boolean> = preferencesManager.surveyShowGpsTrackFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialSurveyShowGpsTrack()
+    )
+
+    val surveyShowLaneTrack: StateFlow<Boolean> = preferencesManager.surveyShowLaneTrackFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialSurveyShowLaneTrack()
+    )
+
+    val surveyShowMarkers: StateFlow<Boolean> = preferencesManager.surveyShowMarkersFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialSurveyShowMarkers()
+    )
+
+    val surveyMapType: StateFlow<String> = preferencesManager.surveyMapTypeFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialSurveyMapType()
+    )
+
+    fun updateSurveyMapPreferences(
+        show200mLabels: Boolean? = null,
+        showCentreline: Boolean? = null,
+        showGpsTrack: Boolean? = null,
+        showLaneTrack: Boolean? = null,
+        showMarkers: Boolean? = null,
+        mapType: String? = null
+    ) {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateSurveyMapPreferences(
+                show200mLabels = show200mLabels,
+                showCentreline = showCentreline,
+                showGpsTrack = showGpsTrack,
+                showLaneTrack = showLaneTrack,
+                showMarkers = showMarkers,
+                mapType = mapType
+            )
+        }
+    }
+
+    private val _homeScreensaverSettings = MutableStateFlow(preferencesManager.getInitialHomeScreensaverSettings())
     val homeScreensaverSettings: StateFlow<HomeScreensaverSettings> = _homeScreensaverSettings.asStateFlow()
+    private val _isScreensaverActive = MutableStateFlow(false)
+    val isScreensaverActive: StateFlow<Boolean> = _isScreensaverActive.asStateFlow()
+    private val _screensaverSensorPosture = MutableStateFlow<com.example.ui.home.ScreensaverSensorPosture?>(null)
+    val screensaverSensorPosture: StateFlow<com.example.ui.home.ScreensaverSensorPosture?> = _screensaverSensorPosture.asStateFlow()
     private val homeScreensaverMutationLock = Any()
     private var homeScreensaverWriteVersion = 0L
     private var homeScreensaverFlushedVersion = 0L
     private var homeScreensaverWriteJob: Job? = null
 
     private val _navigationNotificationSettings =
-        MutableStateFlow(com.example.model.NavigationNotificationSettings())
+        MutableStateFlow(preferencesManager.getInitialNavigationNotificationSettings())
     val navigationNotificationSettings: StateFlow<com.example.model.NavigationNotificationSettings> =
         _navigationNotificationSettings.asStateFlow()
     private val navNotifMutationLock = Any()
@@ -430,14 +510,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var navNotifFlushedVersion = 0L
     private var navNotifWriteJob: Job? = null
 
-    private val _widgetSettings = MutableStateFlow(com.example.model.CtecsWidgetSettings())
+    private val _widgetSettings = MutableStateFlow(preferencesManager.getInitialWidgetSettings())
     val widgetSettings: StateFlow<com.example.model.CtecsWidgetSettings> = _widgetSettings.asStateFlow()
     private val widgetSettingsMutationLock = Any()
     private var widgetSettingsWriteVersion = 0L
     private var widgetSettingsFlushedVersion = 0L
     private var widgetSettingsWriteJob: Job? = null
 
-    private val _kmStoneAlertSettings = MutableStateFlow(com.example.model.KmStoneAlertSettings())
+    private val _kmStoneAlertSettings = MutableStateFlow(preferencesManager.getInitialKmStoneAlertSettings())
     val kmStoneAlertSettings: StateFlow<com.example.model.KmStoneAlertSettings> = _kmStoneAlertSettings.asStateFlow()
     private val kmStoneAlertMutationLock = Any()
     private var kmStoneAlertWriteVersion = 0L
@@ -459,12 +539,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         CtecsNavigationTelemetryHub.updateTelemetry(widgetSettings = snapshot)
         com.example.widget.CtecsWidgetUpdater.cacheWidgetSettings(getApplication(), snapshot)
         com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
-        widgetSettingsWriteJob?.cancel()
-        widgetSettingsWriteJob = viewModelScope.launch {
-            preferencesManager.updateWidgetSettings(snapshot)
+        preferencesManager.launchSafeEdit {
+            val (targetVersion, targetSnapshot) = synchronized(widgetSettingsMutationLock) {
+                if (widgetSettingsWriteVersion <= widgetSettingsFlushedVersion) return@launchSafeEdit
+                widgetSettingsWriteVersion to _widgetSettings.value
+            }
+            preferencesManager.updateWidgetSettings(targetSnapshot)
             synchronized(widgetSettingsMutationLock) {
-                if (myVersion > widgetSettingsFlushedVersion) {
-                    widgetSettingsFlushedVersion = myVersion
+                if (targetVersion > widgetSettingsFlushedVersion) {
+                    widgetSettingsFlushedVersion = targetVersion
                 }
             }
         }
@@ -510,12 +593,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             kmStoneAlertWriteVersion to updated
         }
         CtecsNavigationTelemetryHub.updateTelemetry(kmStoneAlertSettings = snapshot)
-        kmStoneAlertWriteJob?.cancel()
-        kmStoneAlertWriteJob = viewModelScope.launch {
-            preferencesManager.updateKmStoneAlertSettings(snapshot)
+        preferencesManager.launchSafeEdit {
+            val (targetVersion, targetSnapshot) = synchronized(kmStoneAlertMutationLock) {
+                if (kmStoneAlertWriteVersion <= kmStoneAlertFlushedVersion) return@launchSafeEdit
+                kmStoneAlertWriteVersion to _kmStoneAlertSettings.value
+            }
+            preferencesManager.updateKmStoneAlertSettings(targetSnapshot)
             synchronized(kmStoneAlertMutationLock) {
-                if (myVersion > kmStoneAlertFlushedVersion) {
-                    kmStoneAlertFlushedVersion = myVersion
+                if (targetVersion > kmStoneAlertFlushedVersion) {
+                    kmStoneAlertFlushedVersion = targetVersion
                 }
             }
         }
@@ -542,12 +628,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             homeScreensaverWriteVersion to updated
         }
         CtecsNavigationTelemetryHub.updateTelemetry(screensaverSettings = snapshot)
-        homeScreensaverWriteJob?.cancel()
-        homeScreensaverWriteJob = viewModelScope.launch {
-            preferencesManager.updateHomeScreensaverSettings(snapshot)
+        preferencesManager.launchSafeEdit {
+            val (targetVersion, targetSnapshot) = synchronized(homeScreensaverMutationLock) {
+                if (homeScreensaverWriteVersion <= homeScreensaverFlushedVersion) return@launchSafeEdit
+                homeScreensaverWriteVersion to _homeScreensaverSettings.value
+            }
+            preferencesManager.updateHomeScreensaverSettings(targetSnapshot)
             synchronized(homeScreensaverMutationLock) {
-                if (myVersion > homeScreensaverFlushedVersion) {
-                    homeScreensaverFlushedVersion = myVersion
+                if (targetVersion > homeScreensaverFlushedVersion) {
+                    homeScreensaverFlushedVersion = targetVersion
                 }
             }
         }
@@ -576,6 +665,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setScreensaverAutoOrientationEnabled(enabled: Boolean) {
         updateHomeScreensaverState { current ->
             current.withAutoOrientation(enabled)
+        }
+    }
+
+    fun setScreensaverActive(active: Boolean) {
+        _isScreensaverActive.value = active
+        if (!active) {
+            _screensaverSensorPosture.value = null
+        }
+    }
+
+    fun updateScreensaverSensorPosture(posture: com.example.ui.home.ScreensaverSensorPosture?) {
+        _screensaverSensorPosture.value = posture
+    }
+
+    fun setScreensaverKeepScreenAwake(enabled: Boolean) {
+        updateHomeScreensaverState { current ->
+            current.withKeepScreenAwake(enabled)
+        }
+    }
+
+    fun setScreensaverOrientationLocked(
+        locked: Boolean,
+        currentIsLandscape: Boolean? = null
+    ) {
+        updateHomeScreensaverState { current ->
+            current.withOrientationLock(locked, currentIsLandscape)
+        }
+    }
+
+    fun setScreensaverThemeMode(mode: com.example.model.ScreensaverThemeMode) {
+        updateHomeScreensaverState { current ->
+            current.withThemeMode(mode)
         }
     }
 
@@ -637,7 +758,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateHomeScreensaverState { current ->
             current.withMiniMapStyle(style)
         }
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             when (style) {
                 MiniMapStyle.STANDARD -> {
                     preferencesManager.updateMapType("standard")
@@ -658,23 +779,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setLockScreenNavigationEnabled(enabled: Boolean) {
-        updateHomeScreensaverState { current ->
-            current.copy(lockScreenNavEnabled = enabled)
-        }
-        if (enabled && !_navigationNotificationSettings.value.enabled) {
-            updateNavNotificationState { it.copy(enabled = true) }
-        }
-        if (enabled) {
-            startLocation()
-        }
-        val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-            screensaverSettings = _homeScreensaverSettings.value,
-            notifSettings = _navigationNotificationSettings.value
-        )
-        LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
-    }
-
     private fun updateNavNotificationState(
         transform: (com.example.model.NavigationNotificationSettings) -> com.example.model.NavigationNotificationSettings
     ) {
@@ -685,12 +789,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             navNotifWriteVersion to updated
         }
         CtecsNavigationTelemetryHub.updateTelemetry(navigationNotificationSettings = snapshot)
-        navNotifWriteJob?.cancel()
-        navNotifWriteJob = viewModelScope.launch {
-            preferencesManager.updateNavigationNotificationSettings(snapshot)
+        preferencesManager.launchSafeEdit {
+            val (targetVersion, targetSnapshot) = synchronized(navNotifMutationLock) {
+                if (navNotifWriteVersion <= navNotifFlushedVersion) return@launchSafeEdit
+                navNotifWriteVersion to _navigationNotificationSettings.value
+            }
+            preferencesManager.updateNavigationNotificationSettings(targetSnapshot)
             synchronized(navNotifMutationLock) {
-                if (myVersion > navNotifFlushedVersion) {
-                    navNotifFlushedVersion = myVersion
+                if (targetVersion > navNotifFlushedVersion) {
+                    navNotifFlushedVersion = targetVersion
                 }
             }
         }
@@ -704,12 +811,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setNavigationNotificationEnabled(enabled: Boolean) {
         updateNavNotificationState { current -> current.copy(enabled = enabled) }
-        updateHomeScreensaverState { current -> current.copy(lockScreenNavEnabled = enabled) }
         if (enabled) {
             startLocation()
         }
         val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-            screensaverSettings = _homeScreensaverSettings.value,
             notifSettings = _navigationNotificationSettings.value
         )
         LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
@@ -719,7 +824,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val defaults = com.example.model.NavigationNotificationSettings.defaultSettings()
         updateNavNotificationState { defaults }
         val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-            screensaverSettings = _homeScreensaverSettings.value,
             notifSettings = defaults
         )
         LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
@@ -729,8 +833,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resetScreensaverSettings() {
         val defaults = HomeScreensaverSettings.defaultSettings()
         updateHomeScreensaverState { defaults }
-        LockScreenNavigationService.syncServiceState(getApplication(), false)
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateMapType("standard")
             preferencesManager.updateMapTheme("system")
         }
@@ -739,12 +842,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val cameraSettings: StateFlow<com.example.model.CameraSettings> = preferencesManager.cameraSettingsFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = com.example.model.CameraSettings()
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialCameraSettings()
     )
 
     // Capture mode (PHOTO vs VIDEO)
-    private val _captureMode = MutableStateFlow(com.example.model.CaptureMode.PHOTO)
+    private val _captureMode = MutableStateFlow(preferencesManager.getInitialCaptureMode())
     val captureMode: StateFlow<com.example.model.CaptureMode> = _captureMode.asStateFlow()
 
     // Video recording states
@@ -761,36 +864,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isExportingVideo: StateFlow<Boolean> = _isExportingVideo.asStateFlow()
 
     // Zoom & Exposure
-    private val _currentZoomRatio = MutableStateFlow(1.0f)
+    private val _currentZoomRatio = MutableStateFlow(preferencesManager.getInitialCameraSettings().defaultLensZoom)
     val currentZoomRatio: StateFlow<Float> = _currentZoomRatio.asStateFlow()
 
-    private val _exposureCompensation = MutableStateFlow(0)
+    private val _exposureCompensation = MutableStateFlow(preferencesManager.getInitialCameraSettings().exposureCompensationStep)
     val exposureCompensation: StateFlow<Int> = _exposureCompensation.asStateFlow()
 
     // Manual chainage override state (Camera Screen simple custom chainage, independent of Chainage Control System)
-    private val _manualChainage = MutableStateFlow<Chainage?>(null)
+    private val _manualChainage = MutableStateFlow<Chainage?>(preferencesManager.getInitialManualChainageOverride())
     val manualChainage: StateFlow<Chainage?> = _manualChainage.asStateFlow()
 
-    private val _manualChainageText = MutableStateFlow<String?>(null)
+    private val _manualChainageText = MutableStateFlow<String?>(preferencesManager.getInitialManualChainageText())
     val manualChainageText: StateFlow<String?> = _manualChainageText.asStateFlow()
 
     val savedCustomChainages: StateFlow<List<String>> = preferencesManager.savedCustomChainagesFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialSavedCustomChainages()
     )
 
     // Smart KMZ Chainage Correction StateFlows
     val routeCorrectionsMap: StateFlow<Map<String, List<ChainageCorrectionPoint>>> = preferencesManager.routeCorrectionsFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyMap()
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialRouteCorrections()
     )
 
     val isRouteCorrectionsEnabled: StateFlow<Boolean> = preferencesManager.routeCorrectionsEnabledFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = true
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialRouteCorrectionsEnabled()
     )
 
     val activeRouteCorrections: StateFlow<List<ChainageCorrectionPoint>> = combine(
@@ -804,14 +907,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.Eagerly,
         initialValue = emptyList()
     )
 
     val calibrationProfiles: StateFlow<List<PermanentCalibrationProfile>> = preferencesManager.calibrationProfilesFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialCalibrationProfiles()
     )
 
     private val _activeProfileCompatibility = MutableStateFlow<SmartChainageCorrectionEngine.ProfileCompatibilityResult?>(null)
@@ -819,20 +922,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val chainageAuditLog: StateFlow<List<ChainageLogEntry>> = preferencesManager.chainageAuditLogFlow.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialChainageAuditLog()
     )
 
-    private val progressionTracker = com.example.geo.ChainageProgressionTracker()
+    private val progressionTracker = com.example.geo.ChainageProgressionTracker().apply {
+        val initialProfile = preferencesManager.getInitialProjectProfile()
+        if (preferencesManager.isProjectRoadSideExplicitlySaved() && initialProfile.roadSide != RoadSide.NONE) {
+            setManualSide(initialProfile.roadSide.label)
+        }
+    }
     private val refreshCoordinator = ChainageAccuracyRefreshCoordinator()
     private val stuckChainageMonitor = StuckChainageMonitor()
 
-    val selectedAlignmentId = MutableStateFlow<String?>(null)
+    val selectedAlignmentId = MutableStateFlow<String?>(preferencesManager.getInitialSelectedAlignmentId())
     @Volatile
     private var lastCalculatedMatchResult: ChainageMatchResult? = null
 
     fun selectAlignment(alignmentId: String?) {
         selectedAlignmentId.value = alignmentId
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateSelectedAlignmentId(alignmentId)
+        }
     }
 
     private val effectiveRouteFlow: Flow<RouteData?> = combine(activeRouteData, selectedAlignmentId) { route, selectedAlignId ->
@@ -1129,10 +1240,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     // Camera settings in UI
-    private val _isFlashOn = MutableStateFlow(false)
+    private val _isFlashOn = MutableStateFlow(preferencesManager.getInitialIsFlashOn())
     val isFlashOn: StateFlow<Boolean> = _isFlashOn.asStateFlow()
 
-    private val _isFrontCamera = MutableStateFlow(false)
+    private val _isFrontCamera = MutableStateFlow(preferencesManager.getInitialIsFrontCamera())
     val isFrontCamera: StateFlow<Boolean> = _isFrontCamera.asStateFlow()
 
     private val _isCapturing = MutableStateFlow(false)
@@ -1178,13 +1289,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 resolvedSnapshot?.let { snap ->
                     CtecsNavigationTelemetryHub.updateTelemetry(screensaverSettings = snap)
-                    val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-                        screensaverSettings = snap,
-                        notifSettings = _navigationNotificationSettings.value
-                    )
-                    if (stayActive) {
-                        LockScreenNavigationService.syncServiceState(getApplication(), true)
-                    }
                 }
             }
         }
@@ -1202,7 +1306,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 resolvedNotif?.let { snap ->
                     CtecsNavigationTelemetryHub.updateTelemetry(navigationNotificationSettings = snap)
                     val stayActive = LockScreenNavigationService.shouldNotificationServiceStayActive(
-                        screensaverSettings = _homeScreensaverSettings.value,
                         notifSettings = snap
                     )
                     LockScreenNavigationService.syncServiceState(getApplication(), stayActive)
@@ -1409,7 +1512,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 if (name.isNotBlank() && name != _currentLocationName.value) {
                     _currentLocationName.value = name
-                    saveOverlayConfigSilent(overlayConfig.value.copy(lastDetectedLocationName = name))
+                    preferencesManager.updateLastDetectedLocationName(name)
                 }
             }
         }
@@ -1586,11 +1689,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleFlash() {
-        _isFlashOn.value = !_isFlashOn.value
+        val next = !_isFlashOn.value
+        _isFlashOn.value = next
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateIsFlashOn(next)
+        }
     }
 
     fun toggleCameraFacing() {
-        _isFrontCamera.value = !_isFrontCamera.value
+        val next = !_isFrontCamera.value
+        _isFrontCamera.value = next
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateIsFrontCamera(next)
+        }
     }
 
     fun openManualChainageDialog() {
@@ -2125,7 +2236,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateSide(side: RoadSide) {
         progressionTracker.setManualSide(side.label)
         _projectProfile.update { it.copy(roadSide = side) }
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.editProjectProfile { it.copy(roadSide = side) }
         }
     }
@@ -2146,7 +2257,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateLane(lane: String) {
         val clean = lane.trim()
         _projectProfile.update { it.copy(lane = clean) }
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.editProjectProfile { it.copy(lane = clean) }
         }
     }
@@ -2154,7 +2265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateActivity(activity: String) {
         val clean = activity.trim()
         _projectProfile.update { it.copy(activity = clean) }
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.editProjectProfile { it.copy(activity = clean) }
         }
     }
@@ -2162,7 +2273,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateSubActivity(subActivity: String) {
         val clean = subActivity.trim()
         _projectProfile.update { it.copy(subActivity = clean) }
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.editProjectProfile { it.copy(subActivity = clean) }
         }
     }
@@ -2170,7 +2281,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateCustomDescription(description: String) {
         val clean = description.trim()
         _projectProfile.update { it.copy(customDescription = clean) }
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.editProjectProfile { it.copy(customDescription = clean) }
         }
     }
@@ -2178,23 +2289,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateWorkType(workType: String) {
         val clean = workType.trim()
         _projectProfile.update { it.copy(workType = clean) }
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.editProjectProfile { it.copy(workType = clean) }
         }
     }
 
     fun saveProjectProfile(profile: ProjectProfile) {
         _projectProfile.value = profile
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateProjectProfile(profile)
             syncProjectToRepository(profile)
+        }
+        viewModelScope.launch {
             _uiMessages.emit(UiMessage.Success("Project profile saved"))
         }
     }
 
     fun saveProjectProfileSilent(profile: ProjectProfile) {
         _projectProfile.value = profile
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateProjectProfile(profile)
             syncProjectToRepository(profile)
         }
@@ -2220,13 +2333,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveDefinedProjects(projects: List<DefinedProject>) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateDefinedProjects(projects)
         }
     }
 
     fun addDefinedProject(project: DefinedProject) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             val current = definedProjects.value.toMutableList()
             val index = current.indexOfFirst { it.name.equals(project.name, ignoreCase = true) }
             if (index >= 0) {
@@ -2239,7 +2352,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeDefinedProject(name: String) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             val current = definedProjects.value.filterNot { it.name.equals(name, ignoreCase = true) }
             preferencesManager.updateDefinedProjects(current)
         }
@@ -2266,104 +2379,119 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveOverlayConfig(config: OverlayConfig) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateOverlayConfig(config)
+        }
+        viewModelScope.launch {
             _uiMessages.emit(UiMessage.Success("Overlay configuration saved"))
         }
     }
 
     fun saveOverlayConfigSilent(config: OverlayConfig) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateOverlayConfig(config)
         }
     }
 
     fun resetMiniMapDefaults() {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.editOverlayConfig { current ->
+                current.copy(
+                    showMapInset = true,
+                    photoMiniMap = com.example.model.MiniMapStyleConfig(),
+                    videoMiniMap = com.example.model.MiniMapStyleConfig()
+                )
+            }
+        }
         viewModelScope.launch {
-            val reset = overlayConfig.value.copy(
-                showMapInset = true,
-                photoMiniMap = com.example.model.MiniMapStyleConfig(),
-                videoMiniMap = com.example.model.MiniMapStyleConfig()
-            )
-            preferencesManager.updateOverlayConfig(reset)
             _uiMessages.emit(UiMessage.Info("Mini Map settings reset to default"))
         }
     }
 
     fun saveCameraSettings(settings: com.example.model.CameraSettings) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateCameraSettings(settings)
+        }
+        viewModelScope.launch {
             _uiMessages.emit(UiMessage.Success("Camera settings saved"))
         }
     }
 
     fun saveCameraSettingsSilent(settings: com.example.model.CameraSettings) {
-        viewModelScope.launch {
+        preferencesManager.launchSafeEdit {
             preferencesManager.updateCameraSettings(settings)
         }
     }
 
     fun toggleRecordAudio() {
-        val current = cameraSettings.value
-        val updated = current.copy(recordAudio = !current.recordAudio)
-        saveCameraSettingsSilent(updated)
-        val state = if (updated.recordAudio) "enabled" else "disabled"
-        showToast("Audio recording $state", ToastType.SETTINGS_SAVED)
+        viewModelScope.launch {
+            val updated = preferencesManager.editCameraSettings { current ->
+                current.copy(recordAudio = !current.recordAudio)
+            }
+            val state = if (updated.recordAudio) "enabled" else "disabled"
+            showToast("Audio recording $state", ToastType.SETTINGS_SAVED)
+        }
     }
 
     fun setCaptureMode(mode: com.example.model.CaptureMode) {
         _captureMode.value = mode
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateCaptureMode(mode)
+        }
     }
 
     fun setCameraMode(mode: CameraMode) {
-        viewModelScope.launch {
-            val updatedSettings = cameraSettings.value.copy(cameraMode = mode)
-            preferencesManager.updateCameraSettings(updatedSettings)
-
-            val updatedOverlay = when (mode) {
-                CameraMode.HIGHWAY -> overlayConfig.value.copy(
-                    showTimestamp = true,
-                    showCoordinates = true,
-                    showChainage = true,
-                    showMapInset = true,
-                    showProjectInfo = true,
-                    showCompass = true,
-                    showAltitude = true,
-                    showAccuracy = true
-                )
-                CameraMode.NORMAL -> overlayConfig.value.copy(
-                    showTimestamp = true,
-                    showCoordinates = false,
-                    showChainage = false,
-                    showMapInset = false,
-                    showProjectInfo = false,
-                    showCompass = false,
-                    showAltitude = false,
-                    showAccuracy = false
-                )
-                CameraMode.TIMESTAMP -> overlayConfig.value.copy(
-                    showTimestamp = true,
-                    showCoordinates = false,
-                    showChainage = false,
-                    showMapInset = false,
-                    showProjectInfo = false,
-                    showCompass = false,
-                    showAltitude = false,
-                    showAccuracy = false
-                )
-                CameraMode.LOCATION -> overlayConfig.value.copy(
-                    showTimestamp = true,
-                    showCoordinates = true,
-                    showChainage = false,
-                    showMapInset = true,
-                    showProjectInfo = false,
-                    showCompass = true,
-                    showAltitude = true,
-                    showAccuracy = true
-                )
-                CameraMode.CUSTOM -> overlayConfig.value
+        preferencesManager.launchSafeEdit {
+            preferencesManager.editCameraSettings { current ->
+                current.copy(cameraMode = mode)
             }
-            preferencesManager.updateOverlayConfig(updatedOverlay)
+            preferencesManager.editOverlayConfig { current ->
+                when (mode) {
+                    CameraMode.HIGHWAY -> current.copy(
+                        showTimestamp = true,
+                        showCoordinates = true,
+                        showChainage = true,
+                        showMapInset = true,
+                        showProjectInfo = true,
+                        showCompass = true,
+                        showAltitude = true,
+                        showAccuracy = true
+                    )
+                    CameraMode.NORMAL -> current.copy(
+                        showTimestamp = true,
+                        showCoordinates = false,
+                        showChainage = false,
+                        showMapInset = false,
+                        showProjectInfo = false,
+                        showCompass = false,
+                        showAltitude = false,
+                        showAccuracy = false
+                    )
+                    CameraMode.TIMESTAMP -> current.copy(
+                        showTimestamp = true,
+                        showCoordinates = false,
+                        showChainage = false,
+                        showMapInset = false,
+                        showProjectInfo = false,
+                        showCompass = false,
+                        showAltitude = false,
+                        showAccuracy = false
+                    )
+                    CameraMode.LOCATION -> current.copy(
+                        showTimestamp = true,
+                        showCoordinates = true,
+                        showChainage = false,
+                        showMapInset = true,
+                        showProjectInfo = false,
+                        showCompass = true,
+                        showAltitude = true,
+                        showAccuracy = true
+                    )
+                    CameraMode.CUSTOM -> current
+                }
+            }
+        }
+        viewModelScope.launch {
             _uiMessages.emit(UiMessage.Info("Mode: ${mode.label}"))
         }
     }
@@ -2373,33 +2501,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setExposureCompensation(ev: Int) {
-        _exposureCompensation.value = ev.coerceIn(-4, 4)
+        val clamped = ev.coerceIn(-4, 4)
+        _exposureCompensation.value = clamped
+        preferencesManager.launchSafeEdit {
+            preferencesManager.editCameraSettings { current ->
+                current.copy(exposureCompensationStep = clamped)
+            }
+        }
     }
 
     fun cycleTimer() {
-        val current = cameraSettings.value.captureTimer
-        val next = when (current) {
-            com.example.model.CaptureTimer.OFF -> com.example.model.CaptureTimer.SEC_3
-            com.example.model.CaptureTimer.SEC_3 -> com.example.model.CaptureTimer.SEC_5
-            com.example.model.CaptureTimer.SEC_5 -> com.example.model.CaptureTimer.SEC_10
-            com.example.model.CaptureTimer.SEC_10 -> com.example.model.CaptureTimer.OFF
-        }
         viewModelScope.launch {
-            preferencesManager.updateCameraSettings(cameraSettings.value.copy(captureTimer = next))
-            _uiMessages.emit(UiMessage.Info("Timer: ${next.label}"))
+            val updated = preferencesManager.editCameraSettings { current ->
+                val next = when (current.captureTimer) {
+                    com.example.model.CaptureTimer.OFF -> com.example.model.CaptureTimer.SEC_3
+                    com.example.model.CaptureTimer.SEC_3 -> com.example.model.CaptureTimer.SEC_5
+                    com.example.model.CaptureTimer.SEC_5 -> com.example.model.CaptureTimer.SEC_10
+                    com.example.model.CaptureTimer.SEC_10 -> com.example.model.CaptureTimer.OFF
+                }
+                current.copy(captureTimer = next)
+            }
+            _uiMessages.emit(UiMessage.Info("Timer: ${updated.captureTimer.label}"))
         }
     }
 
     fun cycleGrid() {
-        val current = cameraSettings.value.gridMode
-        val next = when (current) {
-            com.example.model.CameraGridMode.OFF -> com.example.model.CameraGridMode.GRID_3X3
-            com.example.model.CameraGridMode.GRID_3X3 -> com.example.model.CameraGridMode.GRID_4X4
-            com.example.model.CameraGridMode.GRID_4X4 -> com.example.model.CameraGridMode.OFF
-        }
         viewModelScope.launch {
-            preferencesManager.updateCameraSettings(cameraSettings.value.copy(gridMode = next))
-            _uiMessages.emit(UiMessage.Info("Grid: ${next.label}"))
+            val updated = preferencesManager.editCameraSettings { current ->
+                val next = when (current.gridMode) {
+                    com.example.model.CameraGridMode.OFF -> com.example.model.CameraGridMode.GRID_3X3
+                    com.example.model.CameraGridMode.GRID_3X3 -> com.example.model.CameraGridMode.GRID_4X4
+                    com.example.model.CameraGridMode.GRID_4X4 -> com.example.model.CameraGridMode.OFF
+                }
+                current.copy(gridMode = next)
+            }
+            _uiMessages.emit(UiMessage.Info("Grid: ${updated.gridMode.label}"))
         }
     }
 
@@ -2651,6 +2787,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resetAllSettings() {
         viewModelScope.launch {
             preferencesManager.resetAllSettings()
+            _projectProfile.value = ProjectProfile()
+            _homeScreensaverSettings.value = HomeScreensaverSettings()
+            _navigationNotificationSettings.value = com.example.model.NavigationNotificationSettings()
+            _widgetSettings.value = com.example.model.CtecsWidgetSettings()
+            _kmStoneAlertSettings.value = com.example.model.KmStoneAlertSettings()
+            _manualChainage.value = null
+            _manualChainageText.value = null
+            selectedAlignmentId.value = null
+            _isFlashOn.value = false
+            _isFrontCamera.value = false
+            _captureMode.value = com.example.model.CaptureMode.PHOTO
+            _currentZoomRatio.value = 1.0f
+            _exposureCompensation.value = 0
+            progressionTracker.clearManualSide()
+            CtecsNavigationTelemetryHub.updateTelemetry(
+                projectProfile = ProjectProfile(),
+                screensaverSettings = HomeScreensaverSettings(),
+                navigationNotificationSettings = com.example.model.NavigationNotificationSettings(),
+                widgetSettings = com.example.model.CtecsWidgetSettings(),
+                kmStoneAlertSettings = com.example.model.KmStoneAlertSettings(),
+                is24HourFormat = false
+            )
+            com.example.widget.CtecsWidgetUpdater.cacheWidgetSettings(
+                getApplication(),
+                com.example.model.CtecsWidgetSettings()
+            )
+            com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
             _uiMessages.emit(UiMessage.Info("All settings reset to defaults"))
         }
     }
@@ -2666,12 +2829,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val savedPath = com.example.overlay.LogoProvider.saveCustomLogoToInternalStorage(getApplication(), uri)
             if (savedPath != null) {
-                val updated = overlayConfig.value.copy(
-                    showLogo = true,
-                    logoPreset = "custom",
-                    logoUri = savedPath
-                )
-                preferencesManager.updateOverlayConfig(updated)
+                preferencesManager.editOverlayConfig { current ->
+                    current.copy(
+                        showLogo = true,
+                        logoPreset = "custom",
+                        logoUri = savedPath
+                    )
+                }
                 _uiMessages.emit(UiMessage.Success("Custom logo image saved successfully"))
             } else {
                 _uiMessages.emit(UiMessage.Error("Failed to import custom logo image"))
@@ -2681,11 +2845,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeCustomLogo() {
         viewModelScope.launch {
-            val updated = overlayConfig.value.copy(
-                logoPreset = "ctecs",
-                logoUri = null
-            )
-            preferencesManager.updateOverlayConfig(updated)
+            preferencesManager.editOverlayConfig { current ->
+                current.copy(
+                    logoPreset = "ctecs",
+                    logoUri = null
+                )
+            }
             _uiMessages.emit(UiMessage.Info("Custom logo removed. Switched to CTECS preset."))
         }
     }
@@ -2719,6 +2884,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (result.isSuccess) {
                     val data = result.getOrNull()
                     selectedAlignmentId.value = null
+                    preferencesManager.updateSelectedAlignmentId(null)
                     lastCalculatedMatchResult = null
                     progressionTracker.resetChainageFilter()
                     if (_manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()) {
@@ -2808,6 +2974,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectActiveRoute(id: String) {
         viewModelScope.launch {
             selectedAlignmentId.value = null
+            preferencesManager.updateSelectedAlignmentId(null)
             lastCalculatedMatchResult = null
             progressionTracker.resetChainageFilter()
             routeRepository.setActiveRoute(id)
@@ -2818,6 +2985,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteRoute(id: String) {
         viewModelScope.launch {
             selectedAlignmentId.value = null
+            preferencesManager.updateSelectedAlignmentId(null)
             lastCalculatedMatchResult = null
             progressionTracker.resetChainageFilter()
             routeRepository.deleteRoute(id)
@@ -3154,9 +3322,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopLocationIfIdle() {
-        val lockNavRunning = _homeScreensaverSettings.value.lockScreenNavEnabled &&
+        val navNotifRunning = _navigationNotificationSettings.value.enabled &&
             CtecsNavigationTelemetryHub.isServiceRunning.value
-        if (!lockNavRunning) {
+        if (!navNotifRunning) {
             locationTracker.stopTracking()
         }
         compassTracker.stopTracking()

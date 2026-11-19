@@ -325,7 +325,6 @@ class SettingsCleanupAndScreensaverOrientationTest {
                     onMiniMapZoomOut = { vm.zoomOutHomeMiniMap() },
                     onMiniMapRecenter = { vm.recenterHomeMiniMap() },
                     onMiniMapStyleChange = { s -> vm.setHomeMiniMapStyle(s) },
-                    onToggleLockScreenNav = { en -> vm.setLockScreenNavigationEnabled(en) },
                     onResetDefaults = { vm.resetScreensaverSettings() }
                 )
             }

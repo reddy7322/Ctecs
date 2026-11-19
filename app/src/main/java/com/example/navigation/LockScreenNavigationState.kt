@@ -27,18 +27,53 @@ import kotlin.math.roundToLong
 
 /**
  * Process-wide singleton telemetry hub so MainViewModel, LockScreenNavigationService,
- * LockScreenNavigationActivity, and Home-Screen Widgets share the EXACT same single [LocationTracker]
+ * and Home-Screen Widgets share the EXACT same single [LocationTracker]
  * instance without creating duplicate GPS listeners or conflicting location callbacks.
  */
 object CtecsNavigationTelemetryHub {
     @Volatile
     private var sharedTracker: LocationTracker? = null
 
+    @Volatile
+    private var initializedFromPreferences: Boolean = false
+
     fun getOrCreateLocationTracker(context: Context): LocationTracker {
         return sharedTracker ?: synchronized(this) {
             sharedTracker ?: LocationTracker(context.applicationContext).also {
                 sharedTracker = it
             }
+        }
+    }
+
+    /**
+     * Hydrates the singleton telemetry hub directly from persisted DataStore preferences
+     * when background services or widgets start cold after process death or device reboot.
+     */
+    fun ensureInitialized(context: Context, forceReload: Boolean = false) {
+        if (initializedFromPreferences && !forceReload) return
+        synchronized(this) {
+            if (initializedFromPreferences && !forceReload) return
+            try {
+                val prefsManager = com.example.data.PreferencesManager(context.applicationContext)
+                val profile = prefsManager.getInitialProjectProfile()
+                val screensaver = prefsManager.getInitialHomeScreensaverSettings()
+                val notif = prefsManager.getInitialNavigationNotificationSettings()
+                val widgets = prefsManager.getInitialWidgetSettings()
+                val alerts = prefsManager.getInitialKmStoneAlertSettings()
+                val cam = prefsManager.getInitialCameraSettings()
+                val overlay = prefsManager.getInitialOverlayConfig()
+
+                _projectProfile.value = profile
+                _screensaverSettings.value = screensaver
+                _navigationNotificationSettings.value = notif
+                _widgetSettings.value = widgets
+                _kmStoneAlertSettings.value = alerts
+                _is24HourFormat.value = cam.is24HourFormat
+                if (_locationName.value.isBlank() && overlay.lastDetectedLocationName.isNotBlank()) {
+                    _locationName.value = overlay.lastDetectedLocationName
+                }
+                initializedFromPreferences = true
+            } catch (_: Exception) {}
         }
     }
 
