@@ -322,6 +322,7 @@ fun CameraScreen(
     val exposureCompensation by viewModel.exposureCompensation.collectAsStateWithLifecycle()
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
+    val latestWeatherObservation by viewModel.latestWeatherObservation.collectAsStateWithLifecycle()
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
@@ -1663,8 +1664,10 @@ fun CameraScreen(
                     coordinateFormat = cameraSettings.coordinateFormat,
                     is24HourFormat = cameraSettings.is24HourFormat,
                     timestamp = currentTimeMillis,
+                    locationName = currentLocationName.ifBlank { overlayConfig.lastDetectedLocationName },
                     authoritativeSideOverride = smartDirectionState.confirmedSide,
-                    useAuthoritativeSide = true
+                    useAuthoritativeSide = true,
+                    weatherObservation = latestWeatherObservation
                 )
 
                 LiveViewfinderWatermarkBlock(
@@ -2313,20 +2316,41 @@ fun CameraScreen(
                                 thickness = 0.5.dp,
                                 color = Color(0x30FFFFFF)
                             )
-                            // GPS Coordinates
-                            if (locationState.point != null && overlayConfig.showCoordinates && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
-                                val lat = String.format(Locale.US, "%.4f°N", kotlin.math.abs(locationState.point!!.latitude))
-                                val lon = String.format(Locale.US, "%.4f°E", kotlin.math.abs(locationState.point!!.longitude))
+                            // GPS Coordinates (with accurate N/S & E/W notation)
+                            if (locationState.point != null && overlayConfig.showCoordinates &&
+                                (!overlayConfig.showWeatherInfo || overlayConfig.weatherShowCoordinates) &&
+                                overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP
+                            ) {
+                                val coordFormatted = com.example.overlay.SmartTimestampComposer.formatCoordinatesLine(
+                                    location = locationState.point!!,
+                                    precision = overlayConfig.coordinatePrecision,
+                                    coordinateFormat = cameraSettings.coordinateFormat
+                                )
                                 Text(
-                                    text = "$lat $lon",
+                                    text = coordFormatted,
                                     color = Color.White.copy(alpha = 0.85f),
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
-                            // Dynamic Location Name (Area / Town / City)
+                            // Dynamic Location Name & Optional Weather Information
                             val displayLoc = currentLocationName.ifBlank { overlayConfig.lastDetectedLocationName }.trim()
-                            if (overlayConfig.showLocationName && displayLoc.isNotBlank() && !displayLoc.equals("None", ignoreCase = true) && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                            if (overlayConfig.showWeatherInfo && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
+                                val weatherLines = com.example.overlay.SmartTimestampComposer.formatLocationAndWeatherLines(
+                                    config = overlayConfig,
+                                    locationName = displayLoc,
+                                    weatherObservation = latestWeatherObservation,
+                                    captureTimestampMs = currentTimeMillis
+                                )
+                                weatherLines.forEach { wLine ->
+                                    Text(
+                                        text = wLine,
+                                        color = Color.White.copy(alpha = 0.92f),
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            } else if (overlayConfig.showLocationName && displayLoc.isNotBlank() && !displayLoc.equals("None", ignoreCase = true) && overlayConfig.template != OverlayTemplate.MINIMAL_TIMESTAMP) {
                                 Text(
                                     text = displayLoc,
                                     color = Color.White.copy(alpha = 0.9f),

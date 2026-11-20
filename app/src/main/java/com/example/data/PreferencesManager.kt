@@ -202,6 +202,19 @@ class PreferencesManager(context: Context) {
         val KEY_PHOTO_MINI_MAP_JSON = stringPreferencesKey("photo_mini_map_config_json")
         val KEY_VIDEO_MINI_MAP_JSON = stringPreferencesKey("video_mini_map_config_json")
 
+        // Camera Timestamp & Watermark -> Weather Information Keys
+        val KEY_SHOW_WEATHER_INFO = booleanPreferencesKey("overlay_show_weather_info")
+        val KEY_WEATHER_SHOW_TEMPERATURE = booleanPreferencesKey("overlay_weather_show_temp")
+        val KEY_WEATHER_SHOW_CONDITION = booleanPreferencesKey("overlay_weather_show_condition")
+        val KEY_WEATHER_SHOW_LOCATION_NAME = booleanPreferencesKey("overlay_weather_show_location")
+        val KEY_WEATHER_SHOW_COORDINATES = booleanPreferencesKey("overlay_weather_show_coords")
+        val KEY_WEATHER_SHOW_HUMIDITY = booleanPreferencesKey("overlay_weather_show_humidity")
+        val KEY_WEATHER_SHOW_WIND_SPEED = booleanPreferencesKey("overlay_weather_show_wind_speed")
+        val KEY_WEATHER_SHOW_WIND_DIRECTION = booleanPreferencesKey("overlay_weather_show_wind_dir")
+        val KEY_WEATHER_DISPLAY_FORMAT = stringPreferencesKey("overlay_weather_display_format")
+        val KEY_WEATHER_OMIT_IF_STALE = booleanPreferencesKey("overlay_weather_omit_if_stale")
+        val KEY_LAST_WEATHER_OBSERVATION_JSON = stringPreferencesKey("last_weather_observation_json")
+
         // DPR PDF Default Logo & Signature keys
         val KEY_PDF_LOGO_URI = stringPreferencesKey("pdf_logo_uri")
         val KEY_INCLUDE_PDF_LOGO_DEFAULT = booleanPreferencesKey("include_pdf_logo_default")
@@ -779,7 +792,17 @@ class PreferencesManager(context: Context) {
             includePdfSignatureDefault = prefs[KEY_INCLUDE_PDF_SIGNATURE_DEFAULT] ?: true,
             pdfDefaultPreparedBy = prefs[KEY_PDF_DEFAULT_PREPARED_BY] ?: "Site Engineer",
             photoMiniMap = MiniMapStyleConfig.fromJsonString(prefs[KEY_PHOTO_MINI_MAP_JSON]),
-            videoMiniMap = MiniMapStyleConfig.fromJsonString(prefs[KEY_VIDEO_MINI_MAP_JSON])
+            videoMiniMap = MiniMapStyleConfig.fromJsonString(prefs[KEY_VIDEO_MINI_MAP_JSON]),
+            showWeatherInfo = prefs[KEY_SHOW_WEATHER_INFO] ?: false,
+            weatherShowTemperature = prefs[KEY_WEATHER_SHOW_TEMPERATURE] ?: true,
+            weatherShowCondition = prefs[KEY_WEATHER_SHOW_CONDITION] ?: false,
+            weatherShowLocationName = prefs[KEY_WEATHER_SHOW_LOCATION_NAME] ?: true,
+            weatherShowCoordinates = prefs[KEY_WEATHER_SHOW_COORDINATES] ?: true,
+            weatherShowHumidity = prefs[KEY_WEATHER_SHOW_HUMIDITY] ?: false,
+            weatherShowWindSpeed = prefs[KEY_WEATHER_SHOW_WIND_SPEED] ?: false,
+            weatherShowWindDirection = prefs[KEY_WEATHER_SHOW_WIND_DIRECTION] ?: false,
+            weatherDisplayFormat = com.example.model.WeatherDisplayFormat.fromString(prefs[KEY_WEATHER_DISPLAY_FORMAT]),
+            weatherOmitIfStale = prefs[KEY_WEATHER_OMIT_IF_STALE] ?: true
         )
     }
 
@@ -894,6 +917,18 @@ class PreferencesManager(context: Context) {
         }
     }
 
+    fun getInitialCachedWeatherObservation(): com.example.model.WeatherObservation? {
+        return com.example.model.WeatherObservation.fromJsonString(
+            getInitialPreferences()[KEY_LAST_WEATHER_OBSERVATION_JSON]
+        )
+    }
+
+    suspend fun saveCachedWeatherObservation(observation: com.example.model.WeatherObservation) {
+        safeEdit { prefs ->
+            prefs[KEY_LAST_WEATHER_OBSERVATION_JSON] = observation.toJsonString()
+        }
+    }
+
     private fun writeOverlayConfigToPrefs(
         prefs: MutablePreferences,
         config: OverlayConfig
@@ -995,6 +1030,16 @@ class PreferencesManager(context: Context) {
         prefs[KEY_PDF_DEFAULT_PREPARED_BY] = config.pdfDefaultPreparedBy
         prefs[KEY_PHOTO_MINI_MAP_JSON] = config.photoMiniMap.toJsonString()
         prefs[KEY_VIDEO_MINI_MAP_JSON] = config.videoMiniMap.toJsonString()
+        prefs[KEY_SHOW_WEATHER_INFO] = config.showWeatherInfo
+        prefs[KEY_WEATHER_SHOW_TEMPERATURE] = config.weatherShowTemperature
+        prefs[KEY_WEATHER_SHOW_CONDITION] = config.weatherShowCondition
+        prefs[KEY_WEATHER_SHOW_LOCATION_NAME] = config.weatherShowLocationName
+        prefs[KEY_WEATHER_SHOW_COORDINATES] = config.weatherShowCoordinates
+        prefs[KEY_WEATHER_SHOW_HUMIDITY] = config.weatherShowHumidity
+        prefs[KEY_WEATHER_SHOW_WIND_SPEED] = config.weatherShowWindSpeed
+        prefs[KEY_WEATHER_SHOW_WIND_DIRECTION] = config.weatherShowWindDirection
+        prefs[KEY_WEATHER_DISPLAY_FORMAT] = config.weatherDisplayFormat.name
+        prefs[KEY_WEATHER_OMIT_IF_STALE] = config.weatherOmitIfStale
     }
 
     suspend fun updateCameraSettings(settings: CameraSettings) {

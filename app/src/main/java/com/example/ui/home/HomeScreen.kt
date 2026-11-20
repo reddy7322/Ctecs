@@ -256,6 +256,7 @@ fun HomeScreen(
     val lastKmStoneHubEvent by viewModel.lastKmStoneHubEvent.collectAsStateWithLifecycle()
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val kmStoneAlertSettings by viewModel.kmStoneAlertSettings.collectAsStateWithLifecycle()
+    val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
     LaunchedEffect(isScreensaverVisible) {
         viewModel.setScreensaverActive(isScreensaverVisible)
     }
@@ -634,6 +635,21 @@ fun HomeScreen(
                     }
                 )
             }
+
+            // 3.5 Premium Minimalist Borderless Live Weather Card (pauses animations when hidden/screensaver active)
+            HomeLiveWeatherCard(
+                weatherUiState = weatherUiState,
+                resolvedLocationName = vmLocationName,
+                is24HourFormat = cameraSettings.is24HourFormat,
+                isDark = isDark,
+                mainTextColor = mainTextColor,
+                subTextColor = subTextColor,
+                isCompact = isCompactHeight || isUltraCompact,
+                isVisible = !isScreensaverVisible && !isScreensaverScreenOff && !isScreensaverAodActive,
+                onRefresh = {
+                    viewModel.refreshWeather(force = true)
+                }
+            )
 
             // 4. Interactive Smart KMZ Map - Synchronized with Shared Mini Map Settings (all Screensaver config lives in Settings -> Screensaver)
             if (screensaverSettings.miniMapVisible) {

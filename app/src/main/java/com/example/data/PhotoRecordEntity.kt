@@ -28,7 +28,15 @@ data class PhotoRecordEntity(
     val subActivity: String = "",
     val customDescription: String = "",
     val inspectorName: String = "",
-    val formattedOverlayText: String = ""
+    val formattedOverlayText: String = "",
+    val locationName: String = "",
+    val weatherTempC: Double? = null,
+    val weatherCondition: String = "",
+    val weatherHumidity: Int? = null,
+    val weatherWindSpeedKmh: Double? = null,
+    val weatherWindDirDeg: Int? = null,
+    val weatherObservedAtMs: Long? = null,
+    val weatherSource: String = ""
 ) {
     private fun isValidValue(s: String?): Boolean {
         if (s == null) return false
@@ -47,6 +55,24 @@ data class PhotoRecordEntity(
     fun cleanHighwayId(): String = if (isValidValue(highwayId)) highwayId.trim() else ""
 
     fun cleanPackageSection(): String = if (isValidValue(packageSection)) packageSection.trim() else ""
+
+    fun cleanLocationName(): String = if (isValidValue(locationName)) locationName.trim() else ""
+
+    fun hasWeatherMetadata(): Boolean = weatherTempC != null || weatherCondition.isNotBlank()
+
+    fun formatWeatherMetadataSummary(): String {
+        val parts = mutableListOf<String>()
+        weatherTempC?.let { parts.add("${kotlin.math.round(it).toInt()}°C") }
+        if (weatherCondition.isNotBlank()) parts.add(weatherCondition.trim())
+        weatherHumidity?.let { parts.add("Humidity $it%") }
+        if (weatherWindSpeedKmh != null) {
+            val dir = weatherWindDirDeg?.let {
+                " " + com.example.model.WeatherObservation.degreesToCompass16(it)
+            }.orEmpty()
+            parts.add("Wind ${kotlin.math.round(weatherWindSpeedKmh).toInt()} km/h$dir")
+        }
+        return parts.joinToString(" • ")
+    }
 
     fun displayActivityWithSub(): String {
         val act = cleanActivity()

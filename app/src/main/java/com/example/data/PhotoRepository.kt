@@ -578,7 +578,18 @@ class PhotoRepository(
                     if (snapshot.overlayConfig.showLocationName && locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
                         if (baseText.isNotBlank()) "$baseText | $locName" else locName
                     } else baseText
-                }
+                },
+                locationName = snapshot.locationName
+                    .ifBlank { snapshot.weatherObservation?.locationName.orEmpty() }
+                    .ifBlank { snapshot.overlayConfig.lastDetectedLocationName }
+                    .trim(),
+                weatherTempC = snapshot.weatherObservation?.temperatureC,
+                weatherCondition = snapshot.weatherObservation?.conditionLabel.orEmpty(),
+                weatherHumidity = snapshot.weatherObservation?.humidityPercent,
+                weatherWindSpeedKmh = snapshot.weatherObservation?.windSpeedKmh,
+                weatherWindDirDeg = snapshot.weatherObservation?.windDirectionDegrees,
+                weatherObservedAtMs = snapshot.weatherObservation?.observedAtMs,
+                weatherSource = snapshot.weatherObservation?.source.orEmpty()
             )
 
             val newId = photoRecordDao.insertPhoto(entity)

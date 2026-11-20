@@ -185,6 +185,7 @@ fun SettingsScreen(
     val definedProjects by viewModel.definedProjects.collectAsStateWithLifecycle()
     val currentOverlay by viewModel.overlayConfig.collectAsStateWithLifecycle()
     val currentLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
+    val latestWeatherObservation by viewModel.latestWeatherObservation.collectAsStateWithLifecycle()
     val currentCameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val isFrontCamera by viewModel.isFrontCamera.collectAsStateWithLifecycle()
     val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
@@ -1807,6 +1808,209 @@ fun SettingsScreen(
                         onCheckedChange = { viewModel.saveOverlayConfigSilent(currentOverlay.copy(showAccuracy = it)) },
                         tag = "switch_show_accuracy"
                     )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
+
+                    // ----------------------------------------------------
+                    // WEATHER INFORMATION (DYNAMIC TIMESTAMP METADATA)
+                    // ----------------------------------------------------
+                    Text(
+                        text = "WEATHER INFORMATION",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = timestampAccent,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                    )
+
+                    CompactSwitchRow(
+                        title = "Show Weather Information",
+                        subtitle = "Include dynamic location & capture-time weather in 4-line timestamp (Default OFF)",
+                        checked = currentOverlay.showWeatherInfo,
+                        onCheckedChange = {
+                            viewModel.saveOverlayConfigSilent(currentOverlay.copy(showWeatherInfo = it))
+                            if (it) viewModel.refreshWeather(force = false)
+                        },
+                        tag = "switch_weather_info"
+                    )
+
+                    if (currentOverlay.showWeatherInfo) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp, top = 2.dp, bottom = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            CompactSwitchRow(
+                                title = "Show Temperature",
+                                subtitle = "Actual temperature (°C) at capture time",
+                                checked = currentOverlay.weatherShowTemperature,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherShowTemperature = it))
+                                },
+                                tag = "switch_weather_temp"
+                            )
+                            CompactSwitchRow(
+                                title = "Show Weather Condition",
+                                subtitle = "Condition label (e.g. Sunny, Partly Cloudy, Rainy)",
+                                checked = currentOverlay.weatherShowCondition,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherShowCondition = it))
+                                },
+                                tag = "switch_weather_condition"
+                            )
+                            CompactSwitchRow(
+                                title = "Show Location Name",
+                                subtitle = "Auto-resolved locality paired with weather",
+                                checked = currentOverlay.weatherShowLocationName,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherShowLocationName = it))
+                                },
+                                tag = "switch_weather_location"
+                            )
+                            CompactSwitchRow(
+                                title = "Show GPS Coordinates",
+                                subtitle = "Latitude & longitude with N/S & E/W notation",
+                                checked = currentOverlay.weatherShowCoordinates,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherShowCoordinates = it))
+                                },
+                                tag = "switch_weather_coords"
+                            )
+                            CompactSwitchRow(
+                                title = "Show Humidity",
+                                subtitle = "Relative humidity (%) at capture time",
+                                checked = currentOverlay.weatherShowHumidity,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherShowHumidity = it))
+                                },
+                                tag = "switch_weather_humidity"
+                            )
+                            CompactSwitchRow(
+                                title = "Show Wind Speed",
+                                subtitle = "Wind speed (km/h) at capture time",
+                                checked = currentOverlay.weatherShowWindSpeed,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherShowWindSpeed = it))
+                                },
+                                tag = "switch_weather_wind_speed"
+                            )
+                            CompactSwitchRow(
+                                title = "Show Wind Direction",
+                                subtitle = "Compass wind direction (N, NE, NW, etc.)",
+                                checked = currentOverlay.weatherShowWindDirection,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherShowWindDirection = it))
+                                },
+                                tag = "switch_weather_wind_dir"
+                            )
+                            CompactSwitchRow(
+                                title = "Omit Stale Weather (>45 min)",
+                                subtitle = "Hide weather automatically when observation is too old",
+                                checked = currentOverlay.weatherOmitIfStale,
+                                onCheckedChange = {
+                                    viewModel.saveOverlayConfigSilent(currentOverlay.copy(weatherOmitIfStale = it))
+                                },
+                                tag = "switch_weather_omit_stale"
+                            )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Weather Display Format",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp, bottom = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                com.example.model.WeatherDisplayFormat.entries.forEach { fmt ->
+                                    val selected = currentOverlay.weatherDisplayFormat == fmt
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = {
+                                            viewModel.saveOverlayConfigSilent(
+                                                currentOverlay.copy(weatherDisplayFormat = fmt)
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = fmt.displayName,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = timestampAccent,
+                                            selectedLabelColor = timestampAccentContent
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("chip_weather_format_${fmt.name.lowercase(Locale.US)}")
+                                    )
+                                }
+                            }
+
+                            // Compact Live Timestamp Preview Card showing exact dynamic lines
+                            val previewLines = remember(
+                                currentOverlay,
+                                currentProject,
+                                locationState.point,
+                                liveMatchResult.displayChainage,
+                                currentCameraSettings.coordinateFormat,
+                                currentCameraSettings.is24HourFormat,
+                                currentLocationName,
+                                latestWeatherObservation
+                            ) {
+                                com.example.overlay.SmartTimestampComposer.composeLines(
+                                    config = currentOverlay,
+                                    project = currentProject,
+                                    location = locationState.point ?: lastValidLocation,
+                                    chainageStr = liveMatchResult.displayChainage.takeIf { it != "---" } ?: "",
+                                    coordinateFormat = currentCameraSettings.coordinateFormat,
+                                    is24HourFormat = currentCameraSettings.is24HourFormat,
+                                    timestampMs = System.currentTimeMillis(),
+                                    locationName = currentLocationName.ifBlank { currentOverlay.lastDetectedLocationName },
+                                    weatherObservation = latestWeatherObservation
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("weather_timestamp_live_preview")
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = if (latestWeatherObservation != null) {
+                                            "LIVE TIMESTAMP PREVIEW (${latestWeatherObservation!!.source})"
+                                        } else {
+                                            "LIVE TIMESTAMP PREVIEW (WEATHER WAITING FOR GPS/NETWORK)"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = timestampAccent,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    previewLines.forEach { line ->
+                                        Text(
+                                            text = line,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 10.dp))
 
@@ -4378,6 +4582,9 @@ fun SettingsScreen(
             project = currentProject,
             cameraSettings = currentCameraSettings,
             locationName = currentLocationName,
+            liveLocation = locationState.point ?: lastValidLocation,
+            liveChainage = liveMatchResult.displayChainage.takeIf { it != "---" }.orEmpty(),
+            weatherObservation = latestWeatherObservation,
             isLandscape = isPreviewLandscape,
             onToggleOrientation = { isPreviewLandscape = !isPreviewLandscape },
             mediaMode = previewMediaMode,
@@ -4964,6 +5171,9 @@ private fun SmartTimestampPreviewDialog(
     project: ProjectProfile,
     cameraSettings: CameraSettings,
     locationName: String,
+    liveLocation: com.example.model.GeoPoint? = null,
+    liveChainage: String = "",
+    weatherObservation: com.example.model.WeatherObservation? = null,
     isLandscape: Boolean,
     onToggleOrientation: () -> Unit,
     mediaMode: String,
@@ -5167,73 +5377,98 @@ private fun SmartTimestampPreviewDialog(
                                 else -> Alignment.End
                             }
                         ) {
-                            if (overlay.showProjectInfo) {
-                                val highwayPreview = project.buildHighwayText("198+450").ifBlank {
-                                    "NH-44 Expansion | 198+450 RHS • DBM"
+                            if (overlay.showWeatherInfo) {
+                                val dynamicWeatherPreviewLines = com.example.overlay.SmartTimestampComposer.composeLines(
+                                    config = overlay,
+                                    project = project,
+                                    location = liveLocation,
+                                    chainageStr = liveChainage.ifBlank { "198+450" },
+                                    coordinateFormat = cameraSettings.coordinateFormat,
+                                    is24HourFormat = cameraSettings.is24HourFormat,
+                                    timestampMs = liveNow.time,
+                                    locationName = locationName.ifBlank { overlay.lastDetectedLocationName },
+                                    weatherObservation = weatherObservation
+                                )
+                                dynamicWeatherPreviewLines.forEach { line ->
+                                    Text(
+                                        text = line,
+                                        color = previewParsedColor,
+                                        fontSize = 11.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
                                 }
-                                Text(
-                                    text = highwayPreview,
-                                    color = previewParsedColor,
-                                    fontSize = 11.sp,
-                                    fontFamily = previewFontFamily,
-                                    fontWeight = previewFontWeight,
-                                    fontStyle = previewFontStyle,
-                                    textAlign = previewTextAlign
-                                )
-                            }
-                            val commentLine = project.getCustomCommentLine()
-                            if (!commentLine.isNullOrBlank()) {
-                                Text(
-                                    text = commentLine,
-                                    color = Color(0xFF38BDF8),
-                                    fontSize = 10.sp,
-                                    fontFamily = previewFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    textAlign = previewTextAlign
-                                )
-                            }
-                            if (overlay.showLocationName) {
-                                val locNameDisplay = locationName.ifBlank {
-                                    overlay.lastDetectedLocationName.ifBlank { "Dehradun, Uttarakhand" }
+                            } else {
+                                if (overlay.showProjectInfo) {
+                                    val highwayPreview = project.buildHighwayText("198+450").ifBlank {
+                                        "NH-44 Expansion | 198+450 RHS • DBM"
+                                    }
+                                    Text(
+                                        text = highwayPreview,
+                                        color = previewParsedColor,
+                                        fontSize = 11.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
                                 }
-                                Text(
-                                    text = locNameDisplay,
-                                    color = previewParsedColor,
-                                    fontSize = 11.sp,
-                                    fontFamily = previewFontFamily,
-                                    fontWeight = previewFontWeight,
-                                    fontStyle = previewFontStyle,
-                                    textAlign = previewTextAlign
-                                )
-                            }
-                            if (overlay.burnInTimestamp) {
-                                Text(
-                                    text = formattedLiveTimestamp,
-                                    color = previewParsedColor,
-                                    fontSize = 11.sp,
-                                    fontFamily = previewFontFamily,
-                                    fontWeight = previewFontWeight,
-                                    fontStyle = previewFontStyle,
-                                    textAlign = previewTextAlign
-                                )
-                            }
-                            if (overlay.showCoordinates || overlay.showAccuracy) {
-                                val coordText = if (overlay.showCoordinates && overlay.showAccuracy) {
-                                    "30.3165°N 78.0322°E • ±4m"
-                                } else if (overlay.showCoordinates) {
-                                    "30.3165°N 78.0322°E"
-                                } else {
-                                    "GPS ±4m"
+                                val commentLine = project.getCustomCommentLine()
+                                if (!commentLine.isNullOrBlank()) {
+                                    Text(
+                                        text = commentLine,
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 10.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = previewTextAlign
+                                    )
                                 }
-                                Text(
-                                    text = coordText,
-                                    color = previewParsedColor,
-                                    fontSize = 10.sp,
-                                    fontFamily = previewFontFamily,
-                                    fontWeight = previewFontWeight,
-                                    fontStyle = previewFontStyle,
-                                    textAlign = previewTextAlign
-                                )
+                                if (overlay.showLocationName) {
+                                    val locNameDisplay = locationName.ifBlank {
+                                        overlay.lastDetectedLocationName.ifBlank { "Dehradun, Uttarakhand" }
+                                    }
+                                    Text(
+                                        text = locNameDisplay,
+                                        color = previewParsedColor,
+                                        fontSize = 11.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
+                                }
+                                if (overlay.burnInTimestamp) {
+                                    Text(
+                                        text = formattedLiveTimestamp,
+                                        color = previewParsedColor,
+                                        fontSize = 11.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
+                                }
+                                if (overlay.showCoordinates || overlay.showAccuracy) {
+                                    val coordText = if (overlay.showCoordinates && overlay.showAccuracy) {
+                                        "30.3165°N 78.0322°E • ±4m"
+                                    } else if (overlay.showCoordinates) {
+                                        "30.3165°N 78.0322°E"
+                                    } else {
+                                        "GPS ±4m"
+                                    }
+                                    Text(
+                                        text = coordText,
+                                        color = previewParsedColor,
+                                        fontSize = 10.sp,
+                                        fontFamily = previewFontFamily,
+                                        fontWeight = previewFontWeight,
+                                        fontStyle = previewFontStyle,
+                                        textAlign = previewTextAlign
+                                    )
+                                }
                             }
                         }
                     }

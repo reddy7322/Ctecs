@@ -27,7 +27,7 @@ import com.example.survey.data.SurveySessionEntity
         SurveyMarkerEntity::class,
         SurveyCalibrationEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -176,6 +176,19 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN locationName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN weatherTempC REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN weatherCondition TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN weatherHumidity INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN weatherWindSpeedKmh REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN weatherWindDirDeg INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN weatherObservedAtMs INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE photo_records ADD COLUMN weatherSource TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -183,7 +196,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ctecs_highway_camera.db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

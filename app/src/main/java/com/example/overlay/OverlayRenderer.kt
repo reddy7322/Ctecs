@@ -385,13 +385,14 @@ object OverlayRenderer {
             bearing = snapshot.bearing,
             chainageStr = match.displayChainage,
             cameraMode = com.example.model.CameraMode.HIGHWAY,
-            coordinateFormat = CoordinateFormat.DECIMAL,
-            is24HourFormat = false,
+            coordinateFormat = snapshot.coordinateFormat,
+            is24HourFormat = snapshot.is24HourFormat,
             timestamp = snapshot.timestamp,
             isForCapture = true,
             locationName = locNameToDisplay,
             authoritativeSideOverride = authSide,
-            useAuthoritativeSide = useAuthSide
+            useAuthoritativeSide = useAuthSide,
+            weatherObservation = snapshot.weatherObservation
         )
 
         if (rawLines.isEmpty()) return height - padBottomPx
@@ -726,16 +727,32 @@ object OverlayRenderer {
                 val (exifSide, useExifSide) = OverlayTextGenerator.resolveAuthoritativeCaptureSide(snapshot)
                 val resolvedExifSide = if (useExifSide) exifSide else snapshot.projectProfile.roadSide.label
 
-                val locName = snapshot.locationName.ifBlank { snapshot.overlayConfig.lastDetectedLocationName }.trim()
-                if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
-                    val sideSuffix = resolvedExifSide
+                val locName = snapshot.locationName
+                    .ifBlank { snapshot.weatherObservation?.locationName.orEmpty() }
+                    .ifBlank { snapshot.overlayConfig.lastDetectedLocationName }
+                    .trim()
+                val weather = snapshot.weatherObservation
+                val weatherSummary = weather?.let { w ->
+                    val obsTimeStr = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date(w.observedAtMs))
+                    "Weather: ${w.formatTemperature()} ${w.conditionLabel}, Humidity: ${w.formatHumidity()}, Wind: ${w.formatWindSpeed()} ${w.windDirectionCompass} (${w.source} @ $obsTimeStr)"
+                }
+
+                if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true) || weatherSummary != null) {
+                    val descParts = mutableListOf<String>()
+                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
+                        descParts.add(locName)
+                    }
+                    descParts.add("Chainage: ${snapshot.displayChainage}")
+                    resolvedExifSide
                         ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
-                        ?.let { " | Side: $it" }
-                        .orEmpty()
-                    exif.setAttribute(
-                        ExifInterface.TAG_IMAGE_DESCRIPTION,
-                        "$locName | Chainage: ${snapshot.displayChainage}$sideSuffix | Project: ${snapshot.projectProfile.highwayId}"
-                    )
+                        ?.let { descParts.add("Side: $it") }
+                    if (snapshot.projectProfile.highwayId.isNotBlank()) {
+                        descParts.add("Project: ${snapshot.projectProfile.highwayId}")
+                    }
+                    if (weatherSummary != null) {
+                        descParts.add(weatherSummary)
+                    }
+                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, descParts.joinToString(" | "))
                 }
 
                 val userComment = listOfNotNull(
@@ -746,8 +763,9 @@ object OverlayRenderer {
                     snapshot.projectProfile.lane.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                     snapshot.projectProfile.activity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                     snapshot.projectProfile.subActivity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { "($it)" },
-                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) locName else null
-                ).joinToString(" ")
+                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) locName else null,
+                    weatherSummary
+                ).joinToString(" | ")
                 exif.setAttribute(ExifInterface.TAG_USER_COMMENT, userComment)
 
                 exif.saveAttributes()

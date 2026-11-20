@@ -74,6 +74,8 @@ class RealtimeVideoOverlayManager(
     private var lastRenderedMiniMapSig: Int = 0
     @Volatile
     private var lastRenderedRetained: Boolean = false
+    @Volatile
+    private var lastRenderedWeatherSig: String = ""
 
     @Volatile
     private var sessionLastValidLocation: com.example.model.GeoPoint? = null
@@ -172,6 +174,12 @@ class RealtimeVideoOverlayManager(
             val currentRouteKey = baseSnapshot.activeRoute?.let { "${it.name}_${it.alignments.size}_${it.markers.size}" } ?: ""
             val currentMiniMapSig = 31 * baseSnapshot.overlayConfig.showMapInset.hashCode() +
                 baseSnapshot.overlayConfig.getEffectiveMiniMapConfig(isVideo = true).hashCode()
+            val wObs = baseSnapshot.weatherObservation
+            val currentWeatherSig = if (baseSnapshot.overlayConfig.showWeatherInfo) {
+                "${baseSnapshot.locationName}|${wObs?.observedAtMs ?: 0L}|${wObs?.roundedTempC ?: "na"}|${wObs?.conditionLabel.orEmpty()}|${wObs?.humidityPercent ?: -1}|${wObs?.windSpeedKmh ?: -1.0}|${wObs?.windDirectionDegrees ?: -1}|${baseSnapshot.overlayConfig.weatherDisplayFormat.name}"
+            } else {
+                ""
+            }
 
             val cropRect = try { frame.cropRect } catch (e: Throwable) { null }
             val hasCrop = cropRect != null && cropRect.width() > 0 && cropRect.height() > 0
@@ -202,7 +210,8 @@ class RealtimeVideoOverlayManager(
                     (currentBearingInt != lastRenderedBearing) ||
                     (currentRouteKey != lastRenderedRouteKey) ||
                     (currentMiniMapSig != lastRenderedMiniMapSig) ||
-                    (isRetained != lastRenderedRetained)
+                    (isRetained != lastRenderedRetained) ||
+                    (currentWeatherSig != lastRenderedWeatherSig)
 
             if (isDirty) {
                 val canvas = frame.overlayCanvas
@@ -247,6 +256,7 @@ class RealtimeVideoOverlayManager(
                 lastRenderedRouteKey = currentRouteKey
                 lastRenderedMiniMapSig = currentMiniMapSig
                 lastRenderedRetained = isRetained
+                lastRenderedWeatherSig = currentWeatherSig
             }
             return true
         } catch (e: Throwable) {

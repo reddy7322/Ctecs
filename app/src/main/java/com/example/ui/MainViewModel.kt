@@ -366,6 +366,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val currentLocationName: StateFlow<String> = _currentLocationName.asStateFlow()
 
+    // Single Shared Live Weather Repository (reused across Home, Camera, Video, Settings)
+    private val weatherRepository: com.example.weather.SharedWeatherRepository =
+        com.example.weather.SharedWeatherRepository.instance
+    val weatherUiState: StateFlow<com.example.model.WeatherUiState> = weatherRepository.weatherUiState
+    val latestWeatherObservation: StateFlow<com.example.model.WeatherObservation?> =
+        weatherRepository.latestObservation
+
+    fun refreshWeather(force: Boolean = true) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val pt = locationTracker.locationState.value.point ?: _lastValidLocation.value
+            val locName = _currentLocationName.value.ifBlank { overlayConfig.value.lastDetectedLocationName }
+            val updated = weatherRepository.refreshForLocation(
+                point = pt,
+                resolvedLocationName = locName,
+                forceRefresh = force
+            )
+            if (updated != null) {
+                preferencesManager.saveCachedWeatherObservation(updated)
+            }
+        }
+    }
+
     fun refreshLocationName() {
         viewModelScope.launch {
             val pt = locationTracker.locationState.value.point
@@ -379,6 +401,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (name.isNotBlank()) {
                     _currentLocationName.value = name
                     preferencesManager.updateLastDetectedLocationName(name)
+                    weatherRepository.attachResolvedLocationName(name)
                     showToast("Location updated: $name", ToastType.SUCCESS)
                 } else {
                     showToast("Unable to resolve area name. Check network.", ToastType.WARNING)
@@ -1688,30 +1711,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Isolated, throttled reverse-geocoding collector on Dispatchers.IO so network I/O never stalls GPS/chainage
+        // Hydrate cached weather observation on startup (preserving original observation timestamp)
+        weatherRepository.seedFromPersistedCache(preferencesManager.getInitialCachedWeatherObservation())
+
+        // Isolated, throttled reverse-geocoding & shared live weather collector on Dispatchers.IO
+        // Reuses the existing LocationTracker — zero duplicate GPS listeners or network storms
         viewModelScope.launch(Dispatchers.IO) {
             var lastGeocodedPt: com.example.model.GeoPoint? = null
             var lastGeocodedTimeMs = 0L
             locationTracker.locationState.collect { state ->
                 val pt = state.point ?: return@collect
-                if (!overlayConfig.value.showLocationName &&
-                    !_homeScreensaverSettings.value.locationDynamicUpdates
-                ) return@collect
                 val now = System.currentTimeMillis()
                 val moved = lastGeocodedPt?.let { com.example.geo.GeoUtils.distanceMetres(it, pt) } ?: Double.MAX_VALUE
-                if (moved < 45.0 && (now - lastGeocodedTimeMs) < 15_000L && _currentLocationName.value.isNotBlank()) {
-                    return@collect
+                if (moved >= 45.0 || (now - lastGeocodedTimeMs) >= 15_000L || _currentLocationName.value.isBlank()) {
+                    lastGeocodedPt = pt
+                    lastGeocodedTimeMs = now
+                    val name = com.example.location.LocationNameResolver.resolveLocationName(
+                        context = getApplication(),
+                        latitude = pt.latitude,
+                        longitude = pt.longitude
+                    )
+                    if (name.isNotBlank() && name != _currentLocationName.value) {
+                        _currentLocationName.value = name
+                        preferencesManager.updateLastDetectedLocationName(name)
+                    }
                 }
-                lastGeocodedPt = pt
-                lastGeocodedTimeMs = now
-                val name = com.example.location.LocationNameResolver.resolveLocationName(
-                    context = getApplication(),
-                    latitude = pt.latitude,
-                    longitude = pt.longitude
+                val resolvedName = _currentLocationName.value.ifBlank { overlayConfig.value.lastDetectedLocationName }
+                if (resolvedName.isNotBlank()) {
+                    weatherRepository.attachResolvedLocationName(resolvedName)
+                }
+                val fetchedWeather = weatherRepository.refreshForLocation(
+                    point = pt,
+                    resolvedLocationName = resolvedName,
+                    forceRefresh = false
                 )
-                if (name.isNotBlank() && name != _currentLocationName.value) {
-                    _currentLocationName.value = name
-                    preferencesManager.updateLastDetectedLocationName(name)
+                if (fetchedWeather != null && fetchedWeather.fetchedAtMs >= now - 2_000L) {
+                    preferencesManager.saveCachedWeatherObservation(fetchedWeather)
                 }
             }
         }
@@ -2757,9 +2792,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var videoTickerJob: kotlinx.coroutines.Job? = null
 
     fun createCurrentSnapshot(forcedRotation: Int? = null): CaptureSnapshot {
+        val nowMs = System.currentTimeMillis()
         val rot = forcedRotation ?: rotationDegrees.value.toInt()
-        val locName = if (overlayConfig.value.showLocationName) {
-            currentLocationName.value.ifBlank { overlayConfig.value.lastDetectedLocationName }.trim()
+        val currentOverlayCfg = overlayConfig.value
+        val currentCamCfg = cameraSettings.value
+        val shouldIncludeLoc = currentOverlayCfg.showLocationName ||
+            (currentOverlayCfg.showWeatherInfo && currentOverlayCfg.weatherShowLocationName)
+        val locName = if (shouldIncludeLoc) {
+            currentLocationName.value
+                .ifBlank { currentOverlayCfg.lastDetectedLocationName }
+                .trim()
         } else ""
         val liveLoc = locationState.value.point
         val liveBearing = locationState.value.bearing
@@ -2771,26 +2813,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val retainedLoc = liveLoc ?: _lastValidLocation.value
         val retainedBearing = liveBearing ?: lastValidGpsBearing
+        // Non-blocking synchronous read of capture-time weather observation (never delays shutter)
+        val (weatherObs, isWeatherFresh) = weatherRepository.getObservationForCapture(
+            captureTimeMs = nowMs,
+            omitIfStale = currentOverlayCfg.weatherOmitIfStale
+        )
         return CaptureSnapshot(
-            timestamp = System.currentTimeMillis(),
+            timestamp = nowMs,
             location = liveLoc,
             locationName = locName,
             gpsAccuracy = locationState.value.accuracy,
             bearing = liveBearing,
             matchResult = cameraMatchResult.value,
             projectProfile = projectProfile.value,
-            overlayConfig = overlayConfig.value,
+            overlayConfig = currentOverlayCfg,
             activeRoute = activeRouteData.value,
             deviceRotationDegrees = rot,
             compassHeading = compassState.value.displayHeading,
             compassAzimuth = compassState.value.azimuthDegrees,
-            filenameFormatPreset = cameraSettings.value.filenameFormatPreset,
-            customFilenamePrefix = cameraSettings.value.customFilenamePrefix,
+            filenameFormatPreset = currentCamCfg.filenameFormatPreset,
+            customFilenamePrefix = currentCamCfg.customFilenamePrefix,
             isDarkTheme = themeMode.value != "light",
             lastValidLocation = retainedLoc,
             lastValidBearing = retainedBearing,
             isGpsRetained = (liveLoc == null && retainedLoc != null),
-            isVideoCapture = (_captureMode.value == com.example.model.CaptureMode.VIDEO || _isRecording.value)
+            isVideoCapture = (_captureMode.value == com.example.model.CaptureMode.VIDEO || _isRecording.value),
+            weatherObservation = weatherObs,
+            weatherIsFreshAtCapture = isWeatherFresh,
+            is24HourFormat = currentCamCfg.is24HourFormat,
+            coordinateFormat = currentCamCfg.coordinateFormat
         )
     }
 

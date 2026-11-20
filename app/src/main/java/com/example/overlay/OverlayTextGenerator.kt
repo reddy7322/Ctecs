@@ -7,9 +7,11 @@ import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.ProjectProfile
 import com.example.model.GeoPoint
+import com.example.model.WeatherObservation
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 
 object OverlayTextGenerator {
@@ -46,8 +48,32 @@ object OverlayTextGenerator {
         isForCapture: Boolean = false,
         locationName: String = "",
         authoritativeSideOverride: String? = null,
-        useAuthoritativeSide: Boolean = false
+        useAuthoritativeSide: Boolean = false,
+        weatherObservation: WeatherObservation? = null,
+        timeZone: TimeZone = TimeZone.getDefault()
     ): List<String> {
+        // When Weather Information is enabled, use the centralized 4-line SmartTimestampComposer.
+        // When OFF (default), preserve the exact existing timestamp pipeline untouched.
+        if (config.showWeatherInfo &&
+            config.template != OverlayTemplate.MINIMAL_TIMESTAMP &&
+            config.template != OverlayTemplate.NONE
+        ) {
+            return SmartTimestampComposer.composeLines(
+                config = config,
+                project = project,
+                location = location,
+                chainageStr = chainageStr,
+                coordinateFormat = coordinateFormat,
+                is24HourFormat = is24HourFormat,
+                timestampMs = timestamp,
+                locationName = locationName,
+                weatherObservation = weatherObservation,
+                authoritativeSideOverride = authoritativeSideOverride,
+                useAuthoritativeSide = useAuthoritativeSide,
+                timeZone = timeZone
+            )
+        }
+
         val lines = mutableListOf<String>()
 
         when (config.template) {

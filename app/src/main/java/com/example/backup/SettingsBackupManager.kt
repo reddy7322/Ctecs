@@ -135,6 +135,16 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_SHOW_INDEX_NUMBER.name,
                 PreferencesManager.KEY_SHOW_LOCATION_NAME.name,
                 PreferencesManager.KEY_LAST_DETECTED_LOCATION_NAME.name,
+                PreferencesManager.KEY_SHOW_WEATHER_INFO.name,
+                PreferencesManager.KEY_WEATHER_SHOW_TEMPERATURE.name,
+                PreferencesManager.KEY_WEATHER_SHOW_CONDITION.name,
+                PreferencesManager.KEY_WEATHER_SHOW_LOCATION_NAME.name,
+                PreferencesManager.KEY_WEATHER_SHOW_COORDINATES.name,
+                PreferencesManager.KEY_WEATHER_SHOW_HUMIDITY.name,
+                PreferencesManager.KEY_WEATHER_SHOW_WIND_SPEED.name,
+                PreferencesManager.KEY_WEATHER_SHOW_WIND_DIRECTION.name,
+                PreferencesManager.KEY_WEATHER_DISPLAY_FORMAT.name,
+                PreferencesManager.KEY_WEATHER_OMIT_IF_STALE.name,
                 PreferencesManager.KEY_USE_SAME_PADDING_PHOTO_VIDEO.name,
                 PreferencesManager.KEY_PHOTO_PADDING_TOP_DP.name,
                 PreferencesManager.KEY_PHOTO_PADDING_BOTTOM_DP.name,
@@ -529,6 +539,16 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_PDF_DEFAULT_PREPARED_BY.name, PrefValueType.STRING, overlay.pdfDefaultPreparedBy)
         putEntry(PreferencesManager.KEY_PHOTO_MINI_MAP_JSON.name, PrefValueType.STRING, overlay.photoMiniMap.toJsonString())
         putEntry(PreferencesManager.KEY_VIDEO_MINI_MAP_JSON.name, PrefValueType.STRING, overlay.videoMiniMap.toJsonString())
+        putEntry(PreferencesManager.KEY_SHOW_WEATHER_INFO.name, PrefValueType.BOOLEAN, overlay.showWeatherInfo)
+        putEntry(PreferencesManager.KEY_WEATHER_SHOW_TEMPERATURE.name, PrefValueType.BOOLEAN, overlay.weatherShowTemperature)
+        putEntry(PreferencesManager.KEY_WEATHER_SHOW_CONDITION.name, PrefValueType.BOOLEAN, overlay.weatherShowCondition)
+        putEntry(PreferencesManager.KEY_WEATHER_SHOW_LOCATION_NAME.name, PrefValueType.BOOLEAN, overlay.weatherShowLocationName)
+        putEntry(PreferencesManager.KEY_WEATHER_SHOW_COORDINATES.name, PrefValueType.BOOLEAN, overlay.weatherShowCoordinates)
+        putEntry(PreferencesManager.KEY_WEATHER_SHOW_HUMIDITY.name, PrefValueType.BOOLEAN, overlay.weatherShowHumidity)
+        putEntry(PreferencesManager.KEY_WEATHER_SHOW_WIND_SPEED.name, PrefValueType.BOOLEAN, overlay.weatherShowWindSpeed)
+        putEntry(PreferencesManager.KEY_WEATHER_SHOW_WIND_DIRECTION.name, PrefValueType.BOOLEAN, overlay.weatherShowWindDirection)
+        putEntry(PreferencesManager.KEY_WEATHER_DISPLAY_FORMAT.name, PrefValueType.STRING, overlay.weatherDisplayFormat.name)
+        putEntry(PreferencesManager.KEY_WEATHER_OMIT_IF_STALE.name, PrefValueType.BOOLEAN, overlay.weatherOmitIfStale)
 
         // Camera & Photo/Video
         putEntry(PreferencesManager.KEY_CAPTURE_TIMER.name, PrefValueType.INT, camera.captureTimer.seconds)

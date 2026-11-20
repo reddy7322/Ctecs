@@ -2588,6 +2588,18 @@ fun PhotoDetailsDialog(
                 DetailRow("Activity / Desc", cleanActDesc, dialogColors)
                 DetailRow("GPS Coordinates", "%.6f, %.6f".format(Locale.US, photo.latitude, photo.longitude), dialogColors)
                 DetailRow("GPS Accuracy", "±%.1f meters".format(Locale.US, photo.accuracy), dialogColors)
+                if (photo.cleanLocationName().isNotBlank()) {
+                    DetailRow("Location", photo.cleanLocationName(), dialogColors)
+                }
+                if (photo.hasWeatherMetadata()) {
+                    DetailRow("Weather", photo.formatWeatherMetadataSummary(), dialogColors)
+                    if (photo.weatherObservedAtMs != null && photo.weatherObservedAtMs > 0L) {
+                        val weatherTime = SimpleDateFormat("dd MMM yyyy, h:mm a", Locale.US)
+                            .format(Date(photo.weatherObservedAtMs))
+                        val srcPart = photo.weatherSource.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+                        DetailRow("Weather Observed", "$weatherTime$srcPart", dialogColors)
+                    }
+                }
                 DetailRow("Match Offset", "%.1f meters".format(Locale.US, photo.offsetMetres), dialogColors)
                 DetailRow("Match Type", if (photo.isManualChainage) "Manual Input" else "Auto KMZ Match", dialogColors)
                 DetailRow("File Path", photo.filePath, dialogColors)

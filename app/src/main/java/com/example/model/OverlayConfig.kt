@@ -131,7 +131,19 @@ data class OverlayConfig(
 
     // Independent Photo & Video Mini Map Overlay Settings
     val photoMiniMap: MiniMapStyleConfig = MiniMapStyleConfig(),
-    val videoMiniMap: MiniMapStyleConfig = MiniMapStyleConfig()
+    val videoMiniMap: MiniMapStyleConfig = MiniMapStyleConfig(),
+
+    // Camera Timestamp & Watermark -> Weather Information (Default OFF to preserve existing output)
+    val showWeatherInfo: Boolean = false,
+    val weatherShowTemperature: Boolean = true,
+    val weatherShowCondition: Boolean = false,
+    val weatherShowLocationName: Boolean = true,
+    val weatherShowCoordinates: Boolean = true,
+    val weatherShowHumidity: Boolean = false,
+    val weatherShowWindSpeed: Boolean = false,
+    val weatherShowWindDirection: Boolean = false,
+    val weatherDisplayFormat: WeatherDisplayFormat = WeatherDisplayFormat.COMPACT,
+    val weatherOmitIfStale: Boolean = true
 ) {
     fun getEffectivePadding(isVideo: Boolean): OverlayPadding {
         return if (isVideo && !useSamePaddingForPhotoAndVideo) {
@@ -192,7 +204,11 @@ data class CaptureSnapshot(
     val lastValidLocation: GeoPoint? = null,
     val lastValidBearing: Float? = null,
     val isGpsRetained: Boolean = false,
-    val isVideoCapture: Boolean = false
+    val isVideoCapture: Boolean = false,
+    val weatherObservation: WeatherObservation? = null,
+    val weatherIsFreshAtCapture: Boolean = false,
+    val is24HourFormat: Boolean = false,
+    val coordinateFormat: CoordinateFormat = CoordinateFormat.DECIMAL
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage
