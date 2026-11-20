@@ -6,7 +6,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,10 +18,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
@@ -48,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,8 +73,11 @@ import com.example.model.KmVoiceSpeed
 import com.example.navigation.ChainageVoiceAssistantManager
 import com.example.navigation.SmartTtsManager
 import com.example.navigation.TtsAvailabilityStatus
+import com.example.navigation.TtsEngineReadiness
+import com.example.navigation.TtsLanguageAvailability
 import com.example.navigation.TtsStatusSnapshot
 import com.example.navigation.TtsTestResult
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -78,8 +86,9 @@ import kotlin.math.roundToInt
  *
  * Configures Navigate to Chainage Smart Voice Assistant, speech recognition language,
  * automatic Android TTS engine detection & manual engine selection, dynamic language & voice
- * availability, speech speed, pitch, volume, voice confirmation before navigation,
- * Install/Configure Voice Engine setup guidance, Check Again, and Test Voice Output diagnostics.
+ * availability with voice preview, speech speed, pitch, volume, voice confirmation before
+ * navigation, single compact setup/fallback guidance with non-truncating buttons, separated
+ * Microphone / Speech Recognition / TTS Engine / Language statuses, and real async Test Voice Output.
  */
 @Composable
 fun ChainageVoiceAssistantSettingsSectionContent(
@@ -91,6 +100,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
     val ttsStatus by SmartTtsManager.status.collectAsStateWithLifecycle()
 
     var hasMicPermission by remember {
@@ -106,7 +116,10 @@ fun ChainageVoiceAssistantSettingsSectionContent(
     var showResetDialog by remember { mutableStateOf(false) }
     var micTestStatus by remember { mutableStateOf<String?>(null) }
     var voiceTestResult by remember { mutableStateOf<TtsTestResult?>(null) }
-    var setupGuidanceMessage by remember { mutableStateOf<String?>(null) }
+    var isTestingVoice by remember { mutableStateOf(false) }
+    var isPreviewingVoice by remember { mutableStateOf(false) }
+    var inlineSetupNote by remember { mutableStateOf<String?>(null) }
+    var hadPausedOrStopped by remember { mutableStateOf(false) }
 
     val effectiveLangTag = settings.effectiveLanguageTag()
 
@@ -128,7 +141,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
     }
 
     // Smart Voice Output state management:
-    // - ON: verify & initialize working TTS engine automatically.
+    // - ON: verify & initialize working TTS engine automatically (without cancelling in-flight binds).
     // - OFF: stop active speech and do NOT unnecessarily initialize TTS.
     LaunchedEffect(settings.voiceOutputEnabled, settings.ttsEnginePackage, effectiveLangTag) {
         if (settings.voiceOutputEnabled) {
@@ -143,18 +156,41 @@ fun ChainageVoiceAssistantSettingsSectionContent(
         }
     }
 
-    // Automatically re-detect TTS engine & installed voice data when the user returns to CTECS
-    // from Android TTS Settings or Google Speech Services installation.
+    // Clear stale test failure or manual setup notes immediately once TTS recovers to READY.
+    LaunchedEffect(ttsStatus.status, ttsStatus.activeEnginePackage, ttsStatus.languageCheck?.availability) {
+        if (ttsStatus.isReady) {
+            inlineSetupNote = null
+            if (voiceTestResult?.success == false) {
+                voiceTestResult = null
+            }
+        }
+    }
+
+    // Automatically re-detect TTS engine & installed voice data ONLY after actually returning
+    // from background / Android TTS Settings (ON_PAUSE/ON_STOP -> ON_RESUME).
+    // Never fire on initial observer attach so an in-flight Samsung SMT bind is NEVER cancelled!
     DisposableEffect(lifecycleOwner, settings.voiceOutputEnabled, settings.ttsEnginePackage, effectiveLangTag) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && settings.voiceOutputEnabled) {
-                SmartTtsManager.revalidateOnResume(
-                    context = context,
-                    voiceOutputEnabled = true,
-                    preferredEngine = settings.ttsEnginePackage,
-                    languageTag = effectiveLangTag,
-                    forceReinitialize = !SmartTtsManager.status.value.isReady
-                )
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    hadPausedOrStopped = true
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if (hadPausedOrStopped) {
+                        hadPausedOrStopped = false
+                        hasMicPermission = ChainageVoiceAssistantManager.hasRecordAudioPermission(context)
+                        if (settings.voiceOutputEnabled) {
+                            SmartTtsManager.revalidateOnResume(
+                                context = context,
+                                voiceOutputEnabled = true,
+                                preferredEngine = settings.ttsEnginePackage,
+                                languageTag = effectiveLangTag,
+                                forceReinitialize = !SmartTtsManager.status.value.isReady
+                            )
+                        }
+                    }
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -165,7 +201,13 @@ fun ChainageVoiceAssistantSettingsSectionContent(
         SmartTtsManager.getVoicesForLanguage(effectiveLangTag)
     }
 
-    val selectedEngineLabel = remember(ttsStatus.installedEngines, ttsStatus.activeEngineLabel, settings.ttsEnginePackage) {
+    val selectedEngineLabel = remember(
+        ttsStatus.installedEngines,
+        ttsStatus.disabledEngines,
+        ttsStatus.activeEngineLabel,
+        ttsStatus.isFallbackActive,
+        settings.ttsEnginePackage
+    ) {
         if (settings.ttsEnginePackage.isBlank()) {
             if (ttsStatus.activeEngineLabel.isNotBlank()) {
                 "Auto (${ttsStatus.activeEngineLabel})"
@@ -173,8 +215,14 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                 "Auto (System Default)"
             }
         } else {
-            ttsStatus.installedEngines.firstOrNull { it.packageName == settings.ttsEnginePackage }?.label
-                ?: settings.ttsEnginePackage.substringAfterLast('.')
+            val matched = ttsStatus.installedEngines.firstOrNull { it.packageName == settings.ttsEnginePackage }
+                ?: ttsStatus.disabledEngines.firstOrNull { it.packageName == settings.ttsEnginePackage }
+            val baseLabel = matched?.label ?: settings.ttsEnginePackage.substringAfterLast('.')
+            if (ttsStatus.isFallbackActive && ttsStatus.activeEngineLabel.isNotBlank()) {
+                "$baseLabel (using ${ttsStatus.activeEngineLabel})"
+            } else {
+                baseLabel
+            }
         }
     }
 
@@ -208,6 +256,27 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                 ?: settings.ttsVoiceName.substringAfterLast('#')
         }
     }
+
+    val voiceOutputSubtitle = remember(settings.voiceOutputEnabled, ttsStatus) {
+        when {
+            !settings.voiceOutputEnabled ->
+                "Voice Output is OFF • Visual destination confirmation remains active"
+            ttsStatus.isReady && ttsStatus.isFallbackActive ->
+                "Active via fallback (${ttsStatus.activeEngineLabel}) • Preference preserved"
+            ttsStatus.isReady ->
+                "Ready • ${ttsStatus.activeEngineLabel.ifBlank { "Android TTS" }}"
+            ttsStatus.status == TtsAvailabilityStatus.INITIALIZING ||
+                ttsStatus.status == TtsAvailabilityStatus.NOT_INITIALIZED ->
+                "Initializing Android Text-to-Speech engine…"
+            else ->
+                "Engine setup required • Visual destination confirmation remains active"
+        }
+    }
+
+    val selectedLangAvailability = ttsStatus.languageCheck?.availability
+    val isSelectedLangMissingOrUnsupported = settings.voiceOutputEnabled &&
+        (selectedLangAvailability == TtsLanguageAvailability.MISSING_DATA ||
+            selectedLangAvailability == TtsLanguageAvailability.NOT_SUPPORTED)
 
     Column(
         modifier = Modifier
@@ -289,6 +358,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                         onClick = {
                             showLanguageMenu = false
                             voiceTestResult = null
+                            inlineSetupNote = null
                             onUpdateSettings {
                                 it.copy(
                                     voiceLanguage = lang,
@@ -323,6 +393,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                             onClick = {
                                 showLanguageMenu = false
                                 voiceTestResult = null
+                                inlineSetupNote = null
                                 onUpdateSettings {
                                     it.copy(
                                         voiceLanguage = ChainageVoiceLanguage.SYSTEM,
@@ -340,16 +411,16 @@ fun ChainageVoiceAssistantSettingsSectionContent(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
 
-        // Voice Output ON/OFF
+        // Voice Output ON/OFF with truthful readiness status in subtitle
         KmFlatSwitchRow(
             title = "Voice Output",
-            subtitle = "Speak destination distance and confirmation prompts using Android TTS",
+            subtitle = voiceOutputSubtitle,
             checked = settings.voiceOutputEnabled,
             accentColor = accentColor,
             tag = "cva_switch_voice_output",
             onCheckedChange = { enabled ->
                 voiceTestResult = null
-                setupGuidanceMessage = null
+                inlineSetupNote = null
                 if (!enabled) {
                     SmartTtsManager.stopSpeaking()
                 } else {
@@ -364,19 +435,20 @@ fun ChainageVoiceAssistantSettingsSectionContent(
             }
         )
 
-        // Smart TTS Engine Status, Setup Guidance, Install/Configure & Check Again
+        // STRICTLY ONE compact TTS status / fallback / setup panel
         TtsEngineStatusAndSetupCard(
             voiceOutputEnabled = settings.voiceOutputEnabled,
             ttsStatus = ttsStatus,
             accentColor = accentColor,
             contextSuffix = "Visual destination confirmation remains active.",
+            inlineSetupNote = inlineSetupNote,
             onInstallOrConfigure = { forMissingData ->
                 val msg = SmartTtsManager.launchSetupFlow(context, forMissingVoiceData = forMissingData)
-                setupGuidanceMessage = msg
+                inlineSetupNote = msg
                 onFeedbackMessage(msg)
             },
             onCheckAgain = {
-                setupGuidanceMessage = null
+                inlineSetupNote = null
                 voiceTestResult = null
                 SmartTtsManager.revalidateOnResume(
                     context = context,
@@ -386,28 +458,22 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                     forceReinitialize = true
                 )
                 onFeedbackMessage("Checking installed Android Text-to-Speech engines…")
+            },
+            onKeepFallbackEngine = if (ttsStatus.isFallbackActive && ttsStatus.activeEnginePackage.isNotBlank()) {
+                {
+                    inlineSetupNote = null
+                    voiceTestResult = null
+                    val fallbackPkg = ttsStatus.activeEnginePackage
+                    onUpdateSettings { it.copy(ttsEnginePackage = fallbackPkg, ttsVoiceName = "") }
+                    SmartTtsManager.selectEngine(context, fallbackPkg, effectiveLangTag)
+                    onFeedbackMessage("Saved ${ttsStatus.activeEngineLabel} as your preferred voice engine.")
+                }
+            } else {
+                null
             }
         )
 
-        if (!setupGuidanceMessage.isNullOrBlank()) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("cva_tts_setup_guidance_msg")
-            ) {
-                Text(
-                    text = setupGuidanceMessage!!,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.padding(10.dp)
-                )
-            }
-        }
-
-        // TTS Engine Selector (Auto + detected installed engines)
+        // TTS Engine Selector (Auto + detected installed engines with truthful readiness badges)
         Box(modifier = Modifier.fillMaxWidth()) {
             KmFlatDropdownRow(
                 label = "Text-to-Speech Engine",
@@ -422,22 +488,36 @@ fun ChainageVoiceAssistantSettingsSectionContent(
             ) {
                 DropdownMenuItem(
                     text = {
-                        Column {
-                            Text(
-                                text = "Auto (System Default)",
-                                fontWeight = if (settings.ttsEnginePackage.isBlank()) FontWeight.Bold else FontWeight.Normal,
-                                color = if (settings.ttsEnginePackage.isBlank()) accentColor else MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "Automatically selects default or working compatible engine",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f, fill = false)) {
+                                Text(
+                                    text = "Auto (System Default)",
+                                    fontWeight = if (settings.ttsEnginePackage.isBlank()) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (settings.ttsEnginePackage.isBlank()) accentColor else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Automatically picks default or working installed engine",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (settings.ttsEnginePackage.isBlank()) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = accentColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     },
                     onClick = {
                         showEngineMenu = false
                         voiceTestResult = null
+                        inlineSetupNote = null
                         onUpdateSettings { it.copy(ttsEnginePackage = "", ttsVoiceName = "") }
                         if (settings.voiceOutputEnabled) {
                             SmartTtsManager.selectEngine(context, "", effectiveLangTag)
@@ -448,24 +528,43 @@ fun ChainageVoiceAssistantSettingsSectionContent(
 
                 ttsStatus.installedEngines.forEach { engine ->
                     val isSel = settings.ttsEnginePackage == engine.packageName
+                    val readinessColor = when (engine.readiness) {
+                        TtsEngineReadiness.READY -> accentColor
+                        TtsEngineReadiness.FAILED, TtsEngineReadiness.DISABLED -> MaterialTheme.colorScheme.error
+                        TtsEngineReadiness.INITIALIZING, TtsEngineReadiness.UNTESTED -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                     DropdownMenuItem(
                         text = {
-                            Column {
-                                Text(
-                                    text = engine.label + if (engine.isSystemDefault) " (Default)" else "",
-                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSel) accentColor else MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = engine.packageName,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f, fill = false)) {
+                                    Text(
+                                        text = engine.label + if (engine.isSystemDefault) " (Default)" else "",
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSel) accentColor else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "${engine.readiness.badgeLabel} • ${engine.packageName}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = readinessColor
+                                    )
+                                }
+                                if (isSel) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = accentColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         },
                         onClick = {
                             showEngineMenu = false
                             voiceTestResult = null
+                            inlineSetupNote = null
                             onUpdateSettings { it.copy(ttsEnginePackage = engine.packageName, ttsVoiceName = "") }
                             if (settings.voiceOutputEnabled) {
                                 SmartTtsManager.selectEngine(context, engine.packageName, effectiveLangTag)
@@ -474,54 +573,170 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                         modifier = Modifier.testTag("cva_tts_engine_${engine.packageName}")
                     )
                 }
+
+                if (ttsStatus.disabledEngines.isNotEmpty()) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    ttsStatus.disabledEngines.forEach { disabled ->
+                        DropdownMenuItem(
+                            enabled = false,
+                            text = {
+                                Column {
+                                    Text(
+                                        text = disabled.label,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                                    )
+                                    Text(
+                                        text = "Disabled in Android Settings • ${disabled.packageName}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                                    )
+                                }
+                            },
+                            onClick = {},
+                            modifier = Modifier.testTag("cva_tts_engine_disabled_${disabled.packageName}")
+                        )
+                    }
+                }
             }
         }
 
-        // TTS Voice Selector
-        Box(modifier = Modifier.fillMaxWidth()) {
-            KmFlatDropdownRow(
-                label = "Assistant TTS Voice",
-                valueText = selectedVoiceLabel,
-                accentColor = accentColor,
-                tag = "cva_dropdown_tts_voice",
-                onClick = { showVoiceMenu = true }
-            )
-            DropdownMenu(
-                expanded = showVoiceMenu,
-                onDismissRequest = { showVoiceMenu = false }
+        // TTS Voice Selector + Voice Preview Action
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = "System Default Voice",
-                            fontWeight = if (settings.ttsVoiceName.isBlank()) FontWeight.Bold else FontWeight.Normal,
-                            color = if (settings.ttsVoiceName.isBlank()) accentColor else MaterialTheme.colorScheme.onSurface
+                Box(modifier = Modifier.weight(1f)) {
+                    KmFlatDropdownRow(
+                        label = "Assistant TTS Voice",
+                        valueText = selectedVoiceLabel,
+                        accentColor = accentColor,
+                        tag = "cva_dropdown_tts_voice",
+                        onClick = { showVoiceMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showVoiceMenu,
+                        onDismissRequest = { showVoiceMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "System Default Voice",
+                                    fontWeight = if (settings.ttsVoiceName.isBlank()) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (settings.ttsVoiceName.isBlank()) accentColor else MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            onClick = {
+                                showVoiceMenu = false
+                                onUpdateSettings { it.copy(ttsVoiceName = "") }
+                            },
+                            modifier = Modifier.testTag("cva_tts_voice_default")
                         )
-                    },
-                    onClick = {
-                        showVoiceMenu = false
-                        onUpdateSettings { it.copy(ttsVoiceName = "") }
-                    },
-                    modifier = Modifier.testTag("cva_tts_voice_default")
-                )
-                filteredVoices.take(25).forEach { voice ->
-                    val isSel = settings.ttsVoiceName == voice.name
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = voice.displayLabel,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSel) accentColor else MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                        if (filteredVoices.isEmpty() && isSelectedLangMissingOrUnsupported) {
+                            DropdownMenuItem(
+                                enabled = false,
+                                text = {
+                                    Text(
+                                        text = "No installed voices for $selectedLanguageLabel",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {}
                             )
-                        },
-                        onClick = {
-                            showVoiceMenu = false
-                            onUpdateSettings { it.copy(ttsVoiceName = voice.name) }
+                        } else {
+                            filteredVoices.take(25).forEach { voice ->
+                                val isSel = settings.ttsVoiceName == voice.name
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = voice.displayLabel,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isSel) accentColor else MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    onClick = {
+                                        showVoiceMenu = false
+                                        onUpdateSettings { it.copy(ttsVoiceName = voice.name) }
+                                    }
+                                )
+                            }
                         }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        if (!settings.voiceOutputEnabled) {
+                            onFeedbackMessage("Turn ON Voice Output to preview voices.")
+                        } else if (!isPreviewingVoice) {
+                            isPreviewingVoice = true
+                            coroutineScope.launch {
+                                try {
+                                    val res = ChainageVoiceAssistantManager.previewVoiceAsync(context, settings)
+                                    if (res.success) {
+                                        onFeedbackMessage("Voice preview: ${res.spokenText}")
+                                    } else {
+                                        onFeedbackMessage("${res.headline}: ${res.message}")
+                                    }
+                                } finally {
+                                    isPreviewingVoice = false
+                                }
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("cva_preview_voice_btn")
+                ) {
+                    if (isPreviewingVoice) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = accentColor
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Preview Voice",
+                            tint = accentColor,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Preview",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accentColor,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
+            }
+
+            if (isSelectedLangMissingOrUnsupported) {
+                Text(
+                    text = if (selectedLangAvailability == TtsLanguageAvailability.MISSING_DATA) {
+                        "Voice data is missing for $selectedLanguageLabel. Install voice data in TTS settings to see installed voices."
+                    } else {
+                        "$selectedLanguageLabel is not supported by the active TTS engine."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .testTag("cva_voice_missing_data_hint")
+                )
             }
         }
 
@@ -544,7 +759,9 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                         Text(
                             text = spd.label,
                             fontSize = 11.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
@@ -553,6 +770,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                     ),
                     modifier = Modifier
                         .weight(1f)
+                        .heightIn(min = 48.dp)
                         .testTag("cva_speed_${spd.name.lowercase()}")
                 )
             }
@@ -628,141 +846,184 @@ fun ChainageVoiceAssistantSettingsSectionContent(
             }
         )
 
-        // Test Microphone & Test Voice Output
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(
-                onClick = {
-                    val grantedNow = ChainageVoiceAssistantManager.hasRecordAudioPermission(context)
-                    hasMicPermission = grantedNow
-                    if (!grantedNow) {
-                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    } else if (!isSpeechServiceAvailable) {
-                        micTestStatus = "Microphone granted, but Android Speech Recognition service is not available on this device."
-                        onFeedbackMessage(micTestStatus!!)
-                    } else {
-                        micTestStatus = "Microphone permission granted & Android Speech Recognition ready ($selectedLanguageLabel)."
-                        onFeedbackMessage(micTestStatus!!)
-                    }
-                },
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .testTag("cva_test_microphone_btn")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Mic,
-                    contentDescription = "Test Microphone",
-                    tint = accentColor,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Test Microphone",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = accentColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+        // Test Microphone & Test Voice Output (responsive non-truncating buttons)
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val stackTestButtons = maxWidth < 310.dp
+            val testMicButton: @Composable (Modifier) -> Unit = { btnMod ->
+                OutlinedButton(
+                    onClick = {
+                        val grantedNow = ChainageVoiceAssistantManager.hasRecordAudioPermission(context)
+                        hasMicPermission = grantedNow
+                        if (!grantedNow) {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        } else if (!isSpeechServiceAvailable) {
+                            micTestStatus = "Microphone granted, but Android Speech Recognition service is not available on this device."
+                            onFeedbackMessage(micTestStatus!!)
+                        } else {
+                            micTestStatus = "Microphone permission granted & Android Speech Recognition ready ($selectedLanguageLabel)."
+                            onFeedbackMessage(micTestStatus!!)
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    modifier = btnMod
+                        .heightIn(min = 48.dp)
+                        .testTag("cva_test_microphone_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "Test Microphone",
+                        tint = accentColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "Test Microphone",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accentColor,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
             }
 
-            OutlinedButton(
-                onClick = {
-                    if (!settings.voiceOutputEnabled) {
-                        val disabledMsg = "Voice Output is currently OFF. Turn ON Voice Output to test speech."
-                        voiceTestResult = TtsTestResult(
-                            success = false,
-                            spokenText = SmartTtsManager.TEST_VOICE_SAMPLE_TEXT,
-                            message = disabledMsg,
-                            status = TtsAvailabilityStatus.NOT_INITIALIZED
-                        )
-                        onFeedbackMessage(disabledMsg)
-                    } else {
-                        val res = ChainageVoiceAssistantManager.testVoiceOutputDetailed(context, settings)
-                        voiceTestResult = res
-                        if (res.success) {
-                            onFeedbackMessage("Voice test: ${res.spokenText}")
-                        } else {
-                            onFeedbackMessage("Voice test failed (${res.spokenText}): ${res.message}")
+            val testVoiceButton: @Composable (Modifier) -> Unit = { btnMod ->
+                OutlinedButton(
+                    onClick = {
+                        if (!settings.voiceOutputEnabled) {
+                            val disabledMsg = "Voice Output is currently OFF. Turn ON Voice Output to test speech."
+                            voiceTestResult = TtsTestResult(
+                                success = false,
+                                spokenText = SmartTtsManager.TEST_VOICE_SAMPLE_TEXT,
+                                headline = "Voice Output is OFF",
+                                message = disabledMsg,
+                                status = TtsAvailabilityStatus.NOT_INITIALIZED
+                            )
+                            onFeedbackMessage("$disabledMsg (${SmartTtsManager.TEST_VOICE_SAMPLE_TEXT})")
+                        } else if (!isTestingVoice) {
+                            isTestingVoice = true
+                            coroutineScope.launch {
+                                try {
+                                    val res = ChainageVoiceAssistantManager.testVoiceOutputAsync(context, settings)
+                                    voiceTestResult = res
+                                    if (res.success) {
+                                        onFeedbackMessage("${res.headline}: ${res.spokenText}")
+                                    } else {
+                                        onFeedbackMessage("${res.headline} (${res.spokenText}): ${res.message}")
+                                    }
+                                } finally {
+                                    isTestingVoice = false
+                                }
+                            }
                         }
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    modifier = btnMod
+                        .heightIn(min = 48.dp)
+                        .testTag("cva_test_voice_output_btn")
+                ) {
+                    if (isTestingVoice) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(15.dp),
+                            strokeWidth = 2.dp,
+                            color = accentColor
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.RecordVoiceOver,
+                            contentDescription = "Test Voice Output",
+                            tint = accentColor,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
-                },
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .testTag("cva_test_voice_output_btn")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.RecordVoiceOver,
-                    contentDescription = "Test Voice Output",
-                    tint = accentColor,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Test Voice Output",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = accentColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = if (isTestingVoice) "Testing…" else "Test Voice Output",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accentColor,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+
+            if (stackTestButtons) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    testMicButton(Modifier.fillMaxWidth())
+                    testVoiceButton(Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    testMicButton(Modifier.weight(1f))
+                    testVoiceButton(Modifier.weight(1f))
+                }
             }
         }
 
-        // Clear inline Test Voice Output Success / Failure feedback
-        voiceTestResult?.let { testRes ->
-            val containerColor = if (testRes.success) {
-                accentColor.copy(alpha = 0.12f)
-            } else {
-                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
-            }
-            val iconTint = if (testRes.success) accentColor else MaterialTheme.colorScheme.tertiary
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = containerColor,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("cva_voice_test_status")
-            ) {
-                Row(
-                    modifier = Modifier.padding(10.dp),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // Inline Test Voice Output result — strictly suppresses duplicate engine/language error cards
+        // when the single primary tts_status_card_setup warning panel is already displayed above.
+        val showVoiceTestCard = voiceTestResult?.let { res ->
+            res.success ||
+                !settings.voiceOutputEnabled ||
+                res.status == TtsAvailabilityStatus.AUDIO_OUTPUT_UNAVAILABLE ||
+                !ttsStatus.status.needsSetupAction
+        } == true
+
+        if (showVoiceTestCard) {
+            voiceTestResult?.let { testRes ->
+                val containerColor = if (testRes.success) {
+                    accentColor.copy(alpha = 0.12f)
+                } else {
+                    MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
+                }
+                val iconTint = if (testRes.success) accentColor else MaterialTheme.colorScheme.tertiary
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = containerColor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cva_voice_test_status")
                 ) {
-                    Icon(
-                        imageVector = if (testRes.success) Icons.Default.CheckCircle else Icons.Default.Warning,
-                        contentDescription = if (testRes.success) "Voice test succeeded" else "Voice test issue",
-                        tint = iconTint,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = if (testRes.success) "Voice Output Working" else "Voice Output Needs Attention",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (testRes.success) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = if (testRes.success) "Voice test successful" else testRes.headline,
+                            tint = iconTint,
+                            modifier = Modifier.size(16.dp)
                         )
-                        Text(
-                            text = testRes.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (testRes.success) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                text = "\"${testRes.spokenText}\"",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontSize = 10.sp,
-                                color = accentColor
+                                text = testRes.headline,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
+                            Text(
+                                text = testRes.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (testRes.success) {
+                                Text(
+                                    text = "\"${testRes.spokenText}\"",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    color = accentColor
+                                )
+                            }
                         }
                     }
                 }
@@ -798,50 +1059,97 @@ fun ChainageVoiceAssistantSettingsSectionContent(
             }
         }
 
-        // Permission & Privacy Explanation Card
+        // Separated Independent Status & Privacy Card:
+        // Clearly separates Microphone Permission, Speech Recognition, TTS Engine, and Selected TTS Language.
+        val ttsEngineStatusText = when {
+            !settings.voiceOutputEnabled -> "Off"
+            ttsStatus.isReady && ttsStatus.isFallbackActive ->
+                "Ready (Fallback: ${ttsStatus.activeEngineLabel})"
+            ttsStatus.isReady ->
+                "Ready (${ttsStatus.activeEngineLabel.ifBlank { "System Default" }})"
+            ttsStatus.status == TtsAvailabilityStatus.INITIALIZING ||
+                ttsStatus.status == TtsAvailabilityStatus.NOT_INITIALIZED -> "Initializing…"
+            else -> "Unavailable"
+        }
+        val ttsEngineOk = !settings.voiceOutputEnabled || ttsStatus.isReady
+
+        val ttsLangStatusText = when {
+            !settings.voiceOutputEnabled -> "Inactive (Voice Output Off)"
+            ttsStatus.status == TtsAvailabilityStatus.INITIALIZING ||
+                ttsStatus.status == TtsAvailabilityStatus.NOT_INITIALIZED -> "Checking…"
+            !ttsStatus.isReady && ttsStatus.status != TtsAvailabilityStatus.LANGUAGE_MISSING_DATA &&
+                ttsStatus.status != TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED -> "Unavailable (Engine not ready)"
+            selectedLangAvailability == TtsLanguageAvailability.AVAILABLE -> "Available ($selectedLanguageLabel)"
+            selectedLangAvailability == TtsLanguageAvailability.MISSING_DATA -> "Missing Voice Data ($selectedLanguageLabel)"
+            selectedLangAvailability == TtsLanguageAvailability.NOT_SUPPORTED -> "Not Supported ($selectedLanguageLabel)"
+            else -> "Pending"
+        }
+        val ttsLangOk = !settings.voiceOutputEnabled || selectedLangAvailability == TtsLanguageAvailability.AVAILABLE
+
         Surface(
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(10.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f),
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("cva_permission_explanation_card")
         ) {
-            Row(
-                modifier = Modifier.padding(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.Top
+            Column(
+                modifier = Modifier.padding(11.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    tint = accentColor,
-                    modifier = Modifier.size(16.dp)
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Voice system status",
+                        tint = accentColor,
+                        modifier = Modifier.size(16.dp)
+                    )
                     Text(
-                        text = "Microphone & Speech Recognition Privacy",
+                        text = "Voice System Status & Privacy",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Text(
-                        text = "Microphone permission is requested only when you tap Voice Search inside Navigate to Chainage. CTECS uses Android's built-in Speech Recognition service, never listens in the background, and stops recording immediately when the popup closes.",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 10.5.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    val statusSummary = buildString {
-                        append(if (hasMicPermission) "Microphone: Granted" else "Microphone: Not granted")
-                        append(" • ")
-                        append(if (isSpeechServiceAvailable) "Speech Service: Available" else "Speech Service: Unavailable")
-                    }
-                    Text(
-                        text = statusSummary,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = accentColor
-                    )
                 }
+
+                VoiceSystemStatusRow(
+                    label = "Microphone Permission",
+                    value = if (hasMicPermission) "Granted" else "Denied",
+                    positive = hasMicPermission,
+                    accentColor = accentColor,
+                    tag = "cva_status_mic"
+                )
+                VoiceSystemStatusRow(
+                    label = "Speech Recognition",
+                    value = if (isSpeechServiceAvailable) "Available" else "Unavailable",
+                    positive = isSpeechServiceAvailable,
+                    accentColor = accentColor,
+                    tag = "cva_status_speech_rec"
+                )
+                VoiceSystemStatusRow(
+                    label = "Text-to-Speech Engine",
+                    value = ttsEngineStatusText,
+                    positive = ttsEngineOk,
+                    accentColor = accentColor,
+                    tag = "cva_status_tts_engine"
+                )
+                VoiceSystemStatusRow(
+                    label = "Selected TTS Language",
+                    value = ttsLangStatusText,
+                    positive = ttsLangOk,
+                    accentColor = accentColor,
+                    tag = "cva_status_tts_language"
+                )
+
+                Text(
+                    text = "Microphone access is used only while Voice Search is active inside Navigate to Chainage. CTECS never listens in the background and releases speech resources when closed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 10.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -853,6 +1161,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 48.dp)
                 .testTag("cva_reset_defaults_btn")
         ) {
             Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -873,7 +1182,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                     onClick = {
                         showResetDialog = false
                         voiceTestResult = null
-                        setupGuidanceMessage = null
+                        inlineSetupNote = null
                         onResetDefaults()
                     },
                     modifier = Modifier.testTag("cva_confirm_reset_btn")
@@ -890,12 +1199,47 @@ fun ChainageVoiceAssistantSettingsSectionContent(
     }
 }
 
+@Composable
+private fun VoiceSystemStatusRow(
+    label: String,
+    value: String,
+    positive: Boolean,
+    accentColor: Color,
+    tag: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(tag),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = if (positive) accentColor else MaterialTheme.colorScheme.error,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 /**
- * Reusable actionable Android TTS status & setup card shared between Smart Voice Assistant
- * settings and KM Stone Voice Announcement settings.
+ * Single compact Android TTS status, fallback, and setup card.
  *
- * Replaces static dead-end error banners with live engine detection status, clear explanation,
- * Install / Configure Voice Engine (or Install Voice Data) actions, and a Check Again trigger.
+ * Guarantees:
+ * - Strictly ONE configuration warning panel when Voice Output needs attention.
+ * - Responsive button layout (`Configure Engine` / `Install Voice Data` + `Check Again`) so
+ *   labels NEVER truncate with ellipsis on compact portrait or landscape screens.
+ * - Explicit fallback controls when a fallback engine is active, never silently overwriting
+ *   the user's saved engine preference.
  */
 @Composable
 internal fun TtsEngineStatusAndSetupCard(
@@ -903,8 +1247,10 @@ internal fun TtsEngineStatusAndSetupCard(
     ttsStatus: TtsStatusSnapshot,
     accentColor: Color,
     contextSuffix: String,
+    inlineSetupNote: String? = null,
     onInstallOrConfigure: (forMissingVoiceData: Boolean) -> Unit,
     onCheckAgain: () -> Unit,
+    onKeepFallbackEngine: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (!voiceOutputEnabled) {
@@ -939,37 +1285,146 @@ internal fun TtsEngineStatusAndSetupCard(
 
     when (ttsStatus.status) {
         TtsAvailabilityStatus.READY -> {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = accentColor.copy(alpha = 0.11f),
-                modifier = modifier
-                    .fillMaxWidth()
-                    .testTag("tts_status_card_ready")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            if (ttsStatus.isFallbackActive) {
+                // Transparent fallback notice: user's saved preference is untouched; user can keep fallback or retry/configure
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.50f),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.40f)),
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .testTag("tts_status_card_fallback")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "TTS engine ready",
-                        tint = accentColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = ttsStatus.statusHeadline,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
+                    Column(
+                        modifier = Modifier.padding(11.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Fallback TTS engine active",
+                                tint = accentColor,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = ttsStatus.statusHeadline,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = ttsStatus.statusDetail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.9f)
+                                )
+                            }
+                        }
+
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val stack = maxWidth < 310.dp
+                            val keepBtn: @Composable (Modifier) -> Unit = { mod ->
+                                if (onKeepFallbackEngine != null) {
+                                    Button(
+                                        onClick = onKeepFallbackEngine,
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                        modifier = mod
+                                            .heightIn(min = 48.dp)
+                                            .testTag("cva_keep_fallback_engine_btn")
+                                    ) {
+                                        Text(
+                                            text = "Keep Fallback",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                            }
+                            val retryBtn: @Composable (Modifier) -> Unit = { mod ->
+                                OutlinedButton(
+                                    onClick = onCheckAgain,
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                    modifier = mod
+                                        .heightIn(min = 48.dp)
+                                        .testTag("cva_check_tts_again_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Check Again",
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Check Again",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+
+                            if (stack) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    keepBtn(Modifier.fillMaxWidth())
+                                    retryBtn(Modifier.fillMaxWidth())
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (onKeepFallbackEngine != null) {
+                                        keepBtn(Modifier.weight(1f))
+                                    }
+                                    retryBtn(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = accentColor.copy(alpha = 0.11f),
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .testTag("tts_status_card_ready")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "TTS engine ready",
+                            tint = accentColor,
+                            modifier = Modifier.size(16.dp)
                         )
-                        Text(
-                            text = ttsStatus.statusDetail,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontSize = 10.5.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = ttsStatus.statusHeadline,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = ttsStatus.statusDetail,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -1010,7 +1465,7 @@ internal fun TtsEngineStatusAndSetupCard(
             val primaryActionLabel = if (isMissingLanguageData) {
                 "Install Voice Data"
             } else {
-                "Install / Configure Voice Engine"
+                "Configure Engine"
             }
 
             Surface(
@@ -1048,64 +1503,92 @@ internal fun TtsEngineStatusAndSetupCard(
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.9f)
                             )
+                            if (!inlineSetupNote.isNullOrBlank()) {
+                                Text(
+                                    text = inlineSetupNote,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.5.sp,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f),
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { onInstallOrConfigure(isMissingLanguageData) },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                            modifier = Modifier
-                                .weight(1.45f)
-                                .heightIn(min = 48.dp)
-                                .testTag(
-                                    if (isMissingLanguageData) "cva_install_voice_data_btn"
-                                    else "cva_install_configure_tts_btn"
+                    // Responsive non-truncating action layout for Portrait & Landscape
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        val stackVertically = maxWidth < 310.dp
+
+                        val primaryButton: @Composable (Modifier) -> Unit = { btnMod ->
+                            Button(
+                                onClick = { onInstallOrConfigure(isMissingLanguageData) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                modifier = btnMod
+                                    .heightIn(min = 48.dp)
+                                    .testTag(
+                                        if (isMissingLanguageData) "cva_install_voice_data_btn"
+                                        else "cva_install_configure_tts_btn"
+                                    )
+                            ) {
+                                Icon(
+                                    imageVector = if (isMissingLanguageData) Icons.Default.Download else Icons.Default.Settings,
+                                    contentDescription = primaryActionLabel,
+                                    modifier = Modifier.size(15.dp)
                                 )
-                        ) {
-                            Icon(
-                                imageVector = if (isMissingLanguageData) Icons.Default.Download else Icons.Default.Settings,
-                                contentDescription = primaryActionLabel,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = primaryActionLabel,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = primaryActionLabel,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
 
-                        OutlinedButton(
-                            onClick = onCheckAgain,
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.65f)),
-                            modifier = Modifier
-                                .weight(0.95f)
-                                .heightIn(min = 48.dp)
-                                .testTag("cva_check_tts_again_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Check Again",
-                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Check Again",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        val checkAgainButton: @Composable (Modifier) -> Unit = { btnMod ->
+                            OutlinedButton(
+                                onClick = onCheckAgain,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.65f)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                modifier = btnMod
+                                    .heightIn(min = 48.dp)
+                                    .testTag("cva_check_tts_again_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Check Again",
+                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Check Again",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+
+                        if (stackVertically) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                primaryButton(Modifier.fillMaxWidth())
+                                checkAgainButton(Modifier.fillMaxWidth())
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                primaryButton(Modifier.weight(1.1f))
+                                checkAgainButton(Modifier.weight(0.9f))
+                            }
                         }
                     }
                 }

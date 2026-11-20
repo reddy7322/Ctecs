@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -16,10 +17,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -33,6 +38,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +66,7 @@ import com.example.model.KmVoiceSpeed
 import com.example.navigation.KmStoneVoiceAnnouncementManager
 import com.example.navigation.KmStoneVoiceScriptFormatter
 import com.example.navigation.SmartTtsManager
+import com.example.navigation.TtsAvailabilityStatus
 import kotlin.math.roundToInt
 
 /**
@@ -90,6 +97,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
     var showLanguageMenu by remember { mutableStateOf(false) }
     var showVoiceMenu by remember { mutableStateOf(false) }
     var customTemplateDraft by remember { mutableStateOf(settings.voiceCustomTemplate) }
+    var hadPausedOrStopped by remember { mutableStateOf(false) }
 
     LaunchedEffect(expanded, settings.voiceAnnouncementEnabled, settings.voiceEnginePackage, settings.voiceLanguageTag) {
         if (expanded && settings.voiceAnnouncementEnabled) {
@@ -102,16 +110,28 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
         }
     }
 
+    // Revalidate only after returning from background / Android TTS Settings (never on initial attach)
     DisposableEffect(lifecycleOwner, expanded, settings.voiceAnnouncementEnabled, settings.voiceEnginePackage, settings.voiceLanguageTag) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && expanded && settings.voiceAnnouncementEnabled) {
-                SmartTtsManager.revalidateOnResume(
-                    context = context,
-                    voiceOutputEnabled = true,
-                    preferredEngine = settings.voiceEnginePackage,
-                    languageTag = settings.voiceLanguageTag,
-                    forceReinitialize = !SmartTtsManager.status.value.isReady
-                )
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    hadPausedOrStopped = true
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if (hadPausedOrStopped) {
+                        hadPausedOrStopped = false
+                        if (expanded && settings.voiceAnnouncementEnabled) {
+                            SmartTtsManager.revalidateOnResume(
+                                context = context,
+                                voiceOutputEnabled = true,
+                                preferredEngine = settings.voiceEnginePackage,
+                                languageTag = settings.voiceLanguageTag,
+                                forceReinitialize = !SmartTtsManager.status.value.isReady
+                            )
+                        }
+                    }
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -210,25 +230,102 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                 }
             )
 
-            TtsEngineStatusAndSetupCard(
-                voiceOutputEnabled = settings.voiceAnnouncementEnabled,
-                ttsStatus = ttsStatus,
-                accentColor = accentColor,
-                contextSuffix = "Existing sound and vibration alerts remain fully active.",
-                onInstallOrConfigure = { forMissingData ->
-                    onFeedbackMessage(SmartTtsManager.launchSetupFlow(context, forMissingVoiceData = forMissingData))
+            // Compact single-line TTS readiness indicator (avoids duplicating full warning panels
+            // when both KM Stone Alerts and Chainage Voice Assistant are open on Settings).
+            val kmTtsMissingData = ttsStatus.status == TtsAvailabilityStatus.LANGUAGE_MISSING_DATA ||
+                ttsStatus.status == TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = when {
+                    !settings.voiceAnnouncementEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
+                    ttsStatus.isReady -> accentColor.copy(alpha = 0.10f)
+                    ttsStatus.status == TtsAvailabilityStatus.INITIALIZING ||
+                        ttsStatus.status == TtsAvailabilityStatus.NOT_INITIALIZED ->
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    else -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
                 },
-                onCheckAgain = {
-                    SmartTtsManager.revalidateOnResume(
-                        context = context,
-                        voiceOutputEnabled = true,
-                        preferredEngine = settings.voiceEnginePackage,
-                        languageTag = settings.voiceLanguageTag,
-                        forceReinitialize = true
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("km_voice_tts_compact_status")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    when {
+                        !settings.voiceAnnouncementEnabled -> {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "Voice announcement off",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                        ttsStatus.isReady -> {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "TTS engine ready",
+                                tint = accentColor,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                        ttsStatus.status == TtsAvailabilityStatus.INITIALIZING ||
+                            ttsStatus.status == TtsAvailabilityStatus.NOT_INITIALIZED -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = accentColor
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "TTS setup needed",
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = when {
+                            !settings.voiceAnnouncementEnabled -> "Voice Announcement OFF • Sound & vibration remain active."
+                            ttsStatus.isReady -> "TTS Ready: ${ttsStatus.activeEngineLabel.ifBlank { "Android TTS" }}"
+                            ttsStatus.status == TtsAvailabilityStatus.INITIALIZING ||
+                                ttsStatus.status == TtsAvailabilityStatus.NOT_INITIALIZED -> "Initializing Android TTS…"
+                            else -> "${ttsStatus.statusHeadline}. Sound & vibration remain active."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
                     )
-                    onFeedbackMessage("Checking installed Android Text-to-Speech engines…")
+
+                    if (settings.voiceAnnouncementEnabled && ttsStatus.status.needsSetupAction) {
+                        TextButton(
+                            onClick = {
+                                onFeedbackMessage(
+                                    SmartTtsManager.launchSetupFlow(context, forMissingVoiceData = kmTtsMissingData)
+                                )
+                            },
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("km_voice_tts_configure_btn")
+                        ) {
+                            Text(
+                                text = if (kmTtsMissingData) "Install Data" else "Configure",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
                 }
-            )
+            }
 
             // Alert Output Coordination (Voice / Sound / Vibration)
             Box(modifier = Modifier.fillMaxWidth()) {

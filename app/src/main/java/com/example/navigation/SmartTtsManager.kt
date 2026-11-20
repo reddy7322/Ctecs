@@ -9,10 +9,13 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,11 +24,27 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * Per-engine readiness state verified via actual Android [TextToSpeech.OnInitListener] callback.
+ * Never assumes an engine is ready merely because it appears in PackageManager.
+ */
+enum class TtsEngineReadiness(val badgeLabel: String) {
+    READY("Ready"),
+    INITIALIZING("Initializing…"),
+    FAILED("Init failed"),
+    DISABLED("Disabled"),
+    UNTESTED("Installed")
+}
 
 /**
  * Metadata for an installed Android Text-to-Speech engine discovered on the device.
@@ -34,7 +53,8 @@ data class TtsEngineInfo(
     val packageName: String,
     val label: String,
     val isSystemDefault: Boolean,
-    val isEnabled: Boolean
+    val isEnabled: Boolean,
+    val readiness: TtsEngineReadiness = if (isEnabled) TtsEngineReadiness.UNTESTED else TtsEngineReadiness.DISABLED
 )
 
 /**
@@ -104,12 +124,14 @@ data class TtsSpeakOutcome(
     val message: String,
     val engineLabel: String = "",
     val resolvedLanguageTag: String = "",
-    val resolvedVoiceLabel: String = ""
+    val resolvedVoiceLabel: String = "",
+    val utteranceId: String? = null
 )
 
 data class TtsTestResult(
     val success: Boolean,
     val spokenText: String,
+    val headline: String,
     val message: String,
     val status: TtsAvailabilityStatus,
     val engineLabel: String = "",
@@ -131,11 +153,15 @@ data class TtsStatusSnapshot(
     val activeEnginePackage: String = "",
     val activeEngineLabel: String = "",
     val preferredEnginePackage: String = "",
+    val isFallbackActive: Boolean = false,
+    val fallbackFromEnginePackage: String = "",
+    val fallbackFromEngineLabel: String = "",
     val availableLanguages: List<KmStoneLanguageOption> = emptyList(),
     val availableVoices: List<KmStoneVoiceOption> = emptyList(),
     val languageCheck: TtsLanguageCheckResult? = null,
     val statusHeadline: String = "Voice output not initialized",
     val statusDetail: String = "Enable Voice Output to detect and initialize an Android Text-to-Speech engine.",
+    val lastInitErrorCode: Int? = null,
     val canOpenTtsSettings: Boolean = false,
     val canInstallVoiceData: Boolean = false,
     val canInstallGoogleSpeechServices: Boolean = false,
@@ -373,7 +399,7 @@ private class AndroidTtsEngineAdapter(
 private fun friendlyEngineName(packageName: String): String {
     return when (packageName) {
         SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG -> "Google Speech Services"
-        "com.samsung.SMT" -> "Samsung Text-to-Speech"
+        SmartTtsManager.SAMSUNG_TTS_PKG, SmartTtsManager.SAMSUNG_TTS_ALT_PKG -> "Samsung Text-to-Speech"
         "com.svox.pico" -> "Pico TTS"
         "com.reecedunn.espeak" -> "eSpeak TTS"
         "" -> "System Default TTS"
@@ -383,7 +409,7 @@ private fun friendlyEngineName(packageName: String): String {
 
 /**
  * Production Android [TtsPlatformProvider] using PackageManager, Settings.Secure, AudioManager,
- * and race-free [TextToSpeech] construction.
+ * and race-free [TextToSpeech] construction on the Main Looper (required by Samsung SMT and OEM engines).
  */
 private object AndroidTtsPlatformProvider : TtsPlatformProvider {
 
@@ -427,13 +453,13 @@ private object AndroidTtsPlatformProvider : TtsPlatformProvider {
                     packageName = pkg,
                     label = label,
                     isSystemDefault = pkg == defaultPkg,
-                    isEnabled = isAppEnabled
+                    isEnabled = isAppEnabled,
+                    readiness = if (isAppEnabled) TtsEngineReadiness.UNTESTED else TtsEngineReadiness.DISABLED
                 )
                 if (isAppEnabled) enabledList.add(info) else disabledList.add(info)
             }
 
-            // Also inspect disabled TTS services so we can accurately distinguish
-            // "engine disabled" from "no engine installed".
+            // Also inspect disabled TTS services to distinguish "engine disabled" vs "not installed".
             val allFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 PackageManager.MATCH_DISABLED_COMPONENTS or PackageManager.MATCH_ALL
             } else {
@@ -459,7 +485,8 @@ private object AndroidTtsPlatformProvider : TtsPlatformProvider {
                         packageName = pkg,
                         label = label,
                         isSystemDefault = pkg == defaultPkg,
-                        isEnabled = false
+                        isEnabled = false,
+                        readiness = TtsEngineReadiness.DISABLED
                     )
                 )
             }
@@ -494,7 +521,6 @@ private object AndroidTtsPlatformProvider : TtsPlatformProvider {
             if (created != null) {
                 onInit(created, status)
             } else {
-                // Capture synchronous callback fired before constructor returns
                 earlyStatus.set(status)
             }
         }
@@ -544,30 +570,37 @@ private object AndroidTtsPlatformProvider : TtsPlatformProvider {
 }
 
 /**
- * Centralized, process-wide Android Text-to-Speech (TTS) Manager for all of CTECS:
+ * Centralized, process-wide Android Text-to-Speech (TTS) Engine Manager for all of CTECS:
  * - Navigate to Chainage destination confirmation & distance announcements
  * - Smart Chainage Voice Assistant responses & Test Voice Output
  * - Smart Next KM Stone announcements & Arrival alerts
  * - Direction-change navigation voice feedback
  *
  * Root-Cause Guarantees:
- * 1. Strictly ONE shared TTS engine instance across the entire application (zero duplicate instances).
- * 2. Eliminates constructor/callback race conditions so `availableLanguages` and `availableVoices`
- *    are always populated reliably upon initialization.
- * 3. Automatically discovers installed TTS engines, initializes the preferred or system default engine,
- *    and falls back cleanly to other installed compatible engines (including Google Speech Services)
- *    before ever reporting TTS unavailable.
- * 4. Distinguishes accurately between no engine installed, disabled engine, init failure, missing
- *    language voice data, unsupported language, muted audio output, and engine disconnection.
- * 5. Never silently substitutes a wrong language when the user selected Hindi, Telugu, English, etc.
- * 6. Automatically revalidates on app resume, engine switch, or default system engine change.
- * 7. Never blocks the main UI thread; queues announcements intelligently with priority and non-overlap.
+ * 1. Constructs Android [TextToSpeech] on the Main Looper (required by Samsung SMT `com.samsung.SMT`
+ *    and OEM TTS services) while keeping package discovery off the UI thread.
+ * 2. Prevents duplicate TTS instances and initialization cancellation loops across recompositions
+ *    and lifecycle callbacks (`activeInstanceCount <= 1` at all times).
+ * 3. Follows strict engine priority without silently mutating user preferences:
+ *    (1) User-selected engine -> (2) System default engine (including bare default bind retry) ->
+ *    (3) Other compatible installed engines -> (4) Actionable setup guidance.
+ * 4. Clearly identifies when a fallback engine is active and tracks honest per-engine readiness.
+ * 5. Never silently substitutes a wrong language when voice data is missing or unsupported.
+ * 6. Awaits actual [UtteranceProgressListener] synthesis completion during async Test Voice Output.
  */
 object SmartTtsManager {
 
     const val GOOGLE_SPEECH_SERVICES_PKG = "com.google.android.tts"
+    const val SAMSUNG_TTS_PKG = "com.samsung.SMT"
+    const val SAMSUNG_TTS_ALT_PKG = "com.samsung.android.tts"
     const val TEST_VOICE_SAMPLE_TEXT =
-        "Voice assistant is working. Your destination chainage is 201 plus 500. Remaining distance is 5 kilometres."
+        "CTECS voice assistant is working. Your destination chainage is 201 plus 500."
+    const val VOICE_PREVIEW_SAMPLE_TEXT =
+        "Destination chainage 201 plus 500."
+
+    private const val INIT_WATCHDOG_TIMEOUT_MS = 6_000L
+    private const val TEST_INIT_WAIT_TIMEOUT_MS = 6_500L
+    private const val TEST_SYNTHESIS_WAIT_TIMEOUT_MS = 10_000L
 
     private val KEY_PROBED_LOCALES = listOf(
         Locale.forLanguageTag("en-IN"),
@@ -578,6 +611,7 @@ object SmartTtsManager {
     )
 
     private val ttsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val lock = Any()
 
     @Volatile
@@ -618,9 +652,12 @@ object SmartTtsManager {
     private var legacyFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var delayedSpeakJob: Job? = null
     private var initJob: Job? = null
+    private var initWatchdogJob: Job? = null
 
     private val activeUtteranceIds = mutableSetOf<String>()
     private val pendingQueue = ArrayDeque<TtsSpeakRequest>()
+    private val failedEnginePackagesInRun = ConcurrentHashMap.newKeySet<String>()
+    private val utteranceCompletionWaiters = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
     private val _status = MutableStateFlow(TtsStatusSnapshot())
     val status: StateFlow<TtsStatusSnapshot> = _status.asStateFlow()
@@ -629,9 +666,12 @@ object SmartTtsManager {
         get() = activeInstanceCountInternal
 
     /**
-     * Detects installed TTS engines and initializes the best working engine asynchronously
-     * (never blocking the main UI thread). Safe to call repeatedly — reuses the existing healthy
-     * engine unless [preferredEngine] changed, the system default engine changed, or [forceReinitialize] is true.
+     * Detects installed TTS engines and initializes the best working engine asynchronously.
+     *
+     * Guarded against initialization loops:
+     * - If an initialization for the same [preferredEngine] is ALREADY in flight and
+     *   [forceReinitialize] is false, this is a safe no-op (never cancels an in-flight Samsung SMT bind!).
+     * - If already initialized and healthy for the requested engine, only refreshes the language check.
      */
     fun initializeIfNeeded(
         context: Context,
@@ -646,13 +686,22 @@ object SmartTtsManager {
         val shouldRunDiscovery: Boolean
         synchronized(lock) {
             appContextRef = appCtx
+            val samePreferredInFlight = isInitializing &&
+                preferredEnginePackage.equals(cleanPreferred, ignoreCase = true)
+
+            if (samePreferredInFlight && !forceReinitialize) {
+                requestedLanguageTag = cleanLang
+                return
+            }
+
             preferredEnginePackage = cleanPreferred
             requestedLanguageTag = cleanLang
 
             val needsSwitch = cleanPreferred.isNotBlank() &&
                 isInitialized &&
                 activeEnginePackage.isNotBlank() &&
-                !activeEnginePackage.equals(cleanPreferred, ignoreCase = true)
+                !activeEnginePackage.equals(cleanPreferred, ignoreCase = true) &&
+                !_status.value.isFallbackActive
 
             val systemDefaultChanged = cleanPreferred.isBlank() &&
                 isInitialized &&
@@ -682,22 +731,38 @@ object SmartTtsManager {
             isInitializing = true
             isInitialized = false
             recoveryAttemptedForCurrentError = false
+            failedEnginePackagesInRun.clear()
             shutdownAdapterLocked()
         }
 
-        // Publish initializing state immediately
         val currentSnap = _status.value
+        val initializingEngines = currentSnap.installedEngines.map { info ->
+            val targetMatch = (cleanPreferred.isNotBlank() && info.packageName == cleanPreferred) ||
+                (cleanPreferred.isBlank() && info.isSystemDefault)
+            info.copy(
+                readiness = if (targetMatch) TtsEngineReadiness.INITIALIZING else info.readiness
+            )
+        }
         _status.value = currentSnap.copy(
             status = TtsAvailabilityStatus.INITIALIZING,
+            installedEngines = initializingEngines,
             preferredEnginePackage = cleanPreferred,
-            statusHeadline = "Detecting & initializing voice engine…",
-            statusDetail = "Checking installed Android Text-to-Speech engines.",
+            isFallbackActive = false,
+            fallbackFromEnginePackage = "",
+            fallbackFromEngineLabel = "",
+            statusHeadline = "Initializing voice engine…",
+            statusDetail = if (cleanPreferred.isNotBlank()) {
+                "Connecting to ${friendlyEngineName(cleanPreferred)}…"
+            } else {
+                "Detecting and connecting to Android Text-to-Speech engine…"
+            },
             lastCheckedAtMs = System.currentTimeMillis()
         )
 
         initJob?.cancel()
+        initWatchdogJob?.cancel()
         initJob = ttsScope.launch {
-            runEngineDiscoveryAndInit(
+            runEngineDiscoveryAndInitAsync(
                 appCtx = appCtx,
                 generation = generation,
                 preferredEngine = cleanPreferred,
@@ -707,8 +772,7 @@ object SmartTtsManager {
     }
 
     /**
-     * Synchronous initialization helper used when callers (or tests) need immediate deterministic
-     * detection on the calling thread without waiting for coroutine scheduling.
+     * Synchronous initialization helper used by deterministic tests or synchronous callers.
      */
     fun initializeBlockingForSync(
         context: Context,
@@ -724,6 +788,10 @@ object SmartTtsManager {
         val generation: Int
         synchronized(lock) {
             appContextRef = appCtx
+            if (isInitializing && !forceReinitialize && preferredEnginePackage.equals(cleanPreferred, ignoreCase = true)) {
+                requestedLanguageTag = cleanLang
+                return _status.value
+            }
             preferredEnginePackage = cleanPreferred
             requestedLanguageTag = cleanLang
 
@@ -747,6 +815,7 @@ object SmartTtsManager {
                 isInitializing = true
                 isInitialized = false
                 recoveryAttemptedForCurrentError = false
+                failedEnginePackagesInRun.clear()
                 shutdownAdapterLocked()
             } else {
                 generation = activeAttemptGeneration
@@ -754,9 +823,14 @@ object SmartTtsManager {
         }
 
         if (needsInit) {
-            runEngineDiscoveryAndInit(
+            val (enabledEngines, disabledEngines) = platformProvider.discoverInstalledEngines(appCtx)
+            val defaultPkg = platformProvider.getSystemDefaultEnginePackage(appCtx)
+            startCandidateChainSync(
                 appCtx = appCtx,
                 generation = generation,
+                enabledEngines = enabledEngines,
+                disabledEngines = disabledEngines,
+                defaultPkg = defaultPkg,
                 preferredEngine = cleanPreferred,
                 languageTag = cleanLang
             )
@@ -767,8 +841,8 @@ object SmartTtsManager {
     }
 
     /**
-     * Called when returning to CTECS (Activity ON_RESUME) or when the user taps "Check Again".
-     * If Voice Output is OFF, stops speech and does NOT unnecessarily initialize TTS.
+     * Called when returning to CTECS after visiting Android Voice Engine Settings (after an actual
+     * pause/stop), or when the user explicitly taps "Check Again".
      */
     fun revalidateOnResume(
         context: Context,
@@ -781,9 +855,15 @@ object SmartTtsManager {
             stopSpeaking()
             return
         }
+        val cur = _status.value
+        // Never kill an in-flight initialization unless the user explicitly forced Check Again
+        if (cur.status == TtsAvailabilityStatus.INITIALIZING && !forceReinitialize) {
+            return
+        }
         val shouldForce = forceReinitialize ||
-            !_status.value.isReady ||
-            _status.value.status == TtsAvailabilityStatus.ENGINE_DISCONNECTED
+            !cur.isReady ||
+            cur.isFallbackActive ||
+            cur.status == TtsAvailabilityStatus.ENGINE_DISCONNECTED
         initializeIfNeeded(
             context = context,
             preferredEngine = preferredEngine,
@@ -808,7 +888,7 @@ object SmartTtsManager {
         )
     }
 
-    private fun runEngineDiscoveryAndInit(
+    private suspend fun runEngineDiscoveryAndInitAsync(
         appCtx: Context,
         generation: Int,
         preferredEngine: String,
@@ -816,9 +896,35 @@ object SmartTtsManager {
     ) {
         val (enabledEngines, disabledEngines) = platformProvider.discoverInstalledEngines(appCtx)
         val defaultPkg = platformProvider.getSystemDefaultEnginePackage(appCtx)
+
+        // Dispatch Android TextToSpeech construction onto Main Looper (critical for Samsung SMT!)
+        withContext(Dispatchers.Main.immediate) {
+            startCandidateChainSync(
+                appCtx = appCtx,
+                generation = generation,
+                enabledEngines = enabledEngines,
+                disabledEngines = disabledEngines,
+                defaultPkg = defaultPkg,
+                preferredEngine = preferredEngine,
+                languageTag = languageTag
+            )
+        }
+    }
+
+    private fun startCandidateChainSync(
+        appCtx: Context,
+        generation: Int,
+        enabledEngines: List<TtsEngineInfo>,
+        disabledEngines: List<TtsEngineInfo>,
+        defaultPkg: String,
+        preferredEngine: String,
+        languageTag: String
+    ) {
+        synchronized(lock) {
+            if (generation != activeAttemptGeneration) return
+        }
         val intentCaps = computeIntentCapabilities(appCtx, preferredEngine.ifBlank { defaultPkg })
 
-        // Build prioritized fallback candidate list
         val candidates = buildCandidateEngineChain(
             enabledEngines = enabledEngines,
             preferredEngine = preferredEngine,
@@ -826,7 +932,6 @@ object SmartTtsManager {
         )
 
         if (candidates.isEmpty()) {
-            // If PackageManager returned disabled engines only -> accurate ENGINE_DISABLED state
             if (disabledEngines.isNotEmpty()) {
                 synchronized(lock) {
                     if (generation != activeAttemptGeneration) return
@@ -851,8 +956,7 @@ object SmartTtsManager {
                 return
             }
 
-            // Even if queryIntentServices returned empty (rare OEM package visibility quirk),
-            // attempt ONE bare default system bind before concluding NO_ENGINE_INSTALLED.
+            // Even if PackageManager returned empty (OEM quirk), try one bare default bind
             tryCandidateAtIndex(
                 appCtx = appCtx,
                 generation = generation,
@@ -899,11 +1003,49 @@ object SmartTtsManager {
         }
 
         val candidatePkg = candidates[index]
+        val callbackHandled = AtomicInteger(0)
+
+        // Start a watchdog so a stalled OEM binder never leaves CTECS stuck in INITIALIZING forever
+        initWatchdogJob?.cancel()
+        initWatchdogJob = ttsScope.launch {
+            delay(INIT_WATCHDOG_TIMEOUT_MS)
+            if (callbackHandled.compareAndSet(0, 1)) {
+                withContext(Dispatchers.Main.immediate) {
+                    val stale = synchronized(lock) { generation != activeAttemptGeneration }
+                    if (!stale) {
+                        if (candidatePkg.isNotBlank()) {
+                            failedEnginePackagesInRun.add(candidatePkg)
+                        }
+                        synchronized(lock) { shutdownAdapterLocked() }
+                        advanceOrFailCandidate(
+                            appCtx = appCtx,
+                            generation = generation,
+                            candidates = candidates,
+                            failedIndex = index,
+                            lastErrorCode = TextToSpeech.ERROR_NETWORK_TIMEOUT,
+                            enabledEngines = enabledEngines,
+                            disabledEngines = disabledEngines,
+                            defaultPkg = defaultPkg,
+                            preferredEngine = preferredEngine,
+                            languageTag = languageTag,
+                            wasEmptyDiscovery = wasEmptyDiscovery
+                        )
+                    }
+                }
+            }
+        }
+
         val adapter: TtsEngineAdapter = try {
             platformProvider.createEngine(
                 context = appCtx,
                 enginePackage = candidatePkg.ifBlank { null }
             ) { initializedAdapter, statusCode ->
+                if (!callbackHandled.compareAndSet(0, 1)) {
+                    // Already timed out or handled — shut down late adapter cleanly
+                    initializedAdapter.shutdown()
+                    return@createEngine
+                }
+                initWatchdogJob?.cancel()
                 handleCandidateInitResult(
                     appCtx = appCtx,
                     generation = generation,
@@ -920,31 +1062,36 @@ object SmartTtsManager {
                 )
             }
         } catch (_: Throwable) {
-            advanceOrFailCandidate(
-                appCtx = appCtx,
-                generation = generation,
-                candidates = candidates,
-                failedIndex = index,
-                enabledEngines = enabledEngines,
-                disabledEngines = disabledEngines,
-                defaultPkg = defaultPkg,
-                preferredEngine = preferredEngine,
-                languageTag = languageTag,
-                wasEmptyDiscovery = wasEmptyDiscovery
-            )
+            if (callbackHandled.compareAndSet(0, 1)) {
+                initWatchdogJob?.cancel()
+                if (candidatePkg.isNotBlank()) {
+                    failedEnginePackagesInRun.add(candidatePkg)
+                }
+                advanceOrFailCandidate(
+                    appCtx = appCtx,
+                    generation = generation,
+                    candidates = candidates,
+                    failedIndex = index,
+                    lastErrorCode = TextToSpeech.ERROR,
+                    enabledEngines = enabledEngines,
+                    disabledEngines = disabledEngines,
+                    defaultPkg = defaultPkg,
+                    preferredEngine = preferredEngine,
+                    languageTag = languageTag,
+                    wasEmptyDiscovery = wasEmptyDiscovery
+                )
+            }
             return
         }
 
+        // Register adapter as the single active handle ONLY if callback hasn't already failed & torn it down
         synchronized(lock) {
             if (generation != activeAttemptGeneration) {
                 adapter.shutdown()
                 return
             }
-            if (activeAdapter !== adapter) {
-                activeAdapter?.let { prev ->
-                    prev.shutdown()
-                    activeInstanceCountInternal = (activeInstanceCountInternal - 1).coerceAtLeast(0)
-                }
+            if (callbackHandled.get() == 0 && activeAdapter !== adapter) {
+                shutdownAdapterLocked()
                 activeAdapter = adapter
                 activeInstanceCountInternal += 1
             }
@@ -974,17 +1121,44 @@ object SmartTtsManager {
             return
         }
 
+        val candidatePkg = candidates[index]
+
         if (statusCode == TextToSpeech.SUCCESS) {
             val reportedEngines = adapter.getReportedEngines()
-            val mergedEnabled = mergeEngineLists(enabledEngines, reportedEngines, defaultPkg.ifBlank { adapter.defaultEnginePackage })
-            val resolvedActivePkg = candidates[index].ifBlank {
+            val effectiveDefaultPkg = defaultPkg.ifBlank { adapter.defaultEnginePackage }
+            val resolvedActivePkg = candidatePkg.ifBlank {
                 adapter.defaultEnginePackage.ifBlank {
-                    mergedEnabled.firstOrNull { it.isSystemDefault }?.packageName
-                        ?: mergedEnabled.firstOrNull()?.packageName.orEmpty()
+                    enabledEngines.firstOrNull { it.isSystemDefault }?.packageName
+                        ?: reportedEngines.firstOrNull { it.isSystemDefault }?.packageName
+                        ?: enabledEngines.firstOrNull()?.packageName
+                        ?: reportedEngines.firstOrNull()?.packageName.orEmpty()
                 }
             }
+            // If bare default bind succeeded for the user's preferred engine, remove it from failed set
+            if (resolvedActivePkg.isNotBlank()) {
+                failedEnginePackagesInRun.remove(resolvedActivePkg)
+            }
+
+            val mergedEnabled = mergeEngineLists(
+                pmEngines = enabledEngines,
+                reportedEngines = reportedEngines,
+                defaultPkg = effectiveDefaultPkg,
+                activeReadyPkg = resolvedActivePkg,
+                failedPkgs = failedEnginePackagesInRun
+            )
             val resolvedLabel = mergedEnabled.firstOrNull { it.packageName == resolvedActivePkg }?.label
                 ?: friendlyEngineName(resolvedActivePkg)
+
+            val isFallback = preferredEngine.isNotBlank() &&
+                resolvedActivePkg.isNotBlank() &&
+                !resolvedActivePkg.equals(preferredEngine, ignoreCase = true)
+            val fallbackFromLabel = if (isFallback) {
+                mergedEnabled.firstOrNull { it.packageName == preferredEngine }?.label
+                    ?: disabledEngines.firstOrNull { it.packageName == preferredEngine }?.label
+                    ?: friendlyEngineName(preferredEngine)
+            } else {
+                ""
+            }
 
             synchronized(lock) {
                 if (generation != activeAttemptGeneration) {
@@ -992,10 +1166,7 @@ object SmartTtsManager {
                     return
                 }
                 if (activeAdapter !== adapter) {
-                    activeAdapter?.let { prev ->
-                        prev.shutdown()
-                        activeInstanceCountInternal = (activeInstanceCountInternal - 1).coerceAtLeast(0)
-                    }
+                    shutdownAdapterLocked()
                     activeAdapter = adapter
                     activeInstanceCountInternal += 1
                 }
@@ -1015,31 +1186,34 @@ object SmartTtsManager {
                 TtsLanguageAvailability.ENGINE_NOT_READY -> TtsAvailabilityStatus.READY
             }
             val intentCaps = computeIntentCapabilities(appCtx, resolvedActivePkg)
-            val fallbackNote = if (preferredEngine.isNotBlank() && !resolvedActivePkg.equals(preferredEngine, ignoreCase = true)) {
-                "Switched automatically to $resolvedLabel because the previously selected engine could not initialize."
-            } else if (effectiveStatus == TtsAvailabilityStatus.READY) {
-                "Ready • $resolvedLabel (${langs.size} language${if (langs.size == 1) "" else "s"} available)"
-            } else {
-                langCheck.message
+            val headline = when {
+                effectiveStatus != TtsAvailabilityStatus.READY -> "${langCheck.displayLanguageName} voice data needed"
+                isFallback -> "Fallback active: $resolvedLabel"
+                else -> "Ready • $resolvedLabel"
+            }
+            val detail = when {
+                effectiveStatus != TtsAvailabilityStatus.READY -> langCheck.message
+                isFallback -> "$fallbackFromLabel could not initialize. Using $resolvedLabel instead. You can keep this engine or configure $fallbackFromLabel in Voice Engine Settings."
+                else -> "${langs.size} language${if (langs.size == 1) "" else "s"} installed on $resolvedLabel."
             }
 
             _status.value = TtsStatusSnapshot(
                 status = effectiveStatus,
                 installedEngines = mergedEnabled,
                 disabledEngines = disabledEngines,
-                defaultEnginePackage = defaultPkg.ifBlank { adapter.defaultEnginePackage },
+                defaultEnginePackage = effectiveDefaultPkg,
                 activeEnginePackage = resolvedActivePkg,
                 activeEngineLabel = resolvedLabel,
                 preferredEnginePackage = preferredEngine,
+                isFallbackActive = isFallback,
+                fallbackFromEnginePackage = if (isFallback) preferredEngine else "",
+                fallbackFromEngineLabel = fallbackFromLabel,
                 availableLanguages = langs,
                 availableVoices = voices,
                 languageCheck = langCheck,
-                statusHeadline = if (effectiveStatus == TtsAvailabilityStatus.READY) {
-                    "Voice Engine Ready ($resolvedLabel)"
-                } else {
-                    langCheck.displayLanguageName + " voice data required"
-                },
-                statusDetail = fallbackNote,
+                statusHeadline = headline,
+                statusDetail = detail,
+                lastInitErrorCode = null,
                 canOpenTtsSettings = intentCaps.first,
                 canInstallVoiceData = intentCaps.second,
                 canInstallGoogleSpeechServices = intentCaps.third,
@@ -1048,7 +1222,9 @@ object SmartTtsManager {
 
             drainPendingQueue()
         } else {
-            // Tear down failed engine handle cleanly and try next compatible installed engine
+            if (candidatePkg.isNotBlank()) {
+                failedEnginePackagesInRun.add(candidatePkg)
+            }
             synchronized(lock) {
                 if (activeAdapter === adapter) {
                     activeAdapter = null
@@ -1061,6 +1237,7 @@ object SmartTtsManager {
                 generation = generation,
                 candidates = candidates,
                 failedIndex = index,
+                lastErrorCode = statusCode,
                 enabledEngines = enabledEngines,
                 disabledEngines = disabledEngines,
                 defaultPkg = defaultPkg,
@@ -1076,6 +1253,7 @@ object SmartTtsManager {
         generation: Int,
         candidates: List<String>,
         failedIndex: Int,
+        lastErrorCode: Int,
         enabledEngines: List<TtsEngineInfo>,
         disabledEngines: List<TtsEngineInfo>,
         defaultPkg: String,
@@ -1110,39 +1288,62 @@ object SmartTtsManager {
         }
 
         val intentCaps = computeIntentCapabilities(appCtx, preferredEngine.ifBlank { defaultPkg })
+        val markedEngines = enabledEngines.map { info ->
+            info.copy(
+                readiness = if (info.packageName in failedEnginePackagesInRun || candidates.contains(info.packageName)) {
+                    TtsEngineReadiness.FAILED
+                } else {
+                    info.readiness
+                }
+            )
+        }
         val finalStatus = when {
             wasEmptyDiscovery && disabledEngines.isEmpty() -> TtsAvailabilityStatus.NO_ENGINE_INSTALLED
             enabledEngines.isEmpty() && disabledEngines.isNotEmpty() -> TtsAvailabilityStatus.ENGINE_DISABLED
             enabledEngines.isEmpty() -> TtsAvailabilityStatus.NO_ENGINE_INSTALLED
             else -> TtsAvailabilityStatus.INIT_FAILED
         }
+        val failedTargetLabel = when {
+            preferredEngine.isNotBlank() -> markedEngines.firstOrNull { it.packageName == preferredEngine }?.label
+                ?: disabledEngines.firstOrNull { it.packageName == preferredEngine }?.label
+                ?: friendlyEngineName(preferredEngine)
+            defaultPkg.isNotBlank() -> markedEngines.firstOrNull { it.packageName == defaultPkg }?.label
+                ?: friendlyEngineName(defaultPkg)
+            markedEngines.isNotEmpty() -> markedEngines.first().label
+            else -> "Text-to-Speech engine"
+        }
+
         val headline = when (finalStatus) {
             TtsAvailabilityStatus.NO_ENGINE_INSTALLED -> "No Text-to-Speech engine installed"
             TtsAvailabilityStatus.ENGINE_DISABLED -> "Text-to-Speech engine is disabled"
-            else -> "Text-to-Speech engine needs configuration"
+            else -> "$failedTargetLabel could not initialize"
         }
         val detail = when (finalStatus) {
             TtsAvailabilityStatus.NO_ENGINE_INSTALLED ->
-                "Install Google Speech Services or another compatible Android TTS engine to hear destination and KM Stone announcements. Visual destination confirmation remains active."
+                "Install Google Speech Services or another compatible Android TTS engine to hear announcements. Visual destination confirmation remains active."
             TtsAvailabilityStatus.ENGINE_DISABLED ->
                 "Enable an Android Text-to-Speech engine in system settings, then tap Check Again. Visual destination confirmation remains active."
             else ->
-                "Installed TTS engine could not initialize. Open Voice Engine Settings to verify the default engine and voice data, then tap Check Again. Visual destination confirmation remains active."
+                "Android returned an initialization error for $failedTargetLabel. Open Voice Engine Settings to select a working engine or download voice data, then tap Check Again. Visual destination confirmation remains active."
         }
 
         _status.value = TtsStatusSnapshot(
             status = finalStatus,
-            installedEngines = enabledEngines,
+            installedEngines = markedEngines,
             disabledEngines = disabledEngines,
             defaultEnginePackage = defaultPkg,
             activeEnginePackage = "",
             activeEngineLabel = "",
             preferredEnginePackage = preferredEngine,
+            isFallbackActive = false,
+            fallbackFromEnginePackage = "",
+            fallbackFromEngineLabel = "",
             availableLanguages = emptyList(),
             availableVoices = emptyList(),
             languageCheck = null,
             statusHeadline = headline,
             statusDetail = detail,
+            lastInitErrorCode = lastErrorCode,
             canOpenTtsSettings = intentCaps.first,
             canInstallVoiceData = intentCaps.second,
             canInstallGoogleSpeechServices = intentCaps.third,
@@ -1185,25 +1386,27 @@ object SmartTtsManager {
             TtsLanguageAvailability.NOT_SUPPORTED -> TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED
             TtsLanguageAvailability.ENGINE_NOT_READY -> cur.status
         }
+        val headline = when {
+            newStatus != TtsAvailabilityStatus.READY -> "${check.displayLanguageName} voice data needed"
+            cur.isFallbackActive -> "Fallback active: $engineLabel"
+            else -> "Ready • $engineLabel"
+        }
+        val detail = when {
+            newStatus != TtsAvailabilityStatus.READY -> check.message
+            cur.isFallbackActive -> "${cur.fallbackFromEngineLabel} could not initialize. Using $engineLabel instead."
+            else -> "${cur.availableLanguages.size} language${if (cur.availableLanguages.size == 1) "" else "s"} installed on $engineLabel."
+        }
         _status.value = cur.copy(
             status = newStatus,
             languageCheck = check,
-            statusHeadline = if (newStatus == TtsAvailabilityStatus.READY) {
-                "Voice Engine Ready ($engineLabel)"
-            } else {
-                "${check.displayLanguageName} voice data needed"
-            },
-            statusDetail = if (newStatus == TtsAvailabilityStatus.READY) {
-                "Ready • $engineLabel (${cur.availableLanguages.size} language${if (cur.availableLanguages.size == 1) "" else "s"} available)"
-            } else {
-                check.message
-            },
+            statusHeadline = headline,
+            statusDetail = detail,
             lastCheckedAtMs = System.currentTimeMillis()
         )
     }
 
     /**
-     * Returns installed voices filtered for [languageTag] (blank = all installed voices).
+     * Returns installed compatible voices filtered for [languageTag] (blank = all installed voices).
      */
     fun getVoicesForLanguage(languageTag: String): List<KmStoneVoiceOption> {
         val all = _status.value.availableVoices
@@ -1251,7 +1454,6 @@ object SmartTtsManager {
             )
         }
 
-        // Priority rule: do not interrupt an active critical arrival announcement with routine speech
         if (request.priority == TtsSpeechPriority.ROUTINE && activeArrivalSpeaking) {
             return TtsSpeakOutcome(
                 dispatched = false,
@@ -1308,8 +1510,171 @@ object SmartTtsManager {
     }
 
     /**
-     * Runs a comprehensive live Voice Output test checking engine readiness, language & voice data,
-     * audio output volume, speech speed, pitch, and engine disconnection recovery.
+     * Real asynchronous Test Voice Output that NEVER reports success until:
+     * 1. Engine initialization actually completed with `TextToSpeech.SUCCESS` (awaits in-flight init).
+     * 2. Selected language is genuinely available (no silent substitution).
+     * 3. Audio output is unmuted and volume > 0.
+     * 4. `speak()` is accepted by the engine AND [UtteranceProgressListener.onDone] confirms synthesis completed.
+     */
+    suspend fun testVoiceOutputSuspend(
+        context: Context,
+        languageTag: String,
+        voiceName: String,
+        enginePackage: String,
+        speechRate: Float,
+        pitch: Float,
+        volumePercent: Int,
+        sampleText: String = TEST_VOICE_SAMPLE_TEXT
+    ): TtsTestResult {
+        val appCtx = context.applicationContext ?: context
+        val cur = _status.value
+        val nowMs = System.currentTimeMillis()
+        val freshlyCheckedSameEngine = cur.lastCheckedAtMs > 0L &&
+            (nowMs - cur.lastCheckedAtMs) < 500L &&
+            enginePackage.equals(cur.preferredEnginePackage, ignoreCase = true)
+        val needsStart = (!cur.isReady && cur.status != TtsAvailabilityStatus.INITIALIZING && !freshlyCheckedSameEngine) ||
+            (enginePackage.isNotBlank() && !enginePackage.equals(cur.preferredEnginePackage, ignoreCase = true))
+
+        if (needsStart) {
+            initializeIfNeeded(
+                context = appCtx,
+                preferredEngine = enginePackage,
+                languageTag = languageTag,
+                forceReinitialize = !cur.isReady || enginePackage != cur.preferredEnginePackage
+            )
+        }
+
+        // Wait cleanly for any in-flight engine initialization to complete (never cancel it!)
+        val settled = if (needsStart || cur.status == TtsAvailabilityStatus.INITIALIZING || cur.status == TtsAvailabilityStatus.NOT_INITIALIZED) {
+            withTimeoutOrNull(TEST_INIT_WAIT_TIMEOUT_MS) {
+                status.first { it.status != TtsAvailabilityStatus.INITIALIZING && it.status != TtsAvailabilityStatus.NOT_INITIALIZED }
+            } ?: _status.value
+        } else {
+            cur
+        }
+
+        if (!settled.isReady && settled.status != TtsAvailabilityStatus.LANGUAGE_MISSING_DATA &&
+            settled.status != TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED
+        ) {
+            return TtsTestResult(
+                success = false,
+                spokenText = sampleText,
+                headline = "Engine unavailable",
+                message = settled.statusDetail,
+                status = if (settled.status == TtsAvailabilityStatus.INITIALIZING) {
+                    TtsAvailabilityStatus.INIT_FAILED
+                } else {
+                    settled.status
+                },
+                engineLabel = settled.activeEngineLabel
+            )
+        }
+
+        val langCheck = checkLanguageAvailability(languageTag)
+        if (langCheck.availability == TtsLanguageAvailability.MISSING_DATA) {
+            refreshLanguageCheck(languageTag)
+            return TtsTestResult(
+                success = false,
+                spokenText = sampleText,
+                headline = "Voice data missing",
+                message = langCheck.message,
+                status = TtsAvailabilityStatus.LANGUAGE_MISSING_DATA,
+                engineLabel = settled.activeEngineLabel,
+                languageLabel = langCheck.displayLanguageName
+            )
+        }
+        if (langCheck.availability == TtsLanguageAvailability.NOT_SUPPORTED) {
+            refreshLanguageCheck(languageTag)
+            return TtsTestResult(
+                success = false,
+                spokenText = sampleText,
+                headline = "Voice data missing",
+                message = langCheck.message,
+                status = TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED,
+                engineLabel = settled.activeEngineLabel,
+                languageLabel = langCheck.displayLanguageName
+            )
+        }
+
+        if (volumePercent <= 0 || platformProvider.isAudioOutputMuted(appCtx)) {
+            return TtsTestResult(
+                success = false,
+                spokenText = sampleText,
+                headline = "Audio output failed",
+                message = "Device media volume or Announcement Volume is muted (0%). Increase volume and try again.",
+                status = TtsAvailabilityStatus.AUDIO_OUTPUT_UNAVAILABLE,
+                engineLabel = settled.activeEngineLabel,
+                languageLabel = langCheck.displayLanguageName
+            )
+        }
+
+        val completionDeferred = CompletableDeferred<Boolean>()
+        val outcome = speakNowInternal(
+            context = appCtx,
+            request = TtsSpeakRequest(
+                text = sampleText,
+                languageTag = languageTag,
+                voiceName = voiceName,
+                enginePackage = enginePackage,
+                speechRate = speechRate,
+                pitch = pitch,
+                volumePercent = volumePercent,
+                priority = TtsSpeechPriority.USER_INTERACTIVE,
+                repeatOnce = false
+            ),
+            completionWaiter = completionDeferred
+        )
+
+        if (!outcome.dispatched) {
+            val failHeadline = when (outcome.status) {
+                TtsAvailabilityStatus.LANGUAGE_MISSING_DATA,
+                TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED -> "Voice data missing"
+                TtsAvailabilityStatus.AUDIO_OUTPUT_UNAVAILABLE -> "Audio output failed"
+                else -> "Engine unavailable"
+            }
+            return TtsTestResult(
+                success = false,
+                spokenText = sampleText,
+                headline = failHeadline,
+                message = outcome.message,
+                status = outcome.status,
+                engineLabel = settled.activeEngineLabel,
+                languageLabel = langCheck.displayLanguageName
+            )
+        }
+
+        // Wait for UtteranceProgressListener.onDone / onError so we NEVER claim success unless completed
+        val completedOk = withTimeoutOrNull(TEST_SYNTHESIS_WAIT_TIMEOUT_MS) {
+            completionDeferred.await()
+        }
+        outcome.utteranceId?.let { utteranceCompletionWaiters.remove(it) }
+
+        return if (completedOk == true) {
+            TtsTestResult(
+                success = true,
+                spokenText = sampleText,
+                headline = "Voice test successful",
+                message = "Spoken cleanly via ${outcome.engineLabel.ifBlank { settled.activeEngineLabel }} (${langCheck.displayLanguageName}).",
+                status = TtsAvailabilityStatus.READY,
+                engineLabel = outcome.engineLabel.ifBlank { settled.activeEngineLabel },
+                languageLabel = langCheck.displayLanguageName,
+                voiceLabel = outcome.resolvedVoiceLabel
+            )
+        } else {
+            TtsTestResult(
+                success = false,
+                spokenText = sampleText,
+                headline = "Audio output failed",
+                message = "The TTS engine did not complete speech synthesis. Check voice data or switch TTS engine in settings.",
+                status = TtsAvailabilityStatus.AUDIO_OUTPUT_UNAVAILABLE,
+                engineLabel = settled.activeEngineLabel,
+                languageLabel = langCheck.displayLanguageName
+            )
+        }
+    }
+
+    /**
+     * Synchronous diagnostic helper retained for unit/Robolectric tests and non-coroutine callers.
      */
     fun testVoiceOutput(
         context: Context,
@@ -1326,18 +1691,20 @@ object SmartTtsManager {
             context = appCtx,
             preferredEngine = enginePackage,
             languageTag = languageTag,
-            forceReinitialize = !_status.value.isReady ||
+            forceReinitialize = (!_status.value.isReady && _status.value.status != TtsAvailabilityStatus.INITIALIZING) ||
                 (enginePackage.isNotBlank() && !enginePackage.equals(activeEnginePackage, ignoreCase = true))
         )
 
         if (snap.status == TtsAvailabilityStatus.NO_ENGINE_INSTALLED ||
             snap.status == TtsAvailabilityStatus.ENGINE_DISABLED ||
             snap.status == TtsAvailabilityStatus.INIT_FAILED ||
-            snap.status == TtsAvailabilityStatus.ENGINE_DISCONNECTED
+            snap.status == TtsAvailabilityStatus.ENGINE_DISCONNECTED ||
+            snap.status == TtsAvailabilityStatus.INITIALIZING
         ) {
             return TtsTestResult(
                 success = false,
                 spokenText = sampleText,
+                headline = "Engine unavailable",
                 message = snap.statusDetail,
                 status = snap.status,
                 engineLabel = snap.activeEngineLabel
@@ -1345,24 +1712,21 @@ object SmartTtsManager {
         }
 
         val langCheck = checkLanguageAvailability(languageTag)
-        if (langCheck.availability == TtsLanguageAvailability.MISSING_DATA) {
+        if (langCheck.availability == TtsLanguageAvailability.MISSING_DATA ||
+            langCheck.availability == TtsLanguageAvailability.NOT_SUPPORTED
+        ) {
             refreshLanguageCheck(languageTag)
+            val failStatus = if (langCheck.availability == TtsLanguageAvailability.MISSING_DATA) {
+                TtsAvailabilityStatus.LANGUAGE_MISSING_DATA
+            } else {
+                TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED
+            }
             return TtsTestResult(
                 success = false,
                 spokenText = sampleText,
+                headline = "Voice data missing",
                 message = langCheck.message,
-                status = TtsAvailabilityStatus.LANGUAGE_MISSING_DATA,
-                engineLabel = snap.activeEngineLabel,
-                languageLabel = langCheck.displayLanguageName
-            )
-        }
-        if (langCheck.availability == TtsLanguageAvailability.NOT_SUPPORTED) {
-            refreshLanguageCheck(languageTag)
-            return TtsTestResult(
-                success = false,
-                spokenText = sampleText,
-                message = langCheck.message,
-                status = TtsAvailabilityStatus.LANGUAGE_NOT_SUPPORTED,
+                status = failStatus,
                 engineLabel = snap.activeEngineLabel,
                 languageLabel = langCheck.displayLanguageName
             )
@@ -1372,14 +1736,15 @@ object SmartTtsManager {
             return TtsTestResult(
                 success = false,
                 spokenText = sampleText,
-                message = "Audio output is muted or volume is 0%. Raise media volume or Announcement Volume to hear voice output.",
+                headline = "Audio output failed",
+                message = "Device media volume or Announcement Volume is muted (0%). Increase volume to hear voice output.",
                 status = TtsAvailabilityStatus.AUDIO_OUTPUT_UNAVAILABLE,
                 engineLabel = snap.activeEngineLabel,
                 languageLabel = langCheck.displayLanguageName
             )
         }
 
-        val outcome = speak(
+        val outcome = speakNowInternal(
             context = appCtx,
             request = TtsSpeakRequest(
                 text = sampleText,
@@ -1398,7 +1763,8 @@ object SmartTtsManager {
             TtsTestResult(
                 success = true,
                 spokenText = sampleText,
-                message = "Playing test voice on ${outcome.engineLabel.ifBlank { snap.activeEngineLabel }} (${langCheck.displayLanguageName}).",
+                headline = "Voice test successful",
+                message = "Spoken via ${outcome.engineLabel.ifBlank { snap.activeEngineLabel }} (${langCheck.displayLanguageName}).",
                 status = TtsAvailabilityStatus.READY,
                 engineLabel = outcome.engineLabel.ifBlank { snap.activeEngineLabel },
                 languageLabel = langCheck.displayLanguageName,
@@ -1408,6 +1774,7 @@ object SmartTtsManager {
             TtsTestResult(
                 success = false,
                 spokenText = sampleText,
+                headline = "Audio output failed",
                 message = outcome.message,
                 status = outcome.status,
                 engineLabel = snap.activeEngineLabel,
@@ -1427,6 +1794,8 @@ object SmartTtsManager {
             activeUtteranceIds.clear()
             activeArrivalSpeaking = false
         }
+        utteranceCompletionWaiters.values.forEach { it.complete(false) }
+        utteranceCompletionWaiters.clear()
         try {
             activeAdapter?.stop()
         } catch (_: Throwable) {}
@@ -1434,13 +1803,14 @@ object SmartTtsManager {
     }
 
     /**
-     * Releases the shared TTS engine cleanly when no longer required (for example, when Voice Output
-     * is explicitly disabled and no KM Stone voice alerts are active).
+     * Releases the shared TTS engine cleanly when no longer required.
      */
     fun releaseResources() {
         stopSpeaking()
         initJob?.cancel()
         initJob = null
+        initWatchdogJob?.cancel()
+        initWatchdogJob = null
         synchronized(lock) {
             activeAttemptGeneration += 1
             isInitializing = false
@@ -1453,6 +1823,9 @@ object SmartTtsManager {
             status = TtsAvailabilityStatus.NOT_INITIALIZED,
             activeEnginePackage = "",
             activeEngineLabel = "",
+            isFallbackActive = false,
+            fallbackFromEnginePackage = "",
+            fallbackFromEngineLabel = "",
             statusHeadline = "Voice output is OFF",
             statusDetail = "Visual destination confirmation remains active.",
             lastCheckedAtMs = System.currentTimeMillis()
@@ -1460,15 +1833,15 @@ object SmartTtsManager {
     }
 
     /**
-     * Resolves the safest supported Android Intent for installing or configuring a TTS engine
-     * or missing language voice data. Never returns an unresolvable Intent.
+     * Resolves the safest supported Android Intent for configuring Samsung/Google/system TTS
+     * engines or installing missing language voice data. Never returns an unresolvable Intent.
      */
     fun resolveSetupIntent(
         context: Context,
         forMissingVoiceData: Boolean = false
     ): TtsSetupIntentResolution {
         val snap = _status.value
-        val activePkg = snap.activeEnginePackage.ifBlank { snap.defaultEnginePackage }
+        val activePkg = snap.activeEnginePackage.ifBlank { snap.preferredEnginePackage.ifBlank { snap.defaultEnginePackage } }
         val candidates = mutableListOf<Triple<Intent, String, String>>()
 
         if (forMissingVoiceData) {
@@ -1480,7 +1853,7 @@ object SmartTtsManager {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         },
                         "Install Voice Data",
-                        "Download voice data for ${snap.activeEngineLabel.ifBlank { "your TTS engine" }}"
+                        "Download voice data for ${snap.activeEngineLabel.ifBlank { friendlyEngineName(activePkg) }}"
                     )
                 )
             }
@@ -1498,8 +1871,8 @@ object SmartTtsManager {
                     Intent("com.android.settings.TTS_SETTINGS").apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     },
-                    "Open TTS Settings",
-                    "Configure installed languages and voices"
+                    "Configure Engine",
+                    "Open Android Text-to-Speech settings to manage languages and voices"
                 )
             )
         } else if (snap.status == TtsAvailabilityStatus.NO_ENGINE_INSTALLED) {
@@ -1517,8 +1890,8 @@ object SmartTtsManager {
                     Intent("com.android.settings.TTS_SETTINGS").apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     },
-                    "Open TTS Settings",
-                    "Configure Android Text-to-Speech output"
+                    "Configure Engine",
+                    "Open Android Text-to-Speech settings"
                 )
             )
             candidates.add(
@@ -1539,10 +1912,22 @@ object SmartTtsManager {
                     Intent("com.android.settings.TTS_SETTINGS").apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     },
-                    "Configure Voice Engine",
-                    "Open Android Text-to-Speech settings to select or enable an engine"
+                    "Configure Engine",
+                    "Open Android Text-to-Speech settings to configure Samsung, Google, or system engine"
                 )
             )
+            if (activePkg.isNotBlank()) {
+                candidates.add(
+                    Triple(
+                        Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
+                            setPackage(activePkg)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        },
+                        "Install Voice Data",
+                        "Download or repair voice data for ${friendlyEngineName(activePkg)}"
+                    )
+                )
+            }
             candidates.add(
                 Triple(
                     Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
@@ -1580,8 +1965,8 @@ object SmartTtsManager {
 
         return TtsSetupIntentResolution(
             intent = null,
-            actionLabel = "Manual Setup Required",
-            description = "This device does not expose an Android TTS settings screen directly. Open device Settings → System / Accessibility → Text-to-Speech output to install or enable Speech Services, then return to CTECS and tap Check Again."
+            actionLabel = "Manual Setup",
+            description = "Open device Settings → General management / System → Text-to-speech output to select Samsung or Google Speech Services, then return to CTECS and tap Check Again."
         )
     }
 
@@ -1595,7 +1980,7 @@ object SmartTtsManager {
             context.startActivity(intent)
             "${resolution.description}. Return to CTECS when finished."
         } catch (_: Throwable) {
-            "Unable to open ${resolution.actionLabel} automatically. Open device Settings → Text-to-Speech output, then tap Check Again."
+            "Unable to open ${resolution.actionLabel} automatically. Open device Settings → Text-to-speech output, then tap Check Again."
         }
     }
 
@@ -1603,6 +1988,14 @@ object SmartTtsManager {
     // Internal Helpers
     // -------------------------------------------------------------------------
 
+    /**
+     * Builds the strict priority initialization chain:
+     * 1. User-selected engine (if installed & enabled)
+     *    - If user-selected engine IS the Android system default, also includes bare 2-arg bind (`""`)
+     *      as an immediate retry because Samsung One UI sometimes binds cleanly via default constructor.
+     * 2. Android system default engine (bare 2-arg bind `""` first when Auto, then explicit package)
+     * 3. Other compatible installed enabled engines (Google Speech Services, Samsung TTS, others)
+     */
     private fun buildCandidateEngineChain(
         enabledEngines: List<TtsEngineInfo>,
         preferredEngine: String,
@@ -1611,12 +2004,26 @@ object SmartTtsManager {
         val ordered = LinkedHashSet<String>()
         val enabledByPkg = enabledEngines.associateBy { it.packageName }
 
-        if (preferredEngine.isNotBlank() && enabledByPkg.containsKey(preferredEngine)) {
-            ordered.add(preferredEngine)
+        if (preferredEngine.isNotBlank()) {
+            if (enabledByPkg.containsKey(preferredEngine)) {
+                ordered.add(preferredEngine)
+                if (preferredEngine.equals(defaultEngine, ignoreCase = true)) {
+                    ordered.add("") // Samsung One UI bare default constructor retry
+                }
+            }
+            if (defaultEngine.isNotBlank() && enabledByPkg.containsKey(defaultEngine)) {
+                ordered.add(defaultEngine)
+            }
+        } else {
+            // Auto mode: prefer system default engine first
+            if (defaultEngine.isNotBlank() && enabledByPkg.containsKey(defaultEngine)) {
+                ordered.add(defaultEngine)
+                ordered.add("")
+            } else if (enabledEngines.isNotEmpty()) {
+                ordered.add("")
+            }
         }
-        if (defaultEngine.isNotBlank() && enabledByPkg.containsKey(defaultEngine)) {
-            ordered.add(defaultEngine)
-        }
+
         if (enabledByPkg.containsKey(GOOGLE_SPEECH_SERVICES_PKG)) {
             ordered.add(GOOGLE_SPEECH_SERVICES_PKG)
         }
@@ -1629,19 +2036,33 @@ object SmartTtsManager {
     private fun mergeEngineLists(
         pmEngines: List<TtsEngineInfo>,
         reportedEngines: List<TtsEngineInfo>,
-        defaultPkg: String
+        defaultPkg: String,
+        activeReadyPkg: String,
+        failedPkgs: Set<String>
     ): List<TtsEngineInfo> {
         val byPkg = LinkedHashMap<String, TtsEngineInfo>()
+        fun readinessFor(pkg: String): TtsEngineReadiness = when {
+            pkg == activeReadyPkg && pkg.isNotBlank() -> TtsEngineReadiness.READY
+            pkg in failedPkgs -> TtsEngineReadiness.FAILED
+            else -> TtsEngineReadiness.UNTESTED
+        }
         for (e in pmEngines) {
-            byPkg[e.packageName] = e.copy(isSystemDefault = e.packageName == defaultPkg)
+            byPkg[e.packageName] = e.copy(
+                isSystemDefault = e.packageName == defaultPkg,
+                readiness = readinessFor(e.packageName)
+            )
         }
         for (e in reportedEngines) {
             if (!byPkg.containsKey(e.packageName)) {
-                byPkg[e.packageName] = e.copy(isSystemDefault = e.packageName == defaultPkg)
+                byPkg[e.packageName] = e.copy(
+                    isSystemDefault = e.packageName == defaultPkg,
+                    readiness = readinessFor(e.packageName)
+                )
             }
         }
         return byPkg.values.sortedWith(
-            compareByDescending<TtsEngineInfo> { it.isSystemDefault }
+            compareByDescending<TtsEngineInfo> { it.packageName == activeReadyPkg }
+                .thenByDescending { it.isSystemDefault }
                 .thenByDescending { it.packageName == GOOGLE_SPEECH_SERVICES_PKG }
                 .thenBy { it.label.lowercase(Locale.ROOT) }
         )
@@ -1681,12 +2102,11 @@ object SmartTtsManager {
                 displayLanguageName = displayName,
                 availability = TtsLanguageAvailability.AVAILABLE,
                 resolvedLocale = targetLocale,
-                message = "$displayName is ready on $engineLabel."
+                message = "$displayName is available on $engineLabel."
             )
         }
 
-        // If a regional variant (e.g. en-IN) is unavailable, check same base language ONLY (e.g. en),
-        // NEVER substituting a different language (e.g. never substituting English for Hindi/Telugu).
+        // Check same base language ONLY (e.g. en-IN -> en), never substituting a different language
         if (cleanTag.contains('-')) {
             val baseLocale = Locale(targetLocale.language)
             val baseCode = adapter.isLanguageAvailable(baseLocale)
@@ -1696,7 +2116,7 @@ object SmartTtsManager {
                     displayLanguageName = displayName,
                     availability = TtsLanguageAvailability.AVAILABLE,
                     resolvedLocale = baseLocale,
-                    message = "$displayName is ready on $engineLabel."
+                    message = "$displayName is available on $engineLabel."
                 )
             }
         }
@@ -1707,7 +2127,7 @@ object SmartTtsManager {
                 displayLanguageName = displayName,
                 availability = TtsLanguageAvailability.MISSING_DATA,
                 resolvedLocale = null,
-                message = "Voice data for $displayName is missing on $engineLabel. Tap Install Voice Data or choose another supported language."
+                message = "Voice data for $displayName is missing on $engineLabel. Tap Install Voice Data or select another supported language."
             )
         } else {
             TtsLanguageCheckResult(
@@ -1715,7 +2135,7 @@ object SmartTtsManager {
                 displayLanguageName = displayName,
                 availability = TtsLanguageAvailability.NOT_SUPPORTED,
                 resolvedLocale = null,
-                message = "$displayName is not supported by $engineLabel. Switch TTS engine or select an installed language."
+                message = "$displayName is not supported by $engineLabel. Switch TTS engine or choose an installed language."
             )
         }
     }
@@ -1735,11 +2155,12 @@ object SmartTtsManager {
         adapter: TtsEngineAdapter
     ): Pair<List<KmStoneLanguageOption>, List<KmStoneVoiceOption>> {
         val candidateLocales = LinkedHashMap<String, Locale>()
-        for (loc in adapter.getAvailableLanguages()) {
-            candidateLocales[loc.toLanguageTag()] = loc
-        }
-        // Explicitly probe core CTECS locales & device default because some OEM engines
-        // omit valid locales from `availableLanguages` despite supporting them.
+        try {
+            for (loc in adapter.getAvailableLanguages()) {
+                candidateLocales[loc.toLanguageTag()] = loc
+            }
+        } catch (_: Throwable) {}
+
         val probed = KEY_PROBED_LOCALES + Locale.getDefault()
         for (loc in probed) {
             val tag = loc.toLanguageTag()
@@ -1749,7 +2170,13 @@ object SmartTtsManager {
         }
 
         val supportedLocales = candidateLocales.values
-            .filter { loc -> adapter.isLanguageAvailable(loc) >= TextToSpeech.LANG_AVAILABLE }
+            .filter { loc ->
+                try {
+                    adapter.isLanguageAvailable(loc) >= TextToSpeech.LANG_AVAILABLE
+                } catch (_: Throwable) {
+                    false
+                }
+            }
             .distinctBy { it.toLanguageTag() }
             .sortedBy { it.getDisplayName(Locale.getDefault()) }
             .map { loc ->
@@ -1760,13 +2187,25 @@ object SmartTtsManager {
                 )
             }
 
-        val allVoices = adapter.getVoices()
-        val offlineFirst = allVoices.sortedWith(
-            compareBy<TtsVoiceDescriptor> { it.isNetworkConnectionRequired }
-                .thenBy { it.locale.getDisplayName(Locale.getDefault()) }
-                .thenByDescending { it.quality }
-                .thenBy { it.name }
-        )
+        val allVoices = try {
+            adapter.getVoices()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        val offlineFirst = allVoices
+            .filter { v ->
+                try {
+                    adapter.isLanguageAvailable(v.locale) >= TextToSpeech.LANG_AVAILABLE
+                } catch (_: Throwable) {
+                    true
+                }
+            }
+            .sortedWith(
+                compareBy<TtsVoiceDescriptor> { it.isNetworkConnectionRequired }
+                    .thenBy { it.locale.getDisplayName(Locale.getDefault()) }
+                    .thenByDescending { it.quality }
+                    .thenBy { it.name }
+            )
         val voiceOptions = offlineFirst.mapIndexed { idx, voice ->
             val langDisplay = voice.locale.getDisplayName(Locale.getDefault())
             val shortName = voice.name
@@ -1818,7 +2257,11 @@ object SmartTtsManager {
         items.forEach { speakNowInternal(ctx, it) }
     }
 
-    private fun speakNowInternal(context: Context, request: TtsSpeakRequest): TtsSpeakOutcome {
+    private fun speakNowInternal(
+        context: Context,
+        request: TtsSpeakRequest,
+        completionWaiter: CompletableDeferred<Boolean>? = null
+    ): TtsSpeakOutcome {
         val adapter = synchronized(lock) {
             if (isInitialized) activeAdapter else null
         } ?: return TtsSpeakOutcome(
@@ -1829,7 +2272,6 @@ object SmartTtsManager {
 
         val engineLabel = _status.value.activeEngineLabel.ifBlank { "Android TTS" }
 
-        // Check requested language strictly — never silently substitute a wrong language
         val langCheck = evaluateLanguageOnAdapter(adapter, engineLabel, request.languageTag)
         if (langCheck.availability == TtsLanguageAvailability.MISSING_DATA) {
             refreshLanguageCheck(request.languageTag)
@@ -1913,17 +2355,21 @@ object SmartTtsManager {
 
         val volumeGain = request.volumePercent.coerceIn(0, 100) / 100f
         val firstId = "ctecs_tts_${UUID.randomUUID()}"
+        if (completionWaiter != null) {
+            utteranceCompletionWaiters[firstId] = completionWaiter
+        }
         synchronized(lock) {
             activeUtteranceIds.add(firstId)
         }
 
         val speakResult = adapter.speak(request.text, queueMode, volumeGain, firstId)
         if (speakResult == TextToSpeech.ERROR) {
+            utteranceCompletionWaiters.remove(firstId)?.complete(false)
             handleEngineDisconnect(context, request)
             return TtsSpeakOutcome(
                 dispatched = false,
                 status = TtsAvailabilityStatus.ENGINE_DISCONNECTED,
-                message = "Voice engine disconnected while speaking. Re-initializing automatically…",
+                message = "Voice engine disconnected while speaking. Attempting automatic recovery…",
                 engineLabel = engineLabel
             )
         }
@@ -1946,7 +2392,8 @@ object SmartTtsManager {
             message = "Spoken via $engineLabel",
             engineLabel = engineLabel,
             resolvedLanguageTag = targetLocale.toLanguageTag(),
-            resolvedVoiceLabel = resolvedVoiceLabel
+            resolvedVoiceLabel = resolvedVoiceLabel,
+            utteranceId = firstId
         )
     }
 
@@ -1986,14 +2433,21 @@ object SmartTtsManager {
     private fun attachAdapterListener(adapter: TtsEngineAdapter) {
         adapter.setUtteranceListener(
             onStart = {},
-            onDone = { utteranceId -> handleUtteranceFinished(utteranceId) },
+            onDone = { utteranceId ->
+                utteranceId?.let { utteranceCompletionWaiters.remove(it)?.complete(true) }
+                handleUtteranceFinished(utteranceId)
+            },
             onError = { utteranceId, errorCode ->
+                utteranceId?.let { utteranceCompletionWaiters.remove(it)?.complete(false) }
                 handleUtteranceFinished(utteranceId)
                 if (errorCode == TextToSpeech.ERROR_SERVICE || errorCode == TextToSpeech.ERROR_NOT_INSTALLED_YET) {
                     appContextRef?.let { ctx -> handleEngineDisconnect(ctx, null) }
                 }
             },
-            onStop = { utteranceId -> handleUtteranceFinished(utteranceId) }
+            onStop = { utteranceId ->
+                utteranceId?.let { utteranceCompletionWaiters.remove(it)?.complete(false) }
+                handleUtteranceFinished(utteranceId)
+            }
         )
     }
 
@@ -2092,6 +2546,11 @@ object SmartTtsManager {
         delayedSpeakJob = null
         initJob?.cancel()
         initJob = null
+        initWatchdogJob?.cancel()
+        initWatchdogJob = null
+        utteranceCompletionWaiters.values.forEach { it.complete(false) }
+        utteranceCompletionWaiters.clear()
+        failedEnginePackagesInRun.clear()
         synchronized(lock) {
             activeAttemptGeneration += 1
             pendingQueue.clear()

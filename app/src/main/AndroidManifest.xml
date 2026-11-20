@@ -58,6 +58,8 @@
             <action android:name="com.android.settings.TTS_SETTINGS" />
         </intent>
         <package android:name="com.google.android.tts" />
+        <package android:name="com.samsung.SMT" />
+        <package android:name="com.samsung.android.tts" />
     </queries>
 
     <application

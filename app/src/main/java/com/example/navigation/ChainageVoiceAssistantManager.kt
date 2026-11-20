@@ -650,8 +650,49 @@ class ChainageVoiceAssistantManager(
         }
 
         /**
-         * Runs a full Voice Output diagnostic & audio test verifying selected engine, language,
-         * voice, speech speed, pitch, volume/audio output, and recovery.
+         * Async end-to-end Voice Output test that waits for actual Android TTS initialization
+         * and [android.speech.tts.UtteranceProgressListener.onDone] synthesis completion before
+         * reporting success.
+         */
+        suspend fun testVoiceOutputAsync(
+            context: Context,
+            settings: ChainageVoiceAssistantSettings
+        ): TtsTestResult {
+            return SmartTtsManager.testVoiceOutputSuspend(
+                context = context,
+                languageTag = settings.effectiveLanguageTag(),
+                voiceName = settings.ttsVoiceName,
+                enginePackage = settings.ttsEnginePackage,
+                speechRate = settings.speechSpeed.speechRate,
+                pitch = settings.effectiveSpeechPitch(),
+                volumePercent = settings.volumePercent,
+                sampleText = SmartTtsManager.TEST_VOICE_SAMPLE_TEXT
+            )
+        }
+
+        /**
+         * Plays a short sample preview of the currently selected assistant voice, language,
+         * speed, pitch, and volume without altering live navigation state.
+         */
+        suspend fun previewVoiceAsync(
+            context: Context,
+            settings: ChainageVoiceAssistantSettings
+        ): TtsTestResult {
+            return SmartTtsManager.testVoiceOutputSuspend(
+                context = context,
+                languageTag = settings.effectiveLanguageTag(),
+                voiceName = settings.ttsVoiceName,
+                enginePackage = settings.ttsEnginePackage,
+                speechRate = settings.speechSpeed.speechRate,
+                pitch = settings.effectiveSpeechPitch(),
+                volumePercent = settings.volumePercent,
+                sampleText = SmartTtsManager.VOICE_PREVIEW_SAMPLE_TEXT
+            )
+        }
+
+        /**
+         * Runs a synchronous Voice Output diagnostic & audio test verifying selected engine,
+         * language, voice, speech speed, pitch, volume/audio output, and recovery.
          */
         fun testVoiceOutputDetailed(
             context: Context,

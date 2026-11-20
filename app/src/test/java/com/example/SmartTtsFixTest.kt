@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.speech.tts.TextToSpeech
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -13,11 +14,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.PreferencesManager
 import com.example.model.ChainageVoiceAssistantSettings
@@ -33,6 +39,7 @@ import com.example.navigation.SmartTtsManager
 import com.example.navigation.TtsAvailabilityStatus
 import com.example.navigation.TtsEngineAdapter
 import com.example.navigation.TtsEngineInfo
+import com.example.navigation.TtsEngineReadiness
 import com.example.navigation.TtsLanguageAvailability
 import com.example.navigation.TtsPlatformProvider
 import com.example.navigation.TtsSpeakRequest
@@ -58,10 +65,19 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Comprehensive 12-scenario Robolectric verification suite for CTECS Android TTS fix:
- * automatic engine detection, fallback, disabled/missing engine setup & recovery, language data
- * validation without silent wrong-language substitution, Voice Output ON/OFF state management,
- * engine switching, persistence & revalidation, KM Stone priority, and single-instance guarantee.
+ * Comprehensive 15-scenario Robolectric verification suite for CTECS Android TTS initialization fix
+ * and Voice Assistant Settings correction:
+ * - Samsung TTS (`com.samsung.SMT`) explicit bind & bare-default retry
+ * - Google Speech Services (`com.google.android.tts`) & alternate engines
+ * - Intelligent fallback WITHOUT silently overwriting user's saved engine preference
+ * - Async Test Voice Output awaiting real UtteranceProgressListener.onDone / onError
+ * - Voice Preview & exact test phrase verification
+ * - Missing English, Hindi, or Telugu voice data (no silent wrong-language substitution)
+ * - Disabled / missing engine setup intents & automatic recovery on return from Android Settings
+ * - Separated 4-row statuses (Microphone, Speech Recognition, TTS Engine, TTS Language)
+ * - Strictly ONE compact TTS configuration warning panel (no duplicate error cards)
+ * - Responsive non-truncating Configure Engine / Install Voice Data / Check Again buttons
+ * - Persistence across force-stop/reopen, KM Stone arrival priority, single-instance guarantee
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -105,7 +121,8 @@ class SmartTtsFixTest {
         private val languageStatuses: Map<String, Int>,
         private val voices: List<TtsVoiceDescriptor>,
         private val spokenSink: CopyOnWriteArrayList<SpokenCall>,
-        var failNextSpeakWithDisconnect: Boolean = false
+        var failNextSpeakWithDisconnect: Boolean = false,
+        var autoCompleteUtteranceSuccess: Boolean? = null
     ) : TtsEngineAdapter {
 
         var isShutdown: Boolean = false
@@ -191,6 +208,17 @@ class SmartTtsFixTest {
                     voiceName = lastVoiceName
                 )
             )
+            when (autoCompleteUtteranceSuccess) {
+                true -> {
+                    activeUtterances.remove(utteranceId)
+                    onDoneCb?.invoke(utteranceId)
+                }
+                false -> {
+                    activeUtterances.remove(utteranceId)
+                    onErrorCb?.invoke(utteranceId, TextToSpeech.ERROR_SYNTHESIS)
+                }
+                null -> Unit
+            }
             return TextToSpeech.SUCCESS
         }
 
@@ -218,9 +246,11 @@ class SmartTtsFixTest {
         var disabledEngines: List<TtsEngineInfo> = emptyList(),
         var defaultEnginePkg: String = "",
         var failingEnginePackages: Set<String> = emptySet(),
+        var failExplicitBindAllowBareDefaultFor: Set<String> = emptySet(),
         var languageStatusesByEngine: MutableMap<String, Map<String, Int>> = mutableMapOf(),
         var voicesByEngine: MutableMap<String, List<TtsVoiceDescriptor>> = mutableMapOf(),
         var audioMuted: Boolean = false,
+        var autoCompleteUtteranceSuccess: Boolean? = null,
         var resolvableActions: Set<String> = setOf(
             "com.android.settings.TTS_SETTINGS",
             TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA,
@@ -230,6 +260,7 @@ class SmartTtsFixTest {
     ) : TtsPlatformProvider {
 
         val createCount = AtomicInteger(0)
+        val requestedPackages = CopyOnWriteArrayList<String>()
         val createdAdapters = CopyOnWriteArrayList<FakeTtsEngineAdapter>()
         val spokenCalls = CopyOnWriteArrayList<SpokenCall>()
 
@@ -244,7 +275,10 @@ class SmartTtsFixTest {
             onInit: (TtsEngineAdapter, Int) -> Unit
         ): TtsEngineAdapter {
             createCount.incrementAndGet()
-            val targetPkg = enginePackage?.takeIf { it.isNotBlank() } ?: defaultEnginePkg
+            val rawRequested = enginePackage.orEmpty()
+            requestedPackages.add(rawRequested)
+            val isBareDefaultBind = rawRequested.isBlank()
+            val targetPkg = rawRequested.ifBlank { defaultEnginePkg }
             val langs = languageStatusesByEngine[targetPkg]
                 ?: mapOf(
                     "en-IN" to TextToSpeech.LANG_COUNTRY_AVAILABLE,
@@ -265,10 +299,13 @@ class SmartTtsFixTest {
                 reportedEngines = enabledEngines,
                 languageStatuses = langs,
                 voices = voices,
-                spokenSink = spokenCalls
+                spokenSink = spokenCalls,
+                autoCompleteUtteranceSuccess = autoCompleteUtteranceSuccess
             )
             createdAdapters.add(adapter)
-            val shouldFail = targetPkg.isBlank() && enabledEngines.isEmpty() ||
+            val shouldFailExplicitSamsung = !isBareDefaultBind && rawRequested in failExplicitBindAllowBareDefaultFor
+            val shouldFail = shouldFailExplicitSamsung ||
+                (targetPkg.isBlank() && enabledEngines.isEmpty()) ||
                 targetPkg in failingEnginePackages
             if (synchronousInit) {
                 onInit(adapter, if (shouldFail) TextToSpeech.ERROR else TextToSpeech.SUCCESS)
@@ -291,18 +328,73 @@ class SmartTtsFixTest {
     )
 
     private fun samsungEngineInfo(isDefault: Boolean = false, isEnabled: Boolean = true) = TtsEngineInfo(
-        packageName = "com.samsung.SMT",
-        label = "Samsung Text-to-Speech",
+        packageName = SmartTtsManager.SAMSUNG_TTS_PKG,
+        label = "Samsung text-to-speech engine",
         isSystemDefault = isDefault,
         isEnabled = isEnabled
     )
 
     // -------------------------------------------------------------------------
-    // Scenario 1: Device with Google Speech Services installed
+    // Scenario 1: Samsung Text-to-Speech (com.samsung.SMT) Selected & Initialized
+    // (including bare 2-arg TextToSpeech retry when explicit bind returns ERROR)
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenario 1 - detects Google Speech Services, initializes automatically, and passes Test Voice Output with pitch and speed`() {
+    fun `scenario 1 - Samsung TTS initializes cleanly including bare default retry and passes async Test Voice Output`() = runBlocking {
+        val samsung = samsungEngineInfo(isDefault = true)
+        val google = googleEngineInfo(isDefault = false)
+        val fake = FakeTtsPlatformProvider(
+            enabledEngines = listOf(samsung, google),
+            defaultEnginePkg = SmartTtsManager.SAMSUNG_TTS_PKG,
+            // Simulates Samsung One UI rejecting explicit 3-arg bind while succeeding via bare 2-arg default bind
+            failExplicitBindAllowBareDefaultFor = setOf(SmartTtsManager.SAMSUNG_TTS_PKG),
+            autoCompleteUtteranceSuccess = true
+        )
+        SmartTtsManager.setPlatformProviderForTesting(fake)
+
+        val snap = SmartTtsManager.initializeBlockingForSync(
+            context = context,
+            preferredEngine = SmartTtsManager.SAMSUNG_TTS_PKG,
+            languageTag = "en-IN"
+        )
+        assertEquals(TtsAvailabilityStatus.READY, snap.status)
+        assertEquals(SmartTtsManager.SAMSUNG_TTS_PKG, snap.activeEnginePackage)
+        assertFalse("Should NOT be fallback when Samsung TTS bound via bare default retry", snap.isFallbackActive)
+        assertEquals(1, SmartTtsManager.activeInstanceCount)
+        assertEquals(
+            TtsEngineReadiness.READY,
+            snap.installedEngines.first { it.packageName == SmartTtsManager.SAMSUNG_TTS_PKG }.readiness
+        )
+
+        // End-to-end async Test Voice Output awaits UtteranceProgressListener.onDone
+        val settings = ChainageVoiceAssistantSettings(
+            voiceOutputEnabled = true,
+            ttsEnginePackage = SmartTtsManager.SAMSUNG_TTS_PKG,
+            voiceLanguage = ChainageVoiceLanguage.ENGLISH_INDIA,
+            speechSpeed = KmVoiceSpeed.NORMAL,
+            speechPitch = 1.0f,
+            volumePercent = 90
+        )
+        val asyncRes = ChainageVoiceAssistantManager.testVoiceOutputAsync(context, settings)
+        assertTrue(asyncRes.success)
+        assertEquals("Voice test successful", asyncRes.headline)
+        assertEquals(
+            "CTECS voice assistant is working. Your destination chainage is 201 plus 500.",
+            asyncRes.spokenText
+        )
+
+        // Voice preview also completes cleanly
+        val previewRes = ChainageVoiceAssistantManager.previewVoiceAsync(context, settings)
+        assertTrue(previewRes.success)
+        assertEquals(SmartTtsManager.VOICE_PREVIEW_SAMPLE_TEXT, previewRes.spokenText)
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 2: Device with Google Speech Services installed
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `scenario 2 - detects Google Speech Services, initializes automatically, and passes Test Voice Output with pitch and speed`() {
         val fake = FakeTtsPlatformProvider(
             enabledEngines = listOf(googleEngineInfo(isDefault = true)),
             defaultEnginePkg = SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG
@@ -328,6 +420,7 @@ class SmartTtsFixTest {
         )
         val testRes = ChainageVoiceAssistantManager.testVoiceOutputDetailed(context, settings)
         assertTrue(testRes.success)
+        assertEquals("Voice test successful", testRes.headline)
         assertEquals(SmartTtsManager.TEST_VOICE_SAMPLE_TEXT, testRes.spokenText)
         assertEquals(1, fake.spokenCalls.size)
         val spoken = fake.spokenCalls.single()
@@ -338,40 +431,74 @@ class SmartTtsFixTest {
     }
 
     // -------------------------------------------------------------------------
-    // Scenario 2: Device with another compatible TTS engine & automatic fallback
+    // Scenario 3: Intelligent Fallback WITHOUT Silently Changing Saved Preference
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenario 2 - falls back automatically to another compatible TTS engine when default fails`() {
-        val brokenDefault = TtsEngineInfo(
-            packageName = "com.vendor.broken.tts",
-            label = "Broken OEM TTS",
-            isSystemDefault = true,
-            isEnabled = true
-        )
-        val samsung = samsungEngineInfo(isDefault = false)
+    fun `scenario 3 - falls back to working installed engine without mutating user preferred engine and reports honest per-engine readiness`() {
+        val samsung = samsungEngineInfo(isDefault = true)
+        val google = googleEngineInfo(isDefault = false)
         val fake = FakeTtsPlatformProvider(
-            enabledEngines = listOf(brokenDefault, samsung),
-            defaultEnginePkg = brokenDefault.packageName,
-            failingEnginePackages = setOf(brokenDefault.packageName)
+            enabledEngines = listOf(samsung, google),
+            defaultEnginePkg = samsung.packageName,
+            failingEnginePackages = setOf(samsung.packageName)
         )
         SmartTtsManager.setPlatformProviderForTesting(fake)
 
-        val snap = SmartTtsManager.initializeBlockingForSync(context)
+        val snap = SmartTtsManager.initializeBlockingForSync(
+            context = context,
+            preferredEngine = samsung.packageName,
+            languageTag = "en-IN"
+        )
         assertEquals(TtsAvailabilityStatus.READY, snap.status)
-        assertEquals("com.samsung.SMT", snap.activeEnginePackage)
-        assertEquals("Samsung Text-to-Speech", snap.activeEngineLabel)
+        assertEquals(google.packageName, snap.activeEnginePackage)
+        assertEquals(samsung.packageName, snap.preferredEnginePackage)
+        assertTrue("Fallback must be explicitly flagged", snap.isFallbackActive)
+        assertEquals(samsung.packageName, snap.fallbackFromEnginePackage)
+        // Failed Samsung engine MUST NOT be listed as Ready!
+        assertEquals(
+            TtsEngineReadiness.FAILED,
+            snap.installedEngines.first { it.packageName == samsung.packageName }.readiness
+        )
+        assertEquals(
+            TtsEngineReadiness.READY,
+            snap.installedEngines.first { it.packageName == google.packageName }.readiness
+        )
         // Broken adapter must have been shut down cleanly; only 1 active engine remains
         assertTrue(fake.createdAdapters.first().isShutdown)
         assertEquals(1, SmartTtsManager.activeInstanceCount)
+
+        // Fallback banner is rendered cleanly with Keep Fallback & Check Again options
+        var savedEngine = samsung.packageName
+        composeRule.setContent {
+            MaterialTheme {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    ChainageVoiceAssistantSettingsSectionContent(
+                        settings = ChainageVoiceAssistantSettings(
+                            voiceOutputEnabled = true,
+                            ttsEnginePackage = savedEngine
+                        ),
+                        accentColor = Color(0xFF38BDF8),
+                        onUpdateSettings = { savedEngine = it(ChainageVoiceAssistantSettings(ttsEnginePackage = savedEngine)).ttsEnginePackage },
+                        onResetDefaults = {}
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        // Saved preference must remain Samsung until the user explicitly chooses Keep Fallback
+        assertEquals(samsung.packageName, savedEngine)
+        composeRule.onNodeWithTag("tts_status_card_fallback").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("cva_keep_fallback_engine_btn").performScrollTo().assertIsDisplayed()
     }
 
     // -------------------------------------------------------------------------
-    // Scenario 3: Device without a TTS engine
+    // Scenario 4 & 13 & 14: No TTS Engine, Strictly ONE Warning Panel,
+    // Non-Truncating Buttons & 4 Independent Status Rows
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenario 3 - device without TTS engine reports NO_ENGINE_INSTALLED with safe setup intent and keeps UI actionable`() {
+    fun `scenarios 4, 12, 13, 14 - no engine shows strictly one warning panel, non-truncating buttons, and 4 independent voice system statuses`() {
         val fake = FakeTtsPlatformProvider(
             enabledEngines = emptyList(),
             disabledEngines = emptyList(),
@@ -388,16 +515,20 @@ class SmartTtsFixTest {
         assertNotNull(setup.intent)
         assertTrue(setup.actionLabel.contains("Google Speech Services"))
 
-        // When no Android settings/store intents exist on a stripped ROM, returns null intent + manual text (never crashes)
+        // Stripped ROM fallback returns null intent + manual text (never crashes)
         fake.resolvableActions = emptySet()
         val fallbackSetup = SmartTtsManager.resolveSetupIntent(context, forMissingVoiceData = false)
         assertNull(fallbackSetup.intent)
         assertTrue(fallbackSetup.description.contains("Text-to-Speech"))
 
-        // UI renders Install / Configure Voice Engine & Check Again buttons
+        // Render on a compact 320dp screen width to verify responsive non-truncating buttons & zero duplicates
         composeRule.setContent {
             MaterialTheme {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Column(
+                    modifier = Modifier
+                        .width(320.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     ChainageVoiceAssistantSettingsSectionContent(
                         settings = ChainageVoiceAssistantSettings(voiceOutputEnabled = true),
                         accentColor = Color(0xFF38BDF8),
@@ -408,37 +539,56 @@ class SmartTtsFixTest {
             }
         }
         composeRule.waitForIdle()
+
+        // Strictly ONE setup warning panel
+        composeRule.onAllNodesWithTag("tts_status_card_setup").assertCountEquals(1)
         composeRule.onNodeWithTag("tts_status_card_setup").performScrollTo().assertIsDisplayed()
+
+        // Crisp non-truncating button labels: "Configure Engine" & "Check Again"
         composeRule.onNodeWithTag("cva_install_configure_tts_btn").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Configure Engine").assertIsDisplayed()
         composeRule.onNodeWithTag("cva_check_tts_again_btn").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Check Again").assertIsDisplayed()
+
+        // Tapping Test Voice Output MUST NOT spawn a second duplicate engine error panel
+        composeRule.onNodeWithTag("cva_test_voice_output_btn").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithTag("tts_status_card_setup").assertCountEquals(1)
+        composeRule.onAllNodesWithTag("cva_voice_test_status").assertCountEquals(0)
+
+        // 4 strictly separated independent status rows
+        composeRule.onNodeWithTag("cva_status_mic").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("cva_status_speech_rec").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("cva_status_tts_engine").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("cva_status_tts_engine").assertTextContains("Unavailable", substring = true)
+        composeRule.onNodeWithTag("cva_status_tts_language").performScrollTo().assertIsDisplayed()
     }
 
     // -------------------------------------------------------------------------
-    // Scenario 4 & 6: Engine disabled -> enabled, and Engine installed -> return to CTECS
+    // Scenario 5 & 7: Disabled Engine -> Enabled & Return from Android TTS Settings
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenarios 4 and 6 - disabled or missing engine recovers automatically upon enable or install and return to CTECS`() {
-        // Start with disabled Google Speech Services
+    fun `scenarios 5 and 7 - disabled or missing engine recovers automatically upon enable or install and return to CTECS`() {
         val fake = FakeTtsPlatformProvider(
             enabledEngines = emptyList(),
-            disabledEngines = listOf(googleEngineInfo(isDefault = true, isEnabled = false)),
-            defaultEnginePkg = SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG
+            disabledEngines = listOf(samsungEngineInfo(isDefault = true, isEnabled = false)),
+            defaultEnginePkg = SmartTtsManager.SAMSUNG_TTS_PKG
         )
         SmartTtsManager.setPlatformProviderForTesting(fake)
 
         val disabledSnap = SmartTtsManager.initializeBlockingForSync(context)
         assertEquals(TtsAvailabilityStatus.ENGINE_DISABLED, disabledSnap.status)
 
-        // User enables Google Speech Services in Android Settings and returns to CTECS
+        // User enables Samsung TTS in Android Settings and returns to CTECS
         fake.disabledEngines = emptyList()
-        fake.enabledEngines = listOf(googleEngineInfo(isDefault = true, isEnabled = true))
+        fake.enabledEngines = listOf(samsungEngineInfo(isDefault = true, isEnabled = true))
 
         val recoveredSnap = SmartTtsManager.initializeBlockingForSync(context, forceReinitialize = true)
         assertEquals(TtsAvailabilityStatus.READY, recoveredSnap.status)
-        assertEquals("Google Speech Services", recoveredSnap.activeEngineLabel)
+        assertEquals("Samsung text-to-speech engine", recoveredSnap.activeEngineLabel)
 
-        // Simulate missing engine -> user installs engine -> returns to CTECS -> revalidateOnResume recovers
+        // Simulate missing engine -> user installs Google Speech Services -> returns to CTECS
         SmartTtsManager.resetForTesting()
         val installFake = FakeTtsPlatformProvider(enabledEngines = emptyList())
         SmartTtsManager.setPlatformProviderForTesting(installFake)
@@ -451,38 +601,38 @@ class SmartTtsFixTest {
     }
 
     // -------------------------------------------------------------------------
-    // Scenario 5: Missing Hindi, Telugu, or English voice data (no silent wrong language)
+    // Scenario 6: Missing English, Hindi, or Telugu Voice Data (No Silent Wrong Language)
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenario 5 - missing Hindi or Telugu voice data reports LANGUAGE_MISSING_DATA without silently substituting English`() {
+    fun `scenario 6 - missing English, Hindi, or Telugu voice data reports LANGUAGE_MISSING_DATA without silently substituting another language`() = runBlocking {
         val fake = FakeTtsPlatformProvider(
             enabledEngines = listOf(googleEngineInfo(isDefault = true)),
             defaultEnginePkg = SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG,
             languageStatusesByEngine = mutableMapOf(
                 SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG to mapOf(
                     "en-US" to TextToSpeech.LANG_COUNTRY_AVAILABLE,
-                    "en" to TextToSpeech.LANG_AVAILABLE,
+                    "en-IN" to TextToSpeech.LANG_MISSING_DATA,
                     "hi-IN" to TextToSpeech.LANG_MISSING_DATA,
                     "te-IN" to TextToSpeech.LANG_MISSING_DATA
                 )
-            )
+            ),
+            autoCompleteUtteranceSuccess = true
         )
         SmartTtsManager.setPlatformProviderForTesting(fake)
         SmartTtsManager.initializeBlockingForSync(context, languageTag = "hi-IN")
 
-        val hiCheck = SmartTtsManager.checkLanguageAvailability("hi-IN")
-        assertEquals(TtsLanguageAvailability.MISSING_DATA, hiCheck.availability)
+        assertEquals(TtsLanguageAvailability.MISSING_DATA, SmartTtsManager.checkLanguageAvailability("en-IN").availability)
+        assertEquals(TtsLanguageAvailability.MISSING_DATA, SmartTtsManager.checkLanguageAvailability("hi-IN").availability)
+        assertEquals(TtsLanguageAvailability.MISSING_DATA, SmartTtsManager.checkLanguageAvailability("te-IN").availability)
 
-        val teCheck = SmartTtsManager.checkLanguageAvailability("te-IN")
-        assertEquals(TtsLanguageAvailability.MISSING_DATA, teCheck.availability)
-
-        // Attempting to speak Hindi must fail clearly and MUST NOT silently speak in English
-        val hiTest = ChainageVoiceAssistantManager.testVoiceOutputDetailed(
+        // Attempting to speak Hindi MUST fail with "Voice data missing" and MUST NOT silently speak English
+        val hiTest = ChainageVoiceAssistantManager.testVoiceOutputAsync(
             context,
             ChainageVoiceAssistantSettings(voiceLanguage = ChainageVoiceLanguage.HINDI)
         )
         assertFalse(hiTest.success)
+        assertEquals("Voice data missing", hiTest.headline)
         assertEquals(TtsAvailabilityStatus.LANGUAGE_MISSING_DATA, hiTest.status)
         assertEquals(0, fake.spokenCalls.size)
 
@@ -490,21 +640,49 @@ class SmartTtsFixTest {
         val installData = SmartTtsManager.resolveSetupIntent(context, forMissingVoiceData = true)
         assertEquals(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA, installData.intent?.action)
 
-        // Switching to installed English succeeds immediately
-        val enTest = ChainageVoiceAssistantManager.testVoiceOutputDetailed(
+        // Switching to installed English (US) succeeds immediately
+        val enTest = ChainageVoiceAssistantManager.testVoiceOutputAsync(
             context,
             ChainageVoiceAssistantSettings(voiceLanguage = ChainageVoiceLanguage.ENGLISH_US)
         )
         assertTrue(enTest.success)
+        assertEquals("Voice test successful", enTest.headline)
         assertEquals(1, fake.spokenCalls.size)
     }
 
     // -------------------------------------------------------------------------
-    // Scenario 7: Switching TTS engines cleanly
+    // Scenario 8: UtteranceProgressListener.onError Must Report Audio Output Failed (Never Fake Success)
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenario 7 - switching TTS engines shuts down prior engine and activates newly selected engine without duplicates`() {
+    fun `scenario 8 - Test Voice Output reports Audio output failed when UtteranceProgressListener emits onError`() = runBlocking {
+        val fake = FakeTtsPlatformProvider(
+            enabledEngines = listOf(samsungEngineInfo(isDefault = true)),
+            defaultEnginePkg = SmartTtsManager.SAMSUNG_TTS_PKG,
+            autoCompleteUtteranceSuccess = false
+        )
+        SmartTtsManager.setPlatformProviderForTesting(fake)
+        SmartTtsManager.initializeBlockingForSync(context, preferredEngine = SmartTtsManager.SAMSUNG_TTS_PKG, languageTag = "en-IN")
+
+        val res = ChainageVoiceAssistantManager.testVoiceOutputAsync(
+            context,
+            ChainageVoiceAssistantSettings(
+                voiceOutputEnabled = true,
+                ttsEnginePackage = SmartTtsManager.SAMSUNG_TTS_PKG,
+                voiceLanguage = ChainageVoiceLanguage.ENGLISH_INDIA
+            )
+        )
+        assertFalse("Must never report success when synthesis fails via onError", res.success)
+        assertEquals("Audio output failed", res.headline)
+        assertEquals(TtsAvailabilityStatus.AUDIO_OUTPUT_UNAVAILABLE, res.status)
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 9: Switching TTS Engines Cleanly & Android Settings Change
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `scenario 9 - switching TTS engines shuts down prior engine and activates newly selected engine without duplicates`() {
         val google = googleEngineInfo(isDefault = true)
         val samsung = samsungEngineInfo(isDefault = false)
         val fake = FakeTtsPlatformProvider(
@@ -520,11 +698,11 @@ class SmartTtsFixTest {
         // Switch to Samsung TTS
         val s2 = SmartTtsManager.initializeBlockingForSync(context, preferredEngine = samsung.packageName, forceReinitialize = true)
         assertEquals(samsung.packageName, s2.activeEnginePackage)
-        assertEquals("Samsung Text-to-Speech", s2.activeEngineLabel)
+        assertEquals("Samsung text-to-speech engine", s2.activeEngineLabel)
         assertTrue("Previous engine adapter must be shut down", fake.createdAdapters[0].isShutdown)
         assertEquals(1, SmartTtsManager.activeInstanceCount)
 
-        // Also verify automatic re-detection when system default engine changes while CTECS is running
+        // Automatic re-detection when system default engine changes in Android settings
         fake.defaultEnginePkg = google.packageName
         val s3 = SmartTtsManager.initializeBlockingForSync(context, preferredEngine = "", forceReinitialize = false)
         assertEquals(google.packageName, s3.activeEnginePackage)
@@ -532,18 +710,18 @@ class SmartTtsFixTest {
     }
 
     // -------------------------------------------------------------------------
-    // Scenario 8: Force-stop and restart persistence & revalidation
+    // Scenario 10: Force-stop and Restart Persistence & Revalidation
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenario 8 - settings persist engine, language, voice, speed, pitch and revalidate availability on restart`() = runBlocking {
+    fun `scenario 10 - settings persist engine, language, voice, speed, pitch and revalidate availability on restart`() = runBlocking {
         val saved = ChainageVoiceAssistantSettings(
             voiceAssistantEnabled = true,
             voiceSearchEnabled = true,
             voiceLanguage = ChainageVoiceLanguage.ENGLISH_INDIA,
             customLanguageTag = "fr-FR",
             voiceOutputEnabled = true,
-            ttsEnginePackage = "com.samsung.SMT",
+            ttsEnginePackage = SmartTtsManager.SAMSUNG_TTS_PKG,
             ttsVoiceName = "fr-fr-x-fra-local",
             speechSpeed = KmVoiceSpeed.SLOW,
             speechPitch = 1.25f,
@@ -559,7 +737,7 @@ class SmartTtsFixTest {
         assertEquals(1.25f, restored.effectiveSpeechPitch(), 0.001f)
 
         // Simulate app restart where previously persisted Samsung engine was uninstalled;
-        // revalidation falls back cleanly to installed Google Speech Services instead of crashing.
+        // revalidation falls back cleanly to installed Google Speech Services without crashing or mutating saved pref.
         val fake = FakeTtsPlatformProvider(
             enabledEngines = listOf(googleEngineInfo(isDefault = true)),
             defaultEnginePkg = SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG
@@ -572,21 +750,24 @@ class SmartTtsFixTest {
         )
         assertEquals(TtsAvailabilityStatus.READY, snap.status)
         assertEquals(SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG, snap.activeEnginePackage)
+        assertTrue(snap.isFallbackActive)
+        assertEquals(SmartTtsManager.SAMSUNG_TTS_PKG, snap.preferredEnginePackage)
     }
 
     // -------------------------------------------------------------------------
-    // Scenarios 9, 10, 11, 12: Repeated Announcements, KM Stone Priority, OFF/ON, Single Instance, Disconnect & Muted Audio
+    // Scenarios 11 & 15: Destination Confirmations, KM Stone Arrival Priority,
+    // Voice Output OFF Suppression, Muted Audio, Disconnect Recovery & Release
     // -------------------------------------------------------------------------
 
     @Test
-    fun `scenarios 9, 10, 11, 12 - single shared TTS instance, arrival priority, Voice Output OFF suppression, muted audio and disconnect recovery`() {
+    fun `scenarios 11 and 15 - single shared TTS instance, arrival priority, Voice Output OFF suppression, muted audio and disconnect recovery`() {
         val fake = FakeTtsPlatformProvider(
             enabledEngines = listOf(googleEngineInfo(isDefault = true)),
             defaultEnginePkg = SmartTtsManager.GOOGLE_SPEECH_SERVICES_PKG
         )
         SmartTtsManager.setPlatformProviderForTesting(fake)
 
-        // Scenario 11: Voice Output OFF does NOT unnecessarily initialize TTS
+        // Voice Output OFF does NOT unnecessarily initialize TTS
         var uiSettings by mutableStateOf(ChainageVoiceAssistantSettings(voiceOutputEnabled = false))
         composeRule.setContent {
             MaterialTheme {
@@ -609,7 +790,7 @@ class SmartTtsFixTest {
         assertEquals(1, fake.createCount.get())
         assertEquals(1, SmartTtsManager.activeInstanceCount)
 
-        // Scenario 9: Repeated destination confirmations reuse the exact same engine & flush non-overlappingly
+        // Repeated destination confirmations reuse the exact same engine & flush non-overlappingly
         val assistantSettings = ChainageVoiceAssistantSettings(
             voiceOutputEnabled = true,
             voiceLanguage = ChainageVoiceLanguage.ENGLISH_INDIA
@@ -621,7 +802,7 @@ class SmartTtsFixTest {
         assertEquals(2, fake.spokenCalls.size)
         assertTrue(fake.spokenCalls.all { it.queueMode == TextToSpeech.QUEUE_FLUSH })
 
-        // Scenario 10: KM Stone Arrival announcement prioritizes over routine distance announcements
+        // KM Stone Arrival announcement prioritizes over routine distance announcements
         val kmSettings = KmStoneAlertSettings(
             enabled = true,
             voiceAnnouncementEnabled = true,
@@ -672,6 +853,7 @@ class SmartTtsFixTest {
         fake.audioMuted = true
         val mutedRes = ChainageVoiceAssistantManager.testVoiceOutputDetailed(context, assistantSettings)
         assertFalse(mutedRes.success)
+        assertEquals("Audio output failed", mutedRes.headline)
         assertEquals(TtsAvailabilityStatus.AUDIO_OUTPUT_UNAVAILABLE, mutedRes.status)
         fake.audioMuted = false
 
