@@ -168,7 +168,9 @@ data class KmStoneAlertSettings(
     val voiceCustomIncludeDistance: Boolean = true,
     val voiceCustomIncludeSpeed: Boolean = false,
     val voiceCustomIncludeArrivalStatus: Boolean = true,
-    val voiceCustomTemplate: String = ""
+    val voiceCustomTemplate: String = "",
+    val voiceEnginePackage: String = "",
+    val voicePitch: Float = 1.0f
 ) {
     /**
      * Determines whether the dedicated KM Stone Monitoring Foreground Service should stay active.
@@ -276,6 +278,8 @@ data class KmStoneAlertSettings(
             put("voiceCustomIncludeSpeed", voiceCustomIncludeSpeed)
             put("voiceCustomIncludeArrivalStatus", voiceCustomIncludeArrivalStatus)
             put("voiceCustomTemplate", voiceCustomTemplate)
+            put("voiceEnginePackage", voiceEnginePackage)
+            put("voicePitch", voicePitch.coerceIn(0.6f, 1.5f).toDouble())
         }
         return obj.toString()
     }
@@ -372,7 +376,9 @@ data class KmStoneAlertSettings(
                     voiceCustomIncludeDistance = obj.optBoolean("voiceCustomIncludeDistance", true),
                     voiceCustomIncludeSpeed = obj.optBoolean("voiceCustomIncludeSpeed", false),
                     voiceCustomIncludeArrivalStatus = obj.optBoolean("voiceCustomIncludeArrivalStatus", true),
-                    voiceCustomTemplate = obj.optString("voiceCustomTemplate", "")
+                    voiceCustomTemplate = obj.optString("voiceCustomTemplate", ""),
+                    voiceEnginePackage = obj.optString("voiceEnginePackage", "").trim(),
+                    voicePitch = obj.optDouble("voicePitch", 1.0).toFloat().coerceIn(0.6f, 1.5f)
                 )
             } catch (_: Exception) {
                 KmStoneAlertSettings()

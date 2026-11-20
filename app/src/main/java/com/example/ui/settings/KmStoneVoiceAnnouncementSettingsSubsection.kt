@@ -34,6 +34,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +49,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.KmAlertOutputMode
 import com.example.model.KmStoneAlertSettings
@@ -55,6 +59,7 @@ import com.example.model.KmVoiceAnnouncementStyle
 import com.example.model.KmVoiceSpeed
 import com.example.navigation.KmStoneVoiceAnnouncementManager
 import com.example.navigation.KmStoneVoiceScriptFormatter
+import com.example.navigation.SmartTtsManager
 import kotlin.math.roundToInt
 
 /**
@@ -75,9 +80,10 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
     onFeedbackMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val ttsAvailable by KmStoneVoiceAnnouncementManager.ttsAvailable.collectAsStateWithLifecycle()
-    val availableLanguages by KmStoneVoiceAnnouncementManager.availableLanguages.collectAsStateWithLifecycle()
-    val availableVoices by KmStoneVoiceAnnouncementManager.availableVoices.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val ttsStatus by SmartTtsManager.status.collectAsStateWithLifecycle()
+    val availableLanguages = ttsStatus.availableLanguages
+    val availableVoices = ttsStatus.availableVoices
 
     var showStyleMenu by remember { mutableStateOf(false) }
     var showOutputModeMenu by remember { mutableStateOf(false) }
@@ -85,10 +91,31 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
     var showVoiceMenu by remember { mutableStateOf(false) }
     var customTemplateDraft by remember { mutableStateOf(settings.voiceCustomTemplate) }
 
-    LaunchedEffect(expanded, settings.voiceAnnouncementEnabled) {
-        if (expanded || settings.voiceAnnouncementEnabled) {
-            KmStoneVoiceAnnouncementManager.ensureInitialized(context)
+    LaunchedEffect(expanded, settings.voiceAnnouncementEnabled, settings.voiceEnginePackage, settings.voiceLanguageTag) {
+        if (expanded && settings.voiceAnnouncementEnabled) {
+            SmartTtsManager.initializeIfNeeded(
+                context = context,
+                preferredEngine = settings.voiceEnginePackage,
+                languageTag = settings.voiceLanguageTag,
+                forceReinitialize = false
+            )
         }
+    }
+
+    DisposableEffect(lifecycleOwner, expanded, settings.voiceAnnouncementEnabled, settings.voiceEnginePackage, settings.voiceLanguageTag) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && expanded && settings.voiceAnnouncementEnabled) {
+                SmartTtsManager.revalidateOnResume(
+                    context = context,
+                    voiceOutputEnabled = true,
+                    preferredEngine = settings.voiceEnginePackage,
+                    languageTag = settings.voiceLanguageTag,
+                    forceReinitialize = !SmartTtsManager.status.value.isReady
+                )
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(settings.voiceCustomTemplate) {
@@ -161,24 +188,6 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                 .padding(horizontal = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (!ttsAvailable) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("km_voice_tts_unavailable_banner")
-                ) {
-                    Text(
-                        text = "Android Text-to-Speech engine is unavailable on this device. Existing sound and vibration alerts remain fully active.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(10.dp)
-                    )
-                }
-            }
-
             // Master Voice Announcement ON/OFF
             KmFlatSwitchRow(
                 title = "Voice Announcement",
@@ -187,7 +196,37 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                 accentColor = accentColor,
                 tag = "km_alert_switch_voice_enabled",
                 onCheckedChange = { enabled ->
+                    if (!enabled) {
+                        SmartTtsManager.stopSpeaking()
+                    } else {
+                        SmartTtsManager.initializeIfNeeded(
+                            context = context,
+                            preferredEngine = settings.voiceEnginePackage,
+                            languageTag = settings.voiceLanguageTag,
+                            forceReinitialize = true
+                        )
+                    }
                     onUpdateSettings { it.copy(voiceAnnouncementEnabled = enabled) }
+                }
+            )
+
+            TtsEngineStatusAndSetupCard(
+                voiceOutputEnabled = settings.voiceAnnouncementEnabled,
+                ttsStatus = ttsStatus,
+                accentColor = accentColor,
+                contextSuffix = "Existing sound and vibration alerts remain fully active.",
+                onInstallOrConfigure = { forMissingData ->
+                    onFeedbackMessage(SmartTtsManager.launchSetupFlow(context, forMissingVoiceData = forMissingData))
+                },
+                onCheckAgain = {
+                    SmartTtsManager.revalidateOnResume(
+                        context = context,
+                        voiceOutputEnabled = true,
+                        preferredEngine = settings.voiceEnginePackage,
+                        languageTag = settings.voiceLanguageTag,
+                        forceReinitialize = true
+                    )
+                    onFeedbackMessage("Checking installed Android Text-to-Speech engines…")
                 }
             )
 

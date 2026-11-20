@@ -140,6 +140,9 @@ class ChainageVoiceAssistantManager(
         if (!settings.effectiveVoiceSearchActive() && _state.value.stage == ChainageVoiceAssistantStage.LISTENING) {
             stopListening()
         }
+        if (!settings.effectiveVoiceOutputActive()) {
+            KmStoneVoiceAnnouncementManager.stopSpeaking()
+        }
     }
 
     fun hasRecordAudioPermission(): Boolean {
@@ -494,7 +497,7 @@ class ChainageVoiceAssistantManager(
     }
 
     private fun buildRecognizerIntent(settings: ChainageVoiceAssistantSettings): Intent {
-        val langTag = settings.voiceLanguage.languageTag.ifBlank { Locale.getDefault().toLanguageTag() }
+        val langTag = settings.effectiveLanguageTag().ifBlank { Locale.getDefault().toLanguageTag() }
         return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
@@ -622,8 +625,8 @@ class ChainageVoiceAssistantManager(
         }
 
         /**
-         * Speaks a confirmation or test prompt via CTECS's single shared [KmStoneVoiceAnnouncementManager]
-         * TTS instance using the Chainage Voice Assistant's language, voice, speed, and volume settings.
+         * Speaks a confirmation or test prompt via CTECS's single shared [SmartTtsManager]
+         * TTS instance using the Chainage Voice Assistant's engine, language, voice, speed, pitch, and volume settings.
          */
         fun speakWithAssistantSettings(
             context: Context,
@@ -632,9 +635,11 @@ class ChainageVoiceAssistantManager(
         ): KmStoneVoiceDispatchRecord {
             val bridgeSettings = KmStoneAlertSettings(
                 voiceAnnouncementEnabled = true,
+                voiceEnginePackage = settings.ttsEnginePackage,
                 voiceName = settings.ttsVoiceName,
-                voiceLanguageTag = settings.voiceLanguage.languageTag,
+                voiceLanguageTag = settings.effectiveLanguageTag(),
                 voiceSpeed = settings.speechSpeed,
+                voicePitch = settings.effectiveSpeechPitch(),
                 voiceVolumePercent = settings.volumePercent
             )
             return KmStoneVoiceAnnouncementManager.speakCustomAssistantText(
@@ -645,14 +650,46 @@ class ChainageVoiceAssistantManager(
         }
 
         /**
+         * Runs a full Voice Output diagnostic & audio test verifying selected engine, language,
+         * voice, speech speed, pitch, volume/audio output, and recovery.
+         */
+        fun testVoiceOutputDetailed(
+            context: Context,
+            settings: ChainageVoiceAssistantSettings
+        ): TtsTestResult {
+            return SmartTtsManager.testVoiceOutput(
+                context = context,
+                languageTag = settings.effectiveLanguageTag(),
+                voiceName = settings.ttsVoiceName,
+                enginePackage = settings.ttsEnginePackage,
+                speechRate = settings.speechSpeed.speechRate,
+                pitch = settings.effectiveSpeechPitch(),
+                volumePercent = settings.volumePercent,
+                sampleText = SmartTtsManager.TEST_VOICE_SAMPLE_TEXT
+            )
+        }
+
+        /**
          * Plays a sample confirmation test from Settings -> Navigation -> Chainage Voice Assistant.
          */
         fun testVoiceOutput(
             context: Context,
             settings: ChainageVoiceAssistantSettings
         ): KmStoneVoiceDispatchRecord {
-            val sampleText = "Destination chainage 201 plus 500. Distance remaining 5 kilometres and 6 metres. Do you want to start navigation?"
-            return speakWithAssistantSettings(context, sampleText, settings)
+            val result = testVoiceOutputDetailed(context, settings)
+            return KmStoneVoiceDispatchRecord(
+                spokenText = result.spokenText,
+                isArrival = false,
+                isPreview = true,
+                style = com.example.model.KmVoiceAnnouncementStyle.CHAINAGE,
+                speed = settings.speechSpeed,
+                volumePercent = settings.volumePercent.coerceIn(0, 100),
+                repeatQueued = false,
+                languageTag = settings.effectiveLanguageTag(),
+                voiceName = settings.ttsVoiceName,
+                dispatchedToTts = result.success,
+                timestampMs = System.currentTimeMillis()
+            )
         }
     }
 }

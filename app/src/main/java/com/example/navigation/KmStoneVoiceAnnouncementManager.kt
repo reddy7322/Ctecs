@@ -1,14 +1,6 @@
 package com.example.navigation
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.os.Build
-import android.os.Bundle
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import android.speech.tts.Voice
 import com.example.model.Chainage
 import com.example.model.DirectionDetectionState
 import com.example.model.KmStoneAlertSettings
@@ -17,15 +9,14 @@ import com.example.model.KmVoiceSpeed
 import com.example.model.SmartDirectionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import java.util.Locale
-import java.util.UUID
 
 data class KmStoneVoiceOption(
     val name: String,
@@ -282,44 +273,17 @@ object KmStoneVoiceScriptFormatter {
 }
 
 /**
- * Process-wide Android TextToSpeech coordinator for Smart Next KM Stone Dynamic Voice Announcements.
+ * Process-wide coordinator for Smart Next KM Stone Dynamic Voice Announcements and
+ * Navigate-to-Chainage voice prompts.
  *
- * Design guarantees:
- * - Native Android [TextToSpeech] (no prerecorded audio files required).
- * - Lazy initialization with graceful degradation when TTS engine, language, or voice is unavailable.
- * - Transient ducking AudioFocus ([AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK]) requested before
- *   speaking and automatically abandoned via [UtteranceProgressListener] once playback drains.
- * - Priority queue prevents overlapping announcements and prioritizes Arrival announcements over
- *   routine distance callouts.
- * - Preview/test helpers use isolated sample values and NEVER trigger live arrival events.
+ * Delegates all Android [android.speech.tts.TextToSpeech] engine detection, initialization,
+ * priority queueing, audio focus, language/voice validation, and disconnect recovery to
+ * CTECS's single centralized [SmartTtsManager] (strictly one shared TTS instance app-wide).
  */
 object KmStoneVoiceAnnouncementManager {
 
-    private data class PendingUtterance(
-        val text: String,
-        val settings: KmStoneAlertSettings,
-        val isArrival: Boolean,
-        val isPreview: Boolean,
-        val repeatOnce: Boolean
-    )
-
-    private val voiceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Any()
-
-    @Volatile
-    private var tts: TextToSpeech? = null
-
-    @Volatile
-    private var isInitialized: Boolean = false
-
-    @Volatile
-    private var isInitializing: Boolean = false
-
-    @Volatile
-    private var ttsUnavailable: Boolean = false
-
-    @Volatile
-    private var activeArrivalSpeaking: Boolean = false
 
     @Volatile
     private var lastAnnouncedDirectionSide: String? = null
@@ -329,86 +293,50 @@ object KmStoneVoiceAnnouncementManager {
 
     private const val DIRECTION_CHANGE_COOLDOWN_MS = 10_000L
 
-    private var appContextRef: Context? = null
-    private var activeFocusRequest: AudioFocusRequest? = null
-    private var legacyFocusListener: AudioManager.OnAudioFocusChangeListener? = null
-    private var delayedSpeakJob: Job? = null
+    val ttsStatus: StateFlow<TtsStatusSnapshot> = SmartTtsManager.status
 
-    private val activeUtteranceIds = mutableSetOf<String>()
-    private val pendingQueue = ArrayDeque<PendingUtterance>()
+    val ttsReady: StateFlow<Boolean> = SmartTtsManager.status
+        .map { it.isReady }
+        .stateIn(managerScope, SharingStarted.Eagerly, SmartTtsManager.status.value.isReady)
 
-    private val _ttsReady = MutableStateFlow(false)
-    val ttsReady: StateFlow<Boolean> = _ttsReady.asStateFlow()
+    val ttsAvailable: StateFlow<Boolean> = SmartTtsManager.status
+        .map { it.isAvailableOrIdle }
+        .stateIn(managerScope, SharingStarted.Eagerly, SmartTtsManager.status.value.isAvailableOrIdle)
 
-    private val _ttsAvailable = MutableStateFlow(true)
-    val ttsAvailable: StateFlow<Boolean> = _ttsAvailable.asStateFlow()
+    val availableLanguages: StateFlow<List<KmStoneLanguageOption>> = SmartTtsManager.status
+        .map { it.availableLanguages }
+        .stateIn(managerScope, SharingStarted.Eagerly, SmartTtsManager.status.value.availableLanguages)
 
-    private val _availableLanguages = MutableStateFlow<List<KmStoneLanguageOption>>(emptyList())
-    val availableLanguages: StateFlow<List<KmStoneLanguageOption>> = _availableLanguages.asStateFlow()
-
-    private val _availableVoices = MutableStateFlow<List<KmStoneVoiceOption>>(emptyList())
-    val availableVoices: StateFlow<List<KmStoneVoiceOption>> = _availableVoices.asStateFlow()
+    val availableVoices: StateFlow<List<KmStoneVoiceOption>> = SmartTtsManager.status
+        .map { it.availableVoices }
+        .stateIn(managerScope, SharingStarted.Eagerly, SmartTtsManager.status.value.availableVoices)
 
     private val _lastVoiceRecord = MutableStateFlow<KmStoneVoiceDispatchRecord?>(null)
     val lastVoiceRecord: StateFlow<KmStoneVoiceDispatchRecord?> = _lastVoiceRecord.asStateFlow()
 
     /**
-     * Ensures the Android TTS engine is initialized lazily so Settings can populate installed
-     * languages and voices without blocking the UI thread.
+     * Ensures the shared Android TTS engine is detected and initialized lazily without
+     * blocking the main UI thread.
      */
-    fun ensureInitialized(context: Context) {
-        val appCtx = context.applicationContext ?: context
-        synchronized(lock) {
-            appContextRef = appCtx
-            if (isInitialized || isInitializing) return
-            isInitializing = true
-        }
-
-        try {
-            val engine = TextToSpeech(appCtx) { status ->
-                val succeeded = status == TextToSpeech.SUCCESS
-                synchronized(lock) {
-                    isInitializing = false
-                    isInitialized = succeeded
-                    ttsUnavailable = !succeeded
-                }
-                _ttsReady.value = succeeded
-                _ttsAvailable.value = succeeded
-                if (succeeded) {
-                    attachUtteranceListener()
-                    refreshInstalledLanguagesAndVoices()
-                    drainPendingUtterances()
-                } else {
-                    synchronized(lock) {
-                        pendingQueue.clear()
-                    }
-                }
-            }
-            synchronized(lock) {
-                tts = engine
-            }
-        } catch (_: Throwable) {
-            synchronized(lock) {
-                isInitializing = false
-                isInitialized = false
-                ttsUnavailable = true
-                pendingQueue.clear()
-            }
-            _ttsReady.value = false
-            _ttsAvailable.value = false
-        }
+    fun ensureInitialized(
+        context: Context,
+        preferredEnginePackage: String = "",
+        languageTag: String = "",
+        forceReinitialize: Boolean = false
+    ) {
+        SmartTtsManager.initializeIfNeeded(
+            context = context,
+            preferredEngine = preferredEnginePackage,
+            languageTag = languageTag,
+            forceReinitialize = forceReinitialize
+        )
     }
 
     /**
      * Returns installed voices filtered optionally by [languageTag] (empty = all voices).
      */
     fun getVoicesForLanguage(languageTag: String): List<KmStoneVoiceOption> {
-        val all = _availableVoices.value
-        if (languageTag.isBlank()) return all
-        val prefix = languageTag.substringBefore('-').lowercase(Locale.ROOT)
-        val exact = all.filter { it.languageTag.equals(languageTag, ignoreCase = true) }
-        if (exact.isNotEmpty()) return exact
-        return all.filter { it.languageTag.lowercase(Locale.ROOT).startsWith(prefix) }
+        return SmartTtsManager.getVoicesForLanguage(languageTag)
     }
 
     /**
@@ -431,6 +359,21 @@ object KmStoneVoiceAnnouncementManager {
         if (isArrival && !settings.voiceAnnounceAtArrival) return null
 
         val spokenText = KmStoneVoiceScriptFormatter.buildAnnouncementText(event, settings)
+        val outcome = SmartTtsManager.speak(
+            context = context,
+            request = TtsSpeakRequest(
+                text = spokenText,
+                languageTag = settings.voiceLanguageTag,
+                voiceName = settings.voiceName,
+                enginePackage = settings.voiceEnginePackage,
+                speechRate = settings.voiceSpeed.speechRate,
+                pitch = settings.voicePitch,
+                volumePercent = settings.voiceVolumePercent.coerceIn(0, 100),
+                priority = if (isArrival) TtsSpeechPriority.CRITICAL_ARRIVAL else TtsSpeechPriority.ROUTINE,
+                repeatOnce = settings.voiceRepeatEnabled
+            ),
+            initialDelayMs = initialDelayMs
+        )
         val record = KmStoneVoiceDispatchRecord(
             spokenText = spokenText,
             isArrival = isArrival,
@@ -441,20 +384,10 @@ object KmStoneVoiceAnnouncementManager {
             repeatQueued = settings.voiceRepeatEnabled,
             languageTag = settings.voiceLanguageTag,
             voiceName = settings.voiceName,
-            dispatchedToTts = !ttsUnavailable,
+            dispatchedToTts = outcome.dispatched,
             timestampMs = event.timestampMs
         )
         _lastVoiceRecord.value = record
-
-        val utterance = PendingUtterance(
-            text = spokenText,
-            settings = settings,
-            isArrival = isArrival,
-            isPreview = false,
-            repeatOnce = settings.voiceRepeatEnabled
-        )
-
-        enqueueOrSpeak(context = context, utterance = utterance, initialDelayMs = initialDelayMs)
         return record
     }
 
@@ -473,6 +406,20 @@ object KmStoneVoiceAnnouncementManager {
             intervalMetres = sampleIntervalMetres
         )
         val spokenText = KmStoneVoiceScriptFormatter.buildAnnouncementText(sampleEvent, settings)
+        val outcome = SmartTtsManager.speak(
+            context = context,
+            request = TtsSpeakRequest(
+                text = spokenText,
+                languageTag = settings.voiceLanguageTag,
+                voiceName = settings.voiceName,
+                enginePackage = settings.voiceEnginePackage,
+                speechRate = settings.voiceSpeed.speechRate,
+                pitch = settings.voicePitch,
+                volumePercent = settings.voiceVolumePercent.coerceIn(0, 100),
+                priority = TtsSpeechPriority.USER_INTERACTIVE,
+                repeatOnce = false
+            )
+        )
         val record = KmStoneVoiceDispatchRecord(
             spokenText = spokenText,
             isArrival = isArrival,
@@ -483,19 +430,10 @@ object KmStoneVoiceAnnouncementManager {
             repeatQueued = false,
             languageTag = settings.voiceLanguageTag,
             voiceName = settings.voiceName,
-            dispatchedToTts = !ttsUnavailable,
+            dispatchedToTts = outcome.dispatched,
             timestampMs = System.currentTimeMillis()
         )
         _lastVoiceRecord.value = record
-
-        val utterance = PendingUtterance(
-            text = spokenText,
-            settings = settings,
-            isArrival = true, // Preview flushes any prior preview immediately
-            isPreview = true,
-            repeatOnce = false
-        )
-        enqueueOrSpeak(context = context, utterance = utterance, initialDelayMs = 0L)
         return record
     }
 
@@ -517,7 +455,7 @@ object KmStoneVoiceAnnouncementManager {
 
     /**
      * Speaks a Navigate-to-Chainage Smart Voice Assistant confirmation or feedback prompt using
-     * CTECS's single shared Android TextToSpeech engine (avoids duplicate TTS instances).
+     * CTECS's single shared [SmartTtsManager] instance.
      */
     fun speakCustomAssistantText(
         context: Context,
@@ -525,6 +463,28 @@ object KmStoneVoiceAnnouncementManager {
         settings: KmStoneAlertSettings
     ): KmStoneVoiceDispatchRecord {
         val cleanText = spokenText.trim()
+        val outcome = if (cleanText.isNotEmpty()) {
+            SmartTtsManager.speak(
+                context = context,
+                request = TtsSpeakRequest(
+                    text = cleanText,
+                    languageTag = settings.voiceLanguageTag,
+                    voiceName = settings.voiceName,
+                    enginePackage = settings.voiceEnginePackage,
+                    speechRate = settings.voiceSpeed.speechRate,
+                    pitch = settings.voicePitch,
+                    volumePercent = settings.voiceVolumePercent.coerceIn(0, 100),
+                    priority = TtsSpeechPriority.USER_INTERACTIVE,
+                    repeatOnce = false
+                )
+            )
+        } else {
+            TtsSpeakOutcome(
+                dispatched = false,
+                status = SmartTtsManager.status.value.status,
+                message = "Nothing to speak."
+            )
+        }
         val record = KmStoneVoiceDispatchRecord(
             spokenText = cleanText,
             isArrival = false,
@@ -535,20 +495,10 @@ object KmStoneVoiceAnnouncementManager {
             repeatQueued = false,
             languageTag = settings.voiceLanguageTag,
             voiceName = settings.voiceName,
-            dispatchedToTts = !ttsUnavailable && cleanText.isNotEmpty(),
+            dispatchedToTts = outcome.dispatched,
             timestampMs = System.currentTimeMillis()
         )
         _lastVoiceRecord.value = record
-        if (cleanText.isNotEmpty()) {
-            val utterance = PendingUtterance(
-                text = cleanText,
-                settings = settings,
-                isArrival = true,
-                isPreview = true,
-                repeatOnce = false
-            )
-            enqueueOrSpeak(context = context, utterance = utterance, initialDelayMs = 0L)
-        }
         return record
     }
 
@@ -568,26 +518,11 @@ object KmStoneVoiceAnnouncementManager {
     }
 
     fun stopSpeaking() {
-        delayedSpeakJob?.cancel()
-        delayedSpeakJob = null
-        synchronized(lock) {
-            pendingQueue.clear()
-            activeUtteranceIds.clear()
-            activeArrivalSpeaking = false
-        }
-        try {
-            tts?.stop()
-        } catch (_: Throwable) {}
-        abandonAudioFocus()
+        SmartTtsManager.stopSpeaking()
     }
 
     /**
      * Speaks a confirmed LHS/RHS direction change using the single shared Android TTS engine.
-     * Enforces:
-     * - Announces ONLY confirmed direction changes (never uncertain or weak-GPS states).
-     * - Prevents repetitive announcements via cooldown and side deduplication.
-     * - Gives priority to critical KM Stone arrival announcements (`activeArrivalSpeaking`).
-     * - Respects voice settings, silent/DND mode, and active recording.
      */
     fun announceDirectionChange(
         context: Context,
@@ -601,7 +536,6 @@ object KmStoneVoiceAnnouncementManager {
         if (!settings.enabled || !settings.voiceAnnouncementEnabled) return null
         if (!settings.alertOutputMode.includesVoice) return null
         if (isRecordingActive) return null
-        if (activeArrivalSpeaking) return null
         if (!directionState.detectionState.isConfirmed) return null
         val newSide = directionState.confirmedBinarySide ?: return null
         if (directionState.directionChangedFrom == null) return null
@@ -619,6 +553,20 @@ object KmStoneVoiceAnnouncementManager {
         }
 
         val spokenText = KmStoneVoiceScriptFormatter.buildDirectionChangeText(newSide)
+        val outcome = SmartTtsManager.speak(
+            context = context,
+            request = TtsSpeakRequest(
+                text = spokenText,
+                languageTag = settings.voiceLanguageTag,
+                voiceName = settings.voiceName,
+                enginePackage = settings.voiceEnginePackage,
+                speechRate = settings.voiceSpeed.speechRate,
+                pitch = settings.voicePitch,
+                volumePercent = settings.voiceVolumePercent.coerceIn(0, 100),
+                priority = TtsSpeechPriority.ROUTINE,
+                repeatOnce = false
+            )
+        )
         val record = KmStoneVoiceDispatchRecord(
             spokenText = spokenText,
             isArrival = false,
@@ -629,18 +577,10 @@ object KmStoneVoiceAnnouncementManager {
             repeatQueued = false,
             languageTag = settings.voiceLanguageTag,
             voiceName = settings.voiceName,
-            dispatchedToTts = !ttsUnavailable,
+            dispatchedToTts = outcome.dispatched,
             timestampMs = nowMs
         )
         _lastVoiceRecord.value = record
-        val utterance = PendingUtterance(
-            text = spokenText,
-            settings = settings,
-            isArrival = false,
-            isPreview = false,
-            repeatOnce = false
-        )
-        enqueueOrSpeak(context = context, utterance = utterance, initialDelayMs = 0L)
         return record
     }
 
@@ -663,311 +603,11 @@ object KmStoneVoiceAnnouncementManager {
     }
 
     fun resetTestState() {
-        stopSpeaking()
+        SmartTtsManager.resetForTesting()
         synchronized(lock) {
             lastAnnouncedDirectionSide = null
             lastDirectionAnnouncementMs = 0L
         }
         _lastVoiceRecord.value = null
-    }
-
-    private fun enqueueOrSpeak(
-        context: Context,
-        utterance: PendingUtterance,
-        initialDelayMs: Long
-    ) {
-        ensureInitialized(context)
-        if (ttsUnavailable) return
-
-        // If an arrival announcement is currently speaking, drop lower-priority routine distance alerts
-        if (!utterance.isArrival && !utterance.isPreview && activeArrivalSpeaking) {
-            return
-        }
-
-        if (initialDelayMs > 0L) {
-            delayedSpeakJob?.cancel()
-            delayedSpeakJob = voiceScope.launch {
-                delay(initialDelayMs)
-                dispatchOrQueueInternal(utterance)
-            }
-        } else {
-            if (utterance.isArrival || utterance.isPreview) {
-                delayedSpeakJob?.cancel()
-                delayedSpeakJob = null
-            }
-            dispatchOrQueueInternal(utterance)
-        }
-    }
-
-    private fun dispatchOrQueueInternal(utterance: PendingUtterance) {
-        val ready: Boolean
-        synchronized(lock) {
-            ready = isInitialized && tts != null && !ttsUnavailable
-            if (!ready) {
-                if (utterance.isArrival || utterance.isPreview) {
-                    pendingQueue.clear()
-                } else if (pendingQueue.size >= 2) {
-                    pendingQueue.removeFirst()
-                }
-                pendingQueue.addLast(utterance)
-                return
-            }
-        }
-        speakNowInternal(utterance)
-    }
-
-    private fun drainPendingUtterances() {
-        val items = mutableListOf<PendingUtterance>()
-        synchronized(lock) {
-            while (pendingQueue.isNotEmpty()) {
-                items.add(pendingQueue.removeFirst())
-            }
-        }
-        items.forEach { speakNowInternal(it) }
-    }
-
-    private fun speakNowInternal(utterance: PendingUtterance) {
-        val engine = tts ?: return
-        try {
-            configureEngineForSettings(engine, utterance.settings)
-            requestTransientDuckingAudioFocus()
-
-            val volumeGain = (utterance.settings.voiceVolumePercent.coerceIn(0, 100) / 100f)
-            val params = Bundle().apply {
-                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volumeGain)
-            }
-
-            val queueMode = if (utterance.isArrival || utterance.isPreview) {
-                synchronized(lock) {
-                    activeUtteranceIds.clear()
-                    activeArrivalSpeaking = utterance.isArrival
-                }
-                TextToSpeech.QUEUE_FLUSH
-            } else {
-                // Routine distance announcements replace stale queued distance callouts cleanly
-                // without interrupting an active arrival announcement.
-                if (activeArrivalSpeaking) {
-                    return
-                }
-                TextToSpeech.QUEUE_FLUSH
-            }
-
-            val firstId = "ctecs_km_voice_${UUID.randomUUID()}"
-            synchronized(lock) {
-                activeUtteranceIds.add(firstId)
-            }
-            engine.speak(utterance.text, queueMode, params, firstId)
-
-            if (utterance.repeatOnce) {
-                val pauseId = "ctecs_km_pause_${UUID.randomUUID()}"
-                val repeatId = "ctecs_km_repeat_${UUID.randomUUID()}"
-                synchronized(lock) {
-                    activeUtteranceIds.add(pauseId)
-                    activeUtteranceIds.add(repeatId)
-                }
-                engine.playSilentUtterance(420L, TextToSpeech.QUEUE_ADD, pauseId)
-                engine.speak(utterance.text, TextToSpeech.QUEUE_ADD, params, repeatId)
-            }
-        } catch (_: Throwable) {
-            synchronized(lock) {
-                activeUtteranceIds.clear()
-                activeArrivalSpeaking = false
-            }
-            abandonAudioFocus()
-        }
-    }
-
-    private fun configureEngineForSettings(engine: TextToSpeech, settings: KmStoneAlertSettings) {
-        try {
-            engine.setSpeechRate(settings.voiceSpeed.speechRate)
-            engine.setPitch(1.0f)
-
-            // Apply AudioAttributes so Android routes speech cleanly as navigation guidance
-            try {
-                engine.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-            } catch (_: Throwable) {}
-
-            // Apply preferred language (with safe fallback to system default)
-            val targetLocale = if (settings.voiceLanguageTag.isNotBlank()) {
-                Locale.forLanguageTag(settings.voiceLanguageTag)
-            } else {
-                Locale.getDefault()
-            }
-            val langResult = try {
-                engine.setLanguage(targetLocale)
-            } catch (_: Throwable) {
-                TextToSpeech.LANG_NOT_SUPPORTED
-            }
-            if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                try {
-                    engine.setLanguage(Locale.getDefault())
-                } catch (_: Throwable) {}
-            }
-
-            // Apply preferred voice if installed and available
-            if (settings.voiceName.isNotBlank()) {
-                val matchedVoice: Voice? = try {
-                    engine.voices?.firstOrNull { voice ->
-                        voice.name == settings.voiceName && !voice.isNetworkConnectionRequired
-                    } ?: engine.voices?.firstOrNull { it.name == settings.voiceName }
-                } catch (_: Throwable) {
-                    null
-                }
-                if (matchedVoice != null) {
-                    try {
-                        engine.voice = matchedVoice
-                    } catch (_: Throwable) {}
-                }
-            }
-        } catch (_: Throwable) {}
-    }
-
-    private fun attachUtteranceListener() {
-        try {
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
-
-                override fun onDone(utteranceId: String?) {
-                    handleUtteranceFinished(utteranceId)
-                }
-
-                @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) {
-                    handleUtteranceFinished(utteranceId)
-                }
-
-                override fun onError(utteranceId: String?, errorCode: Int) {
-                    handleUtteranceFinished(utteranceId)
-                }
-
-                override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                    handleUtteranceFinished(utteranceId)
-                }
-            })
-        } catch (_: Throwable) {}
-    }
-
-    private fun handleUtteranceFinished(utteranceId: String?) {
-        val shouldAbandon: Boolean
-        synchronized(lock) {
-            if (utteranceId != null) {
-                activeUtteranceIds.remove(utteranceId)
-            }
-            shouldAbandon = activeUtteranceIds.isEmpty()
-            if (shouldAbandon) {
-                activeArrivalSpeaking = false
-            }
-        }
-        if (shouldAbandon) {
-            abandonAudioFocus()
-        }
-    }
-
-    private fun refreshInstalledLanguagesAndVoices() {
-        val engine = tts ?: return
-        try {
-            val locales = engine.availableLanguages
-                ?.filter { locale ->
-                    val status = try {
-                        engine.isLanguageAvailable(locale)
-                    } catch (_: Throwable) {
-                        TextToSpeech.LANG_NOT_SUPPORTED
-                    }
-                    status >= TextToSpeech.LANG_AVAILABLE
-                }
-                ?.distinctBy { it.toLanguageTag() }
-                ?.sortedBy { it.getDisplayName(Locale.getDefault()) }
-                ?.map { locale ->
-                    KmStoneLanguageOption(
-                        languageTag = locale.toLanguageTag(),
-                        displayLabel = locale.getDisplayName(Locale.getDefault())
-                            .replaceFirstChar { it.titlecase(Locale.getDefault()) }
-                    )
-                }
-                .orEmpty()
-
-            val voices = engine.voices
-                ?.filter { !it.isNetworkConnectionRequired }
-                ?.sortedWith(compareBy<Voice> { it.locale.getDisplayName(Locale.getDefault()) }.thenBy { it.name })
-                ?.mapIndexed { idx, voice ->
-                    val langDisplay = voice.locale.getDisplayName(Locale.getDefault())
-                    val shortName = voice.name
-                        .substringAfterLast('#')
-                        .substringBefore("-local")
-                        .ifBlank { "Voice ${idx + 1}" }
-                    KmStoneVoiceOption(
-                        name = voice.name,
-                        displayLabel = "$langDisplay • $shortName",
-                        languageTag = voice.locale.toLanguageTag()
-                    )
-                }
-                .orEmpty()
-
-            _availableLanguages.value = locales
-            _availableVoices.value = voices
-        } catch (_: Throwable) {
-            _availableLanguages.value = emptyList()
-            _availableVoices.value = emptyList()
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun requestTransientDuckingAudioFocus() {
-        val ctx = appContextRef ?: return
-        val audioMgr = try {
-            ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        } catch (_: Throwable) {
-            null
-        } ?: return
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val attrs = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                    .setAudioAttributes(attrs)
-                    .setAcceptsDelayedFocusGain(false)
-                    .setWillPauseWhenDucked(false)
-                    .setOnAudioFocusChangeListener { }
-                    .build()
-                activeFocusRequest = req
-                audioMgr.requestAudioFocus(req)
-            } else {
-                val listener = AudioManager.OnAudioFocusChangeListener { }
-                legacyFocusListener = listener
-                audioMgr.requestAudioFocus(
-                    listener,
-                    AudioManager.STREAM_NOTIFICATION,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
-                )
-            }
-        } catch (_: Throwable) {}
-    }
-
-    @Suppress("DEPRECATION")
-    private fun abandonAudioFocus() {
-        val ctx = appContextRef ?: return
-        val audioMgr = try {
-            ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        } catch (_: Throwable) {
-            null
-        } ?: return
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                activeFocusRequest?.let { audioMgr.abandonAudioFocusRequest(it) }
-                activeFocusRequest = null
-            } else {
-                legacyFocusListener?.let { audioMgr.abandonAudioFocus(it) }
-                legacyFocusListener = null
-            }
-        } catch (_: Throwable) {}
     }
 }
