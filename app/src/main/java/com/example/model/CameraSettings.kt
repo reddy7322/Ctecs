@@ -304,5 +304,9 @@ data class CameraSettings(
     val photoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
     val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
     val videoStabilizationMode: VideoStabilizationMode = VideoStabilizationMode.AUTO,
-    val autofocusMode: CameraAutofocusMode = CameraAutofocusMode.CONTINUOUS
+    val autofocusMode: CameraAutofocusMode = CameraAutofocusMode.CONTINUOUS,
+
+    // Smart Camera Preview Brightness (Full Range 0.02f..1.0f + Ambient-Light Auto Brightness)
+    val autoBrightnessEnabled: Boolean = false,
+    val manualPreviewBrightness: Float = 0.65f
 )

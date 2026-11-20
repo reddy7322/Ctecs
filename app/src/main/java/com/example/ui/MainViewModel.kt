@@ -24,6 +24,8 @@ import com.example.backup.BackupPreviewInfo
 import com.example.backup.BackupRestoreReport
 import com.example.backup.RestoreMode
 import com.example.backup.SettingsBackupManager
+import com.example.camera.AmbientLightZone
+import com.example.camera.CameraBrightnessEngine
 import com.example.data.AppDatabase
 import com.example.data.MediaDeleteResult
 import com.example.data.PhotoRecordEntity
@@ -993,6 +995,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _exposureCompensation = MutableStateFlow(preferencesManager.getInitialCameraSettings().exposureCompensationStep)
     val exposureCompensation: StateFlow<Int> = _exposureCompensation.asStateFlow()
+
+    // Smart Camera Ambient Light State (transient runtime telemetry for preview/capture optimization)
+    private val _cameraAmbientLux = MutableStateFlow<Float?>(null)
+    val cameraAmbientLux: StateFlow<Float?> = _cameraAmbientLux.asStateFlow()
+
+    private val _cameraAmbientLightZone = MutableStateFlow(AmbientLightZone.NORMAL_LIGHT)
+    val cameraAmbientLightZone: StateFlow<AmbientLightZone> = _cameraAmbientLightZone.asStateFlow()
 
     // Manual chainage override state (Camera Screen simple custom chainage, independent of Chainage Control System)
     private val _manualChainage = MutableStateFlow<Chainage?>(preferencesManager.getInitialManualChainageOverride())
@@ -2771,6 +2780,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setCameraAutoBrightness(enabled: Boolean) {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.editCameraSettings { current ->
+                current.copy(autoBrightnessEnabled = enabled)
+            }
+        }
+    }
+
+    fun setCameraManualBrightness(brightness: Float) {
+        val clamped = CameraBrightnessEngine.clampBrightness(brightness)
+        preferencesManager.launchSafeEdit {
+            preferencesManager.editCameraSettings { current ->
+                current.copy(manualPreviewBrightness = clamped)
+            }
+        }
+    }
+
+    fun updateCameraAmbientLight(lux: Float?, zone: AmbientLightZone) {
+        _cameraAmbientLux.value = lux
+        _cameraAmbientLightZone.value = zone
+    }
+
     fun cycleTimer() {
         viewModelScope.launch {
             val updated = preferencesManager.editCameraSettings { current ->
@@ -3406,10 +3437,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun processCapture(bitmap: Bitmap) {
         viewModelScope.launch {
             _isCapturing.value = true
+            var optimizedBitmap: Bitmap? = null
             try {
                 val snapshot = createCurrentSnapshot()
+                val ambientLux = _cameraAmbientLux.value
+                val ambientZone = _cameraAmbientLightZone.value
 
-                val result = photoRepository.saveCapturedPhoto(bitmap, snapshot)
+                // Optimize captured photo strictly for actual scene/ambient lighting BEFORE overlays
+                // so all timestamp/GPS/project/chainage/weather/logo/watermark/EXIF overlays stay untouched.
+                val captureBitmap = withContext(Dispatchers.Default) {
+                    CameraBrightnessEngine.optimizeCapturedPhotoForLighting(
+                        source = bitmap,
+                        ambientLux = ambientLux,
+                        ambientZone = ambientZone
+                    )
+                }
+                if (captureBitmap !== bitmap) {
+                    optimizedBitmap = captureBitmap
+                }
+
+                val result = photoRepository.saveCapturedPhoto(captureBitmap, snapshot)
                 if (result.isSuccess) {
                     val record = result.getOrNull()
                     _lastCapturedPhoto.value = record
@@ -3421,6 +3468,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 _uiMessages.emit(UiMessage.Error("Capture failed: ${e.message}"))
             } finally {
+                optimizedBitmap?.let {
+                    if (!it.isRecycled) {
+                        try { it.recycle() } catch (ignored: Throwable) {}
+                    }
+                }
                 _isCapturing.value = false
             }
         }

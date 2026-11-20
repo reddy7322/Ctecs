@@ -273,6 +273,8 @@ class PreferencesManager(context: Context) {
         val KEY_VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
         val KEY_PHOTO_ASPECT_RATIO = stringPreferencesKey("photo_aspect_ratio")
         val KEY_VIDEO_ASPECT_RATIO = stringPreferencesKey("video_aspect_ratio")
+        val KEY_CAMERA_AUTO_BRIGHTNESS = booleanPreferencesKey("camera_auto_brightness_enabled")
+        val KEY_CAMERA_MANUAL_BRIGHTNESS = floatPreferencesKey("camera_manual_preview_brightness")
         val KEY_GALLERY_VIEW_MODE = stringPreferencesKey("gallery_view_mode")
         val KEY_GALLERY_SORT_OPTION = stringPreferencesKey("gallery_sort_option")
         val KEY_GALLERY_GROUP_OPTION = stringPreferencesKey("gallery_group_option")
@@ -673,7 +675,9 @@ class PreferencesManager(context: Context) {
             photoResolution = prefs[KEY_PHOTO_RESOLUTION] ?: "1920 x 1080",
             videoResolution = prefs[KEY_VIDEO_RESOLUTION] ?: "1920 x 1080",
             photoAspectRatio = prefs[KEY_PHOTO_ASPECT_RATIO] ?: "4:3",
-            videoAspectRatio = prefs[KEY_VIDEO_ASPECT_RATIO] ?: "16:9"
+            videoAspectRatio = prefs[KEY_VIDEO_ASPECT_RATIO] ?: "16:9",
+            autoBrightnessEnabled = prefs[KEY_CAMERA_AUTO_BRIGHTNESS] ?: false,
+            manualPreviewBrightness = (prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] ?: 0.65f).coerceIn(0.02f, 1.0f)
         )
     }
 
@@ -1100,6 +1104,8 @@ class PreferencesManager(context: Context) {
         prefs[KEY_VIDEO_RESOLUTION] = settings.videoResolution
         prefs[KEY_PHOTO_ASPECT_RATIO] = settings.photoAspectRatio
         prefs[KEY_VIDEO_ASPECT_RATIO] = settings.videoAspectRatio
+        prefs[KEY_CAMERA_AUTO_BRIGHTNESS] = settings.autoBrightnessEnabled
+        prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] = settings.manualPreviewBrightness.coerceIn(0.02f, 1.0f)
     }
 
     suspend fun updateIsFlashOn(enabled: Boolean) {

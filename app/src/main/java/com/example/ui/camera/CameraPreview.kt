@@ -1,7 +1,9 @@
 package com.example.ui.camera
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -10,6 +12,8 @@ import android.media.CamcorderProfile
 import android.os.Environment
 import android.util.Log
 import android.view.Surface
+import android.view.Window
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -56,6 +60,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Button
@@ -96,6 +101,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.camera.AmbientBrightnessController
+import com.example.camera.AmbientLightSensorMonitor
+import com.example.camera.AmbientLightZone
+import com.example.camera.CameraBrightnessEngine
+import com.example.camera.CameraQualityEngine
 import com.example.model.CaptureSnapshot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -129,6 +139,12 @@ enum class CameraFocusStatus {
     FAILED
 }
 
+private tailrec fun Context.findActivityWindow(): Window? = when (this) {
+    is Activity -> this.window
+    is ContextWrapper -> this.baseContext?.findActivityWindow()
+    else -> null
+}
+
 @Composable
 fun CameraPreview(
     isFrontCamera: Boolean,
@@ -142,17 +158,27 @@ fun CameraPreview(
     videoResolution: String = "1920 x 1080",
     photoAspectRatio: String = "4:3",
     videoAspectRatio: String = "16:9",
+    autoBrightnessEnabled: Boolean = false,
+    manualPreviewBrightness: Float = CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS,
+    targetVideoFps: Int = 30,
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
     videoManager: VideoRecordingManager? = null,
     onExposureChanged: ((Int) -> Unit)? = null,
     onZoomChanged: ((Float) -> Unit)? = null,
+    onAutoBrightnessChanged: ((Boolean) -> Unit)? = null,
+    onManualBrightnessChanged: ((Float) -> Unit)? = null,
+    onAmbientLightChanged: ((Float?, AmbientLightZone) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestSnapshotProvider by rememberUpdatedState(currentSnapshotProvider)
+    val latestOnAutoBrightnessChanged by rememberUpdatedState(onAutoBrightnessChanged)
+    val latestOnManualBrightnessChanged by rememberUpdatedState(onManualBrightnessChanged)
+    val latestOnAmbientLightChanged by rememberUpdatedState(onAmbientLightChanged)
+    val latestZoomRatio by rememberUpdatedState(zoomRatio)
 
     // Camera Hardware Zoom Range State
     var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
@@ -184,25 +210,53 @@ fun CameraPreview(
         }
     }
 
-    // Right-Side Brightness Control Gesture State
+    // Smart Right-Side Display Brightness & Ambient Light Controller
+    val ambientLightMonitor = remember(context) { AmbientLightSensorMonitor(context) }
+    val brightnessController = remember {
+        AmbientBrightnessController(
+            initialAutoEnabled = autoBrightnessEnabled,
+            initialManualBrightness = manualPreviewBrightness,
+            initialHasLightSensor = ambientLightMonitor.isAvailable
+        )
+    }
+    var brightnessState by remember { mutableStateOf(brightnessController.getState()) }
     var isDraggingBrightness by remember { mutableStateOf(false) }
     var showBrightnessIndicator by remember { mutableStateOf(false) }
     var brightnessDismissKey by remember { mutableIntStateOf(0) }
-    var accumulatedDragY by remember { mutableFloatStateOf(0f) }
-    var currentEvIndex by remember(exposureIndex) { mutableIntStateOf(exposureIndex) }
 
-    val exposureState = controller.cameraInfo?.exposureState
-    val isEvSupported = exposureState?.isExposureCompensationSupported ?: false
-    val evRange = exposureState?.exposureCompensationRange ?: android.util.Range(-4, 4)
-    // Ensure minEv and maxEv have a valid range even if hardware reports 0..0
-    val minEv = if (isEvSupported && evRange.lower < evRange.upper) evRange.lower else -4
-    val maxEv = if (isEvSupported && evRange.lower < evRange.upper) evRange.upper else 4
-    val evStepRational = exposureState?.exposureCompensationStep ?: android.util.Rational(1, 1)
-    val evStep = if (evStepRational.denominator != 0 && evStepRational.numerator != 0) evStepRational.toFloat() else 1f
+    // Synchronize persisted Auto Brightness / Manual Brightness changes without interrupting active drag
+    LaunchedEffect(autoBrightnessEnabled) {
+        brightnessState = brightnessController.setAutoEnabled(autoBrightnessEnabled)
+        if (!autoBrightnessEnabled) {
+            latestOnAmbientLightChanged?.invoke(null, AmbientLightZone.NORMAL_LIGHT)
+        }
+    }
+
+    LaunchedEffect(manualPreviewBrightness) {
+        if (!isDraggingBrightness) {
+            brightnessState = brightnessController.setManualBrightness(manualPreviewBrightness)
+        }
+    }
+
+    // Restore system screen brightness cleanly when leaving Camera screen
+    DisposableEffect(context) {
+        val window = context.findActivityWindow()
+        onDispose {
+            try {
+                if (window != null) {
+                    val lp = window.attributes
+                    if (lp.screenBrightness != WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE) {
+                        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                        window.attributes = lp
+                    }
+                }
+            } catch (ignored: Throwable) {}
+        }
+    }
 
     LaunchedEffect(brightnessDismissKey, isDraggingBrightness) {
         if (!isDraggingBrightness && showBrightnessIndicator) {
-            delay(1500L)
+            delay(1600L)
             showBrightnessIndicator = false
         }
     }
@@ -256,37 +310,36 @@ fun CameraPreview(
         }
     }
 
-    fun updateBrightness(deltaDrag: Float, dragStepPx: Float) {
-        accumulatedDragY += -deltaDrag // Dragging UP (negative deltaDrag) increases brightness
+    fun updateManualDisplayBrightness(deltaDragPx: Float, dragSpanPx: Float) {
+        val wasAuto = brightnessState.isAutoEnabled
+        val deltaNormalized = -deltaDragPx / dragSpanPx.coerceAtLeast(180f) // Drag UP -> brighter, DOWN -> dimmer
+        val updated = brightnessController.applyManualDragDelta(deltaNormalized)
+        brightnessState = updated
+        if (wasAuto && !updated.isAutoEnabled) {
+            latestOnAutoBrightnessChanged?.invoke(false)
+            latestOnAmbientLightChanged?.invoke(null, AmbientLightZone.NORMAL_LIGHT)
+        }
+    }
 
-        var changed = false
-        var targetEv = currentEvIndex
+    fun persistCurrentManualBrightness() {
+        val current = brightnessController.getState()
+        latestOnManualBrightnessChanged?.invoke(current.manualBrightness)
+    }
 
-        while (accumulatedDragY >= dragStepPx) {
-            if (targetEv < maxEv) {
-                targetEv++
-                changed = true
+    fun onBrightnessIndicatorTapped() {
+        if (brightnessState.hasLightSensor) {
+            val nextAuto = !brightnessState.isAutoEnabled
+            brightnessState = brightnessController.setAutoEnabled(nextAuto)
+            latestOnAutoBrightnessChanged?.invoke(nextAuto)
+            if (!nextAuto) {
+                latestOnAmbientLightChanged?.invoke(null, AmbientLightZone.NORMAL_LIGHT)
             }
-            accumulatedDragY -= dragStepPx
+        } else {
+            val resetState = brightnessController.setManualBrightness(CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS)
+            brightnessState = resetState
+            latestOnManualBrightnessChanged?.invoke(resetState.manualBrightness)
         }
-
-        while (accumulatedDragY <= -dragStepPx) {
-            if (targetEv > minEv) {
-                targetEv--
-                changed = true
-            }
-            accumulatedDragY += dragStepPx
-        }
-
-        if (changed) {
-            currentEvIndex = targetEv
-            try {
-                if (isEvSupported && evRange.lower < evRange.upper) {
-                    controller.cameraControl?.setExposureCompensationIndex(targetEv)
-                }
-            } catch (ignored: Exception) {}
-            onExposureChanged?.invoke(targetEv)
-        }
+        brightnessDismissKey++
     }
 
     var hasCameraPermission by remember {
@@ -452,6 +505,65 @@ fun CameraPreview(
         }
     }
 
+    // Single lifecycle-aware ambient light sensor listener — active ONLY while Camera is visible & Auto Brightness is ON
+    DisposableEffect(lifecycleOwner, hasCameraPermission, autoBrightnessEnabled, ambientLightMonitor) {
+        fun startSensorIfNeeded() {
+            if (!hasCameraPermission || !autoBrightnessEnabled) {
+                ambientLightMonitor.stop()
+                return
+            }
+            if (!ambientLightMonitor.isAvailable) {
+                brightnessState = brightnessController.setHasLightSensor(false)
+                return
+            }
+            brightnessState = brightnessController.setHasLightSensor(true)
+            ambientLightMonitor.start { rawLux ->
+                val updated = brightnessController.onAmbientLuxSample(rawLux)
+                brightnessState = updated
+                latestOnAmbientLightChanged?.invoke(updated.ambientLux, updated.lightZone)
+            }
+        }
+
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> startSensorIfNeeded()
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> ambientLightMonitor.stop()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            startSensorIfNeeded()
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            ambientLightMonitor.stop()
+        }
+    }
+
+    // Smooth real display brightness adjustment (0.02f..1.0f) without artificial scrim overlay
+    val animatedDisplayBrightness by animateFloatAsState(
+        targetValue = brightnessState.effectiveDisplayBrightness,
+        animationSpec = tween(
+            durationMillis = if (isDraggingBrightness) 45 else 240,
+            easing = FastOutSlowInEasing
+        ),
+        label = "camera_display_brightness"
+    )
+
+    LaunchedEffect(animatedDisplayBrightness, hasCameraPermission) {
+        if (!hasCameraPermission) return@LaunchedEffect
+        try {
+            val window = context.findActivityWindow() ?: return@LaunchedEffect
+            val lp = window.attributes
+            val clamped = CameraBrightnessEngine.clampBrightness(animatedDisplayBrightness)
+            if (kotlin.math.abs(lp.screenBrightness - clamped) >= 0.002f) {
+                lp.screenBrightness = clamped
+                window.attributes = lp
+            }
+        } catch (ignored: Throwable) {}
+    }
+
     LaunchedEffect(isFlashOn) {
         try {
             controller.enableTorch(isFlashOn)
@@ -464,13 +576,34 @@ fun CameraPreview(
         } catch (ignored: Exception) {}
     }
 
-    LaunchedEffect(exposureIndex) {
-        currentEvIndex = exposureIndex
+    // Coordinated Camera2 lighting, exposure & noise-reduction tuning (decoupled from manual screen brightness;
+    // applies non-destructive CaptureRequestOptions so active video recording is never interrupted)
+    LaunchedEffect(
+        hasCameraPermission,
+        exposureIndex,
+        autoBrightnessEnabled,
+        brightnessState.lightZone,
+        brightnessState.recommendedAutoExposureOffset,
+        isVideoMode,
+        targetVideoFps,
+        isFrontCamera,
+        lifecycleResumeVersion
+    ) {
+        if (!hasCameraPermission) return@LaunchedEffect
         try {
-            if (isEvSupported && evRange.lower < evRange.upper) {
-                controller.cameraControl?.setExposureCompensationIndex(exposureIndex)
-            }
-        } catch (ignored: Exception) {}
+            val capabilities = CameraQualityEngine.queryHardwareCapabilities(context, isFrontCamera)
+            CameraBrightnessEngine.applyLightConditionCameraTuning(
+                controller = controller,
+                cameraControl = controller.cameraControl,
+                capabilities = capabilities,
+                lightZone = brightnessState.lightZone,
+                isVideoMode = isVideoMode,
+                targetVideoFps = targetVideoFps,
+                autoBrightnessEnabled = autoBrightnessEnabled,
+                recommendedAutoEvOffset = brightnessState.recommendedAutoExposureOffset,
+                userExposureIndex = exposureIndex
+            )
+        } catch (ignored: Throwable) {}
     }
 
     LaunchedEffect(photoResolution, isLandscape, hasCameraPermission) {
@@ -526,55 +659,25 @@ fun CameraPreview(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // 1b. Real-time Visual Brightness Feedback Overlay
-                // Ensures immediate, smooth, and distinct visual brightness change on any device or emulator
-                val visualEv = currentEvIndex.coerceIn(minEv, maxEv)
-                if (visualEv > 0) {
-                    val alpha = (visualEv.toFloat() / maxOf(1, maxEv).toFloat()) * 0.38f
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.White.copy(alpha = alpha))
-                    )
-                } else if (visualEv < 0) {
-                    val alpha = (kotlin.math.abs(visualEv).toFloat() / maxOf(1, kotlin.math.abs(minEv)).toFloat()) * 0.45f
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = alpha))
-                    )
-                }
-
-                fun resetBrightness() {
-                    currentEvIndex = 0
-                    accumulatedDragY = 0f
-                    try {
-                        if (isEvSupported && evRange.lower < evRange.upper) {
-                            controller.cameraControl?.setExposureCompensationIndex(0)
-                        }
-                    } catch (ignored: Exception) {}
-                    onExposureChanged?.invoke(0)
-                }
-
-                // 2. Gesture Detector Layer for Pinch-to-Zoom, Touch-to-Focus & Right-Side Brightness Drag
+                // 2. Gesture Detector Layer for Pinch-to-Zoom, Touch-to-Focus & Existing Right-Side Brightness Drag
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(minEv, maxEv, isLandscape, minZoomRatio, maxZoomRatio) {
+                        .pointerInput(isLandscape, minZoomRatio, maxZoomRatio, totalWidth, totalHeight) {
                             val touchSlop = viewConfiguration.touchSlop * 0.65f
-                            val dragStepPx = 18.dp.toPx()
+                            val dragSpanPx = (totalHeight * 0.65f).coerceAtLeast(180f)
 
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 val startPos = down.position
                                 val inRightZone = startPos.x in rightZoneStart..rightZoneEnd
 
-                                var isDraggingEv = false
+                                var isDraggingDisplayBrightness = false
                                 var isPinchActive = false
                                 var hasMovedPastSlop = false
                                 var lastY = startPos.y
                                 var previousSpan = -1f
-                                var activeZoom = zoomRatio
+                                var activeZoom = latestZoomRatio
 
                                 while (true) {
                                     val event = awaitPointerEvent()
@@ -585,9 +688,11 @@ fun CameraPreview(
                                         isPinchActive = true
                                         hasMovedPastSlop = true
 
-                                        if (isDraggingEv) {
-                                            isDraggingEv = false
+                                        if (isDraggingDisplayBrightness) {
+                                            isDraggingDisplayBrightness = false
                                             isDraggingBrightness = false
+                                            persistCurrentManualBrightness()
+                                            brightnessDismissKey++
                                         }
 
                                         val p0 = pressedPointers[0].position
@@ -615,29 +720,30 @@ fun CameraPreview(
                                             hasMovedPastSlop = true
                                         }
 
-                                        if (!isDraggingEv) {
+                                        if (!isDraggingDisplayBrightness) {
                                             if (inRightZone && kotlin.math.abs(totalDistY) > touchSlop && kotlin.math.abs(totalDistY) > kotlin.math.abs(totalDistX)) {
-                                                isDraggingEv = true
+                                                isDraggingDisplayBrightness = true
                                                 isDraggingBrightness = true
                                                 showBrightnessIndicator = true
                                                 change.consume()
-                                                updateBrightness(totalDistY, dragStepPx)
+                                                updateManualDisplayBrightness(totalDistY, dragSpanPx)
                                                 lastY = currentPos.y
                                             }
                                         } else {
                                             change.consume()
-                                            updateBrightness(deltaY, dragStepPx)
+                                            updateManualDisplayBrightness(deltaY, dragSpanPx)
                                             lastY = currentPos.y
                                         }
                                     }
 
                                     if (pressedPointers.isEmpty()) {
                                         // All fingers lifted
-                                        if (!isDraggingEv && !hasMovedPastSlop && !isPinchActive) {
+                                        if (!isDraggingDisplayBrightness && !hasMovedPastSlop && !isPinchActive) {
                                             // Tap detected! Focus at exact touched position
                                             triggerTouchToFocus(startPos, constraints.maxWidth, constraints.maxHeight)
-                                        } else if (isDraggingEv) {
+                                        } else if (isDraggingDisplayBrightness) {
                                             isDraggingBrightness = false
+                                            persistCurrentManualBrightness()
                                             brightnessDismissKey++
                                         }
                                         break
@@ -653,14 +759,13 @@ fun CameraPreview(
                     position = focusPosition
                 )
 
-                // 4. Right-Side Brightness Control Indicator
+                // 4. Existing Right-Side Brightness Control Indicator (Full Range + Auto Status)
                 CameraBrightnessIndicator(
                     visible = showBrightnessIndicator,
-                    currentEv = currentEvIndex,
-                    minEv = minEv,
-                    maxEv = maxEv,
-                    step = evStep,
-                    onReset = { resetBrightness() },
+                    brightness = brightnessState.effectiveDisplayBrightness,
+                    isAutoBrightness = brightnessState.isAutoEnabled,
+                    lightZone = brightnessState.lightZone,
+                    onToggleAutoOrReset = { onBrightnessIndicatorTapped() },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(end = if (isLandscape) 104.dp else 16.dp)
@@ -846,17 +951,17 @@ fun CameraFocusIndicator(
 }
 
 /**
- * Minimalist Glass Brightness & Exposure indicator shown on the right side of preview
- * when user touches and drags vertically to adjust camera hardware exposure compensation.
+ * Minimalist Glass Brightness Indicator shown on the right side of the preview when the user
+ * drags vertically in the existing right-side brightness control zone.
+ * Displays full practical dim-to-max brightness (`0%..100%`) and Auto Brightness status.
  */
 @Composable
 fun CameraBrightnessIndicator(
     visible: Boolean,
-    currentEv: Int,
-    minEv: Int,
-    maxEv: Int,
-    step: Float,
-    onReset: (() -> Unit)? = null,
+    brightness: Float,
+    isAutoBrightness: Boolean = false,
+    lightZone: AmbientLightZone = AmbientLightZone.NORMAL_LIGHT,
+    onToggleAutoOrReset: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -865,26 +970,25 @@ fun CameraBrightnessIndicator(
         exit = fadeOut(tween(280)),
         modifier = modifier
     ) {
-        val totalRange = (maxEv - minEv).coerceAtLeast(1)
-        val progress = ((currentEv - minEv).toFloat() / totalRange.toFloat()).coerceIn(0f, 1f)
-        val calculatedEv = currentEv * step
-        val evText = if (calculatedEv > 0f) {
-            String.format(Locale.US, "+%.1f", calculatedEv)
-        } else if (calculatedEv < 0f) {
-            String.format(Locale.US, "%.1f", calculatedEv)
-        } else {
-            "0.0"
+        val clamped = CameraBrightnessEngine.clampBrightness(brightness)
+        val percent = CameraBrightnessEngine.brightnessToPercent(clamped)
+        val progress = (percent / 100f).coerceIn(0f, 1f)
+        val badgeText = when {
+            isAutoBrightness -> "AUTO"
+            percent <= 5 -> "DIM"
+            percent >= 98 -> "MAX"
+            else -> "BRI"
         }
 
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = Color(0xD80D111A),
             modifier = Modifier
-                .width(44.dp)
-                .height(168.dp)
+                .width(48.dp)
+                .height(172.dp)
                 .then(
-                    if (currentEv != 0 && onReset != null) {
-                        Modifier.clickable { onReset() }
+                    if (onToggleAutoOrReset != null) {
+                        Modifier.clickable { onToggleAutoOrReset() }
                     } else Modifier
                 )
                 .testTag("camera_brightness_indicator")
@@ -896,24 +1000,25 @@ fun CameraBrightnessIndicator(
                     .fillMaxSize()
                     .padding(vertical = 12.dp, horizontal = 6.dp)
             ) {
-                // Top: Sun Icon
+                // Top: Brightness / Auto Icon
                 val sunTint = when {
-                    currentEv > 0 -> HighlightYellow
-                    currentEv < 0 -> Color(0xFF94A3B8)
+                    isAutoBrightness -> HighlightYellow
+                    percent >= 80 -> HighlightYellow
+                    percent <= 20 -> Color(0xFF94A3B8)
                     else -> Color.White
                 }
                 Icon(
-                    imageVector = Icons.Default.LightMode,
-                    contentDescription = "Brightness",
+                    imageVector = if (isAutoBrightness) Icons.Default.BrightnessAuto else Icons.Default.LightMode,
+                    contentDescription = if (isAutoBrightness) "Auto Brightness (${lightZone.label})" else "Brightness $percent%",
                     tint = sunTint,
                     modifier = Modifier.size(20.dp)
                 )
 
-                // Middle: Vertical Fill Slider Track
+                // Middle: Vertical Fill Slider Track (full practical dim to max bright)
                 Box(
                     modifier = Modifier
                         .width(4.dp)
-                        .height(72.dp)
+                        .height(74.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .background(Color.White.copy(alpha = 0.20f)),
                     contentAlignment = Alignment.BottomCenter
@@ -921,24 +1026,24 @@ fun CameraBrightnessIndicator(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(progress)
+                            .fillMaxHeight(progress.coerceAtLeast(0.04f))
                             .clip(RoundedCornerShape(2.dp))
-                            .background(HighlightYellow)
+                            .background(if (isAutoBrightness) Color(0xFF38BDF8) else HighlightYellow)
                     )
                 }
 
-                // Bottom: Numerical Readout
+                // Bottom: Percentage & Mode Readout
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = evText,
-                        color = if (currentEv != 0) HighlightYellow else Color.White,
+                        text = "$percent%",
+                        color = if (isAutoBrightness || percent >= 85) HighlightYellow else Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = if (currentEv != 0) "RESET" else "EV",
-                        color = if (currentEv != 0) HighlightYellow else SecondaryText,
+                        text = badgeText,
+                        color = if (isAutoBrightness) Color(0xFF38BDF8) else SecondaryText,
                         fontSize = 7.sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
