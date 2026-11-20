@@ -85,7 +85,7 @@ enum class MiniMapOrientationMode(val label: String) {
         fun fromString(name: String?): MiniMapOrientationMode {
             return entries.firstOrNull {
                 it.name.equals(name, ignoreCase = true) || it.label.equals(name, ignoreCase = true)
-            } ?: NORTH_UP
+            } ?: DIRECTION_UP
         }
     }
 }
@@ -122,10 +122,10 @@ data class MiniMapStyleConfig(
     val directionMarkerStyle: MiniMapDirectionStyle = MiniMapDirectionStyle.ARROW,
     val shadowEnabled: Boolean = true,
 
-    // F. Map Zoom & Orientation
+    // F. Map Zoom & Orientation (Always Direction-Up by default)
     val autoZoom: Boolean = true,
     val zoomLevel: Float = 15.5f,
-    val orientationMode: MiniMapOrientationMode = MiniMapOrientationMode.NORTH_UP,
+    val orientationMode: MiniMapOrientationMode = MiniMapOrientationMode.DIRECTION_UP,
 
     // G. Map Information Toggles
     val showCurrentPositionMarker: Boolean = true,
@@ -216,8 +216,8 @@ data class MiniMapStyleConfig(
                     directionMarkerStyle = MiniMapDirectionStyle.fromString(obj.optString("directionMarkerStyle", "ARROW")),
                     shadowEnabled = obj.optBoolean("shadowEnabled", true),
                     autoZoom = obj.optBoolean("autoZoom", true),
-                    zoomLevel = obj.optDouble("zoomLevel", 15.5).toFloat().coerceIn(2f, 19f),
-                    orientationMode = MiniMapOrientationMode.fromString(obj.optString("orientationMode", "NORTH_UP")),
+                    zoomLevel = obj.optDouble("zoomLevel", 15.5).toFloat().coerceIn(1f, 19f),
+                    orientationMode = MiniMapOrientationMode.fromString(obj.optString("orientationMode", "DIRECTION_UP")),
                     showCurrentPositionMarker = obj.optBoolean("showCurrentPositionMarker", true),
                     showRoadAlignment = obj.optBoolean("showRoadAlignment", true),
                     showCurrentChainageLabel = obj.optBoolean("showCurrentChainageLabel", true),

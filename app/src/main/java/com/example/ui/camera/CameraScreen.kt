@@ -344,6 +344,7 @@ fun CameraScreen(
 
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val lastValidLocation by viewModel.lastValidLocation.collectAsStateWithLifecycle()
+    val mapHeadingState by viewModel.mapHeadingState.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val matchResult by viewModel.cameraMatchResult.collectAsStateWithLifecycle()
     val manualChainageText by viewModel.manualChainageText.collectAsStateWithLifecycle()
@@ -722,13 +723,14 @@ fun CameraScreen(
                 ) {
                     MiniMapPreview(
                         location = effectiveMiniMapLocation,
-                        bearing = locationState.bearing,
+                        bearing = mapHeadingState.headingDegrees ?: locationState.bearing,
                         routeData = activeRoute,
                         highwayTag = projectProfile.highwayId,
                         miniMapConfig = activeMiniMapConfig,
                         chainageLabel = reliableMiniMapChainage,
                         sideLabel = reliableMiniMapSide,
                         isGpsRetained = isMiniMapGpsRetained,
+                        mapHeadingState = mapHeadingState,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

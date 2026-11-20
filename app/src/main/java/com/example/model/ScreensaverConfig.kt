@@ -307,9 +307,9 @@ data class HomeScreensaverSettings(
     val locationPosition: HudLocationPosition = HudLocationPosition.BELOW_SIDE,
     val locationDynamicUpdates: Boolean = true,
 
-    // Shared Mini Map Settings (Home + In-App Screensaver)
+    // Shared Mini Map Settings (Home + In-App Screensaver — Direction-Up by default)
     val miniMapVisible: Boolean = true,
-    val miniMapOrientation: MiniMapOrientationMode = MiniMapOrientationMode.NORTH_UP,
+    val miniMapOrientation: MiniMapOrientationMode = MiniMapOrientationMode.DIRECTION_UP,
     val miniMapZoomLevel: Float = DEFAULT_ZOOM_LEVEL,
     val miniMapZoomStep: Float = ZOOM_STEP,
     val miniMapStyle: MiniMapStyle = MiniMapStyle.STANDARD,
@@ -667,7 +667,7 @@ data class HomeScreensaverSettings(
 
                     miniMapVisible = obj.optBoolean("miniMapVisible", true),
                     miniMapOrientation = MiniMapOrientationMode.fromString(
-                        obj.optString("miniMapOrientation", MiniMapOrientationMode.NORTH_UP.name)
+                        obj.optString("miniMapOrientation", MiniMapOrientationMode.DIRECTION_UP.name)
                     ),
                     miniMapZoomLevel = obj.optDouble("miniMapZoomLevel", DEFAULT_ZOOM_LEVEL.toDouble())
                         .toFloat()

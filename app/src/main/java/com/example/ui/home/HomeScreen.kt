@@ -137,6 +137,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
@@ -177,6 +178,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.geo.GeoUtils
+import com.example.geo.MapHeadingState
 import com.example.geo.OsmTileManager
 import com.example.location.LocationNameResolver
 import com.example.location.LocationState
@@ -188,6 +190,7 @@ import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
 import com.example.model.HudMapMarkerStyle
 import com.example.model.MatchConfidence
+import com.example.model.MiniMapOrientationMode
 import com.example.model.MiniMapStyle
 import com.example.model.RoadSide
 import com.example.model.RouteData
@@ -201,6 +204,9 @@ import com.example.ui.dialogs.ChainageManagementDialog
 import com.example.ui.dialogs.ChainageSourceBadge
 import com.example.ui.dialogs.NavigateToChainageDialog
 import com.example.ui.dialogs.NavigateToChainageQuickButton
+import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapViewportMath
+import com.example.ui.map.miniMapNavigationGestures
 import com.example.ui.theme.AccentRed
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.ctecsBorderlessInputColors
@@ -229,6 +235,7 @@ fun HomeScreen(
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
     val compassState by viewModel.compassState.collectAsStateWithLifecycle()
+    val mapHeadingState by viewModel.mapHeadingState.collectAsStateWithLifecycle()
 
     val currentThemeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
@@ -462,6 +469,7 @@ fun HomeScreen(
                 distanceToNextMetres = aodNextKmState?.takeIf { it.isReliable }?.distanceMetres,
                 lastKmStoneEvent = lastKmStoneHubEvent,
                 isKmStoneMonitoringActive = isKmStoneServiceRunning || kmStoneAlertSettings.enabled,
+                mapHeadingState = mapHeadingState,
                 onToggleMirrorQuickMode = { enableMirror, currentlyLandscape ->
                     viewModel.toggleScreensaverMirrorQuickMode(
                         enableMirror = enableMirror,
@@ -697,6 +705,8 @@ fun HomeScreen(
                         onSharedZoomOut = { viewModel.zoomOutHomeMiniMap() },
                         onSharedRecenter = { viewModel.recenterHomeMiniMap() },
                         screensaverSettings = screensaverSettings,
+                        mapHeadingState = mapHeadingState,
+                        isVisible = !isScreensaverVisible && !isScreensaverScreenOff && !isScreensaverAodActive,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -2458,9 +2468,12 @@ fun InteractiveSmartMap(
     onSharedZoomOut: (() -> Unit)? = null,
     onSharedRecenter: (() -> Unit)? = null,
     screensaverSettings: HomeScreensaverSettings = HomeScreensaverSettings(),
+    mapHeadingState: MapHeadingState? = null,
+    isVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
     val isTileLoading by OsmTileManager.isLoading.collectAsStateWithLifecycle()
     val isAppDark = com.example.ui.theme.isAppDarkTheme()
@@ -2468,12 +2481,22 @@ fun InteractiveSmartMap(
     val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
     var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
-    var viewRangeMetres by remember { mutableDoubleStateOf(1000.0) }
+    var continuousZoom by remember {
+        mutableFloatStateOf(
+            (sharedZoomLevel ?: screensaverSettings.miniMapZoomLevel).coerceIn(
+                MiniMapViewportMath.MIN_ZOOM,
+                MiniMapViewportMath.MAX_ZOOM
+            )
+        )
+    }
     var isFollowingUser by remember { mutableStateOf(true) }
 
     LaunchedEffect(sharedZoomLevel) {
         if (sharedZoomLevel != null) {
-            viewRangeMetres = OsmTileManager.viewRangeMetresForZoom(sharedZoomLevel)
+            continuousZoom = sharedZoomLevel.coerceIn(
+                MiniMapViewportMath.MIN_ZOOM,
+                MiniMapViewportMath.MAX_ZOOM
+            )
         }
     }
 
@@ -2490,19 +2513,26 @@ fun InteractiveSmartMap(
         }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "map_pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.22f,
-        targetValue = 0.65f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1350, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseAlpha"
-    )
+    // Pause pulse animation when Home map is covered (e.g. screensaver / AOD) to save battery
+    val pulseAlpha = if (isVisible) {
+        val infiniteTransition = rememberInfiniteTransition(label = "map_pulse")
+        val anim by infiniteTransition.animateFloat(
+            initialValue = 0.22f,
+            targetValue = 0.65f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1350, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulseAlpha"
+        )
+        anim
+    } else {
+        0.35f
+    }
 
-    val currentZoom = remember(viewRangeMetres) {
-        OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
+    val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
+    val viewRangeMetres = remember(continuousZoom) {
+        OsmTileManager.viewRangeMetresForZoom(continuousZoom)
     }
 
     val controlSurfaceColor = if (mapTheme.isDark) Color(0xEB0D111A) else Color(0xF5FFFFFF)
@@ -2510,13 +2540,10 @@ fun InteractiveSmartMap(
     val controlIconColor = if (mapTheme.isDark) Color(0xFFFFFFFF) else Color(0xFF101828)
     val activeControlBg = if (mapTheme.isDark) Color(0xFF1685FF) else Color(0xFF1677F2)
 
-    // Smooth shortest-path angular unwrap for compass rotation
+    // Smooth shortest-path angular unwrap for compass instrument bezel
     var unwrappedHeading by remember { mutableFloatStateOf(compassHeading) }
     LaunchedEffect(compassHeading) {
-        var delta = (compassHeading - unwrappedHeading) % 360f
-        if (delta > 180f) delta -= 360f
-        if (delta < -180f) delta += 360f
-        unwrappedHeading += delta
+        unwrappedHeading = MiniMapViewportMath.unwrapShortestAngle(unwrappedHeading, compassHeading)
     }
     val animatedCompassHeading by animateFloatAsState(
         targetValue = unwrappedHeading,
@@ -2524,138 +2551,148 @@ fun InteractiveSmartMap(
         label = "map_compass_rotation"
     )
 
-    // Shared map orientation mode rotation (North Up / Direction Up / Auto)
+    // Centralized Direction-Up map orientation (retains last reliable heading when stationary; never resets to North-Up)
     val anchorForOrientation = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-    val effectiveMapBearing = remember(anchorForOrientation, bearing, routeData?.id) {
-        MiniMapRenderer.resolveEffectiveBearing(anchorForOrientation, bearing, routeData)
+    val effectiveMapBearing = remember(anchorForOrientation, mapHeadingState?.headingDegrees, bearing, routeData?.id) {
+        mapHeadingState?.headingDegrees
+            ?: MiniMapRenderer.resolveEffectiveBearing(anchorForOrientation, bearing, routeData)
     }
     val rawTargetMapRotation = remember(screensaverSettings.miniMapOrientation, effectiveMapBearing) {
-        MiniMapRenderer.resolveMapRotationDegrees(
+        MiniMapViewportMath.resolveDirectionUpRotation(
             mode = screensaverSettings.miniMapOrientation,
-            effectiveBearing = effectiveMapBearing
+            headingDegrees = effectiveMapBearing
         )
     }
     var unwrappedMapRotation by remember { mutableFloatStateOf(rawTargetMapRotation) }
     LaunchedEffect(rawTargetMapRotation) {
-        var delta = (rawTargetMapRotation - unwrappedMapRotation) % 360f
-        if (delta > 180f) delta -= 360f
-        if (delta < -180f) delta += 360f
-        unwrappedMapRotation += delta
+        unwrappedMapRotation = MiniMapViewportMath.unwrapShortestAngle(unwrappedMapRotation, rawTargetMapRotation)
     }
     val animatedMapRotation by animateFloatAsState(
         targetValue = unwrappedMapRotation,
         animationSpec = tween(260, easing = FastOutSlowInEasing),
         label = "home_shared_map_rotation"
     )
+    val isDirectionUpActive = screensaverSettings.miniMapOrientation != MiniMapOrientationMode.NORTH_UP &&
+        effectiveMapBearing != null
 
-    Box(modifier = modifier) {
+    BoxWithConstraints(modifier = modifier) {
+        val viewportWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+        val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
+
+        val gpsOrRouteCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+        val cameraCenter = if (isFollowingUser) {
+            MiniMapViewportMath.computeFollowCameraCenter(
+                vehicleGeo = gpsOrRouteCenter,
+                continuousZoom = continuousZoom,
+                viewportHeightPx = viewportHeightPx,
+                mapRotationDeg = animatedMapRotation,
+                isDirectionUpActive = isDirectionUpActive
+            )
+        } else {
+            exploredCenter ?: gpsOrRouteCenter
+        }
+
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        isFollowingUser = false
-                        val prevZoom = OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
-                        val anchor = exploredCenter
-                            ?: location
-                            ?: routeData?.bounds?.center
-                            ?: GeoPoint(28.6139, 77.2090)
-                        if (pan.x != 0f || pan.y != 0f) {
-                            exploredCenter = OsmTileManager.offsetGeoPointByPixels(
-                                center = anchor,
-                                deltaPxX = pan.x,
-                                deltaPxY = pan.y,
-                                zoom = prevZoom
-                            )
-                        } else if (exploredCenter == null) {
-                            exploredCenter = anchor
-                        }
-                        if (zoom != 1f) {
-                            viewRangeMetres = (viewRangeMetres / zoom).coerceIn(
-                                OsmTileManager.MIN_VIEW_RANGE_METRES,
-                                OsmTileManager.MAX_VIEW_RANGE_METRES
-                            )
-                        }
-                    }
+                .miniMapNavigationGestures(enabled = true) { centroid, pan, zoom ->
+                    val startCenter = if (isFollowingUser) cameraCenter else (exploredCenter ?: cameraCenter)
+                    isFollowingUser = false
+                    val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
+                        currentCenter = startCenter,
+                        currentZoom = continuousZoom,
+                        focalX = centroid.x,
+                        focalY = centroid.y,
+                        viewportWidthPx = viewportWidthPx,
+                        viewportHeightPx = viewportHeightPx,
+                        panX = pan.x,
+                        panY = pan.y,
+                        zoomChange = zoom,
+                        mapRotationDeg = animatedMapRotation
+                    )
+                    exploredCenter = nextCenter
+                    continuousZoom = nextZoom
                 }
         ) {
-            // Read tileUpdate so Canvas recomposes when tiles finish loading
             val _tick = tileUpdate
             val w = size.width
             val h = size.height
             val cx = w / 2f
             val cy = h / 2f
 
-            val gpsOrRouteCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-            val anchorGeo = if (isFollowingUser) {
-                gpsOrRouteCenter
-            } else {
-                exploredCenter ?: gpsOrRouteCenter
-            }
+            val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
+                widthPx = w,
+                heightPx = h,
+                fractionalScale = fractionalScale,
+                maxPx = 1024
+            )
 
             var hasOsmTiles = false
-            val osmBmp = OsmTileManager.renderMapBitmap(
-                context = context,
-                center = anchorGeo,
-                widthPx = w.toInt().coerceAtLeast(1),
-                heightPx = h.toInt().coerceAtLeast(1),
-                zoom = currentZoom,
-                panOffsetX = 0f,
-                panOffsetY = 0f,
-                darkTheme = mapTheme.isDark,
-                mapType = mapTypePreference
-            )
+            val osmBmp = if (isVisible) {
+                OsmTileManager.renderMapBitmap(
+                    context = context,
+                    center = cameraCenter,
+                    widthPx = diagPx,
+                    heightPx = diagPx,
+                    zoom = baseZoom,
+                    panOffsetX = 0f,
+                    panOffsetY = 0f,
+                    darkTheme = mapTheme.isDark,
+                    mapType = mapTypePreference
+                )
+            } else {
+                null
+            }
 
             drawRect(color = mapTheme.mapBackground)
 
             rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
                 if (osmBmp != null) {
-                    drawImage(
-                        image = osmBmp.asImageBitmap(),
-                        dstOffset = IntOffset.Zero,
-                        dstSize = IntSize(w.toInt(), h.toInt())
-                    )
+                    scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                        drawImage(
+                            image = osmBmp.asImageBitmap(),
+                            dstOffset = IntOffset(
+                                x = (cx - diagPx / 2f).toInt(),
+                                y = (cy - diagPx / 2f).toInt()
+                            ),
+                            dstSize = IntSize(diagPx, diagPx)
+                        )
+                    }
                     hasOsmTiles = true
                 }
 
                 if (!hasOsmTiles) {
                     val gridSpacing = 72.dp.toPx()
-                    var gx = 0f
-                    while (gx < w) {
+                    val extent = maxOf(w, h)
+                    var g = -extent
+                    while (g <= extent * 1.5f) {
                         drawLine(
                             color = mapTheme.gridLineColor,
-                            start = Offset(gx, 0f),
-                            end = Offset(gx, h),
+                            start = Offset(cx + g, cy - extent),
+                            end = Offset(cx + g, cy + extent),
                             strokeWidth = 1f
                         )
-                        gx += gridSpacing
-                    }
-                    var gy = 0f
-                    while (gy < h) {
                         drawLine(
                             color = mapTheme.gridLineColor,
-                            start = Offset(0f, gy),
-                            end = Offset(w, gy),
+                            start = Offset(cx - extent, cy + g),
+                            end = Offset(cx + extent, cy + g),
                             strokeWidth = 1f
                         )
-                        gy += gridSpacing
+                        g += gridSpacing
                     }
                 }
 
                 fun toScreen(pt: GeoPoint): Offset {
-                    val (sx, sy) = OsmTileManager.geoToScreen(
+                    return MiniMapViewportMath.geoToUnrotatedScreen(
                         pt = pt,
-                        center = anchorGeo,
-                        widthPx = w,
-                        heightPx = h,
-                        zoom = currentZoom,
-                        panOffsetX = 0f,
-                        panOffsetY = 0f
+                        center = cameraCenter,
+                        viewportWidthPx = w,
+                        viewportHeightPx = h,
+                        continuousZoom = continuousZoom
                     )
-                    return Offset(sx, sy)
                 }
 
-                // High-Contrast Highway Route Polylines (synchronized with shared Mini Map alignment visibility)
+                // High-Contrast Highway Route Polylines
                 if (screensaverSettings.miniMapShowRouteAlignment &&
                     routeData != null &&
                     routeData.alignments.isNotEmpty()
@@ -2674,19 +2711,16 @@ fun InteractiveSmartMap(
                             }
                         }
 
-                        // Soft outer glow for clear distinction from surrounding roads
                         drawPath(
                             path = path,
                             color = Color(0xFF2563EB).copy(alpha = 0.22f),
                             style = Stroke(width = 14.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
-                        // Outer high-contrast casing
                         drawPath(
                             path = path,
                             color = if (mapTheme.isDark) Color(0xFF0F172A) else Color(0xFF1E3A8A),
                             style = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
-                        // Inner vibrant alignment line
                         drawPath(
                             path = path,
                             color = if (mapTheme.isDark) Color(0xFF38BDF8) else Color(0xFF3B82F6),
@@ -2697,9 +2731,10 @@ fun InteractiveSmartMap(
 
                 // Route Chainage Markers
                 if (screensaverSettings.miniMapShowRouteAlignment && routeData != null) {
+                    val boundPad = maxOf(w, h) * 0.45f
                     for (marker in routeData.markers) {
                         val mOff = toScreen(marker.point)
-                        if (mOff.x in -100f..(w + 100f) && mOff.y in -100f..(h + 100f)) {
+                        if (mOff.x in -boundPad..(w + boundPad) && mOff.y in -boundPad..(h + boundPad)) {
                             drawCircle(color = Color.White, radius = 5.5.dp.toPx(), center = mOff)
                             drawCircle(
                                 color = Color(0xFF2563EB),
@@ -2710,29 +2745,42 @@ fun InteractiveSmartMap(
                     }
                 }
 
-                // Live GPS Location Marker synchronized with shared marker style
+                // Live GPS Location Marker synchronized with shared marker style & filtered heading
                 if (location != null) {
                     val userOff = toScreen(location)
 
-                    // Pulsing GPS Accuracy Halo
+                    // GPS Accuracy circle + pulsing halo
+                    val accHaloPx = if (gpsAccuracy > 0f) {
+                        (gpsAccuracy / (viewRangeMetres / (w / 2f)).coerceAtLeast(0.5)).toFloat()
+                            .coerceIn(18.dp.toPx(), 64.dp.toPx())
+                    } else {
+                        24.dp.toPx()
+                    }
+                    drawCircle(
+                        color = Color(0xFF38BDF8).copy(alpha = 0.16f),
+                        radius = accHaloPx,
+                        center = userOff
+                    )
                     drawCircle(
                         color = Color(0xFFEF4444).copy(alpha = pulseAlpha * 0.35f),
-                        radius = 26.dp.toPx(),
+                        radius = 22.dp.toPx(),
                         center = userOff
                     )
 
-                    val activeHeading = bearing ?: animatedCompassHeading
+                    val activeHeading = effectiveMapBearing
                     when (screensaverSettings.miniMapMarkerStyle) {
                         HudMapMarkerStyle.NAVIGATION_ARROW -> {
-                            rotate(degrees = activeHeading, pivot = userOff) {
-                                val conePath = Path().apply {
-                                    moveTo(userOff.x, userOff.y - 19.dp.toPx())
-                                    lineTo(userOff.x - 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
-                                    lineTo(userOff.x, userOff.y + 2.dp.toPx())
-                                    lineTo(userOff.x + 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
-                                    close()
+                            if (activeHeading != null) {
+                                rotate(degrees = activeHeading, pivot = userOff) {
+                                    val conePath = Path().apply {
+                                        moveTo(userOff.x, userOff.y - 19.dp.toPx())
+                                        lineTo(userOff.x - 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
+                                        lineTo(userOff.x, userOff.y + 2.dp.toPx())
+                                        lineTo(userOff.x + 8.5.dp.toPx(), userOff.y + 7.dp.toPx())
+                                        close()
+                                    }
+                                    drawPath(path = conePath, color = Color(0xFFEF4444))
                                 }
-                                drawPath(path = conePath, color = Color(0xFFEF4444))
                             }
                             drawCircle(color = Color.White, radius = 7.dp.toPx(), center = userOff)
                             drawCircle(color = Color(0xFFEF4444), radius = 4.8.dp.toPx(), center = userOff)
@@ -2748,6 +2796,20 @@ fun InteractiveSmartMap(
                     }
                 }
             }
+        }
+
+        // Heading unavailable indicator (shown ONLY when no reliable heading exists yet)
+        if (mapHeadingState?.isDirectionUnavailable == true &&
+            effectiveMapBearing == null &&
+            location != null &&
+            screensaverSettings.miniMapOrientation != MiniMapOrientationMode.NORTH_UP
+        ) {
+            MiniMapHeadingUnavailableBadge(
+                isDark = mapTheme.isDark,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 8.dp, start = 10.dp)
+            )
         }
 
         // Tile / Satellite Loading Banner
@@ -3052,9 +3114,8 @@ fun InteractiveSmartMap(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 IconButton(
                     onClick = {
-                        viewRangeMetres = (viewRangeMetres * 0.65).coerceAtLeast(
-                            OsmTileManager.MIN_VIEW_RANGE_METRES
-                        )
+                        continuousZoom = (continuousZoom + screensaverSettings.miniMapZoomStep.coerceIn(0.25f, 1.5f))
+                            .coerceAtMost(MiniMapViewportMath.MAX_ZOOM)
                         onSharedZoomIn?.invoke()
                     },
                     modifier = Modifier
@@ -3076,9 +3137,8 @@ fun InteractiveSmartMap(
                 )
                 IconButton(
                     onClick = {
-                        viewRangeMetres = (viewRangeMetres * 1.6).coerceAtMost(
-                            OsmTileManager.MAX_VIEW_RANGE_METRES
-                        )
+                        continuousZoom = (continuousZoom - screensaverSettings.miniMapZoomStep.coerceIn(0.25f, 1.5f))
+                            .coerceAtLeast(MiniMapViewportMath.MIN_ZOOM)
                         onSharedZoomOut?.invoke()
                     },
                     modifier = Modifier
@@ -3804,6 +3864,7 @@ fun ChainageScreensaverOverlay(
     distanceToNextMetres: Long? = null,
     lastKmStoneEvent: com.example.navigation.KmStoneAlertEvent? = null,
     isKmStoneMonitoringActive: Boolean = false,
+    mapHeadingState: MapHeadingState? = null,
     onToggleMirrorQuickMode: ((enableMirror: Boolean, isCurrentlyLandscape: Boolean) -> Unit)? = null,
     onToggleOrientationLock: ((isCurrentlyLandscape: Boolean) -> Unit)? = null,
     onToggleScreenOff: ((Boolean) -> Unit)? = null,
@@ -3956,6 +4017,7 @@ fun ChainageScreensaverOverlay(
             distanceToNextMetres = distanceToNextMetres,
             lastKmStoneEvent = lastKmStoneEvent,
             isKmStoneMonitoringActive = isKmStoneMonitoringActive,
+            mapHeadingState = mapHeadingState,
             onToggleMirrorQuickMode = handleQuickToggle,
             onToggleOrientationLock = onToggleOrientationLock,
             onToggleScreenOff = onToggleScreenOff,

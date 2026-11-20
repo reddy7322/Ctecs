@@ -5,13 +5,13 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -66,24 +66,34 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.geo.OsmTileManager
 import com.example.model.Chainage
 import com.example.model.GeoPoint
+import com.example.model.MiniMapOrientationMode
 import com.example.survey.data.SaveStatus
 import com.example.survey.engine.SurveyGeometryEngine
 import com.example.survey.model.SurveySession
 import com.example.survey.model.SurveyStatus
 import com.example.ui.MainViewModel
 import com.example.ui.ToastType
+import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapViewportMath
+import com.example.ui.map.miniMapNavigationGestures
 import com.example.ui.theme.SmartFadeDivider
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -107,6 +117,7 @@ fun SurveyScreen(
     val checkpointPrompt by surveyManager.checkpointPrompt.collectAsStateWithLifecycle()
     val endingChainageReached by surveyManager.endingChainageReachedPrompt.collectAsStateWithLifecycle()
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
+    val mapHeadingState by viewModel.mapHeadingState.collectAsStateWithLifecycle()
     val allSessions by surveyManager.repository.allSessions.collectAsStateWithLifecycle(emptyList())
 
     // ----------------------------------------------------
@@ -124,7 +135,7 @@ fun SurveyScreen(
     val currentGps = locationState.point
     val currentAccuracy = locationState.accuracy
     val currentSpeedMps = locationState.speed ?: 0f
-    val currentBearing = locationState.bearing ?: 0f
+    val currentBearing = mapHeadingState.headingDegrees ?: locationState.bearing ?: 0f
 
     // UI Dialog & Review States
     var showNewConfigDialog by remember { mutableStateOf(false) }
@@ -142,9 +153,9 @@ fun SurveyScreen(
     val show200mLabels by viewModel.surveyShow200mLabels.collectAsStateWithLifecycle()
     val mapType by viewModel.surveyMapType.collectAsStateWithLifecycle()
 
-    // Interactive Map State (Full-Earth pan & zoom without automatic snapback)
+    // Interactive Map State (Full-Earth continuous pan & pinch zoom, Always Direction-Up)
     var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
-    var viewRangeMetres by remember { mutableDoubleStateOf(800.0) }
+    var continuousZoom by remember { mutableFloatStateOf(16.0f) }
     var isFollowingLocation by remember { mutableStateOf(true) }
 
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
@@ -154,6 +165,25 @@ fun SurveyScreen(
             exploredCenter = null
         }
     }
+
+    // Smooth Direction-Up rotation driven by centralized MapHeadingManager (never auto-resets to North-Up)
+    val activeHeadingDeg = mapHeadingState.headingDegrees ?: locationState.bearing
+    val rawTargetMapRotation = remember(activeHeadingDeg) {
+        MiniMapViewportMath.resolveDirectionUpRotation(
+            mode = MiniMapOrientationMode.DIRECTION_UP,
+            headingDegrees = activeHeadingDeg
+        )
+    }
+    var unwrappedMapRotation by remember { mutableFloatStateOf(rawTargetMapRotation) }
+    LaunchedEffect(rawTargetMapRotation) {
+        unwrappedMapRotation = MiniMapViewportMath.unwrapShortestAngle(unwrappedMapRotation, rawTargetMapRotation)
+    }
+    val animatedMapRotation by animateFloatAsState(
+        targetValue = unwrappedMapRotation,
+        animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
+        label = "survey_map_direction_up_rotation"
+    )
+    val isDirectionUpActive = activeHeadingDeg != null
 
     // Pulse animation for recording status
     val infiniteTransition = rememberInfiniteTransition(label = "survey_pulse")
@@ -167,8 +197,9 @@ fun SurveyScreen(
         label = "pulseAlpha"
     )
 
-    val currentZoom = remember(viewRangeMetres) {
-        OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
+    val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
+    val viewRangeMetres = remember(continuousZoom) {
+        OsmTileManager.viewRangeMetresForZoom(continuousZoom)
     }
 
     // If review screen is open, show SurveyReviewScreen
@@ -186,100 +217,99 @@ fun SurveyScreen(
         onNavigateBack()
     }
 
-    Box(modifier = modifier.fillMaxSize().background(colors.background)) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize().background(colors.background)) {
+        val density = LocalDensity.current
+        val viewportWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+        val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
+
+        val gpsOrRoutePoint = currentGps
+            ?: activePoints.lastOrNull()?.geoPoint
+            ?: GeoPoint(28.6139, 77.2090)
+
+        val cameraCenter = if (isFollowingLocation) {
+            MiniMapViewportMath.computeFollowCameraCenter(
+                vehicleGeo = gpsOrRoutePoint,
+                continuousZoom = continuousZoom,
+                viewportHeightPx = viewportHeightPx,
+                mapRotationDeg = animatedMapRotation,
+                isDirectionUpActive = isDirectionUpActive
+            )
+        } else {
+            exploredCenter ?: gpsOrRoutePoint
+        }
+
         // ----------------------------------------------------
-        // 1. LIVE INTERACTIVE OSM MAP CANVAS
+        // 1. LIVE INTERACTIVE DIRECTION-UP OSM MAP CANVAS
         // ----------------------------------------------------
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        isFollowingLocation = false
-                        val prevZoom = OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
-                        val anchor = exploredCenter
-                            ?: currentGps
-                            ?: activePoints.lastOrNull()?.geoPoint
-                            ?: GeoPoint(28.6139, 77.2090)
-                        if (pan.x != 0f || pan.y != 0f) {
-                            exploredCenter = OsmTileManager.offsetGeoPointByPixels(
-                                center = anchor,
-                                deltaPxX = pan.x,
-                                deltaPxY = pan.y,
-                                zoom = prevZoom
-                            )
-                        } else if (exploredCenter == null) {
-                            exploredCenter = anchor
-                        }
-                        if (zoom != 1f) {
-                            viewRangeMetres = (viewRangeMetres / zoom).coerceIn(
-                                OsmTileManager.MIN_VIEW_RANGE_METRES,
-                                OsmTileManager.MAX_VIEW_RANGE_METRES
-                            )
-                        }
-                    }
+                .miniMapNavigationGestures(enabled = true) { centroid, pan, zoom ->
+                    val startCenter = if (isFollowingLocation) cameraCenter else (exploredCenter ?: cameraCenter)
+                    isFollowingLocation = false
+                    val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
+                        currentCenter = startCenter,
+                        currentZoom = continuousZoom,
+                        focalX = centroid.x,
+                        focalY = centroid.y,
+                        viewportWidthPx = viewportWidthPx,
+                        viewportHeightPx = viewportHeightPx,
+                        panX = pan.x,
+                        panY = pan.y,
+                        zoomChange = zoom,
+                        mapRotationDeg = animatedMapRotation
+                    )
+                    exploredCenter = nextCenter
+                    continuousZoom = nextZoom
                 }
         ) {
             val _t = tileUpdate
             val w = size.width
             val h = size.height
+            val cx = w / 2f
+            val cy = h / 2f
 
-            val gpsOrRoutePoint = currentGps
-                ?: activePoints.lastOrNull()?.geoPoint
-                ?: GeoPoint(28.6139, 77.2090)
-            val anchorPoint = if (isFollowingLocation) {
-                gpsOrRoutePoint
-            } else {
-                exploredCenter ?: gpsOrRoutePoint
-            }
-            val panOffsetX = 0f
-            val panOffsetY = 0f
+            val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
+                widthPx = w,
+                heightPx = h,
+                fractionalScale = fractionalScale,
+                maxPx = 1024
+            )
 
-            // Render OSM Street or Satellite tile background with active theme
+            // Render OSM Street or Satellite tile background with active theme (diagonal coverage prevents rotated corner clipping)
             val osmBitmap = OsmTileManager.renderMapBitmap(
                 context = context,
-                center = anchorPoint,
-                widthPx = w.toInt().coerceAtLeast(1),
-                heightPx = h.toInt().coerceAtLeast(1),
-                zoom = currentZoom,
-                panOffsetX = panOffsetX,
-                panOffsetY = panOffsetY,
+                center = cameraCenter,
+                widthPx = diagPx,
+                heightPx = diagPx,
+                zoom = baseZoom,
+                panOffsetX = 0f,
+                panOffsetY = 0f,
                 darkTheme = isDark,
                 mapType = mapType
             )
 
-            if (osmBitmap != null) {
-                drawImage(image = osmBitmap.asImageBitmap())
-            } else {
-                drawRect(color = colors.background)
+            drawRect(color = colors.background)
+
+            fun toUnrotated(pt: GeoPoint): Offset {
+                return MiniMapViewportMath.geoToUnrotatedScreen(
+                    pt = pt,
+                    center = cameraCenter,
+                    viewportWidthPx = w,
+                    viewportHeightPx = h,
+                    continuousZoom = continuousZoom
+                )
             }
 
-            // 1. Original Travelled GPS Track
-            if (showGpsTrack && activePoints.size >= 2) {
-                val segments = activePoints.groupBy { it.segmentIndex }
-                segments.forEach { (_, segPoints) ->
-                    if (segPoints.size >= 2) {
-                        val path = Path()
-                        val (startX, startY) = OsmTileManager.geoToScreen(
-                            segPoints[0].geoPoint, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                        )
-                        path.moveTo(startX, startY)
-                        for (i in 1 until segPoints.size) {
-                            val (px, py) = OsmTileManager.geoToScreen(
-                                segPoints[i].geoPoint, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                            )
-                            path.lineTo(px, py)
-                        }
-                        drawPath(
-                            path = path,
-                            color = colors.green,
-                            style = Stroke(width = 6f)
-                        )
-                    }
-                }
+            fun toScreenUpright(pt: GeoPoint): Offset {
+                return MiniMapViewportMath.unrotatedToScreenPoint(
+                    unrotated = toUnrotated(pt),
+                    viewportWidthPx = w,
+                    viewportHeightPx = h,
+                    mapRotationDeg = animatedMapRotation
+                )
             }
 
-            // 2. Highway Centreline (Generated Gold Dashed Line) & 200m Chainage Labels
             var centrelinePts: List<GeoPoint> = emptyList()
             if (activeSession != null && activePoints.size >= 2) {
                 centrelinePts = SurveyGeometryEngine.generateCentrelineTrack(
@@ -287,137 +317,191 @@ fun SurveyScreen(
                     offsetDistanceM = activeSession!!.centrelineOffsetMetres,
                     offsetSide = activeSession!!.offsetSide
                 )
+            }
+
+            rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
+                if (osmBitmap != null) {
+                    scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                        drawImage(
+                            image = osmBitmap.asImageBitmap(),
+                            dstOffset = IntOffset(
+                                x = (cx - diagPx / 2f).toInt(),
+                                y = (cy - diagPx / 2f).toInt()
+                            ),
+                            dstSize = IntSize(diagPx, diagPx)
+                        )
+                    }
+                }
+
+                // 1. Original Travelled GPS Track
+                if (showGpsTrack && activePoints.size >= 2) {
+                    val segments = activePoints.groupBy { it.segmentIndex }
+                    segments.forEach { (_, segPoints) ->
+                        if (segPoints.size >= 2) {
+                            val path = Path()
+                            val startOff = toUnrotated(segPoints[0].geoPoint)
+                            path.moveTo(startOff.x, startOff.y)
+                            for (i in 1 until segPoints.size) {
+                                val off = toUnrotated(segPoints[i].geoPoint)
+                                path.lineTo(off.x, off.y)
+                            }
+                            drawPath(
+                                path = path,
+                                color = colors.green,
+                                style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                        }
+                    }
+                }
+
+                // 2. Highway Centreline (Generated Gold Dashed Line)
                 if (showCentreline && centrelinePts.size >= 2) {
                     val clPath = Path()
-                    val (clX, clY) = OsmTileManager.geoToScreen(
-                        centrelinePts[0], anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                    )
-                    clPath.moveTo(clX, clY)
+                    val startOff = toUnrotated(centrelinePts[0])
+                    clPath.moveTo(startOff.x, startOff.y)
                     for (i in 1 until centrelinePts.size) {
-                        val (px, py) = OsmTileManager.geoToScreen(
-                            centrelinePts[i], anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                        )
-                        clPath.lineTo(px, py)
+                        val off = toUnrotated(centrelinePts[i])
+                        clPath.lineTo(off.x, off.y)
                     }
                     drawPath(
                         path = clPath,
                         color = colors.gold,
                         style = Stroke(
                             width = 5f,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round,
                             pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 8f), 0f)
                         )
                     )
                 }
 
-                // 2b. Centreline Chainage Labels Every 200 Metres
-                if (show200mLabels && centrelinePts.size >= 2) {
-                    val labels200m = SurveyGeometryEngine.generate200mChainageLabels(
-                        centrelinePts = centrelinePts,
-                        startChainageMetres = activeSession!!.startChainageMetres,
-                        direction = activeSession!!.direction
+                // 3. Lane Alignment (Cyan Line)
+                if (showLaneTrack && activePoints.size >= 2) {
+                    val lanePath = Path()
+                    val startOff = toUnrotated(activePoints[0].geoPoint)
+                    lanePath.moveTo(startOff.x, startOff.y)
+                    for (i in 1 until activePoints.size) {
+                        val off = toUnrotated(activePoints[i].geoPoint)
+                        lanePath.lineTo(off.x, off.y)
+                    }
+                    drawPath(
+                        path = lanePath,
+                        color = colors.sky,
+                        style = Stroke(width = 3.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
+                }
 
-                    val labelPaint = android.graphics.Paint().apply {
-                        color = if (isDark) android.graphics.Color.parseColor("#FFD700") else android.graphics.Color.parseColor("#92400E")
-                        textSize = 22f
-                        isFakeBoldText = true
-                        textAlign = android.graphics.Paint.Align.CENTER
-                    }
-                    val bgLabelPaint = android.graphics.Paint().apply {
-                        color = if (isDark) android.graphics.Color.parseColor("#DD0F172A") else android.graphics.Color.parseColor("#EEFEF3C7")
-                        style = android.graphics.Paint.Style.FILL
-                    }
-                    val strokeLabelPaint = android.graphics.Paint().apply {
-                        color = if (isDark) android.graphics.Color.parseColor("#66FFD700") else android.graphics.Color.parseColor("#99D97706")
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 1.5f
-                    }
-
-                    var lastDrawnX = -9999f
-                    var lastDrawnY = -9999f
-
-                    labels200m.forEach { lbl ->
-                        // Zoom adaptive visibility:
-                        // Zoom >= 16: show all 200m labels
-                        // Zoom 14..15: show 400m / 1000m labels
-                        // Zoom < 14: show only round 1000m (1 KM) labels
-                        val is1Km = lbl.chainageMetres % 1000L == 0L
-                        val is400m = lbl.chainageMetres % 400L == 0L
-                        val shouldRenderAtZoom = when {
-                            currentZoom >= 16 -> true
-                            currentZoom in 14..15 -> is400m || is1Km
-                            else -> is1Km
+                // 5. Live Vehicle Position Indicator (Accuracy Halo + Pulse Ring + Directional Navigation Arrow)
+                if (currentGps != null) {
+                    val vOff = toUnrotated(currentGps)
+                    val accPx = (currentAccuracy / (viewRangeMetres / (w / 2f))).toFloat().coerceIn(16f, 150f)
+                    drawCircle(
+                        color = colors.sky.copy(alpha = 0.18f),
+                        radius = accPx,
+                        center = vOff
+                    )
+                    drawCircle(
+                        color = colors.sky.copy(alpha = pulseAlpha),
+                        radius = 20f,
+                        center = vOff
+                    )
+                    if (activeHeadingDeg != null) {
+                        rotate(degrees = activeHeadingDeg, pivot = vOff) {
+                            val conePath = Path().apply {
+                                moveTo(vOff.x, vOff.y - 22.dp.toPx())
+                                lineTo(vOff.x - 9.dp.toPx(), vOff.y + 8.dp.toPx())
+                                lineTo(vOff.x, vOff.y + 3.dp.toPx())
+                                lineTo(vOff.x + 9.dp.toPx(), vOff.y + 8.dp.toPx())
+                                close()
+                            }
+                            drawPath(path = conePath, color = colors.sky)
                         }
+                    }
+                    drawCircle(color = colors.sky, radius = 9f, center = vOff)
+                    drawCircle(color = if (isDark) Color.White else Color(0xFF0F172A), radius = 4f, center = vOff)
+                }
+            }
 
-                        if (shouldRenderAtZoom) {
-                            val (lx, ly) = OsmTileManager.geoToScreen(
-                                lbl.position, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                            )
-                            if (lx in -40f..(w + 40f) && ly in -40f..(h + 40f)) {
-                                // Prevent screen overlap clutter: ensure at least 45 screen pixels distance
-                                val distFromLast = hypot(lx - lastDrawnX, ly - lastDrawnY)
-                                if (distFromLast >= 45f || is1Km) {
-                                    // Centreline tick marker dot
-                                    drawCircle(
-                                        color = colors.gold,
-                                        radius = if (is1Km) 4.5f else 3f,
-                                        center = Offset(lx, ly)
-                                    )
+            // 2b. Upright Centreline Chainage Labels Every 200 Metres (always horizontal even when rotated!)
+            if (activeSession != null && show200mLabels && centrelinePts.size >= 2) {
+                val labels200m = SurveyGeometryEngine.generate200mChainageLabels(
+                    centrelinePts = centrelinePts,
+                    startChainageMetres = activeSession!!.startChainageMetres,
+                    direction = activeSession!!.direction
+                )
 
-                                    val textStr = lbl.displayChainage
-                                    val textW = labelPaint.measureText(textStr)
+                val labelPaint = android.graphics.Paint().apply {
+                    color = if (isDark) android.graphics.Color.parseColor("#FFD700") else android.graphics.Color.parseColor("#92400E")
+                    textSize = 22f
+                    isFakeBoldText = true
+                    textAlign = android.graphics.Paint.Align.CENTER
+                }
+                val bgLabelPaint = android.graphics.Paint().apply {
+                    color = if (isDark) android.graphics.Color.parseColor("#DD0F172A") else android.graphics.Color.parseColor("#EEFEF3C7")
+                    style = android.graphics.Paint.Style.FILL
+                }
+                val strokeLabelPaint = android.graphics.Paint().apply {
+                    color = if (isDark) android.graphics.Color.parseColor("#66FFD700") else android.graphics.Color.parseColor("#99D97706")
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 1.5f
+                }
 
-                                    // Draw pill background + chainage label
-                                    drawContext.canvas.nativeCanvas.drawRoundRect(
-                                        lx - textW / 2f - 7f,
-                                        ly - 28f,
-                                        lx + textW / 2f + 7f,
-                                        ly - 4f,
-                                        6f,
-                                        6f,
-                                        bgLabelPaint
-                                    )
-                                    drawContext.canvas.nativeCanvas.drawRoundRect(
-                                        lx - textW / 2f - 7f,
-                                        ly - 28f,
-                                        lx + textW / 2f + 7f,
-                                        ly - 4f,
-                                        6f,
-                                        6f,
-                                        strokeLabelPaint
-                                    )
-                                    drawContext.canvas.nativeCanvas.drawText(textStr, lx, ly - 10f, labelPaint)
+                var lastDrawnX = -9999f
+                var lastDrawnY = -9999f
 
-                                    lastDrawnX = lx
-                                    lastDrawnY = ly
-                                }
+                labels200m.forEach { lbl ->
+                    val is1Km = lbl.chainageMetres % 1000L == 0L
+                    val is400m = lbl.chainageMetres % 400L == 0L
+                    val shouldRenderAtZoom = when {
+                        baseZoom >= 16 -> true
+                        baseZoom in 14..15 -> is400m || is1Km
+                        else -> is1Km
+                    }
+
+                    if (shouldRenderAtZoom) {
+                        val scr = toScreenUpright(lbl.position)
+                        val lx = scr.x
+                        val ly = scr.y
+                        if (lx in -40f..(w + 40f) && ly in -40f..(h + 40f)) {
+                            val distFromLast = hypot(lx - lastDrawnX, ly - lastDrawnY)
+                            if (distFromLast >= 45f || is1Km) {
+                                drawCircle(
+                                    color = colors.gold,
+                                    radius = if (is1Km) 4.5f else 3f,
+                                    center = Offset(lx, ly)
+                                )
+
+                                val textStr = lbl.displayChainage
+                                val textW = labelPaint.measureText(textStr)
+                                drawContext.canvas.nativeCanvas.drawRoundRect(
+                                    lx - textW / 2f - 7f,
+                                    ly - 28f,
+                                    lx + textW / 2f + 7f,
+                                    ly - 4f,
+                                    6f,
+                                    6f,
+                                    bgLabelPaint
+                                )
+                                drawContext.canvas.nativeCanvas.drawRoundRect(
+                                    lx - textW / 2f - 7f,
+                                    ly - 28f,
+                                    lx + textW / 2f + 7f,
+                                    ly - 4f,
+                                    6f,
+                                    6f,
+                                    strokeLabelPaint
+                                )
+                                drawContext.canvas.nativeCanvas.drawText(textStr, lx, ly - 10f, labelPaint)
+
+                                lastDrawnX = lx
+                                lastDrawnY = ly
                             }
                         }
                     }
                 }
             }
 
-            // 3. Lane Alignment (Cyan Line)
-            if (showLaneTrack && activePoints.size >= 2) {
-                val lanePath = Path()
-                val (lx, ly) = OsmTileManager.geoToScreen(
-                    activePoints[0].geoPoint, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                )
-                lanePath.moveTo(lx, ly)
-                for (i in 1 until activePoints.size) {
-                    val (px, py) = OsmTileManager.geoToScreen(
-                        activePoints[i].geoPoint, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                    )
-                    lanePath.lineTo(px, py)
-                }
-                drawPath(
-                    path = lanePath,
-                    color = colors.sky,
-                    style = Stroke(width = 3.5f)
-                )
-            }
-
-            // 4. KM Stone Markers (Pin Circles with Labels)
+            // 4. Upright KM Stone Markers (Pin Circles with Labels)
             if (showMarkers) {
                 val textPaint = android.graphics.Paint().apply {
                     color = if (isDark) android.graphics.Color.WHITE else android.graphics.Color.parseColor("#0F172A")
@@ -431,15 +515,13 @@ fun SurveyScreen(
                 }
 
                 activeMarkers.forEach { marker ->
-                    val (mx, my) = OsmTileManager.geoToScreen(
-                        marker.geoPoint, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                    )
+                    val scr = toScreenUpright(marker.geoPoint)
+                    val mx = scr.x
+                    val my = scr.y
                     if (mx in -50f..(w + 50f) && my in -50f..(h + 50f)) {
-                        // Marker circle pin
                         drawCircle(color = colors.red, radius = 14f, center = Offset(mx, my))
                         drawCircle(color = if (isDark) Color.White else Color(0xFFF8FAFC), radius = 5f, center = Offset(mx, my))
 
-                        // Chainage text pill above marker
                         val label = marker.displayChainage
                         val textWidth = textPaint.measureText(label)
                         drawContext.canvas.nativeCanvas.drawRoundRect(
@@ -455,29 +537,17 @@ fun SurveyScreen(
                     }
                 }
             }
+        }
 
-            // 5. Live Vehicle Position Indicator (Pulse Dot + Direction Cone)
-            if (currentGps != null) {
-                val (vx, vy) = OsmTileManager.geoToScreen(
-                    currentGps, anchorPoint, w, h, currentZoom, panOffsetX, panOffsetY
-                )
-                // Accuracy circle
-                val accPx = (currentAccuracy / (viewRangeMetres / (w / 2f))).toFloat().coerceIn(16f, 150f)
-                drawCircle(
-                    color = colors.sky.copy(alpha = 0.18f),
-                    radius = accPx,
-                    center = Offset(vx, vy)
-                )
-                // Vehicle pulse ring
-                drawCircle(
-                    color = colors.sky.copy(alpha = pulseAlpha),
-                    radius = 20f,
-                    center = Offset(vx, vy)
-                )
-                // Vehicle center core
-                drawCircle(color = colors.sky, radius = 9f, center = Offset(vx, vy))
-                drawCircle(color = if (isDark) Color.White else Color(0xFF0F172A), radius = 4f, center = Offset(vx, vy))
-            }
+        // Heading unavailable indicator (only when no reliable heading exists)
+        if (mapHeadingState.isDirectionUnavailable && activeHeadingDeg == null && currentGps != null) {
+            MiniMapHeadingUnavailableBadge(
+                isDark = isDark,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 66.dp)
+            )
         }
 
         // ----------------------------------------------------
@@ -671,9 +741,7 @@ fun SurveyScreen(
                 icon = Icons.Default.ZoomIn,
                 contentDescription = "Zoom In",
                 onClick = {
-                    viewRangeMetres = (viewRangeMetres * 0.65).coerceAtLeast(
-                        OsmTileManager.MIN_VIEW_RANGE_METRES
-                    )
+                    continuousZoom = (continuousZoom + 0.75f).coerceAtMost(MiniMapViewportMath.MAX_ZOOM)
                 },
                 variant = GlassButtonVariant.NEUTRAL,
                 size = 38.dp,
@@ -685,9 +753,7 @@ fun SurveyScreen(
                 icon = Icons.Default.ZoomOut,
                 contentDescription = "Zoom Out",
                 onClick = {
-                    viewRangeMetres = (viewRangeMetres * 1.6).coerceAtMost(
-                        OsmTileManager.MAX_VIEW_RANGE_METRES
-                    )
+                    continuousZoom = (continuousZoom - 0.75f).coerceAtLeast(MiniMapViewportMath.MIN_ZOOM)
                 },
                 variant = GlassButtonVariant.NEUTRAL,
                 size = 38.dp,

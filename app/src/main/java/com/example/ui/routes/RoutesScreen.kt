@@ -81,6 +81,8 @@ fun RoutesScreen(
 ) {
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
+    val locationState by viewModel.locationState.collectAsStateWithLifecycle()
+    val mapHeadingState by viewModel.mapHeadingState.collectAsStateWithLifecycle()
     val isImporting by viewModel.isImportingRoute.collectAsStateWithLifecycle()
     val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
     val routeImportError by viewModel.routeImportError.collectAsStateWithLifecycle()
@@ -131,6 +133,10 @@ fun RoutesScreen(
             item {
                 ActiveRouteCard(
                     activeRoute = activeRoute,
+                    liveLocation = locationState.point,
+                    liveBearing = mapHeadingState.headingDegrees ?: locationState.bearing,
+                    gpsAccuracy = locationState.accuracy,
+                    mapHeadingState = mapHeadingState,
                     onInspectMarkers = { showMarkerInspector = true },
                     onCalibrate = { showCalibrationDialog = true }
                 )
@@ -264,6 +270,10 @@ fun RoutesScreen(
 @Composable
 fun ActiveRouteCard(
     activeRoute: RouteData?,
+    liveLocation: com.example.model.GeoPoint? = null,
+    liveBearing: Float? = null,
+    gpsAccuracy: Float = 0f,
+    mapHeadingState: com.example.geo.MapHeadingState? = null,
     onInspectMarkers: () -> Unit,
     onCalibrate: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -354,16 +364,22 @@ fun ActiveRouteCard(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Embedded Dynamic Map Preview of the Active Route Alignment with soft fading edges
+                // Embedded Dynamic Interactive Map Preview of the Active Route Alignment
                 MiniMapPreview(
-                    location = activeRoute.bounds.center,
-                    bearing = null,
+                    location = liveLocation ?: activeRoute.bounds.center,
+                    bearing = liveBearing,
                     routeData = activeRoute,
                     highwayTag = activeRoute.name,
+                    gpsAccuracy = gpsAccuracy,
+                    showGpsBadge = liveLocation != null && gpsAccuracy > 0f,
                     showProjectTag = true,
+                    mapHeadingState = mapHeadingState,
+                    interactive = true,
+                    autoFitRoute = true,
+                    orientationMode = com.example.model.MiniMapOrientationMode.DIRECTION_UP,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(140.dp)
+                        .height(176.dp)
                         .smartMapEdgeFade(fadeToColor = c.surface, edgeSize = 10.dp)
                 )
 

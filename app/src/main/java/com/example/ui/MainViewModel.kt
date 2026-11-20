@@ -211,6 +211,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val deviceOrientation: StateFlow<com.example.sensor.DeviceOrientation> = compassTracker.deviceOrientation
     val rotationDegrees: StateFlow<Float> = compassTracker.rotationDegrees
 
+    // Single authoritative centralized Map Heading engine (strictly separate from LHS/RHS road-direction engine)
+    val mapHeadingManager = com.example.geo.MapHeadingManager()
+    val mapHeadingState: StateFlow<com.example.geo.MapHeadingState> = mapHeadingManager.headingState
+
     private val _currentTab = MutableStateFlow(AppTab.HOME)
     val currentTab: StateFlow<AppTab> = _currentTab.asStateFlow()
 
@@ -1650,7 +1654,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Retain last valid GPS coordinate/bearing seamlessly across temporary signal drops
+        // Retain last valid GPS coordinate/bearing & feed centralized Map Heading engine seamlessly
         viewModelScope.launch {
             locationTracker.locationState.collect { loc ->
                 if (loc.point != null) {
@@ -1659,6 +1663,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (loc.bearing != null) {
                     lastValidGpsBearing = loc.bearing
                 }
+                mapHeadingManager.processGpsSample(
+                    point = loc.point,
+                    speedMps = loc.speed,
+                    gpsBearingDeg = loc.bearing,
+                    accuracyMetres = loc.accuracy.takeIf { it > 0f },
+                    routeData = activeRouteData.value,
+                    timestampMs = loc.lastFixTime.takeIf { it > 0L } ?: System.currentTimeMillis()
+                )
             }
         }
 
@@ -2812,7 +2824,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             lastValidGpsBearing = liveBearing
         }
         val retainedLoc = liveLoc ?: _lastValidLocation.value
-        val retainedBearing = liveBearing ?: lastValidGpsBearing
+        val retainedBearing = mapHeadingState.value.headingDegrees ?: liveBearing ?: lastValidGpsBearing
         // Non-blocking synchronous read of capture-time weather observation (never delays shutter)
         val (weatherObs, isWeatherFresh) = weatherRepository.getObservationForCapture(
             captureTimeMs = nowMs,

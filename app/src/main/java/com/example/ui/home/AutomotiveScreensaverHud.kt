@@ -22,7 +22,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -109,6 +109,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.geo.MapHeadingState
 import com.example.geo.OsmTileManager
 import com.example.model.GeoPoint
 import com.example.model.HomeScreensaverSettings
@@ -123,18 +124,17 @@ import com.example.model.HudMapPosition
 import com.example.model.HudPanelSize
 import com.example.model.HudSpeedometerStyle
 import com.example.model.HudVerticalPosition
+import com.example.model.MiniMapOrientationMode
 import com.example.model.MiniMapStyle
 import com.example.model.RouteData
 import com.example.model.ScreensaverDisplayMode
 import com.example.model.ScreensaverThemeMode
 import com.example.model.resolveEffectiveScreensaverPresentation
 import com.example.overlay.MiniMapRenderer
-import kotlin.math.ceil
+import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapViewportMath
+import com.example.ui.map.miniMapNavigationGestures
 import kotlin.math.cos
-import kotlin.math.floor
-import kotlin.math.hypot
-import kotlin.math.ln
-import kotlin.math.pow
 import kotlin.math.sin
 
 // Semantic verification keys for automated HUD & mirror physics verification
@@ -278,6 +278,7 @@ fun AutomotiveChainageScreensaverContent(
     distanceToNextMetres: Long? = null,
     lastKmStoneEvent: com.example.navigation.KmStoneAlertEvent? = null,
     isKmStoneMonitoringActive: Boolean = false,
+    mapHeadingState: MapHeadingState? = null,
     onToggleMirrorQuickMode: ((enableMirror: Boolean, currentlyLandscape: Boolean) -> Unit)? = null,
     onToggleOrientationLock: ((currentlyLandscape: Boolean) -> Unit)? = null,
     onToggleScreenOff: ((Boolean) -> Unit)? = null,
@@ -414,7 +415,19 @@ fun AutomotiveChainageScreensaverContent(
                                 )
                             }
 
-                            // True immersive edge-to-edge: only pad around physical display cutouts (punch-holes/notches)
+                            // True immersive edge-to-edge: pad around physical display cutouts (punch-holes/notches)
+                            // AND reserve dedicated vertical clearance for top quick-action strip so controls NEVER
+                            // overlap Chainage, Direction, Speedometer, Location, or Mini Map.
+                            val hasTopControlStrip = onToggleOrientationLock != null ||
+                                onToggleMirrorQuickMode != null ||
+                                (showScreenOffBtn && !isScreenOff) ||
+                                showAodQuickBtn ||
+                                isSamplePreview
+                            val topStripClearanceDp = if (hasTopControlStrip) {
+                                if (isLandscapeMode) 48.dp else 56.dp
+                            } else {
+                                0.dp
+                            }
                             val safeCutoutModifier = Modifier
                                 .fillMaxSize()
                                 .windowInsetsPadding(WindowInsets.displayCutout)
@@ -428,6 +441,8 @@ fun AutomotiveChainageScreensaverContent(
                                     routeData = routeData,
                                     screensaverSettings = screensaverSettings,
                                     palette = palette,
+                                    mapHeadingState = mapHeadingState,
+                                    topControlsClearanceDp = topStripClearanceDp,
                                     modifier = safeCutoutModifier
                                 )
                             } else {
@@ -439,83 +454,104 @@ fun AutomotiveChainageScreensaverContent(
                                     routeData = routeData,
                                     screensaverSettings = screensaverSettings,
                                     palette = palette,
+                                    mapHeadingState = mapHeadingState,
+                                    topControlsClearanceDp = topStripClearanceDp,
                                     modifier = safeCutoutModifier
-                                )
-                            }
-                        }
-
-                        // Sample badge ONLY inside explicit Settings preview mode (never during real Home screensaver)
-                        if (isSamplePreview) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFFF59E0B).copy(alpha = 0.20f),
-                                modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    .padding(top = 8.dp)
-                                    .testTag("screensaver_preview_sample_badge")
-                            ) {
-                                Text(
-                                    text = "SAMPLE DATA",
-                                    color = Color(0xFFFCD34D),
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.Black,
-                                    letterSpacing = 0.8.sp,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // Top-corner quick controls kept outside scaleX mirror wrapper so icons and touch targets
-                // remain upright and never overlap chainage, speedometer, or Mini Map.
+                // Dedicated Top Control Strip kept outside scaleX mirror wrapper so icons and touch targets
+                // remain upright, never collide with each other, and sit strictly above the reserved
+                // clearance of Portrait & Landscape clusters (zero overlap mathematically).
                 if (!pauseDashboardRendering) {
-                    if (onToggleOrientationLock != null) {
-                        ScreensaverOrientationLockToggle(
-                            isLocked = screensaverSettings.orientationLocked,
-                            isDarkPalette = palette.isDark,
-                            hudAlpha = hudAlpha,
-                            onToggle = { onToggleOrientationLock(isLandscapeMode) },
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .windowInsetsPadding(WindowInsets.displayCutout)
-                                .padding(top = 6.dp, start = 8.dp)
-                        )
-                    }
+                    val hasAnyTopControl = onToggleOrientationLock != null ||
+                        onToggleMirrorQuickMode != null ||
+                        (showScreenOffBtn && !isScreenOff) ||
+                        showAodQuickBtn ||
+                        isSamplePreview
 
-                    if (onToggleMirrorQuickMode != null || (showScreenOffBtn && !isScreenOff) || showAodQuickBtn) {
+                    if (hasAnyTopControl) {
                         Row(
-                            verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             modifier = Modifier
-                                .align(Alignment.TopEnd)
+                                .fillMaxWidth()
+                                .align(Alignment.TopCenter)
                                 .windowInsetsPadding(WindowInsets.displayCutout)
-                                .padding(top = 6.dp, end = 8.dp)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .heightIn(min = 48.dp)
+                                .testTag("screensaver_top_controls_bar")
                         ) {
-                            if (showAodQuickBtn) {
-                                ScreensaverAodQuickToggle(
-                                    isDarkPalette = palette.isDark,
-                                    hudAlpha = hudAlpha,
-                                    onToggle = { onToggleAod?.invoke(true) }
-                                )
+                            // Start slot: Orientation Lock toggle
+                            Box(contentAlignment = Alignment.CenterStart) {
+                                if (onToggleOrientationLock != null) {
+                                    ScreensaverOrientationLockToggle(
+                                        isLocked = screensaverSettings.orientationLocked,
+                                        isDarkPalette = palette.isDark,
+                                        hudAlpha = hudAlpha,
+                                        onToggle = { onToggleOrientationLock(isLandscapeMode) }
+                                    )
+                                }
                             }
-                            if (showScreenOffBtn && !isScreenOff) {
-                                ScreensaverScreenOffToggle(
-                                    isScreenOff = false,
-                                    isDarkPalette = palette.isDark,
-                                    hudAlpha = hudAlpha,
-                                    onToggle = { onToggleScreenOff?.invoke(true) }
-                                )
+
+                            // Center slot: Sample badge ONLY inside explicit Settings preview mode
+                            if (isSamplePreview) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFF59E0B).copy(alpha = 0.20f),
+                                    modifier = Modifier
+                                        .padding(horizontal = 4.dp)
+                                        .testTag("screensaver_preview_sample_badge")
+                                ) {
+                                    Text(
+                                        text = "SAMPLE DATA",
+                                        color = Color(0xFFFCD34D),
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = 0.8.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.weight(1f))
                             }
-                            if (onToggleMirrorQuickMode != null) {
-                                ScreensaverMirrorQuickToggle(
-                                    isMirrorActive = isMirrorMode,
-                                    isDarkPalette = palette.isDark,
-                                    hudAlpha = hudAlpha,
-                                    onToggle = {
-                                        onToggleMirrorQuickMode(!isMirrorMode, isLandscapeMode)
-                                    }
-                                )
+
+                            // End slot: AOD, Screen OFF, Mirror quick toggles
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                if (showAodQuickBtn) {
+                                    ScreensaverAodQuickToggle(
+                                        isDarkPalette = palette.isDark,
+                                        hudAlpha = hudAlpha,
+                                        onToggle = { onToggleAod?.invoke(true) }
+                                    )
+                                }
+                                if (showScreenOffBtn && !isScreenOff) {
+                                    ScreensaverScreenOffToggle(
+                                        isScreenOff = false,
+                                        isDarkPalette = palette.isDark,
+                                        hudAlpha = hudAlpha,
+                                        onToggle = { onToggleScreenOff?.invoke(true) }
+                                    )
+                                }
+                                if (onToggleMirrorQuickMode != null) {
+                                    ScreensaverMirrorQuickToggle(
+                                        isMirrorActive = isMirrorMode,
+                                        isDarkPalette = palette.isDark,
+                                        hudAlpha = hudAlpha,
+                                        onToggle = {
+                                            onToggleMirrorQuickMode(!isMirrorMode, isLandscapeMode)
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1304,9 +1340,10 @@ private fun GlassMiniMapContainer(
     routeData: RouteData?,
     screensaverSettings: HomeScreensaverSettings,
     palette: HudClusterPalette,
+    mapHeadingState: MapHeadingState? = null,
     modifier: Modifier = Modifier
 ) {
-    val edgeShape = RoundedCornerShape(24.dp)
+    val edgeShape = RoundedCornerShape(22.dp)
 
     Box(
         modifier = modifier
@@ -1326,6 +1363,7 @@ private fun GlassMiniMapContainer(
             screensaverSettings = screensaverSettings,
             isHudMirror = palette.isHudMirror,
             isDarkPalette = palette.isDark,
+            mapHeadingState = mapHeadingState,
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("screensaver_glass_map")
@@ -1348,7 +1386,7 @@ private fun GlassMiniMapContainer(
                             Color.Transparent,
                             Color.Transparent,
                             edgeGlowColor,
-                            palette.rootBackground.copy(alpha = if (palette.isHudMirror) 0.48f else 0.42f)
+                            palette.rootBackground.copy(alpha = if (palette.isHudMirror) 0.42f else 0.34f)
                         )
                     )
                 )
@@ -1365,19 +1403,29 @@ private fun PortraitAutomotiveCluster(
     routeData: RouteData?,
     screensaverSettings: HomeScreensaverSettings,
     palette: HudClusterPalette,
+    mapHeadingState: MapHeadingState? = null,
+    topControlsClearanceDp: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
         modifier = modifier
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(
+                top = topControlsClearanceDp + 6.dp,
+                bottom = 10.dp,
+                start = 14.dp,
+                end = 14.dp
+            )
             .testTag("screensaver_portrait_layout")
     ) {
-        val preferredCeilingSp = (maxWidth.value * 0.175f).coerceIn(46f, 76f)
-        val baseDialSize = minOf(maxWidth * 0.44f, maxHeight * 0.24f)
-        val dialSize = (baseDialSize * screensaverSettings.speedometerSize.scaleFactor).coerceIn(92.dp, 220.dp)
-        val mapVisible = screensaverSettings.miniMapVisible
-        val gap = (maxHeight * 0.018f).coerceIn(8.dp, 16.dp)
+        val availW = maxWidth
+        val availH = maxHeight
+        val isCompactPortrait = availH < 580.dp
 
+        val hasStatusDir = displayState.reliableSide == null && (
+            displayState.directionState == com.example.model.DirectionDetectionState.DIRECTION_CHANGING ||
+                displayState.directionState == com.example.model.DirectionDetectionState.DIRECTION_UNCERTAIN ||
+                displayState.directionState == com.example.model.DirectionDetectionState.GPS_SIGNAL_WEAK
+            )
         val locationOutsideTop = screensaverSettings.showLocation &&
             screensaverSettings.locationPosition == HudLocationPosition.TOP_BAR &&
             displayState.locationName.isNotBlank()
@@ -1385,33 +1433,121 @@ private fun PortraitAutomotiveCluster(
             screensaverSettings.locationPosition == HudLocationPosition.ABOVE_MAP &&
             displayState.locationName.isNotBlank()
         val locationInsideHero = screensaverSettings.showLocation &&
-            screensaverSettings.locationPosition == HudLocationPosition.BELOW_SIDE
+            screensaverSettings.locationPosition == HudLocationPosition.BELOW_SIDE &&
+            displayState.locationName.isNotBlank()
 
-        val locationSp = (14f * screensaverSettings.locationFontSize.scaleFactor).coerceIn(11f, 20f).sp
-        val mapWeight = screensaverSettings.miniMapSize.weightBias.coerceIn(0.65f, 1.45f)
+        val hasHero = screensaverSettings.showChainage ||
+            (screensaverSettings.showDirectionSide && (displayState.reliableSide != null || hasStatusDir)) ||
+            locationInsideHero
+        val hasSpeed = screensaverSettings.showSpeedometer
+        val mapVisible = screensaverSettings.miniMapVisible
+        val hasOutsideLoc = locationOutsideTop || locationOutsideAboveMap
+
+        val sectionCount = (if (locationOutsideTop) 1 else 0) +
+            (if (hasHero) 1 else 0) +
+            (if (hasSpeed) 1 else 0) +
+            (if (locationOutsideAboveMap) 1 else 0) +
+            (if (mapVisible) 1 else 0)
+
+        val gap = (availH * 0.015f).coerceIn(if (isCompactPortrait) 4.dp else 6.dp, 12.dp)
+        val totalGaps = gap * (sectionCount - 1).coerceAtLeast(0)
+        val usableH = (availH - totalGaps).coerceAtLeast(120.dp)
+
+        val outsideLocH = if (hasOutsideLoc) {
+            (24.dp * screensaverSettings.locationFontSize.scaleFactor).coerceIn(20.dp, 32.dp)
+        } else {
+            0.dp
+        }
+        val coreH = (usableH - outsideLocH).coerceAtLeast(96.dp)
+
+        // Strict non-overlapping proportional vertical budget:
+        // Priority 1: Chainage & Direction, Priority 2: Speedometer, Priority 3: Mini Map fills all remaining space
+        val heroPanelBias = when (screensaverSettings.chainagePanelSize) {
+            HudPanelSize.COMPACT -> 0.90f
+            HudPanelSize.STANDARD -> 1.00f
+            HudPanelSize.EXPANDED -> 1.08f
+        }
+        val mapMinShare = if (mapVisible) {
+            (0.36f * screensaverSettings.miniMapSize.weightBias).coerceIn(0.30f, 0.44f)
+        } else {
+            0f
+        }
+        val (heroMaxH, speedMaxH) = when {
+            hasHero && hasSpeed && mapVisible -> {
+                val nonMapShare = (1f - mapMinShare).coerceIn(0.54f, 0.70f)
+                val heroShare = (nonMapShare * 0.56f * heroPanelBias).coerceIn(0.28f, nonMapShare - 0.22f)
+                val speedShare = (nonMapShare - heroShare).coerceAtLeast(0.22f)
+                Pair(
+                    (coreH * heroShare).coerceIn(68.dp, 210.dp),
+                    (coreH * speedShare).coerceIn(64.dp, 180.dp)
+                )
+            }
+            hasHero && mapVisible -> {
+                val heroShare = (1f - mapMinShare).coerceIn(0.34f, 0.50f)
+                Pair((coreH * heroShare).coerceIn(76.dp, 240.dp), 0.dp)
+            }
+            hasSpeed && mapVisible -> {
+                val speedShare = (1f - mapMinShare).coerceIn(0.30f, 0.44f)
+                Pair(0.dp, (coreH * speedShare).coerceIn(72.dp, 210.dp))
+            }
+            hasHero && hasSpeed -> {
+                Pair(
+                    (coreH * 0.56f).coerceIn(84.dp, 280.dp),
+                    (coreH * 0.44f).coerceIn(72.dp, 220.dp)
+                )
+            }
+            hasHero -> Pair(coreH.coerceAtMost(320.dp), 0.dp)
+            hasSpeed -> Pair(0.dp, coreH.coerceAtMost(260.dp))
+            else -> Pair(0.dp, 0.dp)
+        }
+
+        val preferredCeilingSp = minOf(availW.value * 0.175f, heroMaxH.value * 0.44f).coerceIn(30f, 76f)
+        val rawDialTarget = minOf(availW * 0.42f, speedMaxH.coerceAtLeast(64.dp)) *
+            screensaverSettings.speedometerSize.scaleFactor
+        val dialSize = if (screensaverSettings.speedometerStyle == HudSpeedometerStyle.DIGITAL) {
+            minOf(rawDialTarget, speedMaxH / 0.78f, (availW * 0.86f) / 1.12f).coerceIn(58.dp, 180.dp)
+        } else {
+            minOf(rawDialTarget, speedMaxH, availW * 0.86f).coerceIn(58.dp, 180.dp)
+        }
+
+        val locationSp = (13.5f * screensaverSettings.locationFontSize.scaleFactor)
+            .coerceIn(10.5f, if (isCompactPortrait) 15.5f else 19f).sp
 
         val heroBlock: @Composable () -> Unit = {
-            HeroChainageCard(
-                displayState = displayState,
-                screensaverSettings = screensaverSettings,
-                palette = palette,
-                preferredCeilingSp = preferredCeilingSp,
-                includeLocationInside = locationInsideHero,
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (hasHero) {
+                HeroChainageCard(
+                    displayState = displayState,
+                    screensaverSettings = screensaverSettings,
+                    palette = palette,
+                    preferredCeilingSp = preferredCeilingSp,
+                    includeLocationInside = locationInsideHero,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = heroMaxH)
+                        .clipToBounds()
+                )
+            }
         }
 
         val speedBlock: @Composable () -> Unit = {
-            if (screensaverSettings.showSpeedometer) {
-                AutomotiveSpeedometerDisplay(
-                    speedKmh = displayState.speedKmh,
-                    speedText = displayState.speedText,
-                    style = screensaverSettings.speedometerStyle,
-                    animateNeedle = screensaverSettings.speedometerAnimateNeedle,
-                    animateNumbers = screensaverSettings.speedometerAnimateNumbers,
-                    palette = palette,
-                    dialSize = dialSize
-                )
+            if (hasSpeed) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = speedMaxH)
+                        .clipToBounds()
+                ) {
+                    AutomotiveSpeedometerDisplay(
+                        speedKmh = displayState.speedKmh,
+                        speedText = displayState.speedText,
+                        style = screensaverSettings.speedometerStyle,
+                        animateNeedle = screensaverSettings.speedometerAnimateNeedle,
+                        animateNumbers = screensaverSettings.speedometerAnimateNumbers,
+                        palette = palette,
+                        dialSize = dialSize
+                    )
+                }
             }
         }
 
@@ -1423,6 +1559,7 @@ private fun PortraitAutomotiveCluster(
                 routeData = routeData,
                 screensaverSettings = screensaverSettings,
                 palette = palette,
+                mapHeadingState = mapHeadingState,
                 modifier = mapMod
             )
         }
@@ -1430,65 +1567,19 @@ private fun PortraitAutomotiveCluster(
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = if (mapVisible) Arrangement.SpaceBetween else Arrangement.Center
+            verticalArrangement = if (mapVisible) {
+                Arrangement.spacedBy(gap)
+            } else {
+                Arrangement.spacedBy(gap, Alignment.CenterVertically)
+            }
         ) {
             if (locationOutsideTop) {
-                AutomotiveLocationLabel(
-                    locationName = displayState.locationName,
-                    textColor = palette.secondaryTextColor,
-                    shadowColor = palette.chainageGlowColor,
-                    fontSize = locationSp,
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .padding(bottom = gap)
-                        .testTag("screensaver_location_name")
-                )
-            }
-
-            if (mapVisible && screensaverSettings.miniMapPosition == HudMapPosition.TOP) {
-                mapBlock(Modifier.fillMaxWidth().weight(mapWeight))
-                Spacer(modifier = Modifier.height(gap))
-                if (locationOutsideAboveMap) {
-                    AutomotiveLocationLabel(
-                        locationName = displayState.locationName,
-                        textColor = palette.secondaryTextColor,
-                        shadowColor = palette.chainageGlowColor,
-                        fontSize = locationSp,
-                        modifier = Modifier
-                            .padding(bottom = gap / 2)
-                            .testTag("screensaver_location_name")
-                    )
-                }
-                if (screensaverSettings.chainagePanelPosition == HudVerticalPosition.BOTTOM) {
-                    speedBlock()
-                    if (screensaverSettings.showSpeedometer) Spacer(modifier = Modifier.height(gap))
-                    heroBlock()
-                } else {
-                    heroBlock()
-                    if (screensaverSettings.showSpeedometer) {
-                        Spacer(modifier = Modifier.height(gap))
-                        speedBlock()
-                    }
-                }
-            } else {
-                when (screensaverSettings.chainagePanelPosition) {
-                    HudVerticalPosition.TOP -> {
-                        heroBlock()
-                        if (screensaverSettings.showSpeedometer) {
-                            Spacer(modifier = Modifier.height(gap))
-                            speedBlock()
-                        }
-                    }
-                    HudVerticalPosition.CENTER, HudVerticalPosition.BOTTOM -> {
-                        if (screensaverSettings.showSpeedometer) {
-                            speedBlock()
-                            Spacer(modifier = Modifier.height(gap))
-                        }
-                        heroBlock()
-                    }
-                }
-
-                if (locationOutsideAboveMap) {
-                    Spacer(modifier = Modifier.height(gap))
+                        .fillMaxWidth()
+                        .heightIn(max = outsideLocH)
+                ) {
                     AutomotiveLocationLabel(
                         locationName = displayState.locationName,
                         textColor = palette.secondaryTextColor,
@@ -1497,10 +1588,64 @@ private fun PortraitAutomotiveCluster(
                         modifier = Modifier.testTag("screensaver_location_name")
                     )
                 }
+            }
+
+            if (mapVisible && screensaverSettings.miniMapPosition == HudMapPosition.TOP) {
+                mapBlock(Modifier.fillMaxWidth().weight(1f))
+                if (locationOutsideAboveMap) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = outsideLocH)
+                    ) {
+                        AutomotiveLocationLabel(
+                            locationName = displayState.locationName,
+                            textColor = palette.secondaryTextColor,
+                            shadowColor = palette.chainageGlowColor,
+                            fontSize = locationSp,
+                            modifier = Modifier.testTag("screensaver_location_name")
+                        )
+                    }
+                }
+                if (screensaverSettings.chainagePanelPosition == HudVerticalPosition.BOTTOM) {
+                    speedBlock()
+                    heroBlock()
+                } else {
+                    heroBlock()
+                    speedBlock()
+                }
+            } else {
+                when (screensaverSettings.chainagePanelPosition) {
+                    HudVerticalPosition.TOP -> {
+                        heroBlock()
+                        speedBlock()
+                    }
+                    HudVerticalPosition.CENTER, HudVerticalPosition.BOTTOM -> {
+                        speedBlock()
+                        heroBlock()
+                    }
+                }
+
+                if (locationOutsideAboveMap) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = outsideLocH)
+                    ) {
+                        AutomotiveLocationLabel(
+                            locationName = displayState.locationName,
+                            textColor = palette.secondaryTextColor,
+                            shadowColor = palette.chainageGlowColor,
+                            fontSize = locationSp,
+                            modifier = Modifier.testTag("screensaver_location_name")
+                        )
+                    }
+                }
 
                 if (mapVisible) {
-                    Spacer(modifier = Modifier.height(gap))
-                    mapBlock(Modifier.fillMaxWidth().weight(mapWeight))
+                    mapBlock(Modifier.fillMaxWidth().weight(1f))
                 }
             }
         }
@@ -1516,11 +1661,18 @@ private fun LandscapeAutomotiveCluster(
     routeData: RouteData?,
     screensaverSettings: HomeScreensaverSettings,
     palette: HudClusterPalette,
+    mapHeadingState: MapHeadingState? = null,
+    topControlsClearanceDp: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
         modifier = modifier
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(
+                top = (topControlsClearanceDp * 0.85f).coerceAtLeast(8.dp),
+                bottom = 10.dp,
+                start = 12.dp,
+                end = 12.dp
+            )
             .testTag("screensaver_landscape_layout")
     ) {
         val mapVisible = screensaverSettings.miniMapVisible
@@ -1535,9 +1687,9 @@ private fun LandscapeAutomotiveCluster(
         val leftWeight = rawSpeedW / totalW
         val centerWeight = rawCenterW / totalW
 
-        val preferredCeilingSp = (maxHeight.value * 0.25f).coerceIn(38f, 68f)
+        val preferredCeilingSp = (maxHeight.value * 0.25f).coerceIn(36f, 68f)
         val baseDialSize = minOf(maxWidth * leftWeight.coerceAtLeast(0.20f) - 8.dp, maxHeight * 0.78f)
-        val dialSize = (baseDialSize * screensaverSettings.speedometerSize.scaleFactor).coerceIn(84.dp, 210.dp)
+        val dialSize = (baseDialSize * screensaverSettings.speedometerSize.scaleFactor).coerceIn(72.dp, 200.dp)
         val rowGap = if (maxWidth < 560.dp) 8.dp else 12.dp
 
         val speedPanel: @Composable androidx.compose.foundation.layout.RowScope.(Float) -> Unit = { w ->
@@ -1581,6 +1733,7 @@ private fun LandscapeAutomotiveCluster(
                 routeData = routeData,
                 screensaverSettings = screensaverSettings,
                 palette = palette,
+                mapHeadingState = mapHeadingState,
                 modifier = Modifier
                     .weight(w)
                     .fillMaxHeight()
@@ -2197,9 +2350,11 @@ private fun ScreensaverLiveMiniMapPanel(
     screensaverSettings: HomeScreensaverSettings,
     isHudMirror: Boolean,
     isDarkPalette: Boolean = true,
+    mapHeadingState: MapHeadingState? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
     val reusableRoutePath = remember { Path() }
 
@@ -2220,11 +2375,10 @@ private fun ScreensaverLiveMiniMapPanel(
     }
 
     val continuousZoom = (screensaverSettings.miniMapZoomLevel + localZoomOffset).coerceIn(
-        HomeScreensaverSettings.MIN_ZOOM_LEVEL,
-        HomeScreensaverSettings.MAX_ZOOM_LEVEL
+        MiniMapViewportMath.MIN_ZOOM,
+        MiniMapViewportMath.MAX_ZOOM
     )
-    val baseZoom = floor(continuousZoom).toInt().coerceIn(2, 19)
-    val fractionalScale = 2.0.pow((continuousZoom - baseZoom).toDouble()).toFloat().coerceIn(0.6f, 2.2f)
+    val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
 
     var lastValidLocation by remember { mutableStateOf(location) }
     LaunchedEffect(location) {
@@ -2233,61 +2387,31 @@ private fun ScreensaverLiveMiniMapPanel(
         }
     }
 
-    val targetAnchor = exploredCenter ?: location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+    val vehicleGeo = location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
 
-    var startAnchor by remember { mutableStateOf(targetAnchor) }
-    var endAnchor by remember { mutableStateOf(targetAnchor) }
-    val glideAnim = remember { Animatable(1f) }
-    LaunchedEffect(
-        targetAnchor.latitude,
-        targetAnchor.longitude,
-        screensaverSettings.recenterEpoch,
-        exploredCenter
-    ) {
-        if (exploredCenter != null) {
-            startAnchor = targetAnchor
-            endAnchor = targetAnchor
-            glideAnim.snapTo(1f)
-        } else if (targetAnchor.latitude != endAnchor.latitude ||
-            targetAnchor.longitude != endAnchor.longitude ||
-            screensaverSettings.recenterEpoch > 0L
-        ) {
-            val frac = glideAnim.value.toDouble()
-            val curLat = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * frac
-            val curLng = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * frac
-            startAnchor = GeoPoint(curLat, curLng)
-            endAnchor = targetAnchor
-            glideAnim.snapTo(0f)
-            glideAnim.animateTo(1f, animationSpec = tween(550, easing = FastOutSlowInEasing))
-        }
-    }
-    val interpolatedAnchor = GeoPoint(
-        latitude = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * glideAnim.value.toDouble(),
-        longitude = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * glideAnim.value.toDouble()
-    )
-
-    val effectiveBearing = remember(interpolatedAnchor, bearing, routeData?.id) {
-        MiniMapRenderer.resolveEffectiveBearing(interpolatedAnchor, bearing, routeData)
+    // Use centralized filtered MapHeadingManager heading (never snaps back to North-Up when stationary!)
+    val effectiveBearing = remember(vehicleGeo, mapHeadingState?.headingDegrees, bearing, routeData?.id) {
+        mapHeadingState?.headingDegrees
+            ?: MiniMapRenderer.resolveEffectiveBearing(vehicleGeo, bearing, routeData)
     }
     val rawTargetRotationDeg = remember(screensaverSettings.miniMapOrientation, effectiveBearing) {
-        MiniMapRenderer.resolveMapRotationDegrees(
+        MiniMapViewportMath.resolveDirectionUpRotation(
             mode = screensaverSettings.miniMapOrientation,
-            effectiveBearing = effectiveBearing
+            headingDegrees = effectiveBearing
         )
     }
 
     var unwrappedRotation by remember { mutableFloatStateOf(rawTargetRotationDeg) }
     LaunchedEffect(rawTargetRotationDeg) {
-        var delta = (rawTargetRotationDeg - unwrappedRotation) % 360f
-        if (delta > 180f) delta -= 360f
-        if (delta < -180f) delta += 360f
-        unwrappedRotation += delta
+        unwrappedRotation = MiniMapViewportMath.unwrapShortestAngle(unwrappedRotation, rawTargetRotationDeg)
     }
     val animatedMapRotation by animateFloatAsState(
         targetValue = unwrappedRotation,
-        animationSpec = tween(280, easing = FastOutSlowInEasing),
+        animationSpec = tween(260, easing = FastOutSlowInEasing),
         label = "hud_minimap_rotation"
     )
+    val isDirectionUpActive = screensaverSettings.miniMapOrientation != MiniMapOrientationMode.NORTH_UP &&
+        effectiveBearing != null
 
     val navTransition = rememberInfiniteTransition(label = "hud_map_nav_pulse")
     val navPulse by navTransition.animateFloat(
@@ -2304,194 +2428,302 @@ private fun ScreensaverLiveMiniMapPanel(
     val routeCoreColor = if (isHudMirror) Color(0xFF7DD3FC) else if (isDarkPalette) Color(0xFF38BDF8) else Color(0xFF0284C7)
     val markerColor = if (isHudMirror) Color(0xFF34D399) else Color(0xFF38BDF8)
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .clipToBounds()
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val currentAnchor = exploredCenter ?: location ?: lastValidLocation ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-                    val curZ = floor((screensaverSettings.miniMapZoomLevel + localZoomOffset).coerceIn(2f, 19f)).toInt()
-                    if (pan.x != 0f || pan.y != 0f) {
-                        exploredCenter = OsmTileManager.offsetGeoPointByPixels(
-                            center = currentAnchor,
-                            deltaPxX = pan.x,
-                            deltaPxY = pan.y,
-                            zoom = curZ
-                        )
-                    }
-                    if (zoom != 1f) {
-                        localZoomOffset = (localZoomOffset + (ln(zoom.toDouble()) / ln(2.0)).toFloat())
-                            .coerceIn(
-                                HomeScreensaverSettings.MIN_ZOOM_LEVEL - screensaverSettings.miniMapZoomLevel,
-                                HomeScreensaverSettings.MAX_ZOOM_LEVEL - screensaverSettings.miniMapZoomLevel
-                            )
-                    }
-                }
-            }
             .semantics {
                 miniMapRotationDeg = rawTargetRotationDeg
             }
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val _tick = tileUpdate
-            val w = size.width
-            val h = size.height
-            val cx = w / 2f
-            val cy = h / 2f
-            val diagPx = ceil(hypot(w.toDouble(), h.toDouble()) / fractionalScale)
-                .toInt()
-                .coerceIn(64, 1024)
+        val viewportWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+        val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
-            val osmBmp = OsmTileManager.renderMapBitmap(
-                context = context,
-                center = interpolatedAnchor,
-                widthPx = diagPx,
-                heightPx = diagPx,
-                zoom = baseZoom,
-                panOffsetX = 0f,
-                panOffsetY = 0f,
-                darkTheme = darkTiles,
-                mapType = osmMapType
+        val followTargetAnchor = remember(
+            exploredCenter,
+            vehicleGeo,
+            continuousZoom,
+            viewportHeightPx,
+            animatedMapRotation,
+            isDirectionUpActive
+        ) {
+            exploredCenter ?: MiniMapViewportMath.computeFollowCameraCenter(
+                vehicleGeo = vehicleGeo,
+                continuousZoom = continuousZoom,
+                viewportHeightPx = viewportHeightPx,
+                mapRotationDeg = animatedMapRotation,
+                isDirectionUpActive = isDirectionUpActive
             )
+        }
 
-            drawRect(color = if (isHudMirror) Color(0xFF030712) else mapTheme.mapBackground)
+        var startAnchor by remember { mutableStateOf(followTargetAnchor) }
+        var endAnchor by remember { mutableStateOf(followTargetAnchor) }
+        val glideAnim = remember { Animatable(1f) }
+        LaunchedEffect(
+            followTargetAnchor.latitude,
+            followTargetAnchor.longitude,
+            screensaverSettings.recenterEpoch,
+            exploredCenter
+        ) {
+            if (exploredCenter != null) {
+                startAnchor = followTargetAnchor
+                endAnchor = followTargetAnchor
+                glideAnim.snapTo(1f)
+            } else if (followTargetAnchor.latitude != endAnchor.latitude ||
+                followTargetAnchor.longitude != endAnchor.longitude ||
+                screensaverSettings.recenterEpoch > 0L
+            ) {
+                val frac = glideAnim.value.toDouble()
+                val curLat = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * frac
+                val curLng = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * frac
+                startAnchor = GeoPoint(curLat, curLng)
+                endAnchor = followTargetAnchor
+                glideAnim.snapTo(0f)
+                glideAnim.animateTo(1f, animationSpec = tween(420, easing = FastOutSlowInEasing))
+            }
+        }
+        val interpolatedAnchor = GeoPoint(
+            latitude = startAnchor.latitude + (endAnchor.latitude - startAnchor.latitude) * glideAnim.value.toDouble(),
+            longitude = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * glideAnim.value.toDouble()
+        )
 
-            rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
-                if (osmBmp != null) {
-                    scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
-                        drawImage(
-                            image = osmBmp.asImageBitmap(),
-                            dstOffset = IntOffset(
-                                x = (cx - diagPx / 2f).toInt(),
-                                y = (cy - diagPx / 2f).toInt()
-                            ),
-                            dstSize = IntSize(diagPx, diagPx),
-                            alpha = if (isHudMirror) 0.72f else 0.90f
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .miniMapNavigationGestures(enabled = true) { centroid, pan, zoom ->
+                    val currentCenter = exploredCenter ?: interpolatedAnchor
+                    val curZoom = (screensaverSettings.miniMapZoomLevel + localZoomOffset).coerceIn(
+                        MiniMapViewportMath.MIN_ZOOM,
+                        MiniMapViewportMath.MAX_ZOOM
+                    )
+                    val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
+                        currentCenter = currentCenter,
+                        currentZoom = curZoom,
+                        focalX = centroid.x,
+                        focalY = centroid.y,
+                        viewportWidthPx = viewportWidthPx,
+                        viewportHeightPx = viewportHeightPx,
+                        panX = pan.x,
+                        panY = pan.y,
+                        zoomChange = zoom,
+                        mapRotationDeg = animatedMapRotation
+                    )
+                    exploredCenter = nextCenter
+                    localZoomOffset = (nextZoom - screensaverSettings.miniMapZoomLevel).coerceIn(
+                        MiniMapViewportMath.MIN_ZOOM - screensaverSettings.miniMapZoomLevel,
+                        MiniMapViewportMath.MAX_ZOOM - screensaverSettings.miniMapZoomLevel
+                    )
+                }
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val _tick = tileUpdate
+                val w = size.width
+                val h = size.height
+                val cx = w / 2f
+                val cy = h / 2f
+                val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
+                    widthPx = w,
+                    heightPx = h,
+                    fractionalScale = fractionalScale,
+                    maxPx = 1024
+                )
+
+                val osmBmp = OsmTileManager.renderMapBitmap(
+                    context = context,
+                    center = interpolatedAnchor,
+                    widthPx = diagPx,
+                    heightPx = diagPx,
+                    zoom = baseZoom,
+                    panOffsetX = 0f,
+                    panOffsetY = 0f,
+                    darkTheme = darkTiles,
+                    mapType = osmMapType
+                )
+
+                drawRect(color = if (isHudMirror) Color(0xFF030712) else mapTheme.mapBackground)
+
+                rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
+                    if (osmBmp != null) {
+                        scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                            drawImage(
+                                image = osmBmp.asImageBitmap(),
+                                dstOffset = IntOffset(
+                                    x = (cx - diagPx / 2f).toInt(),
+                                    y = (cy - diagPx / 2f).toInt()
+                                ),
+                                dstSize = IntSize(diagPx, diagPx),
+                                alpha = if (isHudMirror) 0.72f else 0.90f
+                            )
+                        }
+                    } else {
+                        val gridStep = 44.dp.toPx()
+                        val halfSpan = maxOf(w, h)
+                        var g = -halfSpan
+                        while (g <= halfSpan * 1.5f) {
+                            drawLine(
+                                color = Color(0xFF38BDF8).copy(alpha = 0.14f),
+                                start = Offset(cx + g, cy - halfSpan),
+                                end = Offset(cx + g, cy + halfSpan),
+                                strokeWidth = 1f
+                            )
+                            drawLine(
+                                color = Color(0xFF38BDF8).copy(alpha = 0.14f),
+                                start = Offset(cx - halfSpan, cy + g),
+                                end = Offset(cx + halfSpan, cy + g),
+                                strokeWidth = 1f
+                            )
+                            g += gridStep
+                        }
+                    }
+
+                    fun toScreen(pt: GeoPoint): Offset {
+                        return MiniMapViewportMath.geoToUnrotatedScreen(
+                            pt = pt,
+                            center = interpolatedAnchor,
+                            viewportWidthPx = w,
+                            viewportHeightPx = h,
+                            continuousZoom = continuousZoom
                         )
                     }
-                } else {
-                    val gridStep = 44.dp.toPx()
-                    val halfSpan = maxOf(w, h)
-                    var g = -halfSpan
-                    while (g <= halfSpan * 1.5f) {
-                        drawLine(
-                            color = Color(0xFF38BDF8).copy(alpha = 0.14f),
-                            start = Offset(cx + g, cy - halfSpan),
-                            end = Offset(cx + g, cy + halfSpan),
-                            strokeWidth = 1f
-                        )
-                        drawLine(
-                            color = Color(0xFF38BDF8).copy(alpha = 0.14f),
-                            start = Offset(cx - halfSpan, cy + g),
-                            end = Offset(cx + halfSpan, cy + g),
-                            strokeWidth = 1f
-                        )
-                        g += gridStep
-                    }
-                }
 
-                fun toScreen(pt: GeoPoint): Offset {
-                    val (sx, sy) = OsmTileManager.geoToScreen(
-                        pt = pt,
-                        center = interpolatedAnchor,
-                        widthPx = w,
-                        heightPx = h,
-                        zoom = baseZoom,
-                        panOffsetX = 0f,
-                        panOffsetY = 0f
-                    )
-                    return Offset(
-                        x = cx + (sx - cx) * fractionalScale,
-                        y = cy + (sy - cy) * fractionalScale
-                    )
-                }
-
-                // Actual imported route alignment vector lines (if toggled visible)
-                if (screensaverSettings.miniMapShowRouteAlignment &&
-                    routeData != null &&
-                    routeData.alignments.isNotEmpty()
-                ) {
-                    for (align in routeData.alignments) {
-                        if (align.points.size < 2) continue
-                        reusableRoutePath.reset()
-                        var started = false
-                        for (pt in align.points) {
-                            val off = toScreen(pt)
-                            if (!started) {
-                                reusableRoutePath.moveTo(off.x, off.y)
-                                started = true
-                            } else {
-                                reusableRoutePath.lineTo(off.x, off.y)
+                    // Actual imported route alignment vector lines (if toggled visible)
+                    if (screensaverSettings.miniMapShowRouteAlignment &&
+                        routeData != null &&
+                        routeData.alignments.isNotEmpty()
+                    ) {
+                        for (align in routeData.alignments) {
+                            if (align.points.size < 2) continue
+                            reusableRoutePath.reset()
+                            var started = false
+                            for (pt in align.points) {
+                                val off = toScreen(pt)
+                                if (!started) {
+                                    reusableRoutePath.moveTo(off.x, off.y)
+                                    started = true
+                                } else {
+                                    reusableRoutePath.lineTo(off.x, off.y)
+                                }
                             }
+                            drawPath(
+                                path = reusableRoutePath,
+                                color = outerGlowColor.copy(alpha = 0.30f),
+                                style = Stroke(width = 11.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                            drawPath(
+                                path = reusableRoutePath,
+                                color = routeCoreColor,
+                                style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
                         }
-                        drawPath(
-                            path = reusableRoutePath,
-                            color = outerGlowColor.copy(alpha = 0.30f),
-                            style = Stroke(width = 11.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-                        drawPath(
-                            path = reusableRoutePath,
-                            color = routeCoreColor,
-                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
                     }
-                }
 
-                // Live / retained vehicle marker
-                val markerGeo = location ?: lastValidLocation
-                if (markerGeo != null) {
-                    val userOff = toScreen(markerGeo)
-                    drawCircle(
-                        color = markerColor.copy(alpha = navPulse * 0.65f),
-                        radius = 15.dp.toPx(),
-                        center = userOff
-                    )
-                    val activeHeading = effectiveBearing ?: compassHeading
-                    when (screensaverSettings.miniMapMarkerStyle) {
-                        HudMapMarkerStyle.NAVIGATION_ARROW -> {
-                            rotate(degrees = activeHeading, pivot = userOff) {
-                                reusableRoutePath.reset()
-                                reusableRoutePath.moveTo(userOff.x, userOff.y - 11.dp.toPx())
-                                reusableRoutePath.lineTo(userOff.x - 6.dp.toPx(), userOff.y + 6.dp.toPx())
-                                reusableRoutePath.lineTo(userOff.x, userOff.y + 2.5.dp.toPx())
-                                reusableRoutePath.lineTo(userOff.x + 6.dp.toPx(), userOff.y + 6.dp.toPx())
-                                reusableRoutePath.close()
-                                drawPath(path = reusableRoutePath, color = markerColor)
+                    // Live / retained vehicle marker
+                    val markerGeo = location ?: lastValidLocation
+                    if (markerGeo != null) {
+                        val userOff = toScreen(markerGeo)
+                        drawCircle(
+                            color = markerColor.copy(alpha = navPulse * 0.65f),
+                            radius = 15.dp.toPx(),
+                            center = userOff
+                        )
+                        val activeHeading = effectiveBearing
+                        when (screensaverSettings.miniMapMarkerStyle) {
+                            HudMapMarkerStyle.NAVIGATION_ARROW -> {
+                                if (activeHeading != null) {
+                                    rotate(degrees = activeHeading, pivot = userOff) {
+                                        reusableRoutePath.reset()
+                                        reusableRoutePath.moveTo(userOff.x, userOff.y - 11.dp.toPx())
+                                        reusableRoutePath.lineTo(userOff.x - 6.dp.toPx(), userOff.y + 6.dp.toPx())
+                                        reusableRoutePath.lineTo(userOff.x, userOff.y + 2.5.dp.toPx())
+                                        reusableRoutePath.lineTo(userOff.x + 6.dp.toPx(), userOff.y + 6.dp.toPx())
+                                        reusableRoutePath.close()
+                                        drawPath(path = reusableRoutePath, color = markerColor)
+                                    }
+                                }
+                                drawCircle(color = Color.White, radius = 4.dp.toPx(), center = userOff)
+                                drawCircle(color = markerColor, radius = 2.4.dp.toPx(), center = userOff)
                             }
-                            drawCircle(color = Color.White, radius = 4.dp.toPx(), center = userOff)
-                            drawCircle(color = markerColor, radius = 2.4.dp.toPx(), center = userOff)
-                        }
-                        HudMapMarkerStyle.PULSE_DOT -> {
-                            drawCircle(color = Color.White, radius = 6.5.dp.toPx(), center = userOff)
-                            drawCircle(color = markerColor, radius = 4.2.dp.toPx(), center = userOff)
-                        }
-                        HudMapMarkerStyle.CLASSIC_PIN -> {
-                            drawCircle(color = Color.White, radius = 7.dp.toPx(), center = userOff)
-                            drawCircle(color = Color(0xFFEF4444), radius = 4.5.dp.toPx(), center = userOff)
+                            HudMapMarkerStyle.PULSE_DOT -> {
+                                drawCircle(color = Color.White, radius = 6.5.dp.toPx(), center = userOff)
+                                drawCircle(color = markerColor, radius = 4.2.dp.toPx(), center = userOff)
+                            }
+                            HudMapMarkerStyle.CLASSIC_PIN -> {
+                                drawCircle(color = Color.White, radius = 7.dp.toPx(), center = userOff)
+                                drawCircle(color = Color(0xFFEF4444), radius = 4.5.dp.toPx(), center = userOff)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Subtle North orientation pip top-right (non-interactive pure instrument indicator)
-        Surface(
-            shape = CircleShape,
-            color = if (isDarkPalette || isHudMirror) Color(0xFF020617).copy(alpha = 0.52f) else Color.White.copy(alpha = 0.85f),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(8.dp)
-                .size(26.dp)
-                .graphicsLayer { rotationZ = animatedMapRotation }
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = "N",
-                    color = if (isDarkPalette || isHudMirror) Color(0xFF38BDF8) else Color(0xFF0284C7),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1
+            // Show Heading Unavailable indicator ONLY when no reliable heading exists
+            if (mapHeadingState?.isDirectionUnavailable == true &&
+                effectiveBearing == null &&
+                location != null &&
+                screensaverSettings.miniMapOrientation != MiniMapOrientationMode.NORTH_UP
+            ) {
+                MiniMapHeadingUnavailableBadge(
+                    isDark = isDarkPalette || isHudMirror,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
                 )
+            }
+
+            // Show compact Recenter chip ONLY when user manually panned away from vehicle
+            if (exploredCenter != null) {
+                Surface(
+                    shape = CircleShape,
+                    color = if (isDarkPalette || isHudMirror) Color(0xDD0284C7) else Color(0xFF1677F2),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .minimumInteractiveComponentSize()
+                        .clickable {
+                            exploredCenter = null
+                        }
+                        .testTag("screensaver_map_recenter_btn")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MyLocation,
+                            contentDescription = "Follow vehicle",
+                            tint = Color.White,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Follow",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            // Subtle North orientation pip top-right (non-interactive pure instrument indicator)
+            Surface(
+                shape = CircleShape,
+                color = if (isDarkPalette || isHudMirror) Color(0xFF020617).copy(alpha = 0.52f) else Color.White.copy(alpha = 0.85f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .size(26.dp)
+                    .graphicsLayer { rotationZ = animatedMapRotation }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "N",
+                        color = if (isDarkPalette || isHudMirror) Color(0xFF38BDF8) else Color(0xFF0284C7),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }

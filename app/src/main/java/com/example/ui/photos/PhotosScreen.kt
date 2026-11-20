@@ -2610,9 +2610,10 @@ fun PhotoDetailsDialog(
                         gpsAccuracy = photo.accuracy,
                         showGpsBadge = true,
                         showProjectTag = true,
+                        interactive = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(130.dp)
+                            .height(152.dp)
                     )
                 }
             }

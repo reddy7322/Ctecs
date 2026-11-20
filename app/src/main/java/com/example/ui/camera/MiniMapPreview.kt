@@ -1,25 +1,42 @@
 package com.example.ui.camera
 
 import android.graphics.RectF
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -28,312 +45,555 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.geo.MapHeadingState
 import com.example.geo.OsmTileManager
 import com.example.model.GeoPoint
+import com.example.model.MiniMapOrientationMode
 import com.example.model.MiniMapStyleConfig
 import com.example.model.RouteData
 import com.example.overlay.MiniMapRenderer
-import java.util.Locale
+import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapViewportMath
+import com.example.ui.map.miniMapNavigationGestures
+import com.example.ui.map.rememberResolvedMapColors
+import com.example.ui.theme.AccentRed
+import com.example.ui.theme.HighlightYellow
+import kotlin.math.cos
+import kotlin.math.sin
 
+/**
+ * Dynamic Mini Map composable used in Camera Screen, Settings Preview, Routes Screen,
+ * and Photo Info embedded map previews.
+ *
+ * - Always Direction-Up by default (never auto-resets to North-Up).
+ * - Dynamically fits full available container dimensions with proper aspect ratio & zero clipping.
+ * - Supports Google Maps-style focal-point pinch zoom, rotation-aware panning, and compact
+ *   `+`, `−`, and Recenter controls when [interactive] is enabled.
+ */
 @Composable
 fun MiniMapPreview(
     location: GeoPoint?,
     bearing: Float?,
     routeData: RouteData?,
     highwayTag: String,
-    modifier: Modifier = Modifier,
-    gpsAccuracy: Float? = null,
+    gpsAccuracy: Float = 0f,
     showGpsBadge: Boolean = false,
     showProjectTag: Boolean = false,
-    overrideIsDark: Boolean? = null,
-    mapType: String = "standard",
     mapThemePreference: String = "system",
-    showAttribution: Boolean = false,
-    transparentBackground: Boolean = false,
+    mapTypePreference: String = "standard",
     miniMapConfig: MiniMapStyleConfig? = null,
-    chainageLabel: String? = null,
-    sideLabel: String? = null,
-    isGpsRetained: Boolean = false
+    chainageLabel: String = "",
+    sideLabel: String = "",
+    isGpsRetained: Boolean = false,
+    mapHeadingState: MapHeadingState? = null,
+    interactive: Boolean = false,
+    autoFitRoute: Boolean = false,
+    orientationMode: MiniMapOrientationMode = MiniMapOrientationMode.DIRECTION_UP,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsState()
+    val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
 
-    val appliedModifier = if (modifier == Modifier) {
-        if (miniMapConfig != null) {
-            Modifier.size(
-                width = miniMapConfig.resolveWidthDp().dp,
-                height = miniMapConfig.resolveHeightDp().dp
-            )
-        } else {
-            Modifier.size(width = 68.dp, height = 68.dp)
-        }
-    } else {
-        modifier
-    }
-
-    // Configurable Mini Map Pipeline (pixel-matched with Photo & Video Output Renderer)
+    // Unified configurable path shared by Camera Preview, Photo Capture, Video Recording, and Settings
     if (miniMapConfig != null) {
-        val cornerRadius = miniMapConfig.resolveCornerRadiusDp().dp
-        val shape = RoundedCornerShape(cornerRadius)
-        Box(
-            modifier = appliedModifier.clip(shape)
+        val cornerRadiusDp = miniMapConfig.resolveCornerRadiusDp().dp
+        val effectiveHeading = mapHeadingState?.headingDegrees ?: bearing
+        val resolvedBearing = remember(location, effectiveHeading, routeData?.id) {
+            MiniMapRenderer.resolveEffectiveBearing(
+                center = location ?: routeData?.bounds?.center,
+                gpsBearing = effectiveHeading,
+                routeData = routeData
+            )
+        }
+        val showHeadingUnavailable = mapHeadingState?.isDirectionUnavailable == true &&
+            resolvedBearing == null &&
+            location != null &&
+            miniMapConfig.orientationMode != MiniMapOrientationMode.NORTH_UP
+
+        BoxWithConstraints(
+            modifier = modifier
+                .clip(RoundedCornerShape(cornerRadiusDp))
+                .clipToBounds()
         ) {
+            val showCompactUnavailable = showHeadingUnavailable && maxHeight >= 96.dp && maxWidth >= 110.dp
+
             Canvas(modifier = Modifier.fillMaxSize()) {
-                // Observe tile updates cleanly
-                @Suppress("UNUSED_VARIABLE")
-                val triggerTileRedraw = tileUpdate
-                val w = size.width
-                val h = size.height
-                if (w > 2f && h > 2f) {
-                    val dpScale = density.density.coerceAtLeast(1f)
-                    drawIntoCanvas { composeCanvas ->
-                        MiniMapRenderer.drawMiniMap(
-                            context = context,
-                            canvas = composeCanvas.nativeCanvas,
-                            bounds = RectF(0f, 0f, w, h),
-                            config = miniMapConfig,
-                            location = location,
-                            isGpsRetained = isGpsRetained,
-                            bearing = bearing,
-                            routeData = routeData,
-                            chainageLabel = chainageLabel,
-                            sideLabel = sideLabel,
-                            dpScale = dpScale
-                        )
-                    }
+                val _tick = tileUpdate
+                val bounds = RectF(0f, 0f, size.width, size.height)
+                drawIntoCanvas { canvas ->
+                    MiniMapRenderer.drawMiniMap(
+                        canvas = canvas.nativeCanvas,
+                        bounds = bounds,
+                        context = context,
+                        config = miniMapConfig,
+                        location = location,
+                        routeData = routeData,
+                        bearing = effectiveHeading,
+                        chainageLabel = chainageLabel,
+                        sideLabel = sideLabel,
+                        isGpsRetained = isGpsRetained,
+                        dpScale = density.density
+                    )
                 }
+            }
+
+            if (showCompactUnavailable) {
+                MiniMapHeadingUnavailableBadge(
+                    isDark = miniMapConfig.mapStyle == com.example.model.MiniMapStyle.DARK ||
+                        miniMapConfig.mapStyle == com.example.model.MiniMapStyle.SATELLITE,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 4.dp)
+                )
             }
         }
         return
     }
 
-    // Legacy / RoutesScreen / PhotosScreen compact inset mode (real geometry only)
-    val isAppDark = com.example.ui.theme.isAppDarkTheme()
-    val isDark = overrideIsDark ?: com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
-    val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
+    // Embedded / Routes / Photos dynamic interactive map path
+    val mapTheme = rememberResolvedMapColors(mapThemePreference)
+    val outerGlowBrush = remember(mapTheme.isDark) {
+        Brush.verticalGradient(
+            colors = listOf(
+                mapTheme.mapBackground.copy(alpha = 0.0f),
+                mapTheme.mapBackground.copy(alpha = 0.30f)
+            )
+        )
+    }
 
-    val shape = RoundedCornerShape(14.dp)
-    Box(
-        modifier = appliedModifier
-            .clip(shape)
-            .background(if (transparentBackground) Color.Transparent else mapTheme.containerBackground)
+    BoxWithConstraints(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(mapTheme.mapBackground)
+            .clipToBounds()
     ) {
-        val centerGeo = location ?: routeData?.bounds?.center
+        val viewportWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+        val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            @Suppress("UNUSED_VARIABLE")
-            val triggerTileRedraw = tileUpdate
-            val w = size.width
-            val h = size.height
-            val center = Offset(w / 2f, h / 2f)
-
-            var hasOsmTiles = false
-            if (centerGeo != null && !transparentBackground) {
-                val osmBmp = OsmTileManager.renderMapBitmap(
-                    context = context,
-                    center = centerGeo,
-                    widthPx = w.toInt().coerceAtLeast(1),
-                    heightPx = h.toInt().coerceAtLeast(1),
-                    zoom = 15,
-                    darkTheme = mapTheme.isDark,
-                    mapType = mapType
+        val defaultFit = remember(routeData?.id, location, autoFitRoute, viewportWidthPx, viewportHeightPx) {
+            if (autoFitRoute && routeData != null && routeData.alignments.isNotEmpty()) {
+                MiniMapViewportMath.computeRouteFitCamera(
+                    routeData = routeData,
+                    viewportWidthPx = viewportWidthPx,
+                    viewportHeightPx = viewportHeightPx,
+                    paddingFraction = 0.14f
                 )
-                if (osmBmp != null) {
-                    drawImage(
-                        image = osmBmp.asImageBitmap(),
-                        dstOffset = IntOffset.Zero,
-                        dstSize = IntSize(w.toInt(), h.toInt())
-                    )
-                    if (mapTheme.isDark) {
-                        drawRect(color = Color(0x22000000))
-                    }
-                    hasOsmTiles = true
-                }
+            } else {
+                val baseCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+                Pair(baseCenter, 15.5f)
             }
+        }
 
-            if (!hasOsmTiles) {
-                if (!transparentBackground) {
-                    drawRect(color = mapTheme.mapBackground)
-                }
-                val gridLineColor = if (transparentBackground) {
-                    Color.White.copy(alpha = 0.16f)
-                } else {
-                    mapTheme.gridLineColor
-                }
-                val gridStep = w / 4f
-                for (i in 1..3) {
-                    drawLine(
-                        color = gridLineColor,
-                        start = Offset(i * gridStep, 0f),
-                        end = Offset(i * gridStep, h),
-                        strokeWidth = 1f
-                    )
-                    drawLine(
-                        color = gridLineColor,
-                        start = Offset(0f, i * gridStep),
-                        end = Offset(w, i * gridStep),
-                        strokeWidth = 1f
-                    )
-                }
+        var isFollowingDefault by remember(routeData?.id, autoFitRoute) { mutableStateOf(true) }
+        var exploredCenter by remember(routeData?.id, autoFitRoute) { mutableStateOf<GeoPoint?>(null) }
+        var continuousZoom by remember(routeData?.id, autoFitRoute) { mutableFloatStateOf(defaultFit.second) }
+
+        LaunchedEffect(defaultFit.second, isFollowingDefault) {
+            if (isFollowingDefault) {
+                continuousZoom = defaultFit.second
+                exploredCenter = null
             }
+        }
 
-            if (centerGeo != null) {
-                fun toScreen(pt: GeoPoint): Offset {
-                    val (sx, sy) = OsmTileManager.geoToScreen(pt, centerGeo, w, h, zoom = 15)
-                    return Offset(sx, sy)
+        // Direction-Up orientation (never auto-resets to North-Up)
+        val anchorForBearing = location ?: routeData?.bounds?.center
+        val effectiveBearing = remember(anchorForBearing, mapHeadingState?.headingDegrees, bearing, routeData?.id) {
+            mapHeadingState?.headingDegrees
+                ?: MiniMapRenderer.resolveEffectiveBearing(anchorForBearing, bearing, routeData)
+        }
+        val effectiveOrientation = if (autoFitRoute && location == null) {
+            // When previewing a static route corridor with no live GPS, align along corridor bearing if present
+            orientationMode
+        } else {
+            orientationMode
+        }
+        val targetRotation = remember(effectiveOrientation, effectiveBearing) {
+            MiniMapViewportMath.resolveDirectionUpRotation(
+                mode = effectiveOrientation,
+                headingDegrees = effectiveBearing,
+                fallbackBearing = bearing
+            )
+        }
+        var unwrappedRotation by remember { mutableFloatStateOf(targetRotation) }
+        LaunchedEffect(targetRotation) {
+            unwrappedRotation = MiniMapViewportMath.unwrapShortestAngle(unwrappedRotation, targetRotation)
+        }
+        val animatedRotation by animateFloatAsState(
+            targetValue = unwrappedRotation,
+            animationSpec = tween(240, easing = FastOutSlowInEasing),
+            label = "preview_minimap_rotation"
+        )
+
+        val isDirectionUpActive = effectiveOrientation != MiniMapOrientationMode.NORTH_UP && effectiveBearing != null
+        val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
+
+        val cameraCenter = remember(
+            isFollowingDefault,
+            exploredCenter,
+            location,
+            defaultFit.first,
+            continuousZoom,
+            viewportHeightPx,
+            animatedRotation,
+            isDirectionUpActive,
+            autoFitRoute
+        ) {
+            if (!isFollowingDefault && exploredCenter != null) {
+                exploredCenter!!
+            } else if (!autoFitRoute && location != null && isDirectionUpActive) {
+                MiniMapViewportMath.computeFollowCameraCenter(
+                    vehicleGeo = location,
+                    continuousZoom = continuousZoom,
+                    viewportHeightPx = viewportHeightPx,
+                    mapRotationDeg = animatedRotation,
+                    isDirectionUpActive = true
+                )
+            } else {
+                defaultFit.first
+            }
+        }
+
+        val showHeadingUnavailable = mapHeadingState?.isDirectionUnavailable == true &&
+            effectiveBearing == null &&
+            location != null &&
+            effectiveOrientation != MiniMapOrientationMode.NORTH_UP
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .miniMapNavigationGestures(enabled = interactive) { centroid, pan, zoom ->
+                    val startCenter = if (isFollowingDefault) cameraCenter else (exploredCenter ?: cameraCenter)
+                    isFollowingDefault = false
+                    val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
+                        currentCenter = startCenter,
+                        currentZoom = continuousZoom,
+                        focalX = centroid.x,
+                        focalY = centroid.y,
+                        viewportWidthPx = viewportWidthPx,
+                        viewportHeightPx = viewportHeightPx,
+                        panX = pan.x,
+                        panY = pan.y,
+                        zoomChange = zoom,
+                        mapRotationDeg = animatedRotation
+                    )
+                    exploredCenter = nextCenter
+                    continuousZoom = nextZoom
                 }
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val _t = tileUpdate
+                val w = size.width
+                val h = size.height
+                val cx = w / 2f
+                val cy = h / 2f
 
-                if (routeData != null && routeData.alignments.isNotEmpty()) {
-                    for (align in routeData.alignments) {
-                        if (align.points.size < 2) continue
-                        val path = Path()
-                        var started = false
-                        for (pt in align.points) {
-                            val off = toScreen(pt)
-                            if (!started) {
-                                path.moveTo(off.x, off.y)
-                                started = true
-                            } else {
-                                path.lineTo(off.x, off.y)
-                            }
+                val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
+                    widthPx = w,
+                    heightPx = h,
+                    fractionalScale = fractionalScale,
+                    maxPx = 1024
+                )
+
+                val osmBitmap = OsmTileManager.renderMapBitmap(
+                    context = context,
+                    center = cameraCenter,
+                    widthPx = diagPx,
+                    heightPx = diagPx,
+                    zoom = baseZoom,
+                    panOffsetX = 0f,
+                    panOffsetY = 0f,
+                    darkTheme = mapTheme.isDark,
+                    mapType = mapTypePreference
+                )
+
+                drawRect(color = mapTheme.mapBackground)
+
+                rotate(degrees = animatedRotation, pivot = Offset(cx, cy)) {
+                    if (osmBitmap != null) {
+                        scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                            drawImage(
+                                image = osmBitmap.asImageBitmap(),
+                                dstOffset = IntOffset(
+                                    x = (cx - diagPx / 2f).toInt(),
+                                    y = (cy - diagPx / 2f).toInt()
+                                ),
+                                dstSize = IntSize(diagPx, diagPx)
+                            )
                         }
-                        drawPath(
-                            path = path,
-                            color = mapTheme.routeCasingColor,
-                            style = Stroke(width = 5.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-                        drawPath(
-                            path = path,
-                            color = mapTheme.routeCenterColor,
-                            style = Stroke(width = 3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    } else {
+                        val gridStep = 36.dp.toPx()
+                        val extent = maxOf(w, h)
+                        var g = -extent
+                        while (g <= extent * 1.5f) {
+                            drawLine(
+                                color = mapTheme.gridLineColor,
+                                start = Offset(cx + g, cy - extent),
+                                end = Offset(cx + g, cy + extent),
+                                strokeWidth = 1f
+                            )
+                            drawLine(
+                                color = mapTheme.gridLineColor,
+                                start = Offset(cx - extent, cy + g),
+                                end = Offset(cx + extent, cy + g),
+                                strokeWidth = 1f
+                            )
+                            g += gridStep
+                        }
+                    }
+
+                    fun toScreen(pt: GeoPoint): Offset {
+                        return MiniMapViewportMath.geoToUnrotatedScreen(
+                            pt = pt,
+                            center = cameraCenter,
+                            viewportWidthPx = w,
+                            viewportHeightPx = h,
+                            continuousZoom = continuousZoom
                         )
                     }
 
-                    for (m in routeData.markers) {
-                        val off = toScreen(m.point)
-                        if (off.x in 0f..w && off.y in 0f..h) {
-                            drawCircle(
-                                color = mapTheme.markerDotColor,
-                                radius = 2.8f,
-                                center = off
+                    // Route alignments
+                    if (routeData != null && routeData.alignments.isNotEmpty()) {
+                        for (alignment in routeData.alignments) {
+                            if (alignment.points.size < 2) continue
+                            val path = Path()
+                            var started = false
+                            for (pt in alignment.points) {
+                                val off = toScreen(pt)
+                                if (!started) {
+                                    path.moveTo(off.x, off.y)
+                                    started = true
+                                } else {
+                                    path.lineTo(off.x, off.y)
+                                }
+                            }
+                            drawPath(
+                                path = path,
+                                color = mapTheme.routeCasingColor.copy(alpha = 0.85f),
+                                style = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                            drawPath(
+                                path = path,
+                                color = mapTheme.routeCenterColor,
+                                style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                             )
                         }
                     }
-                }
 
-                if (location != null) {
-                    val pinHeadR = 7.5f
-                    val pinTip = center
-                    val pinCenter = Offset(center.x, center.y - 9f)
-
-                    drawCircle(
-                        color = Color(0x66000000),
-                        radius = 3.5f,
-                        center = Offset(pinTip.x, pinTip.y + 1f)
-                    )
-
-                    val pinPath = Path().apply {
-                        moveTo(pinTip.x, pinTip.y)
-                        lineTo(pinCenter.x - pinHeadR * 0.85f, pinCenter.y + 1f)
-                        arcTo(
-                            rect = Rect(
-                                pinCenter.x - pinHeadR,
-                                pinCenter.y - pinHeadR,
-                                pinCenter.x + pinHeadR,
-                                pinCenter.y + pinHeadR
-                            ),
-                            startAngleDegrees = 145f,
-                            sweepAngleDegrees = 250f,
-                            forceMoveTo = false
-                        )
-                        close()
+                    // Nearby route markers
+                    if (routeData != null && routeData.markers.isNotEmpty()) {
+                        val stride = (routeData.markers.size / 40).coerceAtLeast(1)
+                        val pad = maxOf(w, h) * 0.45f
+                        var idx = 0
+                        while (idx < routeData.markers.size) {
+                            val mOff = toScreen(routeData.markers[idx].point)
+                            if (mOff.x in -pad..(w + pad) && mOff.y in -pad..(h + pad)) {
+                                drawCircle(color = mapTheme.markerBorderColor, radius = 4.dp.toPx(), center = mOff)
+                                drawCircle(color = mapTheme.markerDotColor, radius = 2.6.dp.toPx(), center = mOff)
+                            }
+                            idx += stride
+                        }
                     }
-                    drawPath(pinPath, color = mapTheme.userPinColor)
 
-                    drawCircle(
-                        color = mapTheme.userPinInnerColor,
-                        radius = 2.5f,
-                        center = pinCenter
-                    )
+                    // Live / capture location marker + directional arrow
+                    if (location != null) {
+                        val userOff = toScreen(location)
+                        val accRadiusPx = if (gpsAccuracy > 0f) {
+                            (gpsAccuracy * 0.45f).coerceIn(10f, 24f)
+                        } else {
+                            12.dp.toPx()
+                        }
+                        drawCircle(
+                            color = mapTheme.userPulseColor,
+                            radius = accRadiusPx,
+                            center = userOff
+                        )
 
-                    if (bearing != null) {
-                        rotate(degrees = bearing, pivot = center) {
+                        if (effectiveBearing != null) {
+                            val rad = Math.toRadians(effectiveBearing.toDouble())
+                            val arrowLen = 14.dp.toPx()
+                            val tipX = userOff.x + (sin(rad) * arrowLen).toFloat()
+                            val tipY = userOff.y - (cos(rad) * arrowLen).toFloat()
                             val arrowPath = Path().apply {
-                                moveTo(center.x, center.y - 17f)
-                                lineTo(center.x - 3.5f, center.y - 11f)
-                                lineTo(center.x + 3.5f, center.y - 11f)
+                                moveTo(tipX, tipY)
+                                lineTo(
+                                    userOff.x + (sin(rad - 2.3) * (arrowLen * 0.52f)).toFloat(),
+                                    userOff.y - (cos(rad - 2.3) * (arrowLen * 0.52f)).toFloat()
+                                )
+                                lineTo(
+                                    userOff.x + (sin(rad + 2.3) * (arrowLen * 0.52f)).toFloat(),
+                                    userOff.y - (cos(rad + 2.3) * (arrowLen * 0.52f)).toFloat()
+                                )
                                 close()
                             }
                             drawPath(arrowPath, color = mapTheme.userBearingColor)
                         }
+
+                        drawCircle(color = mapTheme.userPinInnerColor, radius = 6.dp.toPx(), center = userOff)
+                        drawCircle(color = mapTheme.userPinColor, radius = 4.2.dp.toPx(), center = userOff)
                     }
                 }
             }
-        }
 
-        if (showGpsBadge && gpsAccuracy != null) {
-            val isGood = gpsAccuracy <= 10f
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(5.dp)
-                    .background(mapTheme.badgeBg, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(5.dp)
-                        .clip(CircleShape)
-                        .background(if (isGood) Color(0xFF22C55E) else Color(0xFFFBBF24))
-                )
-                Text(
-                    text = String.format(Locale.US, "GPS ±%.1fm", gpsAccuracy),
-                    color = mapTheme.badgeTextColor,
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        if (showAttribution) {
-            Text(
-                text = if (mapType.equals("satellite", ignoreCase = true)) "© Esri" else "© OSM",
-                color = mapTheme.attributionTextColor,
-                fontSize = 7.sp,
-                fontWeight = FontWeight.Normal,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 4.dp, end = 5.dp)
-            )
-        }
-
-        if (showProjectTag && highwayTag.isNotBlank()) {
+            // Soft bottom gradient for badge readability
             Box(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 5.dp)
-                    .background(mapTheme.badgeBg, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 1.5.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = highwayTag,
-                    color = mapTheme.badgeTextColor,
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1
+                    .fillMaxSize()
+                    .background(outerGlowBrush)
+            )
+
+            // Highway / Project Tag (Top-Left)
+            if (showProjectTag && highwayTag.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = mapTheme.badgeBg,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = highwayTag,
+                        color = if (mapTheme.isDark) HighlightYellow else mapTheme.badgeTextColor,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            // Heading unavailable indicator (only when no reliable heading exists)
+            if (showHeadingUnavailable) {
+                MiniMapHeadingUnavailableBadge(
+                    isDark = mapTheme.isDark,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 6.dp)
                 )
+            }
+
+            // GPS Accuracy Badge (Bottom-Left)
+            if (showGpsBadge && gpsAccuracy > 0f) {
+                val gpsColor = when {
+                    gpsAccuracy <= 10f -> Color(0xFF10B981)
+                    gpsAccuracy <= 25f -> Color(0xFFF59E0B)
+                    else -> AccentRed
+                }
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = mapTheme.badgeBg,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(6.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(gpsColor)
+                        )
+                        Text(
+                            text = "±${gpsAccuracy.toInt()}m",
+                            color = mapTheme.badgeTextColor,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            // Compact minimalist +, -, Recenter controls when interactive
+            if (interactive) {
+                val ctrlBg = if (mapTheme.isDark) Color(0xE00D111A) else Color(0xF2FFFFFF)
+                val ctrlIcon = if (mapTheme.isDark) Color.White else Color(0xFF101828)
+                val activeBg = if (mapTheme.isDark) Color(0xFF1685FF) else Color(0xFF1677F2)
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.End,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 6.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = ctrlBg,
+                        shadowElevation = 0.dp
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(
+                                onClick = {
+                                    continuousZoom = (continuousZoom + 0.8f).coerceAtMost(MiniMapViewportMath.MAX_ZOOM)
+                                },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("preview_map_zoom_in")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Zoom in map",
+                                    tint = ctrlIcon,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    continuousZoom = (continuousZoom - 0.8f).coerceAtLeast(MiniMapViewportMath.MIN_ZOOM)
+                                },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("preview_map_zoom_out")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Remove,
+                                    contentDescription = "Zoom out map",
+                                    tint = ctrlIcon,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isFollowingDefault) activeBg else ctrlBg,
+                        shadowElevation = 0.dp
+                    ) {
+                        IconButton(
+                            onClick = {
+                                isFollowingDefault = true
+                                exploredCenter = null
+                                continuousZoom = defaultFit.second
+                            },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("preview_map_recenter")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MyLocation,
+                                contentDescription = "Recenter map",
+                                tint = if (isFollowingDefault) Color.White else ctrlIcon,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
