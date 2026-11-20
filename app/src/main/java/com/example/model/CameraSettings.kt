@@ -91,6 +91,162 @@ enum class SpeedUnit(val label: String) {
     }
 }
 
+/**
+ * Simple 4-format output modes for both Photos and Videos.
+ * - [LANDSCAPE_FULL]: Wide horizontal output preserving natural full sensor aspect ratio.
+ * - [PORTRAIT_FULL]: Full-height vertical output with maximum usable vertical framing.
+ * - [SQUARE]: Smart 1:1 square output with intelligent center framing & cropping.
+ * - [RECTANGULAR_CROP]: Smart rectangular (4:3 / 3:4) output adapting to device orientation.
+ */
+enum class CameraOutputFormat(
+    val title: String,
+    val shortLabel: String,
+    val subtitle: String,
+    val legacyAspectRatioId: String
+) {
+    LANDSCAPE_FULL(
+        title = "Landscape",
+        shortLabel = "Land",
+        subtitle = "Full width horizontal framing",
+        legacyAspectRatioId = "16:9"
+    ),
+    PORTRAIT_FULL(
+        title = "Portrait",
+        shortLabel = "Port",
+        subtitle = "Full height vertical framing",
+        legacyAspectRatioId = "Full"
+    ),
+    SQUARE(
+        title = "Square",
+        shortLabel = "1:1",
+        subtitle = "Smart 1:1 square framing",
+        legacyAspectRatioId = "1:1"
+    ),
+    RECTANGULAR_CROP(
+        title = "Rectangular",
+        shortLabel = "Rect",
+        subtitle = "Smart 4:3 / 3:4 orientation crop",
+        legacyAspectRatioId = "4:3"
+    );
+
+    companion object {
+        fun fromString(raw: String?, fallback: CameraOutputFormat = PORTRAIT_FULL): CameraOutputFormat {
+            if (raw.isNullOrBlank()) return fallback
+            val normalized = raw.trim()
+            entries.firstOrNull {
+                it.name.equals(normalized, ignoreCase = true) ||
+                    it.title.equals(normalized, ignoreCase = true) ||
+                    it.shortLabel.equals(normalized, ignoreCase = true)
+            }?.let { return it }
+
+            return when (normalized.lowercase()) {
+                "1:1", "square", "square 1:1" -> SQUARE
+                "4:3", "standard", "rectangular", "rectangular crop" -> RECTANGULAR_CROP
+                "16:9", "widescreen", "landscape", "landscape - full width" -> LANDSCAPE_FULL
+                "full", "full screen", "portrait", "portrait - full vertical" -> PORTRAIT_FULL
+                else -> fallback
+            }
+        }
+    }
+}
+
+/**
+ * Simple 4-tier output quality & file-size presets shared independently by Photos and Videos.
+ */
+enum class OutputQualityPreset(
+    val title: String,
+    val shortLabel: String,
+    val subtitle: String,
+    val photoJpegQuality: Int,
+    val photoMaxLongEdgePx: Int, // 0 = full native sensor resolution
+    val videoBitrateMultiplier: Float,
+    val photoBytesPerPixel: Double
+) {
+    MAXIMUM(
+        title = "Maximum Quality",
+        shortLabel = "Max",
+        subtitle = "Highest resolution & sharpest detail",
+        photoJpegQuality = 97,
+        photoMaxLongEdgePx = 0,
+        videoBitrateMultiplier = 1.0f,
+        photoBytesPerPixel = 0.42
+    ),
+    HIGH(
+        title = "High Quality",
+        shortLabel = "High",
+        subtitle = "Excellent clarity with optimized size",
+        photoJpegQuality = 92,
+        photoMaxLongEdgePx = 4096,
+        videoBitrateMultiplier = 0.78f,
+        photoBytesPerPixel = 0.28
+    ),
+    BALANCED(
+        title = "Balanced",
+        shortLabel = "Balanced",
+        subtitle = "Balanced detail and storage usage",
+        photoJpegQuality = 86,
+        photoMaxLongEdgePx = 2560,
+        videoBitrateMultiplier = 0.56f,
+        photoBytesPerPixel = 0.18
+    ),
+    SMALLER_SIZE(
+        title = "Smaller Size",
+        shortLabel = "Small",
+        subtitle = "Compact file size with clear image",
+        photoJpegQuality = 78,
+        photoMaxLongEdgePx = 1920,
+        videoBitrateMultiplier = 0.36f,
+        photoBytesPerPixel = 0.11
+    );
+
+    companion object {
+        fun fromString(raw: String?, fallback: OutputQualityPreset = HIGH): OutputQualityPreset {
+            if (raw.isNullOrBlank()) return fallback
+            val trimmed = raw.trim()
+            return entries.firstOrNull {
+                it.name.equals(trimmed, ignoreCase = true) ||
+                    it.title.equals(trimmed, ignoreCase = true) ||
+                    it.shortLabel.equals(trimmed, ignoreCase = true)
+            } ?: fallback
+        }
+    }
+}
+
+/**
+ * Simple hardware-backed Video Stabilization controls (OIS + EIS).
+ */
+enum class VideoStabilizationMode(val label: String, val subtitle: String) {
+    AUTO("Auto", "Best supported OIS / EIS automatically"),
+    ON("ON", "Active optical & electronic stabilization"),
+    OFF("OFF", "Stabilization disabled");
+
+    companion object {
+        fun fromString(raw: String?): VideoStabilizationMode {
+            return entries.firstOrNull {
+                it.name.equals(raw?.trim(), ignoreCase = true) ||
+                    it.label.equals(raw?.trim(), ignoreCase = true)
+            } ?: AUTO
+        }
+    }
+}
+
+/**
+ * Simple hardware-backed Autofocus controls.
+ */
+enum class CameraAutofocusMode(val label: String, val subtitle: String) {
+    CONTINUOUS("Continuous", "Smooth tracking with tap-to-focus"),
+    TAP_LOCK("Tap & Lock", "Locks focus on tapped subject");
+
+    companion object {
+        fun fromString(raw: String?): CameraAutofocusMode {
+            return entries.firstOrNull {
+                it.name.equals(raw?.trim(), ignoreCase = true) ||
+                    it.label.equals(raw?.trim(), ignoreCase = true)
+            } ?: CONTINUOUS
+        }
+    }
+}
+
 data class CameraSettings(
     val captureTimer: CaptureTimer = CaptureTimer.OFF,
     val gridMode: CameraGridMode = CameraGridMode.OFF,
@@ -140,5 +296,13 @@ data class CameraSettings(
     val photoResolution: String = "1920 x 1080",
     val videoResolution: String = "1920 x 1080",
     val photoAspectRatio: String = "4:3",
-    val videoAspectRatio: String = "16:9"
+    val videoAspectRatio: String = "16:9",
+
+    // Simple Output Formats, Quality Presets, Stabilization & Autofocus
+    val photoOutputFormat: CameraOutputFormat = CameraOutputFormat.PORTRAIT_FULL,
+    val videoOutputFormat: CameraOutputFormat = CameraOutputFormat.LANDSCAPE_FULL,
+    val photoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
+    val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
+    val videoStabilizationMode: VideoStabilizationMode = VideoStabilizationMode.AUTO,
+    val autofocusMode: CameraAutofocusMode = CameraAutofocusMode.CONTINUOUS
 )
