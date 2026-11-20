@@ -202,6 +202,10 @@ import com.example.ui.dialogs.ChainageSourceBadge
 import com.example.ui.dialogs.NavigateToChainageDialog
 import com.example.ui.dialogs.NavigateToChainageQuickButton
 import com.example.ui.theme.AccentRed
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.ctecsBorderlessInputColors
+import com.example.ui.theme.smartFadeSurface
+import com.example.ui.theme.smartMapEdgeFade
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -280,31 +284,32 @@ fun HomeScreen(
         isPageLoading
 
     val isDark = com.example.ui.theme.isAppDarkTheme()
+    val c = CtecsTheme.colors
 
-    // Smooth Animated Light Theme vs Dark Theme Palette
+    // Smooth Animated AMOLED Deep Black Dark Mode vs Professional Light Mode Palette
     val pageBgColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF090D16) else Color(0xFFF1F5F9),
-        animationSpec = tween(260),
+        targetValue = c.background,
+        animationSpec = tween(220),
         label = "home_page_bg"
     )
     val cardBgColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF111827) else Color(0xFFFFFFFF),
-        animationSpec = tween(260),
+        targetValue = c.surface,
+        animationSpec = tween(220),
         label = "home_card_bg"
     )
     val cardBorderColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0),
-        animationSpec = tween(260),
+        targetValue = c.subtleSeparator,
+        animationSpec = tween(220),
         label = "home_card_border"
     )
     val mainTextColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A),
-        animationSpec = tween(260),
+        targetValue = c.textPrimary,
+        animationSpec = tween(220),
         label = "home_main_text"
     )
     val subTextColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
-        animationSpec = tween(260),
+        targetValue = c.textSecondary,
+        animationSpec = tween(220),
         label = "home_sub_text"
     )
 
@@ -527,26 +532,17 @@ fun HomeScreen(
                 gpsPulseAlpha = gpsPulseAlpha,
                 satellitesCount = satCount,
                 speedKmh = speedKmh,
-                compassHeadingStr = compassState.displayHeading,
-                currentThemeMode = currentThemeMode,
-                onToggleTheme = {
-                    val nextMode = when (currentThemeMode) {
-                        "dark" -> "light"
-                        "light" -> "system"
-                        else -> "dark"
-                    }
-                    viewModel.setThemeMode(nextMode)
-                    viewModel.showToast("Theme: ${nextMode.uppercase()}")
-                },
+                projectName = projectProfile.highwayId,
+                stretchName = projectProfile.packageSection,
+                onEditProjectStretch = { showEditProjectStretchDialog = true },
                 cardBgColor = cardBgColor,
-                cardBorderColor = cardBorderColor,
                 mainTextColor = mainTextColor,
                 subTextColor = subTextColor,
                 isDark = isDark,
                 isCompact = isCompactHeight
             )
 
-            // 2. Dominant Central Chainage Display (Highest Priority)
+            // 2. Dominant Central Chainage Display (Borderless Hero Focus)
             val displayChainageText = when {
                 matchResult.source == ChainageSource.MANUAL || matchResult.isManual -> matchResult.displayChainage
                 activeRoute == null -> "NO KMZ"
@@ -605,20 +601,6 @@ fun HomeScreen(
                 )
             }
 
-            // 3. Project & Stretch Information Cards
-
-            ProjectStretchCardsRow(
-                projectName = projectProfile.highwayId,
-                stretchName = projectProfile.packageSection,
-                onEdit = { showEditProjectStretchDialog = true },
-                cardBgColor = cardBgColor,
-                cardBorderColor = cardBorderColor,
-                mainTextColor = mainTextColor,
-                subTextColor = subTextColor,
-                isDark = isDark,
-                isCompact = isCompactHeight
-            )
-
             if (showEditProjectStretchDialog) {
                 EditProjectStretchDialog(
                     initialProject = projectProfile.highwayId,
@@ -636,7 +618,7 @@ fun HomeScreen(
                 )
             }
 
-            // 3.5 Premium Minimalist Borderless Live Weather Card (pauses animations when hidden/screensaver active)
+            // 3. Premium Minimalist Borderless Live Weather Card (pauses animations when hidden/screensaver active)
             HomeLiveWeatherCard(
                 weatherUiState = weatherUiState,
                 resolvedLocationName = vmLocationName,
@@ -651,17 +633,8 @@ fun HomeScreen(
                 }
             )
 
-            // 4. Interactive Smart KMZ Map - Synchronized with Shared Mini Map Settings (all Screensaver config lives in Settings -> Screensaver)
+            // 4. Interactive Smart KMZ Map with Smart Edge Fades (Borderless)
             if (screensaverSettings.miniMapVisible) {
-                val mapBorderModifier = if (screensaverSettings.miniMapShowBorder) {
-                    Modifier.border(
-                        width = 1.2.dp,
-                        color = Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(alpha = 0.55f),
-                        shape = RoundedCornerShape(14.dp)
-                    )
-                } else {
-                    Modifier
-                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -672,8 +645,8 @@ fun HomeScreen(
                                 1.0f
                             )
                         )
-                        .clip(RoundedCornerShape(14.dp))
-                        .then(mapBorderModifier)
+                        .clip(RoundedCornerShape(16.dp))
+                        .smartMapEdgeFade(fadeToColor = pageBgColor, edgeSize = 14.dp)
                         .testTag("home_interactive_map_container")
                 ) {
                     InteractiveSmartMap(
@@ -835,7 +808,7 @@ fun HomeScreen(
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 1: TOP TELEMETRY HEADER ROW (4 Theme-Matched Cards)
+// COMPONENT 1: TOP STATUS STRIP (Borderless GPS, Sats, Speed + Compact Project | Stretch)
 // -------------------------------------------------------------------
 @Composable
 fun TopTelemetryHeaderRow(
@@ -844,482 +817,183 @@ fun TopTelemetryHeaderRow(
     gpsPulseAlpha: Float,
     satellitesCount: Int,
     speedKmh: Float,
-    compassHeadingStr: String,
-    currentThemeMode: String,
-    onToggleTheme: () -> Unit,
+    projectName: String,
+    stretchName: String,
+    onEditProjectStretch: () -> Unit,
     cardBgColor: Color,
-    cardBorderColor: Color,
     mainTextColor: Color,
     subTextColor: Color,
     isDark: Boolean = false,
     isCompact: Boolean = false
 ) {
-    val cardHeight = if (isCompact) 42.dp else 46.dp
+    val c = CtecsTheme.colors
+    val stripHeight = if (isCompact) 38.dp else 42.dp
 
     val (targetGpsColor, gpsValueText, gpsStatusSub) = when {
-        !hasFix -> Triple(
-            if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
-            "--",
-            "Searching"
-        )
-        accuracy <= 5f -> Triple(
-            if (isDark) Color(0xFF10B981) else Color(0xFF059669),
-            String.format(Locale.US, "±%.0fm", accuracy),
-            "GPS Good"
-        )
-        accuracy <= 15f -> Triple(
-            if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB),
-            String.format(Locale.US, "±%.0fm", accuracy),
-            "GPS Fair"
-        )
-        else -> Triple(
-            if (isDark) Color(0xFFF87171) else Color(0xFFDC2626),
-            String.format(Locale.US, "±%.0fm", accuracy),
-            "GPS Weak"
-        )
+        !hasFix -> Triple(c.accentSecondary, "--", "GPS")
+        accuracy <= 5f -> Triple(c.success, String.format(Locale.US, "±%.0fm", accuracy), "Good")
+        accuracy <= 15f -> Triple(c.accent, String.format(Locale.US, "±%.0fm", accuracy), "Fair")
+        else -> Triple(c.error, String.format(Locale.US, "±%.0fm", accuracy), "Weak")
     }
 
     val gpsAccentColor by animateColorAsState(
         targetValue = targetGpsColor,
-        animationSpec = tween(250),
+        animationSpec = tween(220),
         label = "gps_accent_color"
     )
 
-    val satAccent = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
-    val speedAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
-    val compassAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
+    val animatedSpeed by animateFloatAsState(
+        targetValue = speedKmh.coerceAtLeast(0f),
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "speed_anim"
+    )
 
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val isVeryNarrow = maxWidth < 310.dp
-
-        if (isVeryNarrow) {
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    GpsAccuracyTelemetryCard(
-                        gpsAccentColor = gpsAccentColor,
-                        gpsValueText = gpsValueText,
-                        gpsStatusSub = gpsStatusSub,
-                        hasFix = hasFix,
-                        gpsPulseAlpha = gpsPulseAlpha,
-                        cardBgColor = cardBgColor,
-                        cardBorderColor = cardBorderColor,
-                        mainTextColor = mainTextColor,
-                        subTextColor = subTextColor,
-                        isDark = isDark,
-                        modifier = Modifier.weight(1f).height(cardHeight)
-                    )
-                    SatelliteTelemetryCard(
-                        satellitesCount = satellitesCount,
-                        hasFix = hasFix,
-                        satAccent = satAccent,
-                        cardBgColor = cardBgColor,
-                        cardBorderColor = cardBorderColor,
-                        mainTextColor = mainTextColor,
-                        subTextColor = subTextColor,
-                        isDark = isDark,
-                        modifier = Modifier.weight(1f).height(cardHeight)
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    SpeedTelemetryCard(
-                        speedKmh = speedKmh,
-                        speedAccent = speedAccent,
-                        cardBgColor = cardBgColor,
-                        cardBorderColor = cardBorderColor,
-                        mainTextColor = mainTextColor,
-                        subTextColor = subTextColor,
-                        isDark = isDark,
-                        modifier = Modifier.weight(1f).height(cardHeight)
-                    )
-                    CompassTelemetryCard(
-                        compassHeadingStr = compassHeadingStr,
-                        currentThemeMode = currentThemeMode,
-                        compassAccent = compassAccent,
-                        onToggleTheme = onToggleTheme,
-                        cardBgColor = cardBgColor,
-                        cardBorderColor = cardBorderColor,
-                        mainTextColor = mainTextColor,
-                        subTextColor = subTextColor,
-                        isDark = isDark,
-                        modifier = Modifier.weight(1.1f).height(cardHeight)
-                    )
-                }
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                GpsAccuracyTelemetryCard(
-                    gpsAccentColor = gpsAccentColor,
-                    gpsValueText = gpsValueText,
-                    gpsStatusSub = gpsStatusSub,
-                    hasFix = hasFix,
-                    gpsPulseAlpha = gpsPulseAlpha,
-                    cardBgColor = cardBgColor,
-                    cardBorderColor = cardBorderColor,
-                    mainTextColor = mainTextColor,
-                    subTextColor = subTextColor,
-                    isDark = isDark,
-                    modifier = Modifier.weight(1.06f).height(cardHeight)
-                )
-                SatelliteTelemetryCard(
-                    satellitesCount = satellitesCount,
-                    hasFix = hasFix,
-                    satAccent = satAccent,
-                    cardBgColor = cardBgColor,
-                    cardBorderColor = cardBorderColor,
-                    mainTextColor = mainTextColor,
-                    subTextColor = subTextColor,
-                    isDark = isDark,
-                    modifier = Modifier.weight(1.02f).height(cardHeight)
-                )
-                SpeedTelemetryCard(
-                    speedKmh = speedKmh,
-                    speedAccent = speedAccent,
-                    cardBgColor = cardBgColor,
-                    cardBorderColor = cardBorderColor,
-                    mainTextColor = mainTextColor,
-                    subTextColor = subTextColor,
-                    isDark = isDark,
-                    modifier = Modifier.weight(0.84f).height(cardHeight)
-                )
-                CompassTelemetryCard(
-                    compassHeadingStr = compassHeadingStr,
-                    currentThemeMode = currentThemeMode,
-                    compassAccent = compassAccent,
-                    onToggleTheme = onToggleTheme,
-                    cardBgColor = cardBgColor,
-                    cardBorderColor = cardBorderColor,
-                    mainTextColor = mainTextColor,
-                    subTextColor = subTextColor,
-                    isDark = isDark,
-                    modifier = Modifier.weight(1.18f).height(cardHeight)
-                )
-            }
+    // Compact Project & Stretch string: "MH | Stretch Name", or just "MH" when stretch is empty (no labels, no edit icon)
+    val cleanProject = projectName.trim()
+    val cleanStretch = stretchName.trim()
+    val projectStretchDisplay = remember(cleanProject, cleanStretch) {
+        when {
+            cleanProject.isNotEmpty() && cleanStretch.isNotEmpty() -> "$cleanProject | $cleanStretch"
+            cleanProject.isNotEmpty() -> cleanProject
+            cleanStretch.isNotEmpty() -> cleanStretch
+            else -> "Project"
         }
     }
-}
 
-@Composable
-private fun GpsAccuracyTelemetryCard(
-    gpsAccentColor: Color,
-    gpsValueText: String,
-    gpsStatusSub: String,
-    hasFix: Boolean,
-    gpsPulseAlpha: Float,
-    cardBgColor: Color,
-    cardBorderColor: Color,
-    mainTextColor: Color,
-    subTextColor: Color,
-    isDark: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = cardBgColor,
-        border = BorderStroke(1.dp, cardBorderColor),
-        shadowElevation = if (isDark) 0.dp else 1.dp,
-        modifier = modifier
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(stripHeight),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        // Unified Flat Borderless Telemetry Pill: GPS + Sats + Speed
         Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 5.5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(23.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(gpsAccentColor.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.GpsFixed,
-                    contentDescription = "GPS Status",
-                    tint = gpsAccentColor,
-                    modifier = Modifier
-                        .size(13.dp)
-                        .alpha(if (!hasFix) gpsPulseAlpha else 1f)
+                .weight(1.35f)
+                .fillMaxHeight()
+                .smartFadeSurface(
+                    surfaceColor = cardBgColor,
+                    cornerRadius = 12.dp,
+                    edgeAlpha = 0.72f,
+                    centerAlpha = 1f
                 )
-            }
-            Spacer(modifier = Modifier.width(4.5.dp))
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center
+                .padding(horizontal = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // GPS Accuracy
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(5.dp)
-                            .clip(CircleShape)
-                            .background(gpsAccentColor)
-                            .alpha(if (hasFix) gpsPulseAlpha else 0.5f)
-                    )
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text(
-                        text = gpsValueText,
-                        color = mainTextColor,
-                        fontSize = 11.5.sp,
-                        lineHeight = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                }
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(gpsAccentColor)
+                        .alpha(if (hasFix) gpsPulseAlpha else 0.45f)
+                )
+                Text(
+                    text = gpsValueText,
+                    color = mainTextColor,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
                 Text(
                     text = gpsStatusSub,
                     color = gpsAccentColor,
-                    fontSize = 8.8.sp,
-                    lineHeight = 10.sp,
-                    letterSpacing = (-0.15).sp,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+
+            // Satellites
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SatelliteAlt,
+                    contentDescription = "Satellites",
+                    tint = c.accentSecondary,
+                    modifier = Modifier.size(12.dp)
+                )
+                Text(
+                    text = if (hasFix) "$satellitesCount" else "--",
+                    color = mainTextColor,
+                    fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     softWrap = false
                 )
             }
-        }
-    }
-}
 
-@Composable
-private fun SatelliteTelemetryCard(
-    satellitesCount: Int,
-    hasFix: Boolean,
-    satAccent: Color,
-    cardBgColor: Color,
-    cardBorderColor: Color,
-    mainTextColor: Color,
-    subTextColor: Color,
-    isDark: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = cardBgColor,
-        border = BorderStroke(1.dp, cardBorderColor),
-        shadowElevation = if (isDark) 0.dp else 1.dp,
-        modifier = modifier
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 5.5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(23.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(satAccent.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SatelliteAlt,
-                    contentDescription = "Satellites",
-                    tint = satAccent,
-                    modifier = Modifier.size(13.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(4.5.dp))
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = if (hasFix) "$satellitesCount" else "--",
-                    color = mainTextColor,
-                    fontSize = 11.5.sp,
-                    lineHeight = 12.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    softWrap = false
-                )
-                Text(
-                    text = "Satellites",
-                    color = subTextColor,
-                    fontSize = 8.8.sp,
-                    lineHeight = 10.sp,
-                    letterSpacing = (-0.15).sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SpeedTelemetryCard(
-    speedKmh: Float,
-    speedAccent: Color,
-    cardBgColor: Color,
-    cardBorderColor: Color,
-    mainTextColor: Color,
-    subTextColor: Color,
-    isDark: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val animatedSpeed by animateFloatAsState(
-        targetValue = speedKmh.coerceAtLeast(0f),
-        animationSpec = tween(250, easing = FastOutSlowInEasing),
-        label = "speed_anim"
-    )
-
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = cardBgColor,
-        border = BorderStroke(1.dp, cardBorderColor),
-        shadowElevation = if (isDark) 0.dp else 1.dp,
-        modifier = modifier
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 5.5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(23.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(speedAccent.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
+            // Speed
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.5.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Speed,
                     contentDescription = "Speed",
-                    tint = speedAccent,
-                    modifier = Modifier.size(13.dp)
+                    tint = c.success,
+                    modifier = Modifier.size(12.dp)
                 )
-            }
-            Spacer(modifier = Modifier.width(4.5.dp))
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center
-            ) {
                 Text(
                     text = String.format(Locale.US, "%.0f", animatedSpeed),
                     color = mainTextColor,
                     fontSize = 11.5.sp,
-                    lineHeight = 12.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     softWrap = false
                 )
                 Text(
                     text = "km/h",
                     color = subTextColor,
-                    fontSize = 8.8.sp,
-                    lineHeight = 10.sp,
+                    fontSize = 9.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     softWrap = false
                 )
             }
         }
-    }
-}
 
-@Composable
-private fun CompassTelemetryCard(
-    compassHeadingStr: String,
-    currentThemeMode: String,
-    compassAccent: Color,
-    onToggleTheme: () -> Unit,
-    cardBgColor: Color,
-    cardBorderColor: Color,
-    mainTextColor: Color,
-    subTextColor: Color,
-    isDark: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = cardBgColor,
-        border = BorderStroke(1.dp, cardBorderColor),
-        shadowElevation = if (isDark) 0.dp else 1.dp,
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onToggleTheme() }
-    ) {
-        Row(
+        // Compact Borderless Project & Stretch Pill (No "PROJECT"/"STRETCH" labels, no pencil icon, tap to edit)
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 5.5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .weight(0.95f)
+                .fillMaxHeight()
+                .smartFadeSurface(
+                    surfaceColor = cardBgColor,
+                    cornerRadius = 12.dp,
+                    edgeAlpha = 0.72f,
+                    centerAlpha = 1f
+                )
+                .clickable(onClick = onEditProjectStretch)
+                .padding(horizontal = 10.dp)
+                .testTag("home_card_project"),
+            contentAlignment = Alignment.Center
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(23.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(compassAccent.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CompassCalibration,
-                        contentDescription = "Compass",
-                        tint = compassAccent,
-                        modifier = Modifier.size(13.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(4.5.dp))
-                Column(
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = compassHeadingStr,
-                        color = mainTextColor,
-                        fontSize = 11.sp,
-                        lineHeight = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    Text(
-                        text = "Compass",
-                        color = subTextColor,
-                        fontSize = 8.8.sp,
-                        lineHeight = 10.sp,
-                        letterSpacing = (-0.15).sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                }
-            }
-
-            Icon(
-                imageVector = when (currentThemeMode) {
-                    "light" -> Icons.Default.LightMode
-                    "dark" -> Icons.Default.DarkMode
-                    else -> Icons.Default.Palette
-                },
-                contentDescription = "Toggle Theme",
-                tint = subTextColor,
-                modifier = Modifier.size(13.5.dp)
+            Text(
+                text = projectStretchDisplay,
+                color = if (cleanProject.isNotEmpty() || cleanStretch.isNotEmpty()) mainTextColor else subTextColor,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
             )
         }
     }
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 2: HERO CHAINAGE DISPLAY (LARGEST & MOST PROMINENT ELEMENT)
+// COMPONENT 2: HERO CHAINAGE DISPLAY (BORDERLESS FOCAL ELEMENT)
 // -------------------------------------------------------------------
 @Composable
 fun CentralChainageDisplay(
@@ -1342,37 +1016,28 @@ fun CentralChainageDisplay(
     onSelectManualSide: ((RoadSide) -> Unit)? = null,
     onResetSideToAuto: (() -> Unit)? = null
 ) {
+    val c = CtecsTheme.colors
     var showDirectionMenu by remember { mutableStateOf(false) }
-    val kmBadgeBg = if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.45f) else Color(0xFFEFF6FF)
-    val kmBadgeBorder = if (isDark) Color(0xFF3B82F6).copy(alpha = 0.4f) else Color(0xFFBFDBFE)
-    val kmBadgeText = if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
+    val kmBadgeBg = c.accent.copy(alpha = if (isDark) 0.16f else 0.12f)
+    val kmBadgeText = c.accent
 
     val isLhs = detectedSide.equals("LHS", ignoreCase = true)
     val isRhs = detectedSide.equals("RHS", ignoreCase = true)
 
     val sideBadgeBg by animateColorAsState(
         targetValue = when {
-            isLhs -> if (isDark) Color(0xFF064E3B).copy(alpha = 0.55f) else Color(0xFFECFDF5)
-            isRhs -> if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.55f) else Color(0xFFEFF6FF)
-            else -> if (isDark) Color(0xFF4C1D95).copy(alpha = 0.55f) else Color(0xFFF3E8FF)
+            isLhs -> c.success.copy(alpha = if (isDark) 0.16f else 0.12f)
+            isRhs -> c.accent.copy(alpha = if (isDark) 0.16f else 0.12f)
+            else -> c.secondarySurface
         },
         animationSpec = tween(220),
         label = "side_badge_bg"
     )
-    val sideBadgeBorder by animateColorAsState(
-        targetValue = when {
-            isLhs -> if (isDark) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFFA7F3D0)
-            isRhs -> if (isDark) Color(0xFF3B82F6).copy(alpha = 0.45f) else Color(0xFFBFDBFE)
-            else -> if (isDark) Color(0xFF8B5CF6).copy(alpha = 0.45f) else Color(0xFFDDD6FE)
-        },
-        animationSpec = tween(220),
-        label = "side_badge_border"
-    )
     val sideBadgeText by animateColorAsState(
         targetValue = when {
-            isLhs -> if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
-            isRhs -> if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
-            else -> if (isDark) Color(0xFFC084FC) else Color(0xFF7E22CE)
+            isLhs -> c.success
+            isRhs -> c.accent
+            else -> c.textSecondary
         },
         animationSpec = tween(220),
         label = "side_badge_text"
@@ -1380,20 +1045,22 @@ fun CentralChainageDisplay(
 
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
 
-    val borderStroke = when (source) {
-        ChainageSource.MANUAL -> BorderStroke(1.5.dp, AccentRed)
-        ChainageSource.CUSTOM_CORRECTION -> BorderStroke(1.5.dp, if (isDark) Color(0xFFA855F7) else Color(0xFF7C3AED))
-        else -> BorderStroke(1.dp, cardBorderColor)
+    val subtleGlowAccent = when (source) {
+        ChainageSource.MANUAL -> c.error
+        ChainageSource.CUSTOM_CORRECTION -> c.accentSecondary
+        else -> Color.Transparent
     }
 
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = cardBgColor,
-        border = borderStroke,
-        shadowElevation = if (isDark) 0.dp else 1.dp,
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .smartFadeSurface(
+                surfaceColor = c.secondaryBackground,
+                accentGlowColor = subtleGlowAccent,
+                cornerRadius = 18.dp,
+                edgeAlpha = 0.0f,
+                centerAlpha = if (isDark) 0.72f else 0.85f
+            )
             .clickable { onClick() }
             .testTag("central_chainage_card")
     ) {
@@ -1445,19 +1112,19 @@ fun CentralChainageDisplay(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Left: KM Badge
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = kmBadgeBg,
-                            border = BorderStroke(0.8.dp, kmBadgeBorder)
+                        // Left: Borderless KM Badge
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(kmBadgeBg)
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
                         ) {
                             Text(
                                 text = "KM",
                                 color = kmBadgeText,
                                 fontSize = 10.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 0.5.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
+                                letterSpacing = 0.5.sp
                             )
                         }
 
@@ -1486,34 +1153,29 @@ fun CentralChainageDisplay(
                                     )
                                 }
                             } else {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = sideBadgeBg,
-                                    border = BorderStroke(0.8.dp, sideBadgeBorder),
-                                    modifier = Modifier.then(
-                                        if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier
-                                    )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(sideBadgeBg)
+                                        .then(if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier)
+                                        .padding(horizontal = 7.dp, vertical = 3.dp)
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(5.dp)
-                                                .clip(CircleShape)
-                                                .background(sideBadgeText)
-                                        )
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        Text(
-                                            text = detectedSide,
-                                            color = sideBadgeText,
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .clip(CircleShape)
+                                            .background(sideBadgeText)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = detectedSide,
+                                        color = sideBadgeText,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
@@ -1535,22 +1197,22 @@ fun CentralChainageDisplay(
                         horizontalArrangement = Arrangement.Center,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(7.dp),
-                            color = kmBadgeBg,
-                            border = BorderStroke(0.9.dp, kmBadgeBorder),
-                            modifier = Modifier.padding(end = if (containerWidth < 360.dp) 4.dp else 8.dp)
+                        Box(
+                            modifier = Modifier
+                                .padding(end = if (containerWidth < 360.dp) 5.dp else 8.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(kmBadgeBg)
+                                .padding(
+                                    horizontal = if (containerWidth < 360.dp) 6.dp else 8.dp,
+                                    vertical = if (containerWidth < 360.dp) 3.dp else 4.dp
+                                )
                         ) {
                             Text(
                                 text = "KM",
                                 color = kmBadgeText,
                                 fontSize = if (containerWidth < 360.dp) 11.sp else 12.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 0.5.sp,
-                                modifier = Modifier.padding(
-                                    horizontal = if (containerWidth < 360.dp) 6.dp else 8.dp,
-                                    vertical = if (containerWidth < 360.dp) 3.dp else 4.dp
-                                )
+                                letterSpacing = 0.5.sp
                             )
                         }
 
@@ -1561,7 +1223,7 @@ fun CentralChainageDisplay(
                             isDark = isDark
                         )
 
-                        Box(modifier = Modifier.padding(start = if (containerWidth < 360.dp) 4.dp else 8.dp)) {
+                        Box(modifier = Modifier.padding(start = if (containerWidth < 360.dp) 5.dp else 8.dp)) {
                             if (smartDirectionState != null) {
                                 SmartDirectionIndicatorBadge(
                                     directionState = smartDirectionState,
@@ -1585,35 +1247,32 @@ fun CentralChainageDisplay(
                                     )
                                 }
                             } else {
-                                Surface(
-                                    shape = RoundedCornerShape(7.dp),
-                                    color = sideBadgeBg,
-                                    border = BorderStroke(0.9.dp, sideBadgeBorder),
-                                    modifier = Modifier.then(if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(sideBadgeBg)
+                                        .then(if (onToggleSide != null) Modifier.clickable { onToggleSide() } else Modifier)
+                                        .padding(
                                             horizontal = if (containerWidth < 360.dp) 6.dp else 8.dp,
                                             vertical = if (containerWidth < 360.dp) 3.dp else 4.dp
                                         )
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(if (containerWidth < 360.dp) 5.dp else 6.dp)
-                                                .clip(CircleShape)
-                                                .background(sideBadgeText)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = detectedSide,
-                                            color = sideBadgeText,
-                                            fontSize = if (containerWidth < 360.dp) 11.sp else 12.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(if (containerWidth < 360.dp) 5.dp else 6.dp)
+                                            .clip(CircleShape)
+                                            .background(sideBadgeText)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = detectedSide,
+                                        color = sideBadgeText,
+                                        fontSize = if (containerWidth < 360.dp) 11.sp else 12.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
@@ -1631,9 +1290,9 @@ fun CentralChainageDisplay(
                 }
 
                 val (confText, confCol) = when (confidence) {
-                    MatchConfidence.HIGH -> "Good" to (if (isDark) Color(0xFF34D399) else Color(0xFF059669))
-                    MatchConfidence.MEDIUM -> "Moderate" to (if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB))
-                    MatchConfidence.LOW -> "Poor" to AccentRed
+                    MatchConfidence.HIGH -> "Good" to c.success
+                    MatchConfidence.MEDIUM -> "Moderate" to c.accent
+                    MatchConfidence.LOW -> "Poor" to c.error
                     MatchConfidence.NO_MATCH -> "No Fix" to subTextColor
                 }
 
@@ -1771,7 +1430,7 @@ fun OdometerSingleDigit(
         }
     }
 
-    val activeAccent = if (isDark) Color(0xFF38BDF8) else Color(0xFF2563EB)
+    val activeAccent = CtecsTheme.colors.accent
 
     val digitColor by animateColorAsState(
         targetValue = if (isChanging) activeAccent else mainTextColor,
@@ -1838,220 +1497,7 @@ fun OdometerSingleDigit(
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 3: PROJECT & STRETCH CARDS (ROW OF 2 CARDS WITH EDIT INDICATOR)
-// -------------------------------------------------------------------
-@Composable
-fun ProjectStretchCardsRow(
-    projectName: String,
-    stretchName: String,
-    onEdit: () -> Unit,
-    cardBgColor: Color,
-    cardBorderColor: Color,
-    mainTextColor: Color,
-    subTextColor: Color,
-    isDark: Boolean = false,
-    isCompact: Boolean = false
-) {
-    val projectAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
-    val stretchAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
-    val cardHeight = if (isCompact) 52.dp else 56.dp
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // Project Card
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = cardBgColor,
-            border = BorderStroke(1.dp, cardBorderColor),
-            shadowElevation = if (isDark) 0.dp else 1.dp,
-            modifier = Modifier
-                .weight(1f)
-                .height(cardHeight)
-                .clip(RoundedCornerShape(12.dp))
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { onEdit() },
-                        onLongPress = { onEdit() }
-                    )
-                }
-                .testTag("home_card_project")
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                // Left Icon Badge
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(projectAccent.copy(alpha = 0.12f))
-                        .align(Alignment.CenterStart),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Engineering,
-                        contentDescription = null,
-                        tint = projectAccent,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-
-                // Centered Content Column (Smart Dynamic Font Sizing & Center Alignment)
-                val pText = projectName.ifBlank { "Set Project" }
-                val pFontSize = when {
-                    pText.length > 20 -> 10.5.sp
-                    pText.length > 14 -> 11.5.sp
-                    else -> 12.5.sp
-                }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 28.dp, end = 22.dp)
-                        .align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "PROJECT",
-                        color = subTextColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = pText,
-                        color = if (projectName.isNotBlank()) mainTextColor else subTextColor,
-                        fontSize = pFontSize,
-                        fontWeight = FontWeight.ExtraBold,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
-                        lineHeight = (pFontSize.value + 2).sp,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Right Edit Pencil Badge
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(subTextColor.copy(alpha = 0.08f))
-                        .align(Alignment.CenterEnd),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = "Edit Project",
-                        tint = subTextColor,
-                        modifier = Modifier.size(10.dp)
-                    )
-                }
-            }
-        }
-
-        // Stretch Card
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = cardBgColor,
-            border = BorderStroke(1.dp, cardBorderColor),
-            shadowElevation = if (isDark) 0.dp else 1.dp,
-            modifier = Modifier
-                .weight(1f)
-                .height(cardHeight)
-                .clip(RoundedCornerShape(12.dp))
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { onEdit() },
-                        onLongPress = { onEdit() }
-                    )
-                }
-                .testTag("home_card_stretch")
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                // Left Icon Badge
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(stretchAccent.copy(alpha = 0.12f))
-                        .align(Alignment.CenterStart),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AltRoute,
-                        contentDescription = null,
-                        tint = stretchAccent,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-
-                // Centered Content Column (Smart Dynamic Font Sizing & Center Alignment)
-                val sText = stretchName.ifBlank { "Set Stretch" }
-                val sFontSize = when {
-                    sText.length > 20 -> 10.5.sp
-                    sText.length > 14 -> 11.5.sp
-                    else -> 12.5.sp
-                }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 28.dp, end = 22.dp)
-                        .align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "STRETCH",
-                        color = subTextColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = sText,
-                        color = if (stretchName.isNotBlank()) mainTextColor else subTextColor,
-                        fontSize = sFontSize,
-                        fontWeight = FontWeight.ExtraBold,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
-                        lineHeight = (sFontSize.value + 2).sp,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Right Edit Pencil Badge
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(subTextColor.copy(alpha = 0.08f))
-                        .align(Alignment.CenterEnd),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = "Edit Stretch",
-                        tint = subTextColor,
-                        modifier = Modifier.size(10.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-// -------------------------------------------------------------------
-// EDIT PROJECT & STRETCH MODAL DIALOG
+// EDIT PROJECT & STRETCH MODAL DIALOG (BORDERLESS FLAT)
 // -------------------------------------------------------------------
 @Composable
 fun EditProjectStretchDialog(
@@ -2064,36 +1510,20 @@ fun EditProjectStretchDialog(
     var stretch by remember { mutableStateOf(initialStretch) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val dialogColors = com.example.ui.theme.rememberDialogColors()
-    val dialogAccent = if (dialogColors.isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
+    val c = CtecsTheme.colors
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = dialogColors.shape,
-        containerColor = dialogColors.containerColor,
+        shape = RoundedCornerShape(22.dp),
+        containerColor = if (c.isDark) c.surface else c.elevatedSurface,
+        tonalElevation = 0.dp,
         modifier = Modifier.imePadding(),
-        icon = {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(dialogAccent.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Edit,
-                    contentDescription = null,
-                    tint = dialogAccent,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        },
         title = {
             Text(
-                text = "Edit Project & Stretch",
+                text = "Project & Stretch",
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
-                color = dialogColors.titleColor
+                color = c.textPrimary
             )
         },
         text = {
@@ -2102,17 +1532,18 @@ fun EditProjectStretchDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Update project information for camera watermark and documentation:",
-                    fontSize = 12.sp,
-                    color = dialogColors.textSecondaryColor
+                    text = "Update project and stretch for dashboard header and camera watermark.",
+                    fontSize = 12.5.sp,
+                    color = c.textSecondary
                 )
 
                 OutlinedTextField(
                     value = project,
                     onValueChange = { project = it },
                     label = { Text("Project Name") },
-                    placeholder = { Text("e.g. NH-44, Express Corridor") },
+                    placeholder = { Text("e.g. MH, NH-44") },
                     singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Characters,
                         imeAction = ImeAction.Next
@@ -2123,23 +1554,18 @@ fun EditProjectStretchDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("edit_project_input"),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = dialogColors.textColor,
-                        unfocusedTextColor = dialogColors.textColor,
-                        focusedBorderColor = dialogAccent,
-                        unfocusedBorderColor = dialogColors.inputBorder,
-                        focusedLabelColor = dialogAccent,
-                        unfocusedLabelColor = dialogColors.textSecondaryColor,
-                        cursorColor = dialogAccent
+                    colors = ctecsBorderlessInputColors(
+                        containerColor = if (c.isDark) c.secondarySurface else c.surface
                     )
                 )
 
                 OutlinedTextField(
                     value = stretch,
                     onValueChange = { stretch = it },
-                    label = { Text("Stretch") },
-                    placeholder = { Text("e.g. MM, Pkg-1, Section-A") },
+                    label = { Text("Stretch (Optional)") },
+                    placeholder = { Text("e.g. Pkg-1, Section-A") },
                     singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Words,
                         imeAction = ImeAction.Done
@@ -2155,14 +1581,8 @@ fun EditProjectStretchDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("edit_stretch_input"),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = dialogColors.textColor,
-                        unfocusedTextColor = dialogColors.textColor,
-                        focusedBorderColor = dialogAccent,
-                        unfocusedBorderColor = dialogColors.inputBorder,
-                        focusedLabelColor = dialogAccent,
-                        unfocusedLabelColor = dialogColors.textSecondaryColor,
-                        cursorColor = dialogAccent
+                    colors = ctecsBorderlessInputColors(
+                        containerColor = if (c.isDark) c.secondarySurface else c.surface
                     )
                 )
             }
@@ -2173,19 +1593,20 @@ fun EditProjectStretchDialog(
                     onSave(project.trim(), stretch.trim())
                     onDismiss()
                 },
+                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = dialogAccent,
-                    contentColor = Color.White
+                    containerColor = c.accent,
+                    contentColor = c.onAccent
                 ),
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.testTag("save_project_stretch_button")
             ) {
-                Text("Save", fontWeight = FontWeight.Bold)
+                Text("Save", fontWeight = FontWeight.SemiBold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = dialogColors.textSecondaryColor)
+                Text("Cancel", color = c.textSecondary)
             }
         }
     )
@@ -2743,38 +2164,26 @@ fun NextChainageCard(
         label = "km_stone_progress"
     )
 
+    val c = CtecsTheme.colors
     val isLhs = detectedSide.equals("LHS", ignoreCase = true)
-    val labelColor = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
-    val glassSurfaceColor = if (isDark) {
-        cardBgColor.copy(alpha = 0.88f)
-    } else {
-        cardBgColor.copy(alpha = 0.96f)
-    }
-    val iconBoxBg = if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.35f) else Color(0xFFEFF6FF)
+    val labelColor = c.accent
+    val iconBoxBg = c.accent.copy(alpha = if (isDark) 0.16f else 0.12f)
     val sideBadgeBg = when {
-        !isReliable -> if (isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9)
-        isLhs -> if (isDark) Color(0xFF064E3B).copy(alpha = 0.55f) else Color(0xFFECFDF5)
-        else -> if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.55f) else Color(0xFFEFF6FF)
-    }
-    val sideBadgeBorder = when {
-        !isReliable -> cardBorderColor
-        isLhs -> if (isDark) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFF6EE7B7)
-        else -> if (isDark) Color(0xFF60A5FA).copy(alpha = 0.45f) else Color(0xFF93C5FD)
+        !isReliable -> c.secondarySurface
+        isLhs -> c.success.copy(alpha = if (isDark) 0.16f else 0.12f)
+        else -> c.accent.copy(alpha = if (isDark) 0.16f else 0.12f)
     }
     val sideBadgeText = when {
         !isReliable -> subTextColor
-        isLhs -> if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
-        else -> if (isDark) Color(0xFF93C5FD) else Color(0xFF1D4ED8)
+        isLhs -> c.success
+        else -> c.accent
     }
-    val distancePillBg = if (isReliable) {
-        if (isDark) Color(0xFF2563EB) else Color(0xFF2563EB)
-    } else {
-        if (isDark) Color(0xFF334155) else Color(0xFF64748B)
-    }
+    val distancePillBg = if (isReliable) c.accent else c.secondarySurface
+    val distancePillText = if (isReliable) c.onAccent else c.textSecondary
 
     val infiniteTransition = rememberInfiniteTransition(label = "km_badge_pulse")
     val badgePulseAlpha by infiniteTransition.animateFloat(
-        initialValue = if (isReliable) 0.88f else 0.95f,
+        initialValue = if (isReliable) 0.90f else 0.96f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
             animation = tween(850, easing = FastOutSlowInEasing),
@@ -2783,13 +2192,15 @@ fun NextChainageCard(
         label = "badgePulse"
     )
 
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = glassSurfaceColor,
-        border = BorderStroke(1.dp, cardBorderColor),
-        shadowElevation = if (isDark) 0.dp else 1.dp,
+    Box(
         modifier = modifier
             .height(if (isCompact) 50.dp else 54.dp)
+            .smartFadeSurface(
+                surfaceColor = cardBgColor,
+                cornerRadius = 14.dp,
+                edgeAlpha = 0.78f,
+                centerAlpha = 1f
+            )
             .testTag("next_chainage_card")
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -2805,14 +2216,14 @@ fun NextChainageCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(9.dp),
-                        color = iconBoxBg,
-                        modifier = Modifier.size(if (isCompact || isTightRow) 32.dp else 38.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(if (isCompact || isTightRow) 32.dp else 36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(iconBoxBg),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            KmStoneIcon(sizeDp = if (isCompact || isTightRow) 24.dp else 30.dp, isDark = isDark)
-                        }
+                        KmStoneIcon(sizeDp = if (isCompact || isTightRow) 22.dp else 26.dp, isDark = isDark)
                     }
 
                     Spacer(modifier = Modifier.width(if (isTightRow) 7.dp else 10.dp))
@@ -2824,7 +2235,7 @@ fun NextChainageCard(
                             fontSize = 9.sp,
                             lineHeight = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.7.sp
+                            letterSpacing = 0.6.sp
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AnimatedContent(
@@ -2841,69 +2252,54 @@ fun NextChainageCard(
                                     fontSize = if (isCompact) 15.5.sp else 17.sp,
                                     lineHeight = 18.sp,
                                     fontWeight = FontWeight.Black,
-                                    letterSpacing = 0.3.sp,
+                                    letterSpacing = 0.2.sp,
                                     maxLines = 1,
                                     modifier = Modifier.testTag("next_km_stone_value")
                                 )
                             }
                             Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(5.dp),
-                                color = sideBadgeBg,
-                                border = BorderStroke(0.8.dp, sideBadgeBorder),
-                                modifier = Modifier.testTag("next_km_stone_side")
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(sideBadgeBg)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .testTag("next_km_stone_side")
                             ) {
                                 Text(
                                     text = "$directionArrow ${detectedSide.uppercase(Locale.ROOT)}".trim(),
                                     color = sideBadgeText,
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
+                                    maxLines = 1
                                 )
                             }
                         }
                     }
                 }
 
-                // Subtle separator bar (`|`) + Distance Away pill
+                // Distance Away Flat Pill
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(distancePillBg.copy(alpha = badgePulseAlpha))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .testTag("next_km_stone_distance")
                 ) {
                     Box(
                         modifier = Modifier
-                            .width(1.dp)
-                            .height(if (isCompact) 22.dp else 26.dp)
-                            .background(cardBorderColor.copy(alpha = 0.65f))
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(distancePillText)
                     )
-
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = distancePillBg.copy(alpha = badgePulseAlpha),
-                        shadowElevation = 1.dp,
-                        modifier = Modifier.testTag("next_km_stone_distance")
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(5.5.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = animatedDistanceLabel,
-                                color = Color.White,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                maxLines = 1
-                            )
-                        }
-                    }
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = animatedDistanceLabel,
+                        color = distancePillText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
                 }
             }
 
@@ -2912,14 +2308,14 @@ fun NextChainageCard(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .height(2.2.dp)
-                    .background(cardBorderColor.copy(alpha = 0.35f))
+                    .height(2.dp)
+                    .background(c.secondarySurface)
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(animatedProgress)
-                        .height(2.2.dp)
-                        .background(labelColor.copy(alpha = 0.85f))
+                        .height(2.dp)
+                        .background(c.accent)
                 )
             }
         }
@@ -2927,7 +2323,7 @@ fun NextChainageCard(
 }
 
 // -------------------------------------------------------------------
-// COMPONENT 5: TOOLS & DPR NOTES QUICK ACTION BUTTONS
+// COMPONENT 5: TOOLS, SURVEY & DPR NOTES QUICK ACTION BUTTONS (FLAT BORDERLESS)
 // -------------------------------------------------------------------
 @Composable
 fun HomeQuickActionButtons(
@@ -2943,168 +2339,99 @@ fun HomeQuickActionButtons(
     isDark: Boolean = false,
     isCompact: Boolean = false
 ) {
-    val surveyAccent = if (isDark) Color(0xFFF59E0B) else Color(0xFFD97706)
-    val toolsAccent = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
-    val notesAccent = if (isDark) Color(0xFF2DD4BF) else Color(0xFF0D9488)
-    val titleColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val btnHeight = if (isCompact) 40.dp else 44.dp
+    val c = CtecsTheme.colors
+    val btnHeight = if (isCompact) 42.dp else 46.dp
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Survey Card Button
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = cardBgColor,
-            border = BorderStroke(1.dp, cardBorderColor),
-            shadowElevation = if (isDark) 0.dp else 1.dp,
-            modifier = Modifier
-                .weight(1f)
-                .height(btnHeight)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { onNavigateToSurvey() }
-                .testTag("home_btn_survey")
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(surveyAccent.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Engineering,
-                            contentDescription = "Survey",
-                            tint = surveyAccent,
-                            modifier = Modifier.size(14.5.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Survey",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = titleColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
+        HomeShortcutPill(
+            label = "Survey",
+            icon = Icons.Default.Engineering,
+            accent = c.warning,
+            surfaceColor = cardBgColor,
+            titleColor = c.textPrimary,
+            height = btnHeight,
+            tag = "home_btn_survey",
+            onClick = onNavigateToSurvey,
+            modifier = Modifier.weight(1f)
+        )
+        HomeShortcutPill(
+            label = "Tools",
+            icon = Icons.Default.Build,
+            accent = c.accent,
+            surfaceColor = cardBgColor,
+            titleColor = c.textPrimary,
+            height = btnHeight,
+            tag = "home_btn_tools",
+            onClick = onNavigateToTools,
+            modifier = Modifier.weight(1f)
+        )
+        HomeShortcutPill(
+            label = "Notes",
+            icon = Icons.Default.Description,
+            accent = c.accentSecondary,
+            surfaceColor = cardBgColor,
+            titleColor = c.textPrimary,
+            height = btnHeight,
+            tag = "home_btn_notes",
+            onClick = onNavigateToNotes,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
 
-        // Tools Card Button
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = cardBgColor,
-            border = BorderStroke(1.dp, cardBorderColor),
-            shadowElevation = if (isDark) 0.dp else 1.dp,
+@Composable
+private fun HomeShortcutPill(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+    surfaceColor: Color,
+    titleColor: Color,
+    height: Dp,
+    tag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(height)
+            .smartFadeSurface(
+                surfaceColor = surfaceColor,
+                cornerRadius = 14.dp,
+                edgeAlpha = 0.78f,
+                centerAlpha = 1f
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Box(
             modifier = Modifier
-                .weight(1f)
-                .height(btnHeight)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { onNavigateToTools() }
-                .testTag("home_btn_tools")
+                .size(26.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(accent.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(toolsAccent.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Build,
-                            contentDescription = "Tools",
-                            tint = toolsAccent,
-                            modifier = Modifier.size(14.5.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Tools",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = titleColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = accent,
+                modifier = Modifier.size(15.dp)
+            )
         }
-
-        // DPR Notes Card Button
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = cardBgColor,
-            border = BorderStroke(1.dp, cardBorderColor),
-            shadowElevation = if (isDark) 0.dp else 1.dp,
-            modifier = Modifier
-                .weight(1f)
-                .height(btnHeight)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { onNavigateToNotes() }
-                .testTag("home_btn_notes")
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(notesAccent.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Description,
-                            contentDescription = "Notes",
-                            tint = notesAccent,
-                            modifier = Modifier.size(14.5.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Notes",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = titleColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
+        Spacer(modifier = Modifier.width(7.dp))
+        Text(
+            text = label,
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = titleColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -3178,10 +2505,10 @@ fun InteractiveSmartMap(
         OsmTileManager.zoomFromViewRangeMetres(viewRangeMetres)
     }
 
-    val controlSurfaceColor = if (mapTheme.isDark) Color(0xE60F172A) else Color(0xF5FFFFFF)
-    val controlBorderColor = if (mapTheme.isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
-    val controlIconColor = if (mapTheme.isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val activeControlBg = Color(0xFF2563EB)
+    val controlSurfaceColor = if (mapTheme.isDark) Color(0xEB0D111A) else Color(0xF5FFFFFF)
+    val controlBorderColor = if (mapTheme.isDark) Color(0xFF171E2B) else Color(0xFFEAF0F7)
+    val controlIconColor = if (mapTheme.isDark) Color(0xFFFFFFFF) else Color(0xFF101828)
+    val activeControlBg = if (mapTheme.isDark) Color(0xFF1685FF) else Color(0xFF1677F2)
 
     // Smooth shortest-path angular unwrap for compass rotation
     var unwrappedHeading by remember { mutableFloatStateOf(compassHeading) }
@@ -3435,8 +2762,7 @@ fun InteractiveSmartMap(
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = controlSurfaceColor,
-                border = BorderStroke(1.dp, controlBorderColor),
-                shadowElevation = 3.dp
+                shadowElevation = 0.dp
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -3458,36 +2784,35 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Map Attribution Badge (Bottom-Left)
+        // Map Attribution Badge (Bottom-Left, Borderless)
         Surface(
-            shape = RoundedCornerShape(topEnd = 8.dp),
-            color = controlSurfaceColor.copy(alpha = 0.88f),
-            border = BorderStroke(0.6.dp, controlBorderColor),
+            shape = RoundedCornerShape(topEnd = 10.dp),
+            color = controlSurfaceColor.copy(alpha = 0.86f),
+            shadowElevation = 0.dp,
             modifier = Modifier.align(Alignment.BottomStart)
         ) {
             Text(
                 text = if (mapTypePreference.equals("satellite", ignoreCase = true)) OsmTileManager.ATTRIBUTION_SATELLITE else OsmTileManager.ATTRIBUTION_STANDARD,
-                color = if (mapTheme.isDark) Color(0xFF94A3B8) else Color(0xFF475569),
+                color = if (mapTheme.isDark) Color(0xFFA1AAB9) else Color(0xFF526174),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
             )
         }
 
-        // Left Map Action Controls (Aligned Vertically)
+        // Left Map Action Controls (Flat Borderless Circles)
         Column(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(start = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // 1. Map Type Switcher (Standard <-> Satellite)
             val isSatellite = mapTypePreference.equals("satellite", ignoreCase = true)
             Surface(
                 shape = CircleShape,
                 color = if (isSatellite) activeControlBg else controlSurfaceColor,
-                border = BorderStroke(1.dp, if (isSatellite) activeControlBg else controlBorderColor),
-                shadowElevation = 2.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
@@ -3513,8 +2838,7 @@ fun InteractiveSmartMap(
             Surface(
                 shape = CircleShape,
                 color = controlSurfaceColor,
-                border = BorderStroke(1.dp, controlBorderColor),
-                shadowElevation = 2.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
@@ -3535,8 +2859,7 @@ fun InteractiveSmartMap(
             Surface(
                 shape = CircleShape,
                 color = controlSurfaceColor,
-                border = BorderStroke(1.dp, controlBorderColor),
-                shadowElevation = 2.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
@@ -3557,8 +2880,7 @@ fun InteractiveSmartMap(
             Surface(
                 shape = CircleShape,
                 color = if (isFollowingUser) activeControlBg else controlSurfaceColor,
-                border = BorderStroke(1.dp, if (isFollowingUser) activeControlBg else controlBorderColor),
-                shadowElevation = 2.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
@@ -3580,27 +2902,26 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Top-Right Modern Dual-Ring Precision Compass Instrument Over the Map
+        // Top-Right Modern Dual-Ring Precision Compass Instrument Over the Map (Preserved inside Map!)
         val headingParts = remember(compassHeadingStr) {
             val tokens = compassHeadingStr.trim().split("\\s+".toRegex())
             val deg = tokens.firstOrNull().orEmpty().ifBlank { "0°" }
             val dir = tokens.getOrNull(1).orEmpty().ifBlank { "N" }
             deg to dir
         }
-        val innerHubBg = if (mapTheme.isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)
+        val innerHubBg = if (mapTheme.isDark) Color(0xFF111827) else Color(0xFFF7F9FC)
         val cardinalColor = if (headingParts.second.startsWith("N", ignoreCase = true)) {
-            Color(0xFFEF4444)
+            Color(0xFFFF5263)
         } else if (mapTheme.isDark) {
-            Color(0xFF38BDF8)
+            Color(0xFF20B8F0)
         } else {
-            Color(0xFF2563EB)
+            Color(0xFF1677F2)
         }
 
         Surface(
             shape = CircleShape,
             color = controlSurfaceColor,
-            border = BorderStroke(1.dp, controlBorderColor),
-            shadowElevation = 4.dp,
+            shadowElevation = 0.dp,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(8.dp)
@@ -3719,12 +3040,11 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Right-Side Zoom Controls (+ / -)
+        // Right-Side Zoom Controls (+ / -, Flat Borderless)
         Surface(
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(12.dp),
             color = controlSurfaceColor,
-            border = BorderStroke(1.dp, controlBorderColor),
-            shadowElevation = 2.dp,
+            shadowElevation = 0.dp,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = 10.dp)
@@ -3750,7 +3070,7 @@ fun InteractiveSmartMap(
                 }
                 Box(
                     modifier = Modifier
-                        .width(22.dp)
+                        .width(20.dp)
                         .height(1.dp)
                         .background(controlBorderColor)
                 )
@@ -3775,7 +3095,7 @@ fun InteractiveSmartMap(
             }
         }
 
-        // Bottom-Right Dynamic Scale Badge (Full-Earth aware)
+        // Bottom-Right Dynamic Scale Badge (Flat Borderless)
         val scaleText = remember(viewRangeMetres) {
             val tenthRange = (viewRangeMetres / 10.0).coerceAtLeast(10.0)
             val roundedMetres = when {
@@ -3795,10 +3115,9 @@ fun InteractiveSmartMap(
         }
 
         Surface(
-            shape = RoundedCornerShape(6.dp),
+            shape = RoundedCornerShape(8.dp),
             color = controlSurfaceColor,
-            border = BorderStroke(0.8.dp, controlBorderColor),
-            shadowElevation = 1.dp,
+            shadowElevation = 0.dp,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(bottom = 8.dp, end = 10.dp)
@@ -3808,7 +3127,7 @@ fun InteractiveSmartMap(
                 color = controlIconColor,
                 fontSize = 9.5.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
             )
         }
     }

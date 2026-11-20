@@ -122,12 +122,18 @@ class MainActivity : ComponentActivity() {
 
                     if (showWidgetTrackingConfirmDialog) {
                         val isCurrentlyTracking = navNotifSettings.enabled
+                        val c = com.example.ui.theme.CtecsTheme.colors
                         AlertDialog(
                             onDismissRequest = { showWidgetTrackingConfirmDialog = false },
+                            containerColor = c.surface,
+                            titleContentColor = c.textPrimary,
+                            textContentColor = c.textSecondary,
+                            tonalElevation = androidx.compose.ui.unit.Dp(0f),
                             title = {
                                 Text(
                                     text = if (isCurrentlyTracking) "Stop Live Navigation Tracking?" else "Start Live Navigation Tracking?",
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    color = c.textPrimary
                                 )
                             },
                             text = {
@@ -136,7 +142,8 @@ class MainActivity : ComponentActivity() {
                                         "This will stop background chainage navigation updates for widgets and the status bar."
                                     } else {
                                         "This will enable live GPS & chainage tracking for home-screen widgets and navigation notifications."
-                                    }
+                                    },
+                                    color = c.textSecondary
                                 )
                             },
                             confirmButton = {
@@ -150,13 +157,14 @@ class MainActivity : ComponentActivity() {
                                 ) {
                                     Text(
                                         text = if (isCurrentlyTracking) "Stop Tracking" else "Start Tracking",
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isCurrentlyTracking) c.error else c.accent
                                     )
                                 }
                             },
                             dismissButton = {
                                 TextButton(onClick = { showWidgetTrackingConfirmDialog = false }) {
-                                    Text("Cancel")
+                                    Text("Cancel", color = c.textSecondary)
                                 }
                             }
                         )

@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.example.ui.theme.DarkCtecsColorTokens
+import com.example.ui.theme.LightCtecsColorTokens
 import com.example.ui.theme.isAppDarkTheme
 
 /**
@@ -44,7 +46,7 @@ enum class MapThemeMode(
 
 /**
  * Centralized theme colors and styling for all map components throughout the CTECS app.
- * Provides synchronized styling across Home, Camera, Routes, Gallery and any screen containing a map.
+ * Synchronized with AMOLED Deep Black Dark Mode and Professional Light Mode.
  */
 data class MapThemeColors(
     val isDark: Boolean,
@@ -85,7 +87,6 @@ data class MapThemeColors(
     val attributionTextColor: Color,
     val attributionBg: Color
 ) {
-    // Android Graphics integer color helpers for Canvas / Paint
     val mapBackgroundArgb: Int get() = mapBackground.toArgb()
     val routeCasingArgb: Int get() = routeCasingColor.toArgb()
     val routeCenterArgb: Int get() = routeCenterColor.toArgb()
@@ -104,89 +105,77 @@ data class MapThemeColors(
 object MapThemeConfig {
     val DarkColors = MapThemeColors(
         isDark = true,
-        mapBackground = Color(0xFF0F172A),
-        gridLineColor = Color.White.copy(alpha = 0.08f),
-        containerBorder = Color(0xFF38BDF8).copy(alpha = 0.4f),
-        containerBackground = Color(0xE60F172A),
-        routeCasingColor = Color(0xFF0284C7),
-        routeCenterColor = Color(0xFF38BDF8),
-        routeArrowColor = Color(0xFF7DD3FC),
-        markerDotColor = Color(0xFFFBBF24),
-        markerBorderColor = Color(0xFF0F172A),
-        markerTextColor = Color.White,
-        markerBadgeBg = Color(0xD00F172A),
-        userPinColor = Color(0xFFEF4444),
+        mapBackground = DarkCtecsColorTokens.secondaryBackground, // #080B12
+        gridLineColor = Color.White.copy(alpha = 0.06f),
+        containerBorder = Color.Transparent,
+        containerBackground = DarkCtecsColorTokens.surface.copy(alpha = 0.94f),
+        routeCasingColor = DarkCtecsColorTokens.accent,           // #1685FF
+        routeCenterColor = DarkCtecsColorTokens.accentSecondary,  // #20B8F0
+        routeArrowColor = DarkCtecsColorTokens.accentSecondary,
+        markerDotColor = DarkCtecsColorTokens.warning,            // #FFB52E
+        markerBorderColor = DarkCtecsColorTokens.background,
+        markerTextColor = DarkCtecsColorTokens.textPrimary,
+        markerBadgeBg = DarkCtecsColorTokens.surface.copy(alpha = 0.90f),
+        userPinColor = DarkCtecsColorTokens.accent,               // Electric Blue live pin
         userPinInnerColor = Color.White,
-        userPulseColor = Color(0xFFFF0000).copy(alpha = 0.45f),
-        userBearingColor = Color(0xFF38BDF8),
-        mapControlBg = Color(0xD0121212),
-        mapControlIconColor = Color.White,
-        mapControlBorder = Color.White.copy(alpha = 0.2f),
-        compassBorderColor = Color(0xFFFBBF24).copy(alpha = 0.8f),
-        badgeBg = Color(0xD9000000),
-        badgeTextColor = Color.White,
-        badgeBorderColor = Color.White.copy(alpha = 0.2f),
-        attributionTextColor = Color(0xFF94A3B8),
-        attributionBg = Color(0xD00F172A)
+        userPulseColor = DarkCtecsColorTokens.accent.copy(alpha = 0.35f),
+        userBearingColor = DarkCtecsColorTokens.accentSecondary,
+        mapControlBg = DarkCtecsColorTokens.surface.copy(alpha = 0.92f),
+        mapControlIconColor = DarkCtecsColorTokens.textPrimary,
+        mapControlBorder = Color.Transparent,
+        compassBorderColor = DarkCtecsColorTokens.elevatedSurface,
+        badgeBg = DarkCtecsColorTokens.surface.copy(alpha = 0.90f),
+        badgeTextColor = DarkCtecsColorTokens.textPrimary,
+        badgeBorderColor = Color.Transparent,
+        attributionTextColor = DarkCtecsColorTokens.textMuted,
+        attributionBg = DarkCtecsColorTokens.background.copy(alpha = 0.72f)
     )
 
     val LightColors = MapThemeColors(
         isDark = false,
-        mapBackground = Color(0xFFF1F5F9),
-        gridLineColor = Color(0xFF64748B).copy(alpha = 0.18f),
-        containerBorder = Color(0xFF94A3B8).copy(alpha = 0.6f),
-        containerBackground = Color(0xF0FFFFFF),
-        routeCasingColor = Color(0xFF0369A1), // Deep contrasting navy blue casing
-        routeCenterColor = Color(0xFF0284C7), // High-visibility royal blue centerline
-        routeArrowColor = Color(0xFF0284C7),
-        markerDotColor = Color(0xFFD97706), // Deep warm amber for maximum contrast on light roads
+        mapBackground = LightCtecsColorTokens.secondaryBackground, // #F7F9FC
+        gridLineColor = LightCtecsColorTokens.textMuted.copy(alpha = 0.14f),
+        containerBorder = Color.Transparent,
+        containerBackground = LightCtecsColorTokens.background.copy(alpha = 0.94f),
+        routeCasingColor = LightCtecsColorTokens.accent,           // #1677F2
+        routeCenterColor = LightCtecsColorTokens.accentSecondary,  // #159FD5
+        routeArrowColor = LightCtecsColorTokens.accent,
+        markerDotColor = LightCtecsColorTokens.warning,            // #D99A20
         markerBorderColor = Color.White,
-        markerTextColor = Color(0xFF0F172A),
-        markerBadgeBg = Color(0xF0FFFFFF),
-        userPinColor = Color(0xFFDC2626), // Vivid red location pin
+        markerTextColor = LightCtecsColorTokens.textPrimary,
+        markerBadgeBg = LightCtecsColorTokens.background.copy(alpha = 0.92f),
+        userPinColor = LightCtecsColorTokens.accent,
         userPinInnerColor = Color.White,
-        userPulseColor = Color(0xFFDC2626).copy(alpha = 0.35f),
-        userBearingColor = Color(0xFF0284C7),
-        mapControlBg = Color(0xF0FFFFFF),
-        mapControlIconColor = Color(0xFF0F172A),
-        mapControlBorder = Color(0xFFCBD5E1),
-        compassBorderColor = Color(0xFFD97706),
-        badgeBg = Color(0xEEFFFFFF),
-        badgeTextColor = Color(0xFF0F172A),
-        badgeBorderColor = Color(0xFFCBD5E1),
-        attributionTextColor = Color(0xFF475569),
-        attributionBg = Color(0xEEFFFFFF)
+        userPulseColor = LightCtecsColorTokens.accent.copy(alpha = 0.28f),
+        userBearingColor = LightCtecsColorTokens.accentSecondary,
+        mapControlBg = LightCtecsColorTokens.background.copy(alpha = 0.94f),
+        mapControlIconColor = LightCtecsColorTokens.textPrimary,
+        mapControlBorder = Color.Transparent,
+        compassBorderColor = LightCtecsColorTokens.secondarySurface,
+        badgeBg = LightCtecsColorTokens.background.copy(alpha = 0.92f),
+        badgeTextColor = LightCtecsColorTokens.textPrimary,
+        badgeBorderColor = Color.Transparent,
+        attributionTextColor = LightCtecsColorTokens.textSecondary,
+        attributionBg = LightCtecsColorTokens.background.copy(alpha = 0.80f)
     )
 
     fun getColors(isDark: Boolean): MapThemeColors = if (isDark) DarkColors else LightColors
 
-    /**
-     * Resolves whether the map should display dark styling based on
-     * the user's manual map theme preference ("system", "light", "dark")
-     * and the current app/system theme.
-     */
     fun resolveIsDark(mapThemePreference: String, appIsDark: Boolean): Boolean {
         return when (mapThemePreference.lowercase()) {
             "light" -> false
             "dark" -> true
-            else -> appIsDark // "system" -> follow app theme / device appearance
+            else -> appIsDark
         }
     }
 }
 
-/**
- * Composable helper returning the current theme's MapThemeColors.
- * Automatically recomposes when app theme or system appearance changes.
- */
 @Composable
 @ReadOnlyComposable
 fun rememberMapThemeColors(isDark: Boolean = isAppDarkTheme()): MapThemeColors {
     return MapThemeConfig.getColors(isDark)
 }
 
-/**
- * Resolves map theme colors considering both user preference and current app theme.
- */
 @Composable
 @ReadOnlyComposable
 fun rememberResolvedMapColors(mapThemePreference: String = "system"): MapThemeColors {

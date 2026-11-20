@@ -92,11 +92,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -105,6 +103,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -316,7 +317,10 @@ fun PhotosScreen(
         }
     }
 
+    val c = CtecsTheme.colors
+
     Scaffold(
+        containerColor = c.background,
         topBar = {
             if (isSelectionMode) {
                 // Multi-select Contextual Bar
@@ -325,7 +329,8 @@ fun PhotosScreen(
                         Text(
                             text = "${selectedPhotoIds.size} Selected",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                            fontSize = 18.sp,
+                            color = c.textPrimary
                         )
                     },
                     navigationIcon = {
@@ -333,12 +338,12 @@ fun PhotosScreen(
                             isSelectionMode = false
                             selectedPhotoIds.clear()
                         }) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Exit Selection Mode")
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Exit Selection Mode", tint = c.textPrimary)
                         }
                     },
                     actions = {
                         // Select All / Deselect All
-                        OutlinedButton(
+                        Button(
                             onClick = {
                                 if (selectedPhotoIds.size == filteredSortedPhotos.size) {
                                     selectedPhotoIds.clear()
@@ -347,8 +352,13 @@ fun PhotosScreen(
                                     selectedPhotoIds.addAll(filteredSortedPhotos.map { it.id })
                                 }
                             },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = c.accent.copy(alpha = 0.14f),
+                                contentColor = c.accent
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Icon(
                                 imageVector = if (selectedPhotoIds.size == filteredSortedPhotos.size) Icons.Default.Close else Icons.Default.Checklist,
@@ -371,7 +381,7 @@ fun PhotosScreen(
                                 shareMultiplePhotos(context, selectedList)
                             }
                         ) {
-                            Icon(imageVector = Icons.Default.Share, contentDescription = "Share Selected")
+                            Icon(imageVector = Icons.Default.Share, contentDescription = "Share Selected", tint = c.textPrimary)
                         }
 
                         // Delete selected
@@ -382,12 +392,12 @@ fun PhotosScreen(
                             Icon(
                                 imageVector = Icons.Default.Delete,
                                 contentDescription = "Delete Selected",
-                                tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFFDC2626) else Color.Gray
+                                tint = if (selectedPhotoIds.isNotEmpty()) c.error else c.textMuted
                             )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = c.surface
                     )
                 )
             } else {
@@ -526,7 +536,8 @@ fun PhotosScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        containerColor = c.background,
+                        titleContentColor = c.textPrimary
                     )
                 )
             }
@@ -540,10 +551,9 @@ fun PhotosScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = Color.White,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shadowElevation = 8.dp,
+                        shape = RoundedCornerShape(22.dp),
+                        color = c.elevatedSurface,
+                        shadowElevation = 0.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -567,7 +577,7 @@ fun PhotosScreen(
                                 Icon(
                                     imageVector = Icons.Default.Share,
                                     contentDescription = "Share",
-                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    tint = if (selectedPhotoIds.isNotEmpty()) c.accent else c.textMuted,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
@@ -575,12 +585,9 @@ fun PhotosScreen(
                                     text = "Share",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                    color = if (selectedPhotoIds.isNotEmpty()) c.textPrimary else c.textMuted
                                 )
                             }
-
-                            // Divider 1
-                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
 
                             // 2. Delete Item
                             Column(
@@ -595,7 +602,7 @@ fun PhotosScreen(
                                 Icon(
                                     imageVector = Icons.Default.Delete,
                                     contentDescription = "Delete",
-                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFFDC2626) else Color.LightGray,
+                                    tint = if (selectedPhotoIds.isNotEmpty()) c.error else c.textMuted,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
@@ -603,12 +610,9 @@ fun PhotosScreen(
                                     text = "Delete",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFFDC2626) else Color.Gray
+                                    color = if (selectedPhotoIds.isNotEmpty()) c.error else c.textMuted
                                 )
                             }
-
-                            // Divider 2
-                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
 
                             // 3. Move Item
                             Column(
@@ -623,7 +627,7 @@ fun PhotosScreen(
                                 Icon(
                                     imageVector = Icons.Default.CreateNewFolder,
                                     contentDescription = "Move",
-                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    tint = if (selectedPhotoIds.isNotEmpty()) c.accent else c.textMuted,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
@@ -631,12 +635,9 @@ fun PhotosScreen(
                                     text = "Move",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                    color = if (selectedPhotoIds.isNotEmpty()) c.textPrimary else c.textMuted
                                 )
                             }
-
-                            // Divider 3
-                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
 
                             // 4. Group Item
                             Column(
@@ -651,7 +652,7 @@ fun PhotosScreen(
                                 Icon(
                                     imageVector = Icons.Default.CreateNewFolder,
                                     contentDescription = "Group",
-                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    tint = if (selectedPhotoIds.isNotEmpty()) c.accent else c.textMuted,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
@@ -659,12 +660,9 @@ fun PhotosScreen(
                                     text = "Group",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                    color = if (selectedPhotoIds.isNotEmpty()) c.textPrimary else c.textMuted
                                 )
                             }
-
-                            // Divider 4
-                            Box(modifier = Modifier.height(22.dp).width(1.dp).background(Color(0xFFE2E8F0)))
 
                             // 5. Export Item
                             Column(
@@ -680,7 +678,7 @@ fun PhotosScreen(
                                 Icon(
                                     imageVector = Icons.Default.FileDownload,
                                     contentDescription = "Export",
-                                    tint = if (selectedPhotoIds.isNotEmpty()) Color(0xFF2563EB) else Color.LightGray,
+                                    tint = if (selectedPhotoIds.isNotEmpty()) c.accent else c.textMuted,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
@@ -688,7 +686,7 @@ fun PhotosScreen(
                                     text = "Export",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (selectedPhotoIds.isNotEmpty()) Color(0xFF1E293B) else Color.Gray
+                                    color = if (selectedPhotoIds.isNotEmpty()) c.textPrimary else c.textMuted
                                 )
                             }
                         }
@@ -784,22 +782,24 @@ fun PhotosScreen(
                 }
             }
 
-            // Search Input Bar
+            // Search Input Bar (borderless tonal pill)
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 leadingIcon = {
-                    Icon(imageVector = Icons.Default.Search, contentDescription = "Search")
+                    Icon(imageVector = Icons.Default.Search, contentDescription = "Search", tint = c.textMuted)
                 },
                 trailingIcon = {
                     if (searchQuery.isNotBlank()) {
                         IconButton(onClick = { searchQuery = "" }) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Clear")
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = c.textSecondary)
                         }
                     }
                 },
                 placeholder = { Text("Search by chainage, activity, filename...") },
                 singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = ctecsBorderlessInputColors(),
                 keyboardOptions = KeyboardOptions(
                     imeAction = ImeAction.Search
                 ),
@@ -1066,7 +1066,8 @@ fun PhotosScreen(
             onDismissRequest = { photoToDelete = null },
             shape = dialogColors.shape,
             containerColor = dialogColors.containerColor,
-            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+            tonalElevation = 0.dp,
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = c.error) },
             title = { Text("Delete Photo File", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor) },
             text = {
                 Text(
@@ -1081,8 +1082,9 @@ fun PhotosScreen(
                         viewModel.deletePhoto(photo)
                         photoToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
-                    shape = RoundedCornerShape(10.dp)
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = c.error, contentColor = Color.White),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -1090,13 +1092,8 @@ fun PhotosScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(
-                    onClick = { photoToDelete = null },
-                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.textColor),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Cancel", fontSize = 12.sp)
+                TextButton(onClick = { photoToDelete = null }) {
+                    Text("Cancel", fontSize = 12.sp, color = dialogColors.textSecondaryColor)
                 }
             }
         )
@@ -1109,7 +1106,8 @@ fun PhotosScreen(
             onDismissRequest = { showBulkDeleteDialog = false },
             shape = dialogColors.shape,
             containerColor = dialogColors.containerColor,
-            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+            tonalElevation = 0.dp,
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = c.error) },
             title = { Text("Delete ${selectedPhotoIds.size} Selected Items", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor) },
             text = {
                 Text(
@@ -1127,8 +1125,9 @@ fun PhotosScreen(
                         isSelectionMode = false
                         showBulkDeleteDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
-                    shape = RoundedCornerShape(10.dp)
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = c.error, contentColor = Color.White),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -1136,13 +1135,8 @@ fun PhotosScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(
-                    onClick = { showBulkDeleteDialog = false },
-                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.textColor),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Cancel", fontSize = 12.sp)
+                TextButton(onClick = { showBulkDeleteDialog = false }) {
+                    Text("Cancel", fontSize = 12.sp, color = dialogColors.textSecondaryColor)
                 }
             }
         )
@@ -1216,17 +1210,14 @@ fun PhotoUncroppedGridCard(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val c = CtecsTheme.colors
     Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = if (isSelected) c.accent.copy(alpha = 0.25f) else c.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .border(
-                width = if (isSelected) 3.dp else 1.dp,
-                color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF334155),
-                shape = RoundedCornerShape(12.dp)
-            )
+            .clip(RoundedCornerShape(14.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
@@ -1622,8 +1613,8 @@ fun PhotoLongPressOptionsDialog(
             Surface(
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 color = dialogColors.containerColor,
-                border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
-                tonalElevation = 6.dp,
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(enabled = false) {}
@@ -1660,9 +1651,8 @@ fun PhotoLongPressOptionsDialog(
                         Box(
                             modifier = Modifier
                                 .size(56.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(dialogColors.surfaceColor)
-                                .border(1.dp, dialogColors.borderColor, RoundedCornerShape(8.dp)),
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(dialogColors.surfaceColor),
                             contentAlignment = Alignment.Center
                         ) {
                             if (isVideo && videoThumbnail != null) {
@@ -1724,8 +1714,7 @@ fun PhotoLongPressOptionsDialog(
                         }
                     }
 
-                    HorizontalDivider(
-                        color = dialogColors.borderColor,
+                    SmartFadeDivider(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
 
@@ -2560,6 +2549,7 @@ fun PhotoDetailsDialog(
         onDismissRequest = onDismiss,
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         title = { Text("Photo Details", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
         text = {
             Column(

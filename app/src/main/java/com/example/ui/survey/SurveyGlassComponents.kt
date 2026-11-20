@@ -2,7 +2,6 @@ package com.example.ui.survey
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -29,7 +27,6 @@ import androidx.compose.material.icons.filled.SettingsBrightness
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,7 +48,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.ui.theme.isAppDarkTheme
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 
 /**
  * Material UI button color variants for CTECS survey controls.
@@ -68,9 +66,8 @@ enum class GlassButtonVariant {
 typealias SurveyButtonVariant = GlassButtonVariant
 
 /**
- * Unified theme colors model for the Survey module, delivering consistent,
- * high-contrast visual clarity across both Light and Dark theme modes.
- * Clean, solid Material Design surfaces without muddy transparencies.
+ * Unified theme colors model for the Survey module, directly backed by
+ * CtecsTheme (AMOLED Deep Black Dark Mode & Professional Minimalist Light Mode).
  */
 data class SurveyThemeColors(
     val isDark: Boolean,
@@ -94,56 +91,33 @@ data class SurveyThemeColors(
 
 @Composable
 fun rememberSurveyThemeColors(): SurveyThemeColors {
-    val isDark = isAppDarkTheme()
-    return remember(isDark) {
-        if (isDark) {
-            SurveyThemeColors(
-                isDark = true,
-                background = Color(0xFF0A0F1D),
-                cardBackground = Color(0xFF131C2E),
-                cardBorder = Color(0xFF1E293B),
-                headerBackground = Color(0xFF131C2E),
-                textPrimary = Color(0xFFF8FAFC),
-                textSecondary = Color(0xFF94A3B8),
-                textMuted = Color(0xFF64748B),
-                divider = Color(0xFF1E293B),
-                gold = Color(0xFFF59E0B),
-                sky = Color(0xFF38BDF8),
-                green = Color(0xFF22C55E),
-                red = Color(0xFFEF4444),
-                inputBackground = Color(0xFF0F172A),
-                inputBorder = Color(0xFF334155),
-                inputFocusedBorder = Color(0xFFF59E0B),
-                surfaceHighlight = Color(0xFF1E293B)
-            )
-        } else {
-            SurveyThemeColors(
-                isDark = false,
-                background = Color(0xFFF8FAFC),
-                cardBackground = Color(0xFFFFFFFF),
-                cardBorder = Color(0xFFE2E8F0),
-                headerBackground = Color(0xFFFFFFFF),
-                textPrimary = Color(0xFF0F172A),
-                textSecondary = Color(0xFF475569),
-                textMuted = Color(0xFF94A3B8),
-                divider = Color(0xFFE2E8F0),
-                gold = Color(0xFFD97706), // Crisp amber in light mode
-                sky = Color(0xFF0284C7),
-                green = Color(0xFF16A34A),
-                red = Color(0xFFDC2626),
-                inputBackground = Color(0xFFF8FAFC),
-                inputBorder = Color(0xFFCBD5E1),
-                inputFocusedBorder = Color(0xFF0284C7),
-                surfaceHighlight = Color(0xFFF1F5F9)
-            )
-        }
+    val c = CtecsTheme.colors
+    return remember(c) {
+        SurveyThemeColors(
+            isDark = c.isDark,
+            background = c.background,
+            cardBackground = c.surface,
+            cardBorder = Color.Transparent,
+            headerBackground = c.background,
+            textPrimary = c.textPrimary,
+            textSecondary = c.textSecondary,
+            textMuted = c.textMuted,
+            divider = c.subtleSeparator,
+            gold = c.warning,
+            sky = c.accent,
+            green = c.success,
+            red = c.error,
+            inputBackground = c.secondarySurface,
+            inputBorder = Color.Transparent,
+            inputFocusedBorder = c.accent,
+            surfaceHighlight = c.secondarySurface
+        )
     }
 }
 
 /**
- * Modern Material Design Flat Button for CTECS Survey operations.
- * Eliminates glass effects, thick borders, heavy shadows, and gradients.
- * Uses flat solid/tonal Material UI fills with high-contrast text and clean ripple effects.
+ * Flat Borderless Material Design Button for CTECS Survey operations.
+ * Zero borders, zero shadows, clean tonal/solid fills with high-contrast text.
  */
 @Composable
 fun SurveyMaterialButton(
@@ -156,84 +130,27 @@ fun SurveyMaterialButton(
     isLoading: Boolean = false,
     fontSize: TextUnit = 12.sp,
     height: Dp = 42.dp,
-    shape: RoundedCornerShape = RoundedCornerShape(10.dp),
+    shape: RoundedCornerShape = RoundedCornerShape(12.dp),
     contentPadding: PaddingValues? = null
 ) {
-    val isDark = isAppDarkTheme()
+    val c = CtecsTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
 
-    // Flat Material color pairs (Background, Text/Icon content, subtle border)
-    val (bgBase, borderBase, contentBase) = if (isDark) {
-        when (variant) {
-            GlassButtonVariant.GOLD -> Triple(
-                Color(0xFFD97706),
-                Color(0xFFF59E0B),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.SUCCESS -> Triple(
-                Color(0xFF16A34A),
-                Color(0xFF22C55E),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.SKY -> Triple(
-                Color(0xFF0284C7),
-                Color(0xFF38BDF8),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.DESTRUCTIVE -> Triple(
-                Color(0xFFDC2626),
-                Color(0xFFEF4444),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.NEUTRAL -> Triple(
-                Color(0xFF1E293B),
-                Color(0xFF334155),
-                Color(0xFFF8FAFC)
-            )
-        }
-    } else {
-        when (variant) {
-            GlassButtonVariant.GOLD -> Triple(
-                Color(0xFFD97706),
-                Color(0xFFB45309),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.SUCCESS -> Triple(
-                Color(0xFF16A34A),
-                Color(0xFF15803D),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.SKY -> Triple(
-                Color(0xFF0284C7),
-                Color(0xFF0369A1),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.DESTRUCTIVE -> Triple(
-                Color(0xFFDC2626),
-                Color(0xFFB91C1C),
-                Color(0xFFFFFFFF)
-            )
-            GlassButtonVariant.NEUTRAL -> Triple(
-                Color(0xFFF1F5F9),
-                Color(0xFFCBD5E1),
-                Color(0xFF0F172A)
-            )
-        }
+    val (bgBase, contentBase) = when (variant) {
+        GlassButtonVariant.GOLD -> c.warning to Color.White
+        GlassButtonVariant.SUCCESS -> c.success to Color.White
+        GlassButtonVariant.SKY -> c.accent to Color.White
+        GlassButtonVariant.DESTRUCTIVE -> c.error to Color.White
+        GlassButtonVariant.NEUTRAL -> c.secondarySurface to c.textPrimary
     }
 
-    val disabledBg = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-    val disabledBorder = if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
-    val disabledContent = if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
+    val disabledBg = c.secondarySurface.copy(alpha = 0.55f)
+    val disabledContent = c.textMuted
 
     val animatedBg by animateColorAsState(
         targetValue = if (enabled) bgBase else disabledBg,
         animationSpec = tween(150),
         label = "btn_bg"
-    )
-    val animatedBorder by animateColorAsState(
-        targetValue = if (enabled) borderBase else disabledBorder,
-        animationSpec = tween(150),
-        label = "btn_border"
     )
     val animatedContent by animateColorAsState(
         targetValue = if (enabled) contentBase else disabledContent,
@@ -241,12 +158,11 @@ fun SurveyMaterialButton(
         label = "btn_content"
     )
 
-    val actualPadding = contentPadding ?: PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+    val actualPadding = contentPadding ?: PaddingValues(horizontal = 12.dp, vertical = 4.dp)
 
     Surface(
         shape = shape,
         color = animatedBg,
-        border = BorderStroke(0.75.dp, animatedBorder.copy(alpha = 0.5f)),
         shadowElevation = 0.dp,
         modifier = modifier
             .height(height)
@@ -298,7 +214,6 @@ fun SurveyMaterialButton(
 
 /**
  * Backwards compatible alias for SurveyMaterialButton.
- * Replaces glass styling with flat Material UI design seamlessly.
  */
 @Composable
 fun SurveyGlassButton(
@@ -311,7 +226,7 @@ fun SurveyGlassButton(
     isLoading: Boolean = false,
     fontSize: TextUnit = 12.sp,
     height: Dp = 42.dp,
-    shape: RoundedCornerShape = RoundedCornerShape(10.dp),
+    shape: RoundedCornerShape = RoundedCornerShape(12.dp),
     contentPadding: PaddingValues? = null
 ) {
     SurveyMaterialButton(
@@ -330,8 +245,7 @@ fun SurveyGlassButton(
 }
 
 /**
- * Modern Material Design Flat Icon Button for map controls and toolbar actions.
- * Flat background, clean icon tint, minimum 48dp interactive touch target.
+ * Flat Borderless Material Design Icon Button for map controls and toolbar actions.
  */
 @Composable
 fun SurveyMaterialIconButton(
@@ -344,68 +258,23 @@ fun SurveyMaterialIconButton(
     active: Boolean = false,
     size: Dp = 38.dp,
     iconSize: Dp? = null,
-    shape: Shape = RoundedCornerShape(10.dp)
+    shape: Shape = RoundedCornerShape(12.dp)
 ) {
-    val isDark = isAppDarkTheme()
+    val c = CtecsTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val isHighlight = isActive || active
 
-    val (bgBase, borderBase, contentBase) = if (isDark) {
-        when (variant) {
-            GlassButtonVariant.GOLD -> Triple(
-                if (isHighlight) Color(0xFFD97706) else Color(0xFF1E293B),
-                if (isHighlight) Color(0xFFF59E0B) else Color(0xFF334155),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFF59E0B)
-            )
-            GlassButtonVariant.SUCCESS -> Triple(
-                if (isHighlight) Color(0xFF16A34A) else Color(0xFF1E293B),
-                if (isHighlight) Color(0xFF22C55E) else Color(0xFF334155),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF22C55E)
-            )
-            GlassButtonVariant.SKY -> Triple(
-                if (isHighlight) Color(0xFF0284C7) else Color(0xFF1E293B),
-                if (isHighlight) Color(0xFF38BDF8) else Color(0xFF334155),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF38BDF8)
-            )
-            GlassButtonVariant.DESTRUCTIVE -> Triple(
-                if (isHighlight) Color(0xFFDC2626) else Color(0xFF1E293B),
-                if (isHighlight) Color(0xFFEF4444) else Color(0xFF334155),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFEF4444)
-            )
-            GlassButtonVariant.NEUTRAL -> Triple(
-                if (isHighlight) Color(0xFF0284C7) else Color(0xFF1E293B),
-                if (isHighlight) Color(0xFF38BDF8) else Color(0xFF334155),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFF8FAFC)
-            )
-        }
-    } else {
-        when (variant) {
-            GlassButtonVariant.GOLD -> Triple(
-                if (isHighlight) Color(0xFFD97706) else Color(0xFFF1F5F9),
-                if (isHighlight) Color(0xFFB45309) else Color(0xFFCBD5E1),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFD97706)
-            )
-            GlassButtonVariant.SUCCESS -> Triple(
-                if (isHighlight) Color(0xFF16A34A) else Color(0xFFF1F5F9),
-                if (isHighlight) Color(0xFF15803D) else Color(0xFFCBD5E1),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF16A34A)
-            )
-            GlassButtonVariant.SKY -> Triple(
-                if (isHighlight) Color(0xFF0284C7) else Color(0xFFF1F5F9),
-                if (isHighlight) Color(0xFF0369A1) else Color(0xFFCBD5E1),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF0284C7)
-            )
-            GlassButtonVariant.DESTRUCTIVE -> Triple(
-                if (isHighlight) Color(0xFFDC2626) else Color(0xFFF1F5F9),
-                if (isHighlight) Color(0xFFB91C1C) else Color(0xFFCBD5E1),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFFDC2626)
-            )
-            GlassButtonVariant.NEUTRAL -> Triple(
-                if (isHighlight) Color(0xFF0284C7) else Color(0xFFF1F5F9),
-                if (isHighlight) Color(0xFF0284C7) else Color(0xFFCBD5E1),
-                if (isHighlight) Color(0xFFFFFFFF) else Color(0xFF0F172A)
-            )
-        }
+    val (bgBase, contentBase) = when (variant) {
+        GlassButtonVariant.GOLD ->
+            if (isHighlight) c.warning to Color.White else c.secondarySurface to c.warning
+        GlassButtonVariant.SUCCESS ->
+            if (isHighlight) c.success to Color.White else c.secondarySurface to c.success
+        GlassButtonVariant.SKY ->
+            if (isHighlight) c.accent to Color.White else c.secondarySurface to c.accent
+        GlassButtonVariant.DESTRUCTIVE ->
+            if (isHighlight) c.error to Color.White else c.secondarySurface to c.error
+        GlassButtonVariant.NEUTRAL ->
+            if (isHighlight) c.accent to Color.White else c.secondarySurface to c.textPrimary
     }
 
     val actualIconSize = iconSize ?: (size.value * 0.48f).dp.coerceIn(16.dp, 22.dp)
@@ -413,7 +282,6 @@ fun SurveyMaterialIconButton(
     Surface(
         shape = shape,
         color = bgBase,
-        border = BorderStroke(0.75.dp, borderBase),
         shadowElevation = 0.dp,
         modifier = modifier
             .size(size)
@@ -449,7 +317,7 @@ fun SurveyGlassIconButton(
     active: Boolean = false,
     size: Dp = 38.dp,
     iconSize: Dp? = null,
-    shape: Shape = RoundedCornerShape(10.dp)
+    shape: Shape = RoundedCornerShape(12.dp)
 ) {
     SurveyMaterialIconButton(
         icon = icon,
@@ -466,8 +334,7 @@ fun SurveyGlassIconButton(
 }
 
 /**
- * Modern Material 3 Segmented Toggle Pill for Road Side, Lane selection, Auto vs Manual modes, etc.
- * High contrast, clean solid indicator pill, zero glass blurring.
+ * Flat Borderless Segmented Toggle Pill for Road Side, Lane selection, Auto vs Manual modes.
  */
 @Composable
 fun <T> SurveyGlassSegmentedToggle(
@@ -477,21 +344,17 @@ fun <T> SurveyGlassSegmentedToggle(
     modifier: Modifier = Modifier,
     activeColor: Color? = null
 ) {
-    val isDark = isAppDarkTheme()
-    val resolvedActiveColor = activeColor ?: if (isDark) Color(0xFFD97706) else Color(0xFFD97706)
-    val surfaceBg = if (isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
-    val surfaceBorder = if (isDark) Color(0xFF1E293B) else Color(0xFFCBD5E1)
-    val unselectedTextColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val c = CtecsTheme.colors
+    val resolvedActiveColor = activeColor ?: c.accent
 
     Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = surfaceBg,
-        border = BorderStroke(0.75.dp, surfaceBorder),
+        shape = RoundedCornerShape(10.dp),
+        color = c.secondarySurface,
         shadowElevation = 0.dp,
         modifier = modifier.height(36.dp)
     ) {
         Row(
-            modifier = Modifier.padding(2.dp),
+            modifier = Modifier.padding(3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             options.forEach { (option, label) ->
@@ -502,7 +365,7 @@ fun <T> SurveyGlassSegmentedToggle(
                     label = "pill_bg"
                 )
                 val textColor by animateColorAsState(
-                    targetValue = if (isSelected) Color.White else unselectedTextColor,
+                    targetValue = if (isSelected) Color.White else c.textSecondary,
                     animationSpec = tween(120),
                     label = "pill_text"
                 )
@@ -510,8 +373,8 @@ fun <T> SurveyGlassSegmentedToggle(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(32.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(pillBg)
                         .clickable { onSelect(option) },
                     contentAlignment = Alignment.Center
@@ -531,9 +394,7 @@ fun <T> SurveyGlassSegmentedToggle(
 }
 
 /**
- * Clean Minimalist Theme Selector Dialog for the Survey Module.
- * Allows instant, dynamic theme switching between Light, Dark, and System Default
- * while preserving survey tracking and map coordinates.
+ * Clean Borderless Theme Selector Dialog for the Survey Module.
  */
 @Composable
 fun SurveyThemeSelectorDialog(
@@ -541,19 +402,19 @@ fun SurveyThemeSelectorDialog(
     onSelectTheme: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val colors = rememberSurveyThemeColors()
+    val c = CtecsTheme.colors
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = BorderStroke(1.dp, colors.cardBorder),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = c.elevatedSurface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier.padding(12.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
@@ -562,33 +423,33 @@ fun SurveyThemeSelectorDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SURVEY THEME MODE",
+                        text = "APPEARANCE MODE",
                         fontWeight = FontWeight.Bold,
-                        color = colors.gold,
-                        fontSize = 14.sp
+                        color = c.accent,
+                        fontSize = 13.sp,
+                        letterSpacing = 0.8.sp
                     )
                     SurveyGlassIconButton(
                         icon = Icons.Default.Check,
                         contentDescription = "Done",
                         onClick = onDismiss,
-                        variant = GlassButtonVariant.GOLD,
+                        variant = GlassButtonVariant.SKY,
                         size = 30.dp,
                         iconSize = 16.dp
                     )
                 }
 
-                HorizontalDivider(color = colors.divider)
+                SmartFadeDivider()
 
                 listOf(
-                    Triple("light", "Light Theme", Icons.Default.LightMode),
-                    Triple("dark", "Dark Theme", Icons.Default.DarkMode),
+                    Triple("dark", "Deep Black Dark Mode", Icons.Default.DarkMode),
+                    Triple("light", "Professional Light Mode", Icons.Default.LightMode),
                     Triple("system", "System Default", Icons.Default.SettingsBrightness)
                 ).forEach { (mode, label, icon) ->
                     val isSelected = currentTheme.equals(mode, ignoreCase = true)
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isSelected) colors.surfaceHighlight else Color.Transparent,
-                        border = if (isSelected) BorderStroke(1.dp, colors.gold) else BorderStroke(0.5.dp, colors.cardBorder),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) c.accent.copy(alpha = 0.14f) else c.secondarySurface,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
@@ -599,7 +460,7 @@ fun SurveyThemeSelectorDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -610,21 +471,21 @@ fun SurveyThemeSelectorDialog(
                                 Icon(
                                     imageVector = icon,
                                     contentDescription = null,
-                                    tint = if (isSelected) colors.gold else colors.textSecondary,
+                                    tint = if (isSelected) c.accent else c.textSecondary,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
                                     text = label,
-                                    color = if (isSelected) colors.gold else colors.textPrimary,
+                                    color = if (isSelected) c.accent else c.textPrimary,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 13.sp
+                                    fontSize = 13.5.sp
                                 )
                             }
                             if (isSelected) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
                                     contentDescription = "Selected",
-                                    tint = colors.gold,
+                                    tint = c.accent,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }

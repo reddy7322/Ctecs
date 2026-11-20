@@ -9,7 +9,6 @@ import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -68,14 +67,11 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -129,7 +125,10 @@ import com.example.model.ReferencePointSource
 import com.example.model.RefreshMode
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
+import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.DialogThemeTokens
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
 import com.example.ui.theme.isAppDarkTheme
 import com.example.ui.theme.rememberDialogColors
 import kotlinx.coroutines.launch
@@ -163,10 +162,11 @@ fun ChainageManagementDialog(
 ) {
     val context = LocalContext.current
     val dialogColors = rememberDialogColors()
-    val primaryAccent = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
-    val greenAccent = Color(0xFF10B981)
-    val amberAccent = Color(0xFFF59E0B)
-    val redAccent = Color(0xFFEF4444)
+    val c = CtecsTheme.colors
+    val primaryAccent = c.accent
+    val greenAccent = c.success
+    val amberAccent = c.warning
+    val redAccent = c.error
 
     val isImportingRoute by viewModel.isImportingRoute.collectAsStateWithLifecycle()
     val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
@@ -223,9 +223,10 @@ fun ChainageManagementDialog(
         )
     ) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(22.dp),
             color = dialogColors.containerColor,
-            border = BorderStroke(1.dp, dialogColors.borderColor),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
             modifier = Modifier
                 .fillMaxWidth(0.95f)
                 .widthIn(max = 600.dp)
@@ -301,7 +302,7 @@ fun ChainageManagementDialog(
                     }
                 }
 
-                HorizontalDivider(color = dialogColors.dividerColor, thickness = 1.dp)
+                SmartFadeDivider()
 
                 // ---------------------------------------------------------
                 // SCROLLABLE MAIN CONTENT
@@ -413,7 +414,7 @@ fun ChainageManagementDialog(
                     )
                 }
 
-                HorizontalDivider(color = dialogColors.dividerColor, thickness = 1.dp)
+                SmartFadeDivider()
 
                 // ---------------------------------------------------------
                 // FLAT FOOTER BAR
@@ -455,6 +456,8 @@ fun ChainageManagementDialog(
         AlertDialog(
             onDismissRequest = { showRemoveAlignmentConfirm = false },
             containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
+            shape = dialogColors.shape,
             title = {
                 Text(
                     text = "Remove KMZ Alignment?",
@@ -492,6 +495,8 @@ fun ChainageManagementDialog(
         AlertDialog(
             onDismissRequest = { showResetCalibrationConfirm = false },
             containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
+            shape = dialogColors.shape,
             title = {
                 Text(
                     text = "Reset Chainage Calibration?",
@@ -530,6 +535,8 @@ fun ChainageManagementDialog(
         AlertDialog(
             onDismissRequest = { pendingDeletePoint = null },
             containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
+            shape = dialogColors.shape,
             title = {
                 Text(
                     text = "Remove Verified Reference Point?",
@@ -623,10 +630,10 @@ private fun KmzAlignmentFileSection(
     onDismissStatus: () -> Unit,
     onSelectAlignment: (String?) -> Unit
 ) {
+    val c = CtecsTheme.colors
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = if (dialogColors.isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC),
-        border = BorderStroke(1.dp, dialogColors.borderColor),
+        shape = RoundedCornerShape(14.dp),
+        color = c.surface,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("kmz_alignment_file_section")
@@ -718,9 +725,8 @@ private fun KmzAlignmentFileSection(
             if (!isImporting && !importErrorMessage.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = redAccent.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, redAccent.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(10.dp),
+                    color = redAccent.copy(alpha = 0.14f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -761,9 +767,8 @@ private fun KmzAlignmentFileSection(
             if (!isImporting && importErrorMessage.isNullOrBlank() && !importStatusMessage.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = greenAccent.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, greenAccent.copy(alpha = 0.35f)),
+                    shape = RoundedCornerShape(10.dp),
+                    color = greenAccent.copy(alpha = 0.14f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -810,9 +815,8 @@ private fun KmzAlignmentFileSection(
                 val diag = activeRoute.diagnostics
 
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (dialogColors.isDark) Color(0xFF0F172A) else Color.White,
-                    border = BorderStroke(1.dp, dialogColors.borderColor),
+                    shape = RoundedCornerShape(12.dp),
+                    color = c.secondarySurface,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
@@ -940,12 +944,15 @@ private fun KmzAlignmentFileSection(
                     )
                 }
 
-                OutlinedButton(
+                Button(
                     onClick = onImportUrlClick,
                     enabled = !isImporting,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryAccent),
-                    border = BorderStroke(1.dp, primaryAccent.copy(alpha = 0.55f)),
-                    shape = RoundedCornerShape(8.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = primaryAccent.copy(alpha = 0.14f),
+                        contentColor = primaryAccent
+                    ),
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier
                         .height(42.dp)
@@ -961,12 +968,15 @@ private fun KmzAlignmentFileSection(
                 }
 
                 if (activeRoute != null) {
-                    OutlinedButton(
+                    Button(
                         onClick = onRemoveClick,
                         enabled = !isImporting,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = redAccent),
-                        border = BorderStroke(1.dp, redAccent.copy(alpha = 0.5f)),
-                        shape = RoundedCornerShape(8.dp),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = redAccent.copy(alpha = 0.14f),
+                            contentColor = redAccent
+                        ),
+                        shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp),
                         modifier = Modifier
                             .height(42.dp)
@@ -1018,10 +1028,10 @@ internal fun LiveCalibrationStatusSection(
         MatchConfidence.NO_MATCH -> Triple(Color(0xFF374151), Color(0xFF9CA3AF), if (activeRoute == null) "Awaiting KMZ" else "Off Route / No GPS")
     }
 
+    val c = CtecsTheme.colors
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = if (dialogColors.isDark) Color(0xFF131D2E) else Color(0xFFF0F9FF),
-        border = BorderStroke(1.dp, primaryAccent.copy(alpha = 0.35f)),
+        shape = RoundedCornerShape(14.dp),
+        color = c.surface,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -1076,9 +1086,8 @@ internal fun LiveCalibrationStatusSection(
 
             // Original KMZ Chainage vs Calibrated Chainage Box
             Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (dialogColors.isDark) Color(0xFF0F172A) else Color.White,
-                border = BorderStroke(1.dp, dialogColors.borderColor),
+                shape = RoundedCornerShape(12.dp),
+                color = c.secondarySurface,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -1410,9 +1419,8 @@ private fun KmzChainageCalibrationSection(
             else -> Pair(redAccent.copy(alpha = 0.15f), redAccent)
         }
         Surface(
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(12.dp),
             color = statusBg,
-            border = BorderStroke(1.dp, statusColor.copy(alpha = 0.4f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
@@ -1454,10 +1462,10 @@ private fun KmzChainageCalibrationSection(
     // ---------------------------------------------------------
     // CALIBRATION INPUT CARD (ALWAYS VISIBLE IN CHAINAGE CONTROL)
     // ---------------------------------------------------------
+    val c = CtecsTheme.colors
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = if (dialogColors.isDark) Color(0xFF1E293B) else Color.White,
-        border = BorderStroke(1.2.dp, primaryAccent.copy(alpha = 0.6f)),
+        shape = RoundedCornerShape(14.dp),
+        color = c.surface,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("kmz_chainage_correction_input")
@@ -1540,10 +1548,15 @@ private fun KmzChainageCalibrationSection(
                     )
 
                     Box {
-                        OutlinedButton(
+                        Button(
                             onClick = { showMarkerDropdown = true },
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = primaryAccent.copy(alpha = 0.14f),
+                                contentColor = primaryAccent
+                            ),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            shape = RoundedCornerShape(6.dp),
+                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
                                 .height(28.dp)
                                 .testTag("pick_reference_marker_button")
@@ -1615,13 +1628,8 @@ private fun KmzChainageCalibrationSection(
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = dialogColors.textColor,
-                    unfocusedTextColor = dialogColors.textColor,
-                    focusedBorderColor = primaryAccent,
-                    unfocusedBorderColor = dialogColors.inputBorder,
-                    focusedLabelColor = primaryAccent
-                ),
+                shape = RoundedCornerShape(12.dp),
+                colors = ctecsBorderlessInputColors(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("orig_kmz_input")
@@ -1644,13 +1652,8 @@ private fun KmzChainageCalibrationSection(
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = dialogColors.textColor,
-                    unfocusedTextColor = dialogColors.textColor,
-                    focusedBorderColor = primaryAccent,
-                    unfocusedBorderColor = dialogColors.inputBorder,
-                    focusedLabelColor = primaryAccent
-                ),
+                shape = RoundedCornerShape(12.dp),
+                colors = ctecsBorderlessInputColors(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("corrected_kmz_input")
@@ -1659,11 +1662,11 @@ private fun KmzChainageCalibrationSection(
             // Live Calibration Offset Preview
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
-                shape = RoundedCornerShape(6.dp),
+                shape = RoundedCornerShape(10.dp),
                 color = when {
-                    calculatedOffset > 0L -> Color(0x1A10B981)
-                    calculatedOffset < 0L -> Color(0x1AEF4444)
-                    else -> if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+                    calculatedOffset > 0L -> greenAccent.copy(alpha = 0.14f)
+                    calculatedOffset < 0L -> redAccent.copy(alpha = 0.14f)
+                    else -> c.secondarySurface
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -1710,8 +1713,8 @@ private fun KmzChainageCalibrationSection(
             ) {
                 listOf(-100L, -50L, -10L, 10L, 50L, 100L).forEach { delta ->
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = if (dialogColors.isDark) Color(0xFF334155) else Color(0xFFE2E8F0),
+                        shape = RoundedCornerShape(8.dp),
+                        color = c.secondarySurface,
                         modifier = Modifier
                             .weight(1f)
                             .clickable {
@@ -1741,12 +1744,8 @@ private fun KmzChainageCalibrationSection(
                 label = { Text("Landmark / Reference Note (Optional)") },
                 placeholder = { Text("e.g. KM Stone 196, Culvert, Toll Plaza") },
                 singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = dialogColors.textColor,
-                    unfocusedTextColor = dialogColors.textColor,
-                    focusedBorderColor = primaryAccent,
-                    unfocusedBorderColor = dialogColors.inputBorder
-                ),
+                shape = RoundedCornerShape(12.dp),
+                colors = ctecsBorderlessInputColors(),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -1754,9 +1753,8 @@ private fun KmzChainageCalibrationSection(
             if (validation != null && validation.warnings.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFFFEF3C7),
-                    border = BorderStroke(1.dp, Color(0xFFF59E0B)),
+                    shape = RoundedCornerShape(10.dp),
+                    color = amberAccent.copy(alpha = 0.14f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
@@ -1881,9 +1879,8 @@ private fun KmzChainageCalibrationSection(
 
         if (correctionPoints.isEmpty()) {
             Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFFAFAFA),
-                border = BorderStroke(1.dp, dialogColors.borderColor),
+                shape = RoundedCornerShape(12.dp),
+                color = c.surface,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -1942,13 +1939,16 @@ private fun KmzChainageCalibrationSection(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
+                Button(
                     onClick = {
                         exportCalibratedKmzFile(context, activeRoute, correctionPoints, coroutineScope)
                     },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryAccent),
-                    border = BorderStroke(1.dp, primaryAccent.copy(alpha = 0.5f)),
-                    shape = RoundedCornerShape(8.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = primaryAccent.copy(alpha = 0.14f),
+                        contentColor = primaryAccent
+                    ),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("export_calibrated_kmz_button")
                 ) {
                     Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(13.dp))
@@ -1958,13 +1958,16 @@ private fun KmzChainageCalibrationSection(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                OutlinedButton(
+                Button(
                     onClick = {
                         exportCorrectionPoints(context, activeRoute, correctionPoints)
                     },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.textColor),
-                    border = BorderStroke(1.dp, dialogColors.borderColor),
-                    shape = RoundedCornerShape(8.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = c.secondarySurface,
+                        contentColor = dialogColors.textColor
+                    ),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("export_calibration_json_button")
                 ) {
                     Text("Export JSON", fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -2026,12 +2029,11 @@ private fun RouteCalibrationSchematicPreview(
     val maxMetres = if (rawMax <= minMetres) minMetres + 5000L else rawMax
     val spanMetres = (maxMetres - minMetres).toFloat().coerceAtLeast(100f)
 
+    val c = CtecsTheme.colors
     Card(
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF8FAFC)
-        ),
-        border = BorderStroke(1.dp, if (dialogColors.isDark) Color(0xFF334155) else Color(0xFFE2E8F0)),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = c.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier.fillMaxWidth()
     ) {
         Column(
@@ -2182,12 +2184,11 @@ private fun CorrectionPointCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val c = CtecsTheme.colors
     Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (dialogColors.isDark) Color(0xFF1E293B) else Color.White
-        ),
-        border = BorderStroke(0.8.dp, if (point.isEnabled) primaryAccent.copy(alpha = 0.4f) else dialogColors.borderColor),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = c.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -2342,37 +2343,33 @@ fun ChainageSourceBadge(
     isDark: Boolean = isAppDarkTheme(),
     modifier: Modifier = Modifier
 ) {
-    val (bgColor, borderColor, textColor, label) = when (source) {
-        ChainageSource.MANUAL -> Quadruple(
-            if (isDark) Color(0xFF78350F).copy(alpha = 0.5f) else Color(0xFFFEF3C7),
-            if (isDark) Color(0xFFF59E0B) else Color(0xFFFCD34D),
-            if (isDark) Color(0xFFFDE68A) else Color(0xFFB45309),
+    val c = CtecsTheme.colors
+    val (bgColor, textColor, label) = when (source) {
+        ChainageSource.MANUAL -> Triple(
+            c.warning.copy(alpha = 0.16f),
+            c.warning,
             "MANUAL"
         )
-        ChainageSource.CUSTOM_CORRECTION -> Quadruple(
-            if (isDark) Color(0xFF4C1D95).copy(alpha = 0.5f) else Color(0xFFEDE9FE),
-            if (isDark) Color(0xFF8B5CF6) else Color(0xFFC4B5FD),
-            if (isDark) Color(0xFFDDD6FE) else Color(0xFF6D28D9),
+        ChainageSource.CUSTOM_CORRECTION -> Triple(
+            c.accent.copy(alpha = 0.16f),
+            c.accent,
             "CALIBRATED"
         )
-        ChainageSource.KMZ -> Quadruple(
-            if (isDark) Color(0xFF0C4A6E).copy(alpha = 0.5f) else Color(0xFFE0F2FE),
-            if (isDark) Color(0xFF0284C7) else Color(0xFFBAE6FD),
-            if (isDark) Color(0xFFBAE6FD) else Color(0xFF0369A1),
+        ChainageSource.KMZ -> Triple(
+            c.accentSecondary.copy(alpha = 0.16f),
+            c.accentSecondary,
             "KMZ"
         )
-        ChainageSource.GPS -> Quadruple(
-            if (isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9),
-            if (isDark) Color(0xFF475569) else Color(0xFFCBD5E1),
-            if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
+        ChainageSource.GPS -> Triple(
+            c.secondarySurface,
+            c.textSecondary,
             "GPS"
         )
     }
 
     Surface(
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(8.dp),
         color = bgColor,
-        border = BorderStroke(0.8.dp, borderColor),
         modifier = modifier
     ) {
         Row(
@@ -2418,10 +2415,10 @@ private fun PermanentCalibrationProfilesCard(
 ) {
     var profileNameInput by rememberSaveable(activeRoute.id) { mutableStateOf("${activeRoute.name} Profile") }
 
+    val c = CtecsTheme.colors
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = if (dialogColors.isDark) Color(0xFF1E293B) else Color.White,
-        border = BorderStroke(1.dp, dialogColors.borderColor),
+        shape = RoundedCornerShape(14.dp),
+        color = c.surface,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("permanent_calibration_profiles_card")
@@ -2451,12 +2448,8 @@ private fun PermanentCalibrationProfilesCard(
                     onValueChange = { profileNameInput = it },
                     label = { Text("Profile Name") },
                     singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = dialogColors.textColor,
-                        unfocusedTextColor = dialogColors.textColor,
-                        focusedBorderColor = primaryAccent,
-                        unfocusedBorderColor = dialogColors.inputBorder
-                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ctecsBorderlessInputColors(),
                     modifier = Modifier.weight(1f)
                 )
 
@@ -2483,9 +2476,8 @@ private fun PermanentCalibrationProfilesCard(
                             else -> redAccent
                         }
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF8FAFC),
-                            border = BorderStroke(1.dp, dialogColors.borderColor),
+                            shape = RoundedCornerShape(10.dp),
+                            color = c.secondarySurface,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -2606,10 +2598,10 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
         }
     }
 
+    val c = CtecsTheme.colors
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = if (dialogColors.isDark) Color(0xFF1E293B) else Color.White,
-        border = BorderStroke(1.dp, dialogColors.borderColor),
+        shape = RoundedCornerShape(14.dp),
+        color = c.surface,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("automatic_2km_markers_and_final_apply_card")
@@ -2653,6 +2645,8 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
                         label = { Text("Start Chainage") },
                         placeholder = { Text("e.g. 198+000") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ctecsBorderlessInputColors(),
                         modifier = Modifier
                             .weight(1f)
                             .testTag("calibration_range_start_input")
@@ -2663,6 +2657,8 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
                         label = { Text("End Chainage") },
                         placeholder = { Text("e.g. 202+000") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ctecsBorderlessInputColors(),
                         modifier = Modifier
                             .weight(1f)
                             .testTag("calibration_range_end_input")
@@ -2674,9 +2670,8 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
 
             // Generated 2 km Markers Summary
             Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF8FAFC),
-                border = BorderStroke(1.dp, dialogColors.borderColor),
+                shape = RoundedCornerShape(10.dp),
+                color = c.secondarySurface,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
@@ -2709,9 +2704,8 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
                 val p = replacementPreview!!
                 Spacer(modifier = Modifier.height(6.dp))
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = greenAccent.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, greenAccent.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(10.dp),
+                    color = greenAccent.copy(alpha = 0.14f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
@@ -2746,7 +2740,7 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
+                Button(
                     onClick = {
                         viewModel.previewKmzCalibrationReplacement(
                             rangeStartMetres = parsedStartMetres,
@@ -2758,7 +2752,12 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(8.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = c.secondarySurface,
+                        contentColor = dialogColors.titleColor
+                    ),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
                         .height(40.dp)
@@ -2773,8 +2772,9 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
                         val ext = if (activeRoute.fileName.endsWith(".kml", ignoreCase = true)) "kml" else "kmz"
                         safExportCalibratedKmzLauncher.launch("${base}_calibrated_2km.$ext")
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = primaryAccent),
-                    shape = RoundedCornerShape(8.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = Color.White),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
                         .height(40.dp)
@@ -2786,7 +2786,7 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            OutlinedButton(
+            Button(
                 onClick = {
                     viewModel.applyCalibrationToKmzAndExport(
                         targetUri = null,
@@ -2797,9 +2797,12 @@ private fun Automatic2KmMarkersAndFinalApplyCard(
                         statusMessage = msg
                     }
                 },
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = greenAccent),
-                border = BorderStroke(1.dp, greenAccent.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(8.dp),
+                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = greenAccent.copy(alpha = 0.16f),
+                    contentColor = greenAccent
+                ),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(38.dp)
@@ -2829,8 +2832,9 @@ private fun CalibrationEngineDiagnosticMonitorCard(
         SmartChainageCorrectionEngine.EngineHealthStatus.STALL_DETECTED -> redAccent
         SmartChainageCorrectionEngine.EngineHealthStatus.IDLE -> amberAccent
     }
-    val cardBgColor = if (dialogColors.isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)
-    val surfaceSubtleColor = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+    val c = CtecsTheme.colors
+    val cardBgColor = c.surface
+    val surfaceSubtleColor = c.secondarySurface
 
     Card(
         modifier = Modifier
@@ -2838,7 +2842,7 @@ private fun CalibrationEngineDiagnosticMonitorCard(
             .testTag("calibration_diagnostic_monitor_panel"),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = cardBgColor),
-        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.35f))
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
@@ -2881,10 +2885,14 @@ private fun CalibrationEngineDiagnosticMonitorCard(
                     }
                 }
 
-                OutlinedButton(
+                Button(
                     onClick = onRestartMatchingSubTask,
                     shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, primaryAccent.copy(alpha = 0.5f)),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = primaryAccent.copy(alpha = 0.14f),
+                        contentColor = primaryAccent
+                    ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     modifier = Modifier
                         .height(32.dp)
@@ -2908,7 +2916,7 @@ private fun CalibrationEngineDiagnosticMonitorCard(
 
             if (expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HorizontalDivider(color = dialogColors.borderColor)
+                    SmartFadeDivider()
 
                     // Row 1: Engine Heartbeat & Watchdog Metrics
                     Row(
@@ -3010,12 +3018,11 @@ private fun DiagnosticMetricTile(
     accentColor: Color,
     dialogColors: DialogThemeTokens
 ) {
-    val surfaceSubtleColor = if (dialogColors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+    val surfaceSubtleColor = CtecsTheme.colors.secondarySurface
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = surfaceSubtleColor,
-        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.22f))
+        shape = RoundedCornerShape(10.dp),
+        color = surfaceSubtleColor
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),

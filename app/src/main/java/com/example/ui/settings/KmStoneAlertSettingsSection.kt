@@ -9,7 +9,6 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -41,12 +40,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -79,6 +75,10 @@ import com.example.model.KmVibrationPattern
 import com.example.navigation.KmStoneAlertFeedbackManager
 import com.example.navigation.KmStoneMonitoringForegroundService
 import com.example.navigation.LockScreenNavigationService
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
+import com.example.ui.theme.rememberDialogColors
 import kotlin.math.roundToInt
 
 /**
@@ -246,26 +246,18 @@ fun KmStoneAlertSettingsSectionContent(
             ) {
                 // Live Foreground Service Status Strip
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = if (isMonitoringServiceRunning) {
-                        Color(0xFF10B981).copy(alpha = 0.12f)
+                        CtecsTheme.colors.success.copy(alpha = 0.14f)
                     } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        CtecsTheme.colors.secondarySurface
                     },
-                    border = BorderStroke(
-                        0.75.dp,
-                        if (isMonitoringServiceRunning) {
-                            Color(0xFF10B981).copy(alpha = 0.40f)
-                        } else {
-                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                        }
-                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("km_alert_service_status_banner")
                 ) {
                     Column(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Text(
@@ -279,13 +271,13 @@ fun KmStoneAlertSettingsSectionContent(
                             },
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = if (isMonitoringServiceRunning) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface
+                            color = if (isMonitoringServiceRunning) CtecsTheme.colors.success else CtecsTheme.colors.textPrimary
                         )
                         if (!serviceStatusNote.isNullOrBlank()) {
                             Text(
                                 text = serviceStatusNote,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = CtecsTheme.colors.textSecondary
                             )
                         }
                     }
@@ -316,7 +308,7 @@ fun KmStoneAlertSettingsSectionContent(
                     settings.backgroundMonitoringEnabled &&
                     !hasBgLocationPerm
                 ) {
-                    OutlinedButton(
+                    Button(
                         onClick = {
                             if (KmStoneMonitoringForegroundService.hasLocationPermission(context)) {
                                 backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
@@ -324,9 +316,12 @@ fun KmStoneAlertSettingsSectionContent(
                                 onFeedbackMessage("Grant Foreground Location permission first before enabling All-the-Time access")
                             }
                         },
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(0.8.dp, accentColor.copy(alpha = 0.55f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accentColor.copy(alpha = 0.14f),
+                            contentColor = accentColor
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("km_alert_request_bg_location_btn")
@@ -417,7 +412,7 @@ fun KmStoneAlertSettingsSectionContent(
                     onCheckedChange = { enabled -> onUpdateSettings { it.copy(soundEnabled = enabled) } }
                 )
 
-                OutlinedButton(
+                Button(
                     onClick = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                             !LockScreenNavigationService.hasNotificationPermission(context)
@@ -433,9 +428,12 @@ fun KmStoneAlertSettingsSectionContent(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("km_alert_test_notification_btn")
@@ -447,7 +445,7 @@ fun KmStoneAlertSettingsSectionContent(
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // ------------------------------------------------------------
         // 2. VIBRATION CUSTOMISATION SUBSECTION
@@ -478,7 +476,8 @@ fun KmStoneAlertSettingsSectionContent(
                     )
                     DropdownMenu(
                         expanded = showVibPatternMenu,
-                        onDismissRequest = { showVibPatternMenu = false }
+                        onDismissRequest = { showVibPatternMenu = false },
+                        containerColor = CtecsTheme.colors.elevatedSurface
                     ) {
                         KmVibrationPattern.entries.forEach { pattern ->
                             DropdownMenuItem(
@@ -486,7 +485,7 @@ fun KmStoneAlertSettingsSectionContent(
                                     Text(
                                         text = pattern.label,
                                         fontWeight = if (settings.vibrationPattern == pattern) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (settings.vibrationPattern == pattern) accentColor else MaterialTheme.colorScheme.onSurface
+                                        color = if (settings.vibrationPattern == pattern) accentColor else CtecsTheme.colors.textPrimary
                                     )
                                 },
                                 onClick = {
@@ -511,7 +510,11 @@ fun KmStoneAlertSettingsSectionContent(
                             label = { Text("Custom Pattern (ms, e.g. 0,140,90,200)") },
                             singleLine = true,
                             textStyle = MaterialTheme.typography.bodySmall,
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = accentColor),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ctecsBorderlessInputColors(
+                                containerColor = CtecsTheme.colors.secondarySurface,
+                                accentColor = accentColor
+                            ),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("km_alert_custom_vib_input")
@@ -521,11 +524,15 @@ fun KmStoneAlertSettingsSectionContent(
                                 onUpdateSettings { it.copy(customVibrationPatternCsv = customVibrationInput.trim()) }
                                 onFeedbackMessage("Custom vibration pattern saved")
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = CtecsTheme.colors.onAccent
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.testTag("km_alert_custom_vib_apply_btn")
                         ) {
-                            Text("Apply", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text("Apply", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -534,7 +541,7 @@ fun KmStoneAlertSettingsSectionContent(
                     text = "Vibration Intensity",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = CtecsTheme.colors.textPrimary
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -552,7 +559,10 @@ fun KmStoneAlertSettingsSectionContent(
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                                 )
                             },
+                            border = null,
                             colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CtecsTheme.colors.secondarySurface,
+                                labelColor = CtecsTheme.colors.textSecondary,
                                 selectedContainerColor = accentColor.copy(alpha = 0.18f),
                                 selectedLabelColor = accentColor
                             ),
@@ -563,14 +573,17 @@ fun KmStoneAlertSettingsSectionContent(
                     }
                 }
 
-                OutlinedButton(
+                Button(
                     onClick = {
                         KmStoneAlertFeedbackManager.testVibration(context, settings)
                         onFeedbackMessage("Testing vibration (${settings.vibrationPattern.label})")
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("km_alert_test_vibration_btn")
@@ -582,7 +595,7 @@ fun KmStoneAlertSettingsSectionContent(
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // ------------------------------------------------------------
         // 3. SOUND CUSTOMISATION SUBSECTION
@@ -620,7 +633,8 @@ fun KmStoneAlertSettingsSectionContent(
                     )
                     DropdownMenu(
                         expanded = showSoundMenu,
-                        onDismissRequest = { showSoundMenu = false }
+                        onDismissRequest = { showSoundMenu = false },
+                        containerColor = CtecsTheme.colors.elevatedSurface
                     ) {
                         KmAlertSoundOption.entries.forEach { opt ->
                             DropdownMenuItem(
@@ -725,14 +739,17 @@ fun KmStoneAlertSettingsSectionContent(
                         .testTag("km_alert_volume_slider")
                 )
 
-                OutlinedButton(
+                Button(
                     onClick = {
                         KmStoneAlertFeedbackManager.testSound(context, settings)
                         onFeedbackMessage("Playing sound preview (${settings.soundOption.label})")
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("km_alert_test_sound_btn")
@@ -744,7 +761,7 @@ fun KmStoneAlertSettingsSectionContent(
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // ------------------------------------------------------------
         // 4. ARRIVAL DETECTION SUBSECTION
@@ -788,7 +805,10 @@ fun KmStoneAlertSettingsSectionContent(
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                                 )
                             },
+                            border = null,
                             colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CtecsTheme.colors.secondarySurface,
+                                labelColor = CtecsTheme.colors.textSecondary,
                                 selectedContainerColor = accentColor.copy(alpha = 0.18f),
                                 selectedLabelColor = accentColor
                             ),
@@ -830,7 +850,7 @@ fun KmStoneAlertSettingsSectionContent(
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // ------------------------------------------------------------
         // 5. SMART ADVANCE WARNING SUBSECTION
@@ -866,7 +886,8 @@ fun KmStoneAlertSettingsSectionContent(
                     )
                     DropdownMenu(
                         expanded = showAdvWarningMenu,
-                        onDismissRequest = { showAdvWarningMenu = false }
+                        onDismissRequest = { showAdvWarningMenu = false },
+                        containerColor = CtecsTheme.colors.elevatedSurface
                     ) {
                         KmAdvanceWarningOption.entries.forEach { opt ->
                             DropdownMenuItem(
@@ -874,7 +895,7 @@ fun KmStoneAlertSettingsSectionContent(
                                     Text(
                                         text = opt.label,
                                         fontWeight = if (settings.advanceWarningOption == opt) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (settings.advanceWarningOption == opt) accentColor else MaterialTheme.colorScheme.onSurface
+                                        color = if (settings.advanceWarningOption == opt) accentColor else CtecsTheme.colors.textPrimary
                                     )
                                 },
                                 onClick = {
@@ -900,7 +921,11 @@ fun KmStoneAlertSettingsSectionContent(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             textStyle = MaterialTheme.typography.bodySmall,
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = accentColor),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ctecsBorderlessInputColors(
+                                containerColor = CtecsTheme.colors.secondarySurface,
+                                accentColor = accentColor
+                            ),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("km_alert_custom_advance_input")
@@ -912,11 +937,15 @@ fun KmStoneAlertSettingsSectionContent(
                                 onUpdateSettings { it.copy(customAdvanceWarningMetres = parsed) }
                                 onFeedbackMessage("Advance warning set to ${parsed}m")
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = CtecsTheme.colors.onAccent
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.testTag("km_alert_custom_advance_apply_btn")
                         ) {
-                            Text("Apply", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text("Apply", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -942,11 +971,12 @@ fun KmStoneAlertSettingsSectionContent(
                         )
                         DropdownMenu(
                             expanded = showAdvVibPatternMenu,
-                            onDismissRequest = { showAdvVibPatternMenu = false }
+                            onDismissRequest = { showAdvVibPatternMenu = false },
+                            containerColor = CtecsTheme.colors.elevatedSurface
                         ) {
                             KmVibrationPattern.entries.forEach { pat ->
                                 DropdownMenuItem(
-                                    text = { Text(pat.label) },
+                                    text = { Text(pat.label, color = CtecsTheme.colors.textPrimary) },
                                     onClick = {
                                         showAdvVibPatternMenu = false
                                         onUpdateSettings { it.copy(advanceWarningVibrationPattern = pat) }
@@ -976,11 +1006,12 @@ fun KmStoneAlertSettingsSectionContent(
                         )
                         DropdownMenu(
                             expanded = showAdvSoundMenu,
-                            onDismissRequest = { showAdvSoundMenu = false }
+                            onDismissRequest = { showAdvSoundMenu = false },
+                            containerColor = CtecsTheme.colors.elevatedSurface
                         ) {
                             KmAlertSoundOption.entries.forEach { snd ->
                                 DropdownMenuItem(
-                                    text = { Text(snd.label) },
+                                    text = { Text(snd.label, color = CtecsTheme.colors.textPrimary) },
                                     onClick = {
                                         showAdvSoundMenu = false
                                         onUpdateSettings { it.copy(advanceWarningSoundOption = snd) }
@@ -993,7 +1024,7 @@ fun KmStoneAlertSettingsSectionContent(
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // ------------------------------------------------------------
         // 6. SMART NEXT KM STONE VOICE ANNOUNCEMENT SUBSECTION
@@ -1009,16 +1040,19 @@ fun KmStoneAlertSettingsSectionContent(
             onFeedbackMessage = onFeedbackMessage
         )
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // ------------------------------------------------------------
         // 7. RESET TO DEFAULT
         // ------------------------------------------------------------
-        OutlinedButton(
+        Button(
             onClick = { showResetConfirmDialog = true },
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CtecsTheme.colors.error.copy(alpha = 0.14f),
+                contentColor = CtecsTheme.colors.error
+            ),
+            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("km_alert_reset_defaults_btn")
@@ -1030,11 +1064,18 @@ fun KmStoneAlertSettingsSectionContent(
     }
 
     if (showResetConfirmDialog) {
+        val dialogColors = rememberDialogColors()
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
-            title = { Text("Reset KM Stone Arrival Settings?") },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
+            title = { Text("Reset KM Stone Arrival Settings?", color = dialogColors.titleColor) },
             text = {
-                Text("This will restore default KM Stone arrival detection thresholds, vibration pattern, sound tone, voice announcements, and advance warning settings.")
+                Text(
+                    "This will restore default KM Stone arrival detection thresholds, vibration pattern, sound tone, voice announcements, and advance warning settings.",
+                    color = dialogColors.textColor
+                )
             },
             confirmButton = {
                 TextButton(
@@ -1044,12 +1085,12 @@ fun KmStoneAlertSettingsSectionContent(
                     },
                     modifier = Modifier.testTag("km_alert_confirm_reset_btn")
                 ) {
-                    Text("Reset", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text("Reset", color = CtecsTheme.colors.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetConfirmDialog = false }) {
-                    Text("Cancel")
+                    Text("Cancel", color = dialogColors.textSecondaryColor)
                 }
             }
         )
@@ -1066,8 +1107,8 @@ internal fun KmFlatExpandableHeader(
     onToggle: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+        shape = RoundedCornerShape(12.dp),
+        color = CtecsTheme.colors.secondarySurface,
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggle() }
@@ -1076,7 +1117,7 @@ internal fun KmFlatExpandableHeader(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 9.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1090,7 +1131,7 @@ internal fun KmFlatExpandableHeader(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = CtecsTheme.colors.textSecondary
                 )
             }
             Icon(
@@ -1111,9 +1152,8 @@ internal fun KmFlatDropdownRow(
     onClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(12.dp),
+        color = CtecsTheme.colors.secondarySurface,
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
@@ -1130,13 +1170,13 @@ internal fun KmFlatDropdownRow(
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = CtecsTheme.colors.textSecondary
                 )
                 Text(
                     text = valueText,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = CtecsTheme.colors.textPrimary
                 )
             }
             Icon(

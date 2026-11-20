@@ -878,9 +878,7 @@ fun CameraBrightnessIndicator(
 
         Surface(
             shape = RoundedCornerShape(22.dp),
-            color = Color(0xD0141414),
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (currentEv != 0) HighlightYellow else Color.White.copy(alpha = 0.25f)),
-            shadowElevation = 8.dp,
+            color = Color(0xD80D111A),
             modifier = Modifier
                 .width(44.dp)
                 .height(168.dp)

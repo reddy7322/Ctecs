@@ -6,15 +6,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,7 +33,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -45,20 +40,16 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.DarkYellowSurface
-import com.example.ui.theme.HighlightYellow
-import com.example.ui.theme.PrimaryBackground
-import com.example.ui.theme.PrimaryText
-import com.example.ui.theme.SecondaryText
+import com.example.ui.theme.CtecsTheme
 import java.util.Locale
 import kotlin.math.abs
 
 /**
- * Clean, compact, minimalist zoom controller bar for CameraScreen.
+ * Clean, compact, borderless flat zoom controller bar for CameraScreen.
  * Provides:
  * - Zoom-out (−) and Zoom-in (+) buttons
  * - Current zoom ratio badge with 1.0x reset
- * - Dynamic quick zoom presets (e.g. 0.5x, 1x, 2x, 3x, 5x, 10x) based on hardware capabilities
+ * - Dynamic quick zoom presets (e.g. 0.5x, 1x, 2x, 3x, 5x, 8x) based on hardware capabilities
  * - Interactive expandable fine-scrubbing zoom slider
  */
 @Composable
@@ -73,6 +64,10 @@ fun CameraZoomControlBar(
 ) {
     val haptic = LocalHapticFeedback.current
     var showFineSlider by remember { mutableStateOf(false) }
+    val c = CtecsTheme.colors
+    val activeAccent = c.accent
+    val pillBg = if (isLandscape) Color(0x88080B12) else Color(0xCC0D111A)
+    val chipBg = Color(0x55171E2B)
 
     // Dynamically calculate supported presets based on device camera hardware
     val presets = remember(minZoomRatio, maxZoomRatio) {
@@ -102,7 +97,7 @@ fun CameraZoomControlBar(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Expandable Fine Zoom Slider
+        // Expandable Fine Zoom Slider (flat borderless dark translucent pill)
         AnimatedVisibility(
             visible = showFineSlider,
             enter = fadeIn() + expandVertically(),
@@ -110,12 +105,8 @@ fun CameraZoomControlBar(
         ) {
             Surface(
                 shape = RoundedCornerShape(18.dp),
-                color = if (isLandscape) Color.Transparent else Color(0xE0101726),
-                border = androidx.compose.foundation.BorderStroke(
-                    0.8.dp,
-                    HighlightYellow.copy(alpha = if (isLandscape) 0.75f else 0.8f)
-                ),
-                shadowElevation = if (isLandscape) 0.dp else 10.dp,
+                color = Color(0xE60D111A),
+                shadowElevation = 0.dp,
                 modifier = Modifier
                     .padding(bottom = 6.dp)
                     .width(if (isLandscape) 320.dp else 290.dp)
@@ -127,7 +118,7 @@ fun CameraZoomControlBar(
                 ) {
                     Text(
                         text = formattedZoom,
-                        color = HighlightYellow,
+                        color = activeAccent,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.width(42.dp)
@@ -139,9 +130,9 @@ fun CameraZoomControlBar(
                         },
                         valueRange = minZoomRatio..maxZoomRatio,
                         colors = SliderDefaults.colors(
-                            thumbColor = HighlightYellow,
-                            activeTrackColor = HighlightYellow,
-                            inactiveTrackColor = if (isLandscape) Color.White.copy(alpha = 0.35f) else SecondaryText.copy(alpha = 0.3f)
+                            thumbColor = activeAccent,
+                            activeTrackColor = activeAccent,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.24f)
                         ),
                         modifier = Modifier.weight(1f)
                     )
@@ -155,183 +146,133 @@ fun CameraZoomControlBar(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
-                            .background(Color.Transparent)
+                            .background(activeAccent.copy(alpha = 0.16f))
                     ) {
                         Icon(
                             imageVector = Icons.Default.RestartAlt,
                             contentDescription = "Reset Zoom to 1.0x",
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(18.dp)
+                            tint = activeAccent,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
             }
         }
 
-        // Main Compact Glass Zoom Controller Bar
+        // Main Compact Borderless Zoom Controller Bar
         Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(
-                if (isLandscape) 0.8.dp else 0.5.dp,
-                if (isLandscape) Color.White.copy(alpha = 0.38f) else Color(0x35FFFFFF)
-            ),
+            shape = RoundedCornerShape(22.dp),
+            color = pillBg,
+            shadowElevation = 0.dp,
             modifier = Modifier.testTag("camera_zoom_control_bar")
         ) {
-            Box {
-                if (!isLandscape) {
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .blur(4.dp)
-                            .background(Color(0x1A101726))
+            Row(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Zoom-Out Button (−)
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(chipBg)
+                        .clickable {
+                            try {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            } catch (ignored: Exception) {}
+                            val nextZoom = (currentZoomRatio - 0.2f).coerceAtLeast(minZoomRatio)
+                            onZoomChanged(nextZoom)
+                        }
+                        .testTag("zoom_out_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Zoom Out",
+                        tint = if (currentZoomRatio > minZoomRatio) Color.White else Color.White.copy(alpha = 0.35f),
+                        modifier = Modifier.size(13.dp)
                     )
                 }
-                Row(
-                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    // Zoom-Out Button (−)
+
+                // Quick Zoom Preset Buttons (e.g. 0.5, 1, 2, 3, 5, 8)
+                presets.forEach { preset ->
+                    val isSelected = abs(currentZoomRatio - preset) < 0.12f
+                    val label = if (preset < 1.0f) {
+                        String.format(Locale.US, "%.1f", preset)
+                    } else if (preset % 1.0f == 0.0f) {
+                        "${preset.toInt()}"
+                    } else {
+                        String.format(Locale.US, "%.1f", preset)
+                    }
+
                     Box(
                         modifier = Modifier
                             .size(26.dp)
                             .clip(CircleShape)
-                            .background(if (isLandscape) Color.Transparent else Color(0x35101726))
-                            .border(
-                                width = if (isLandscape) 0.8.dp else 0.dp,
-                                color = if (isLandscape) Color.White.copy(alpha = 0.35f) else Color.Transparent,
-                                shape = CircleShape
-                            )
+                            .background(if (isSelected) activeAccent else chipBg)
                             .clickable {
                                 try {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                 } catch (ignored: Exception) {}
-                                val nextZoom = (currentZoomRatio - 0.2f).coerceAtLeast(minZoomRatio)
-                                onZoomChanged(nextZoom)
+                                onZoomChanged(preset)
                             }
-                            .testTag("zoom_out_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Remove,
-                            contentDescription = "Zoom Out",
-                            tint = if (currentZoomRatio > minZoomRatio) PrimaryText else SecondaryText.copy(alpha = 0.5f),
-                            modifier = Modifier.size(13.dp)
-                        )
-                    }
-
-                    // Quick Zoom Preset Buttons (e.g. 1, 2, 3, 5, 8)
-                    presets.forEach { preset ->
-                        val isSelected = abs(currentZoomRatio - preset) < 0.12f
-                        val label = if (preset < 1.0f) {
-                            String.format(Locale.US, "%.1f", preset)
-                        } else if (preset % 1.0f == 0.0f) {
-                            "${preset.toInt()}"
-                        } else {
-                            String.format(Locale.US, "%.1f", preset)
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when {
-                                        isLandscape -> Color.Transparent
-                                        isSelected -> HighlightYellow
-                                        else -> Color(0x35101726)
-                                    }
-                                )
-                                .border(
-                                    width = if (isSelected) 1.dp else if (isLandscape) 0.8.dp else 0.4.dp,
-                                    color = if (isSelected) HighlightYellow else Color.White.copy(alpha = if (isLandscape) 0.35f else 0.2f),
-                                    shape = CircleShape
-                                )
-                                .clickable {
-                                    try {
-                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                    } catch (ignored: Exception) {}
-                                    onZoomChanged(preset)
-                                }
-                                .testTag("zoom_preset_$label"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = label,
-                                color = when {
-                                    isLandscape && isSelected -> HighlightYellow
-                                    isSelected -> Color.Black
-                                    else -> PrimaryText
-                                },
-                                fontSize = 9.5.sp,
-                                fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // Current Zoom Ratio Display & Slider Toggle Badge (e.g. 1x circular badge)
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when {
-                                    isLandscape -> Color.Transparent
-                                    isNonDefaultZoom -> HighlightYellow.copy(alpha = 0.22f)
-                                    else -> Color(0x35101726)
-                                }
-                            )
-                            .border(
-                                width = 0.8.dp,
-                                color = if (isNonDefaultZoom) HighlightYellow else Color.White.copy(alpha = if (isLandscape) 0.7f else 1f),
-                                shape = CircleShape
-                            )
-                            .clickable {
-                                showFineSlider = !showFineSlider
-                            }
-                            .testTag("zoom_ratio_display"),
+                            .testTag("zoom_preset_$label"),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = formattedZoom,
-                            color = if (isNonDefaultZoom) HighlightYellow else PrimaryText,
-                            fontSize = 8.5.sp,
-                            fontWeight = FontWeight.Black
+                            text = label,
+                            color = Color.White,
+                            fontSize = 9.5.sp,
+                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
                         )
                     }
+                }
 
-                    // Zoom-In Button (+)
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .background(if (isLandscape) Color.Transparent else Color(0x35101726))
-                            .border(
-                                width = if (isLandscape) 0.8.dp else 0.dp,
-                                color = if (isLandscape) Color.White.copy(alpha = 0.35f) else Color.Transparent,
-                                shape = CircleShape
-                            )
-                            .clickable {
-                                try {
-                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                } catch (ignored: Exception) {}
-                                val nextZoom = (currentZoomRatio + 0.2f).coerceAtMost(maxZoomRatio)
-                                onZoomChanged(nextZoom)
-                            }
-                            .testTag("zoom_in_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Zoom In",
-                            tint = if (currentZoomRatio < maxZoomRatio) PrimaryText else SecondaryText.copy(alpha = 0.5f),
-                            modifier = Modifier.size(13.dp)
-                        )
-                    }
+                // Current Zoom Ratio Display & Slider Toggle Badge
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(if (isNonDefaultZoom || showFineSlider) activeAccent.copy(alpha = 0.24f) else chipBg)
+                        .clickable {
+                            showFineSlider = !showFineSlider
+                        }
+                        .testTag("zoom_ratio_display"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = formattedZoom,
+                        color = if (isNonDefaultZoom || showFineSlider) activeAccent else Color.White,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                // Zoom-In Button (+)
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(chipBg)
+                        .clickable {
+                            try {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            } catch (ignored: Exception) {}
+                            val nextZoom = (currentZoomRatio + 0.2f).coerceAtMost(maxZoomRatio)
+                            onZoomChanged(nextZoom)
+                        }
+                        .testTag("zoom_in_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Zoom In",
+                        tint = if (currentZoomRatio < maxZoomRatio) Color.White else Color.White.copy(alpha = 0.35f),
+                        modifier = Modifier.size(13.dp)
+                    )
                 }
             }
         }
     }
 }
-

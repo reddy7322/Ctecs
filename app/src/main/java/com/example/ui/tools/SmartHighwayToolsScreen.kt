@@ -40,6 +40,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.QcRecordEntity
 import com.example.ui.AppTab
 import com.example.ui.MainViewModel
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
 import com.example.ui.theme.isAppDarkTheme
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -49,28 +52,27 @@ import kotlin.math.*
 
 internal object ToolColors {
     val bgDark: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF0A0E17) else Color(0xFFF8FAFC)
+        @Composable get() = CtecsTheme.colors.background
     val cardBg: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF131B2E) else Color(0xFFFFFFFF)
+        @Composable get() = CtecsTheme.colors.surface
     val cardBgElevated: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF1C2742) else Color(0xFFF1F5F9)
+        @Composable get() = CtecsTheme.colors.secondarySurface
     val border: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF263554) else Color(0xFFE2E8F0)
-    // Never use bright yellow in Light Theme; use refined blue/slate accents
+        @Composable get() = CtecsTheme.colors.subtleSeparator
     val accentYellow: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF38BDF8) else Color(0xFF2563EB)
+        @Composable get() = CtecsTheme.colors.accent
     val accentOrange: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFFFF6D00) else Color(0xFFD97706)
+        @Composable get() = CtecsTheme.colors.warning
     val accentGreen: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF00E676) else Color(0xFF059669)
+        @Composable get() = CtecsTheme.colors.success
     val accentRed: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFFFF5252) else Color(0xFFDC2626)
+        @Composable get() = CtecsTheme.colors.error
     val accentBlue: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF40C4FF) else Color(0xFF2563EB)
+        @Composable get() = CtecsTheme.colors.accent
     val textPrimary: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+        @Composable get() = CtecsTheme.colors.textPrimary
     val textSecondary: Color
-        @Composable get() = if (isAppDarkTheme()) Color(0xFF94A3B8) else Color(0xFF64748B)
+        @Composable get() = CtecsTheme.colors.textSecondary
 }
 
 private data class ToolGridItem(
@@ -484,12 +486,10 @@ fun SmartHighwayToolsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = ToolColors.cardBg,
-                    unfocusedContainerColor = ToolColors.cardBg,
-                    focusedBorderColor = ToolColors.accentBlue,
-                    unfocusedBorderColor = ToolColors.border
+                shape = RoundedCornerShape(14.dp),
+                colors = ctecsBorderlessInputColors(
+                    containerColor = ToolColors.cardBg,
+                    accentColor = ToolColors.accentBlue
                 )
             )
         }
@@ -507,9 +507,10 @@ fun SmartHighwayToolsScreen(
                     val isSelected = selectedCategory == cat
                     Surface(
                         shape = RoundedCornerShape(20.dp),
-                        color = if (isSelected) ToolColors.accentBlue else ToolColors.cardBgElevated,
-                        border = BorderStroke(1.dp, if (isSelected) ToolColors.accentBlue else ToolColors.border),
-                        modifier = Modifier.clickable { selectedCategory = cat }
+                        color = if (isSelected) ToolColors.accentBlue else ToolColors.cardBg,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .clickable { selectedCategory = cat }
                     ) {
                         Text(
                             text = cat,
@@ -615,21 +616,20 @@ private fun ToolsResponsiveCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val cardSurface = if (isDark) Color(0xFF151E32) else Color(0xFFFFFFFF)
-    val cardBorder = if (isDark) Color(0xFF263554) else Color(0xFFE2E8F0)
-    val titleColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val subtitleColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val chevronColor = if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
+    val c = CtecsTheme.colors
+    val cardSurface = c.surface
+    val titleColor = c.textPrimary
+    val subtitleColor = c.textSecondary
+    val chevronColor = c.textMuted
 
     Surface(
         modifier = modifier
             .heightIn(min = 78.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = cardSurface,
-        border = BorderStroke(1.dp, cardBorder),
-        shadowElevation = if (isDark) 0.dp else 1.dp
+        shadowElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
@@ -753,12 +753,10 @@ fun StandardsLibraryBrowserScreen(context: Context) {
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = ToolColors.cardBg,
-                    unfocusedContainerColor = ToolColors.cardBg,
-                    focusedBorderColor = ToolColors.accentBlue,
-                    unfocusedBorderColor = ToolColors.border
+                shape = RoundedCornerShape(12.dp),
+                colors = ctecsBorderlessInputColors(
+                    containerColor = ToolColors.cardBgElevated,
+                    accentColor = ToolColors.accentBlue
                 )
             )
         }
@@ -773,9 +771,8 @@ fun StandardsLibraryBrowserScreen(context: Context) {
 
         filteredClauses.forEach { clause ->
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = ToolColors.cardBg,
-                border = BorderStroke(1.dp, ToolColors.border),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -785,9 +782,8 @@ fun StandardsLibraryBrowserScreen(context: Context) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = ToolColors.accentBlue.copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, ToolColors.accentBlue.copy(alpha = 0.3f))
+                            shape = RoundedCornerShape(8.dp),
+                            color = ToolColors.accentBlue.copy(alpha = 0.14f)
                         ) {
                             Text(
                                 text = "${clause.codeNumber} • Cl. ${clause.clauseNumber}",
@@ -811,7 +807,7 @@ fun StandardsLibraryBrowserScreen(context: Context) {
                     }
                     Text(clause.title, color = ToolColors.textPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Text("Work Item: ${clause.workItem} | Material: ${clause.materialCategory}", color = ToolColors.textSecondary, fontSize = 11.sp)
-                    HorizontalDivider(color = ToolColors.border.copy(alpha = 0.6f), modifier = Modifier.padding(vertical = 2.dp))
+                    SmartFadeDivider(modifier = Modifier.padding(vertical = 2.dp))
                     Text("Test Requirement: ${clause.testRequirement}", color = ToolColors.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     Text("Acceptance Criteria: ${clause.acceptanceCriteria}", color = ToolColors.accentGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Text("Sampling Frequency: ${clause.samplingFrequency}", color = ToolColors.textSecondary, fontSize = 11.sp)
@@ -940,7 +936,7 @@ fun PavementLayersCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -2078,9 +2074,8 @@ private fun SavedQcRecordItem(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = ToolColors.cardBgElevated,
-        border = BorderStroke(1.dp, ToolColors.border)
+        shape = RoundedCornerShape(14.dp),
+        color = ToolColors.cardBgElevated
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -2320,7 +2315,7 @@ fun SiteUtilitiesView(viewModel: MainViewModel, context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Text(
                         "Non-Working / Stoppage Days: ${rain + maint} Days",
                         color = ToolColors.textSecondary,
@@ -2346,10 +2341,9 @@ internal fun ToolSectionCard(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = ToolColors.cardBg,
-        border = BorderStroke(1.dp, ToolColors.border),
-        shadowElevation = if (isAppDarkTheme()) 0.dp else 1.dp
+        shadowElevation = 0.dp
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(
@@ -2360,7 +2354,7 @@ internal fun ToolSectionCard(
                     modifier = Modifier
                         .size(36.dp)
                         .clip(CircleShape)
-                        .background(ToolColors.accentBlue.copy(alpha = 0.12f)),
+                        .background(ToolColors.accentBlue.copy(alpha = 0.14f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -2385,7 +2379,7 @@ internal fun ToolSectionCard(
                 }
             }
             Spacer(modifier = Modifier.height(10.dp))
-            HorizontalDivider(color = ToolColors.border)
+            SmartFadeDivider()
             Spacer(modifier = Modifier.height(10.dp))
             content()
         }
@@ -2449,20 +2443,15 @@ internal fun ToolTextField(
                 completeChainageFormatting()
             }
         },
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(12.dp),
         textStyle = LocalTextStyle.current.copy(
             color = ToolColors.textPrimary,
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp
         ),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = ToolColors.accentBlue,
-            unfocusedBorderColor = ToolColors.border,
-            focusedLabelColor = ToolColors.accentBlue,
-            unfocusedLabelColor = ToolColors.textSecondary,
-            cursorColor = ToolColors.accentBlue,
-            focusedContainerColor = ToolColors.cardBgElevated,
-            unfocusedContainerColor = ToolColors.cardBgElevated
+        colors = ctecsBorderlessInputColors(
+            containerColor = ToolColors.cardBgElevated,
+            accentColor = ToolColors.accentBlue
         )
     )
 }
@@ -2474,9 +2463,8 @@ internal fun ResultBox(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = ToolColors.cardBgElevated,
-        border = BorderStroke(1.dp, ToolColors.border)
+        shape = RoundedCornerShape(12.dp),
+        color = ToolColors.cardBgElevated
     ) {
         Row(
             modifier = Modifier

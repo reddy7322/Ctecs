@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.model.WeatherConditionType
 import com.example.model.WeatherObservation
 import com.example.model.WeatherUiState
+import com.example.ui.theme.CtecsTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -65,7 +66,7 @@ import java.util.Locale
  *
  * Design highlights:
  * - Completely borderless atmospheric wash with smooth fading margins that blend naturally
- *   into Light and Dark Home Screen surfaces (no hard outlines or bulky cards).
+ *   into AMOLED Deep Black Dark Mode (#000000) and Professional Light Mode (#FFFFFF).
  * - Smooth condition-based color and animated icon transitions inspired by Google Weather.
  * - Automatically pauses animations when off-screen, lifecycle-paused, or when Screensaver/AOD is active.
  * - Never fabricates weather data when GPS or network is unavailable.
@@ -83,6 +84,7 @@ fun HomeLiveWeatherCard(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val c = CtecsTheme.colors
     // Pause animations automatically when activity moves to background
     val lifecycleOwner = LocalLifecycleOwner.current
     var isLifecycleResumed by remember { mutableStateOf(true) }
@@ -117,36 +119,36 @@ fun HomeLiveWeatherCard(
         animationSpec = tween(durationMillis = 550),
         label = "weather_atmosphere_glow"
     )
-    val targetWashBase = if (isDark) Color(0xFF131C2E) else Color(0xFFFFFFFF)
+    val targetWashBase = c.surface
     val washBase by animateColorAsState(
         targetValue = targetWashBase,
-        animationSpec = tween(durationMillis = 320),
+        animationSpec = tween(durationMillis = 280),
         label = "weather_wash_base"
     )
 
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
             .drawBehind {
                 // Soft borderless gradient with smooth fading margins — zero hard borders
                 drawRect(
                     brush = Brush.horizontalGradient(
-                        0.0f to washBase.copy(alpha = if (isDark) 0.35f else 0.45f),
-                        0.12f to washBase.copy(alpha = if (isDark) 0.78f else 0.88f),
-                        0.88f to washBase.copy(alpha = if (isDark) 0.78f else 0.88f),
-                        1.0f to washBase.copy(alpha = if (isDark) 0.35f else 0.45f)
+                        0.0f to washBase.copy(alpha = if (isDark) 0.30f else 0.48f),
+                        0.10f to washBase.copy(alpha = if (isDark) 0.94f else 0.96f),
+                        0.90f to washBase.copy(alpha = if (isDark) 0.94f else 0.96f),
+                        1.0f to washBase.copy(alpha = if (isDark) 0.30f else 0.48f)
                     )
                 )
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            glowColor.copy(alpha = if (isDark) 0.24f else 0.18f),
-                            glowColor.copy(alpha = if (isDark) 0.07f else 0.05f),
+                            glowColor.copy(alpha = if (isDark) 0.18f else 0.13f),
+                            glowColor.copy(alpha = if (isDark) 0.05f else 0.03f),
                             Color.Transparent
                         ),
                         center = Offset(size.width * 0.14f, size.height * 0.42f),
-                        radius = size.width * 0.62f
+                        radius = size.width * 0.58f
                     )
                 )
             }

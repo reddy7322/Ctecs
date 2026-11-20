@@ -7,7 +7,6 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,11 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Route
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -59,6 +57,8 @@ import com.example.navigation.LockScreenNavStateResolver
 import com.example.navigation.LockScreenNavUiState
 import com.example.navigation.LockScreenNavigationService
 import com.example.navigation.LockScreenNotificationFormatter
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 
 /**
  * Settings -> Navigation Notifications
@@ -222,8 +222,7 @@ fun NavigationNotificationSettingsSectionContent(
         // Real-time Notification Preview matching exact Android Status / Shade card
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF0B111E),
-            border = BorderStroke(1.dp, accentColor.copy(alpha = 0.25f)),
+            color = Color(0xFF0D111A),
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("nav_notif_live_preview_card")
@@ -302,8 +301,7 @@ fun NavigationNotificationSettingsSectionContent(
             }
         }
 
-        HorizontalDivider(
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+        SmartFadeDivider(
             modifier = Modifier.padding(vertical = 2.dp)
         )
 
@@ -419,10 +417,14 @@ fun NavigationNotificationSettingsSectionContent(
             }
         }
 
-        OutlinedButton(
+        Button(
             onClick = onResetDefaults,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+            shape = RoundedCornerShape(12.dp),
+            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CtecsTheme.colors.secondarySurface,
+                contentColor = CtecsTheme.colors.textPrimary
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("nav_notif_reset_btn")

@@ -35,12 +35,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import com.example.ui.dialogs.ChainageManagementDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -65,7 +63,10 @@ import com.example.data.RouteEntity
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
 import com.example.ui.camera.MiniMapPreview
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 import com.example.ui.theme.isAppDarkTheme
+import com.example.ui.theme.smartMapEdgeFade
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -88,19 +89,33 @@ fun RoutesScreen(
     var showMarkerInspector by remember { mutableStateOf(false) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
 
+    val c = CtecsTheme.colors
+
     Scaffold(
+        containerColor = c.background,
         topBar = {
             TopAppBar(
-                title = { Text("Highway Alignments", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+                title = {
+                    Text(
+                        "Highway Alignments",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = c.textPrimary
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to Camera"
+                            contentDescription = "Back to Camera",
+                            tint = c.textPrimary
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = c.background,
+                    titleContentColor = c.textPrimary
+                )
             )
         },
         modifier = modifier
@@ -138,15 +153,22 @@ fun RoutesScreen(
             }
 
             item {
-                OutlinedButton(
+                Button(
                     onClick = onNavigateToSurvey,
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = c.accent.copy(alpha = 0.14f),
+                        contentColor = c.accent
+                    ),
+                    shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(48.dp)
                         .testTag("survey_alignment_button")
                 ) {
                     Icon(imageVector = Icons.Default.Engineering, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.size(6.dp))
-                    Text("Launch Live Alignment Survey", fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("Launch Live Alignment Survey", fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -189,6 +211,7 @@ fun RoutesScreen(
             onDismissRequest = { routeToDelete = null },
             shape = dialogColors.shape,
             containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
             title = { Text("Delete Alignment", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
             text = { Text("Are you sure you want to delete '${route.name}'? Chainage matching will no longer use this route.", color = dialogColors.textSecondaryColor) },
             confirmButton = {
@@ -198,7 +221,7 @@ fun RoutesScreen(
                         routeToDelete = null
                     }
                 ) {
-                    Text("Delete", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text("Delete", color = c.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -245,16 +268,11 @@ fun ActiveRouteCard(
     onCalibrate: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val isDark = isAppDarkTheme()
+    val c = CtecsTheme.colors
     Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isDark) Color(0xFF1E293B) else MaterialTheme.colorScheme.surface
-        ),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (isDark) Color(0xFF334155) else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-        ),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = c.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -270,12 +288,12 @@ fun ActiveRouteCard(
                     Icon(
                         imageVector = Icons.Default.AltRoute,
                         contentDescription = null,
-                        tint = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
+                        tint = c.accent,
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
                         text = "ACTIVE ALIGNMENT",
-                        color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
+                        color = c.accent,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
@@ -283,12 +301,12 @@ fun ActiveRouteCard(
                 }
 
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (activeRoute != null) Color(0x3310B981) else Color(0x33EF4444)
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (activeRoute != null) c.success.copy(alpha = 0.16f) else c.error.copy(alpha = 0.16f)
                 ) {
                     Text(
                         text = if (activeRoute != null) "Ready for Matching" else "No Active Route",
-                        color = if (activeRoute != null) Color(0xFF10B981) else Color(0xFFEF4444),
+                        color = if (activeRoute != null) c.success else c.error,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -301,7 +319,7 @@ fun ActiveRouteCard(
             if (activeRoute != null) {
                 Text(
                     text = activeRoute.name,
-                    color = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface,
+                    color = c.textPrimary,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -313,14 +331,14 @@ fun ActiveRouteCard(
 
                 Text(
                     text = "Chainage: $startStr  →  $endStr  (%.1f km coverage)".format(Locale.US, activeRoute.totalCoverageKm),
-                    color = if (isDark) Color(0xFFFBBF24) else Color(0xFFD97706),
+                    color = c.accent,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )
 
                 Text(
                     text = "Parsed Markers: ${activeRoute.markers.size} (50m intervals) • Alignments: ${activeRoute.alignments.size}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = c.textSecondary,
                     fontSize = 12.sp
                 )
 
@@ -330,13 +348,13 @@ fun ActiveRouteCard(
                         activeRoute.bounds.minLat, activeRoute.bounds.minLng,
                         activeRoute.bounds.maxLat, activeRoute.bounds.maxLng
                     ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = c.textMuted,
                     fontSize = 11.sp
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Embedded Dynamic Map Preview of the Active Route Alignment
+                // Embedded Dynamic Map Preview of the Active Route Alignment with soft fading edges
                 MiniMapPreview(
                     location = activeRoute.bounds.center,
                     bearing = null,
@@ -346,40 +364,49 @@ fun ActiveRouteCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(140.dp)
+                        .smartMapEdgeFade(fadeToColor = c.surface, edgeSize = 10.dp)
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
+                    Button(
                         onClick = onInspectMarkers,
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = c.secondarySurface,
+                            contentColor = c.textPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f).testTag("inspect_markers_button")
                     ) {
                         Icon(imageVector = Icons.Default.Place, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.size(4.dp))
-                        Text("Markers", maxLines = 1)
+                        Text("Markers", maxLines = 1, fontWeight = FontWeight.SemiBold)
                     }
 
                     Button(
                         onClick = onCalibrate,
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isDark) Color(0xFF7C3AED) else Color(0xFF6D28D9),
+                            containerColor = c.accent,
                             contentColor = Color.White
                         ),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f).testTag("calibrate_route_button")
                     ) {
                         Icon(imageVector = Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.size(4.dp))
-                        Text("Smart Calibration", maxLines = 1)
+                        Text("Smart Calibration", maxLines = 1, fontWeight = FontWeight.Bold)
                     }
                 }
             } else {
                 Text(
                     text = "Import a KMZ or KML highway alignment file to enable real-time chainage tracking.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = c.textSecondary,
                     fontSize = 13.sp
                 )
             }
@@ -395,11 +422,13 @@ fun RouteListItem(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val c = CtecsTheme.colors
     Card(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActive) Color(0xFF1E293B) else MaterialTheme.colorScheme.surfaceVariant
+            containerColor = if (isActive) c.secondarySurface else c.surface
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier.fillMaxWidth()
     ) {
         Row(
@@ -413,13 +442,13 @@ fun RouteListItem(
                         text = route.name,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (isActive) Color.White else MaterialTheme.colorScheme.onSurface
+                        color = c.textPrimary
                     )
                     if (isActive) {
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
                             contentDescription = "Active",
-                            tint = Color(0xFF10B981),
+                            tint = c.success,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -433,23 +462,23 @@ fun RouteListItem(
                 Text(
                     text = "Range: $start → $end • ${route.markerCount} markers",
                     fontSize = 12.sp,
-                    color = Color(0xFF38BDF8)
+                    color = c.accent
                 )
                 Text(
                     text = "Imported: ${sdf.format(Date(route.importedAt))}",
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = c.textSecondary
                 )
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!isActive) {
                     TextButton(onClick = onSelect) {
-                        Text("Activate")
+                        Text("Activate", color = c.accent, fontWeight = FontWeight.Bold)
                     }
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFEF4444))
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = c.error)
                 }
             }
         }
@@ -462,10 +491,12 @@ fun MarkerInspectorDialog(
     onDismiss: () -> Unit
 ) {
     val dialogColors = com.example.ui.theme.rememberDialogColors()
+    val c = CtecsTheme.colors
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         title = { Text("Parsed Chainage Markers (${routeData.markers.size})", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().height(360.dp)) {
@@ -481,14 +512,14 @@ fun MarkerInspectorDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                                .padding(vertical = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
                                 text = marker.chainage.format(),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
-                                color = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                                color = c.accent
                             )
                             Text(
                                 text = "%.5fN, %.5fE".format(Locale.US, marker.point.latitude, marker.point.longitude),
@@ -496,14 +527,14 @@ fun MarkerInspectorDialog(
                                 color = dialogColors.textColor
                             )
                         }
-                        Divider(color = dialogColors.borderColor)
+                        SmartFadeDivider()
                     }
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", fontWeight = FontWeight.Bold, color = dialogColors.textColor)
+                Text("Close", fontWeight = FontWeight.Bold, color = c.accent)
             }
         }
     )

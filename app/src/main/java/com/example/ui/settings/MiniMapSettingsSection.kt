@@ -1,9 +1,7 @@
 package com.example.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -43,11 +41,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -79,6 +75,8 @@ import com.example.model.MiniMapStyleConfig
 import com.example.model.OverlayConfig
 import com.example.model.RouteData
 import com.example.ui.camera.MiniMapPreview
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -124,9 +122,8 @@ fun MiniMapSettingsSection(
     }
 
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(0.75.dp, accentColor.copy(alpha = if (isExpanded) 0.55f else 0.35f)),
+        shape = RoundedCornerShape(14.dp),
+        color = CtecsTheme.colors.secondarySurface,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("mini_map_settings_section")
@@ -196,7 +193,7 @@ fun MiniMapSettingsSection(
                         .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SmartFadeDivider()
 
                     // A. ENABLE / DISABLE
                     MiniMapGroupTitle("A. ENABLE / DISABLE", accentColor)
@@ -218,7 +215,10 @@ fun MiniMapSettingsSection(
                             selected = !editingVideoMode,
                             onClick = { editingVideoMode = false },
                             label = { Text("Photo Settings", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            border = null,
                             colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CtecsTheme.colors.surface,
+                                labelColor = CtecsTheme.colors.textSecondary,
                                 selectedContainerColor = accentColor,
                                 selectedLabelColor = accentContentColor
                             ),
@@ -228,7 +228,10 @@ fun MiniMapSettingsSection(
                             selected = editingVideoMode,
                             onClick = { editingVideoMode = true },
                             label = { Text("Video Settings", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            border = null,
                             colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CtecsTheme.colors.surface,
+                                labelColor = CtecsTheme.colors.textSecondary,
                                 selectedContainerColor = accentColor,
                                 selectedLabelColor = accentContentColor
                             ),
@@ -249,12 +252,17 @@ fun MiniMapSettingsSection(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
+                        Button(
                             onClick = {
                                 draftOverlay = draftOverlay.copy(videoMiniMap = draftOverlay.photoMiniMap)
                                 onShowMessage("Copied Photo Mini Map settings to Video")
                             },
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CtecsTheme.colors.surface,
+                                contentColor = accentColor
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                             modifier = Modifier.weight(1f).testTag("minimap_copy_photo_to_video")
                         ) {
@@ -262,12 +270,17 @@ fun MiniMapSettingsSection(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Photo → Video", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        OutlinedButton(
+                        Button(
                             onClick = {
                                 draftOverlay = draftOverlay.copy(photoMiniMap = draftOverlay.videoMiniMap)
                                 onShowMessage("Copied Video Mini Map settings to Photo")
                             },
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CtecsTheme.colors.surface,
+                                contentColor = accentColor
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                             modifier = Modifier.weight(1f).testTag("minimap_copy_video_to_photo")
                         ) {
@@ -279,9 +292,8 @@ fun MiniMapSettingsSection(
 
                     // LIVE INTERACTIVE PREVIEW CARD
                     Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF090F1C)),
-                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF080B12)),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("minimap_settings_live_preview")
@@ -330,8 +342,7 @@ fun MiniMapSettingsSection(
                                     .align(Alignment.Center)
                                     .aspectRatio(previewRatio, matchHeightConstraintsFirst = true)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF1E293B))
-                                    .border(0.8.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF171E2B))
 
                                 BoxWithConstraints(modifier = frameModifier) {
                                     val frameW = maxWidth
@@ -411,7 +422,10 @@ fun MiniMapSettingsSection(
                                 selected = activeStyleConfig.sizePreset == preset,
                                 onClick = { updateActiveStyle { it.copy(sizePreset = preset) } },
                                 label = { Text(preset.label, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold) },
+                                border = null,
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CtecsTheme.colors.surface,
+                                    labelColor = CtecsTheme.colors.textSecondary,
                                     selectedContainerColor = accentColor,
                                     selectedLabelColor = accentContentColor
                                 )
@@ -460,7 +474,10 @@ fun MiniMapSettingsSection(
                                 selected = activeStyleConfig.position == pos,
                                 onClick = { updateActiveStyle { it.copy(position = pos) } },
                                 label = { Text(pos.label, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold) },
+                                border = null,
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CtecsTheme.colors.surface,
+                                    labelColor = CtecsTheme.colors.textSecondary,
                                     selectedContainerColor = accentColor,
                                     selectedLabelColor = accentContentColor
                                 )
@@ -498,7 +515,10 @@ fun MiniMapSettingsSection(
                                 selected = activeStyleConfig.cornerShape == shape,
                                 onClick = { updateActiveStyle { it.copy(cornerShape = shape) } },
                                 label = { Text(shape.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                border = null,
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CtecsTheme.colors.surface,
+                                    labelColor = CtecsTheme.colors.textSecondary,
                                     selectedContainerColor = accentColor,
                                     selectedLabelColor = accentContentColor
                                 ),
@@ -579,7 +599,10 @@ fun MiniMapSettingsSection(
                                 selected = activeStyleConfig.mapStyle == style,
                                 onClick = { updateActiveStyle { it.copy(mapStyle = style) } },
                                 label = { Text(style.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                border = null,
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CtecsTheme.colors.surface,
+                                    labelColor = CtecsTheme.colors.textSecondary,
                                     selectedContainerColor = accentColor,
                                     selectedLabelColor = accentContentColor
                                 )
@@ -613,7 +636,10 @@ fun MiniMapSettingsSection(
                                 selected = activeStyleConfig.directionMarkerStyle == dirStyle,
                                 onClick = { updateActiveStyle { it.copy(directionMarkerStyle = dirStyle) } },
                                 label = { Text(dirStyle.label, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold) },
+                                border = null,
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CtecsTheme.colors.surface,
+                                    labelColor = CtecsTheme.colors.textSecondary,
                                     selectedContainerColor = accentColor,
                                     selectedLabelColor = accentContentColor
                                 ),
@@ -659,7 +685,10 @@ fun MiniMapSettingsSection(
                                 selected = activeStyleConfig.orientationMode == orient,
                                 onClick = { updateActiveStyle { it.copy(orientationMode = orient) } },
                                 label = { Text(orient.label, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold) },
+                                border = null,
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CtecsTheme.colors.surface,
+                                    labelColor = CtecsTheme.colors.textSecondary,
                                     selectedContainerColor = accentColor,
                                     selectedLabelColor = accentContentColor
                                 ),
@@ -709,7 +738,7 @@ fun MiniMapSettingsSection(
                         accentColor = accentColor
                     )
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                    SmartFadeDivider()
 
                     // SAVE / CANCEL / RESET ACTIONS
                     Row(
@@ -722,6 +751,7 @@ fun MiniMapSettingsSection(
                                 containerColor = accentColor,
                                 contentColor = accentContentColor
                             ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f).testTag("minimap_save_button")
                         ) {
@@ -730,12 +760,19 @@ fun MiniMapSettingsSection(
                             Text("Save Settings", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
 
-                        OutlinedButton(
+                        Button(
                             onClick = {
                                 draftOverlay = savedOverlay
                                 onShowMessage("Mini Map changes discarded")
                             },
                             enabled = hasUnsavedChanges,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CtecsTheme.colors.surface,
+                                contentColor = CtecsTheme.colors.textPrimary,
+                                disabledContainerColor = CtecsTheme.colors.surface.copy(alpha = 0.5f),
+                                disabledContentColor = CtecsTheme.colors.textMuted
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f).testTag("minimap_cancel_button")
                         ) {
@@ -743,7 +780,7 @@ fun MiniMapSettingsSection(
                         }
                     }
 
-                    OutlinedButton(
+                    Button(
                         onClick = {
                             draftOverlay = draftOverlay.copy(
                                 showMapInset = true,
@@ -752,6 +789,11 @@ fun MiniMapSettingsSection(
                             )
                             onResetMiniMapDefaults()
                         },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CtecsTheme.colors.error.copy(alpha = 0.14f),
+                            contentColor = CtecsTheme.colors.error
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth().testTag("minimap_reset_button")
                     ) {
@@ -892,24 +934,28 @@ private fun MiniMapColorRow(
                 }
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
-                        .background(parsed)
-                        .border(
-                            width = if (isSelected) 2.8.dp else 1.dp,
-                            color = if (isSelected) accentColor else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                            shape = CircleShape
-                        )
-                        .clickable { onSelect(hex) },
+                        .background(if (isSelected) accentColor.copy(alpha = 0.35f) else CtecsTheme.colors.surface)
+                        .clickable { onSelect(hex) }
+                        .padding(3.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isSelected) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Selected",
-                            tint = if (hex.equals("#FFFFFF", true) || hex.equals("#FACC15", true)) Color.Black else Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(parsed),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Selected",
+                                tint = if (hex.equals("#FFFFFF", true) || hex.equals("#FACC15", true)) Color.Black else Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }

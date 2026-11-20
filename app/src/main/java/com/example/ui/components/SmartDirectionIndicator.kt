@@ -30,9 +30,10 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -74,26 +75,30 @@ fun SmartDirectionIndicatorBadge(
     val isRhs = confirmedSide.equals("RHS", ignoreCase = true)
     val isOtherConfirmed = directionState.hasConfirmedDirection && !isLhs && !isRhs
 
+    val tokens = if (isDark) {
+        com.example.ui.theme.DarkCtecsColorTokens
+    } else {
+        com.example.ui.theme.LightCtecsColorTokens
+    }
+
     val targetAccent = when {
-        isLhs -> if (isDark) Color(0xFF34D399) else Color(0xFF047857)
-        isRhs -> if (isDark) Color(0xFF60A5FA) else Color(0xFF1D4ED8)
-        isOtherConfirmed -> if (isDark) Color(0xFFC084FC) else Color(0xFF7E22CE)
-        directionState.detectionState == DirectionDetectionState.DIRECTION_CHANGING ->
-            if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309)
-        directionState.detectionState == DirectionDetectionState.GPS_SIGNAL_WEAK ->
-            if (isDark) Color(0xFFF87171) else Color(0xFFDC2626)
-        else -> if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
+        isLhs -> tokens.success
+        isRhs -> tokens.accent
+        isOtherConfirmed -> tokens.accentSecondary
+        directionState.detectionState == DirectionDetectionState.DIRECTION_CHANGING -> tokens.warning
+        directionState.detectionState == DirectionDetectionState.GPS_SIGNAL_WEAK -> tokens.error
+        else -> tokens.textSecondary
     }
 
     val targetBg = when {
-        isLhs -> if (isDark) Color(0xFF064E3B).copy(alpha = 0.50f) else Color(0xFFECFDF5)
-        isRhs -> if (isDark) Color(0xFF1E3A8A).copy(alpha = 0.50f) else Color(0xFFEFF6FF)
-        isOtherConfirmed -> if (isDark) Color(0xFF4C1D95).copy(alpha = 0.48f) else Color(0xFFF3E8FF)
+        isLhs -> tokens.success.copy(alpha = if (isDark) 0.16f else 0.12f)
+        isRhs -> tokens.accent.copy(alpha = if (isDark) 0.18f else 0.12f)
+        isOtherConfirmed -> tokens.accentSecondary.copy(alpha = if (isDark) 0.18f else 0.12f)
         directionState.detectionState == DirectionDetectionState.DIRECTION_CHANGING ->
-            if (isDark) Color(0xFF78350F).copy(alpha = 0.45f) else Color(0xFFFEF3C7)
+            tokens.warning.copy(alpha = if (isDark) 0.16f else 0.14f)
         directionState.detectionState == DirectionDetectionState.GPS_SIGNAL_WEAK ->
-            if (isDark) Color(0xFF7F1D1D).copy(alpha = 0.45f) else Color(0xFFFEE2E2)
-        else -> if (isDark) Color(0xFF1E293B).copy(alpha = 0.72f) else Color(0xFFF1F5F9)
+            tokens.error.copy(alpha = if (isDark) 0.16f else 0.12f)
+        else -> tokens.surface
     }
 
     val animatedAccent by animateColorAsState(
@@ -245,7 +250,8 @@ fun SmartDirectionModePickerMenu(
 ) {
     DropdownMenu(
         expanded = expanded,
-        onDismissRequest = onDismiss
+        onDismissRequest = onDismiss,
+        containerColor = CtecsTheme.colors.elevatedSurface
     ) {
         val isAuto = !directionState.isManualOverride
         DropdownMenuItem(
@@ -273,7 +279,7 @@ fun SmartDirectionModePickerMenu(
             modifier = Modifier.testTag("smart_direction_menu_auto")
         )
 
-        HorizontalDivider()
+        SmartFadeDivider(modifier = Modifier.padding(vertical = 2.dp))
 
         val manualOptions = if (includeExtendedSides) {
             listOf(RoadSide.LHS, RoadSide.RHS, RoadSide.BOTH, RoadSide.MEDIAN, RoadSide.NONE)

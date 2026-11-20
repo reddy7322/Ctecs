@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.QcRecordEntity
 import com.example.ui.MainViewModel
+import com.example.ui.theme.SmartFadeDivider
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -44,9 +45,8 @@ fun StandardComplianceBanner(assessment: ComplianceAssessment) {
     }
 
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(12.dp),
         color = bgColor,
-        border = BorderStroke(1.dp, borderColor),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
@@ -453,9 +453,8 @@ fun AggregateQuarryToolScreen(viewModel: MainViewModel, context: Context) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (overallPass) Color(0xFF16A34A).copy(alpha = 0.12f) else Color(0xFFDC2626).copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, if (overallPass) Color(0xFF16A34A).copy(alpha = 0.35f) else Color(0xFFDC2626).copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(12.dp),
+                color = if (overallPass) ToolColors.accentGreen.copy(alpha = 0.14f) else ToolColors.accentRed.copy(alpha = 0.14f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
@@ -616,9 +615,8 @@ fun BitumenBinderTestingToolScreen(viewModel: MainViewModel, context: Context) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (overallPass) Color(0xFF16A34A).copy(alpha = 0.12f) else Color(0xFFDC2626).copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, if (overallPass) Color(0xFF16A34A).copy(alpha = 0.35f) else Color(0xFFDC2626).copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(12.dp),
+                color = if (overallPass) ToolColors.accentGreen.copy(alpha = 0.14f) else ToolColors.accentRed.copy(alpha = 0.14f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
@@ -788,9 +786,8 @@ fun AsphaltPlantMixToolScreen(viewModel: MainViewModel, context: Context) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (overallPass) Color(0xFF16A34A).copy(alpha = 0.12f) else Color(0xFFDC2626).copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, if (overallPass) Color(0xFF16A34A).copy(alpha = 0.35f) else Color(0xFFDC2626).copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(12.dp),
+                color = if (overallPass) ToolColors.accentGreen.copy(alpha = 0.14f) else ToolColors.accentRed.copy(alpha = 0.14f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
@@ -946,9 +943,8 @@ fun TackPrimeCoatToolScreen(viewModel: MainViewModel, context: Context) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xFF2563EB).copy(alpha = 0.08f),
-                border = BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = 0.25f)),
+                shape = RoundedCornerShape(12.dp),
+                color = ToolColors.accentBlue.copy(alpha = 0.12f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
@@ -991,7 +987,7 @@ fun TackPrimeCoatToolScreen(viewModel: MainViewModel, context: Context) {
                             Text(String.format(Locale.US, "%.1f L", totalRequiredLitres), color = ToolColors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("200 kg Drum Requirement:", color = ToolColors.textSecondary, fontSize = 12.sp)
                         Text("$totalDrums200kg Drums (200kg)", color = ToolColors.accentGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -1203,9 +1199,8 @@ fun RoadMarkingSignageToolScreen(viewModel: MainViewModel, context: Context) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xFF2563EB).copy(alpha = 0.08f),
-                border = BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = 0.25f)),
+                shape = RoundedCornerShape(12.dp),
+                color = ToolColors.accentBlue.copy(alpha = 0.12f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
@@ -1423,9 +1418,8 @@ fun RoadSafetyWorkZoneToolScreen(viewModel: MainViewModel, context: Context) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (allPass) Color(0xFF16A34A).copy(alpha = 0.12f) else Color(0xFFDC2626).copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, if (allPass) Color(0xFF16A34A).copy(alpha = 0.35f) else Color(0xFFDC2626).copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(12.dp),
+                color = if (allPass) ToolColors.accentGreen.copy(alpha = 0.14f) else ToolColors.accentRed.copy(alpha = 0.14f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(

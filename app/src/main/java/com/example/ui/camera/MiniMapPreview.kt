@@ -3,7 +3,6 @@ package com.example.ui.camera
 import android.graphics.RectF
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -122,16 +121,11 @@ fun MiniMapPreview(
     val isDark = overrideIsDark ?: com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
     val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(14.dp)
     Box(
         modifier = appliedModifier
             .clip(shape)
             .background(if (transparentBackground) Color.Transparent else mapTheme.containerBackground)
-            .border(
-                width = 0.8.dp,
-                color = if (transparentBackground) Color.White.copy(alpha = 0.38f) else mapTheme.containerBorder,
-                shape = shape
-            )
     ) {
         val centerGeo = location ?: routeData?.bounds?.center
 
@@ -293,7 +287,6 @@ fun MiniMapPreview(
                     .align(Alignment.TopStart)
                     .padding(5.dp)
                     .background(mapTheme.badgeBg, RoundedCornerShape(10.dp))
-                    .border(0.5.dp, mapTheme.badgeBorderColor, RoundedCornerShape(10.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -331,7 +324,6 @@ fun MiniMapPreview(
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 5.dp)
                     .background(mapTheme.badgeBg, RoundedCornerShape(8.dp))
-                    .border(0.5.dp, mapTheme.badgeBorderColor, RoundedCornerShape(8.dp))
                     .padding(horizontal = 8.dp, vertical = 1.5.dp),
                 contentAlignment = Alignment.Center
             ) {

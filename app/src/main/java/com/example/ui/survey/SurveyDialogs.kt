@@ -47,15 +47,15 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -144,22 +144,16 @@ fun NewSurveyConfigDialog(
         kotlin.math.abs(parsedEndChainage.metres - parsedStartChainage.metres)
     } else null
 
-    val textFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = colors.inputFocusedBorder,
-        unfocusedBorderColor = colors.inputBorder,
-        focusedTextColor = colors.textPrimary,
-        unfocusedTextColor = colors.textPrimary,
-        focusedLabelColor = colors.inputFocusedBorder,
-        unfocusedLabelColor = colors.textSecondary,
-        focusedContainerColor = colors.inputBackground,
-        unfocusedContainerColor = colors.inputBackground
+    val textFieldColors = ctecsBorderlessInputColors(
+        containerColor = colors.inputBackground,
+        accentColor = colors.inputFocusedBorder
     )
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 560.dp)
                 .fillMaxWidth(0.95f)
@@ -197,7 +191,7 @@ fun NewSurveyConfigDialog(
                     }
                 }
 
-                HorizontalDivider(color = colors.divider, modifier = Modifier.padding(vertical = 10.dp))
+                SmartFadeDivider(modifier = Modifier.padding(vertical = 10.dp))
 
                 LazyColumn(
                     modifier = Modifier
@@ -255,11 +249,11 @@ fun NewSurveyConfigDialog(
                         Text("Lane", fontSize = 11.sp, color = colors.textSecondary)
                         Box(modifier = Modifier.fillMaxWidth()) {
                             Card(
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (colors.isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9)
+                                    containerColor = colors.surfaceHighlight
                                 ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, colors.inputBorder),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { isLaneDropdownOpen = true }
@@ -281,7 +275,7 @@ fun NewSurveyConfigDialog(
                             DropdownMenu(
                                 expanded = isLaneDropdownOpen,
                                 onDismissRequest = { isLaneDropdownOpen = false },
-                                modifier = Modifier.background(if (colors.isDark) Color(0xFF1E293B) else Color(0xFFFFFFFF))
+                                modifier = Modifier.background(colors.cardBackground)
                             ) {
                                 listOf(
                                     SurveyLane.AUTO,
@@ -376,9 +370,8 @@ fun NewSurveyConfigDialog(
 
                         if (plannedDistanceM != null) {
                             Surface(
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 color = if (isDirectionCompatible) colors.surfaceHighlight else colors.red.copy(alpha = 0.15f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isDirectionCompatible) colors.gold.copy(alpha = 0.4f) else colors.red),
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                             ) {
                                 Row(
@@ -629,9 +622,9 @@ fun SmartChainageConfirmationDialog(
 
     Dialog(onDismissRequest = { /* Modal: must Confirm or Edit to avoid accidental outside tap */ }) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 500.dp)
                 .fillMaxWidth(0.94f)
@@ -679,8 +672,7 @@ fun SmartChainageConfirmationDialog(
                     // 10-second countdown pill
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = if (remainingSeconds <= 3) colors.red.copy(alpha = 0.15f) else colors.gold.copy(alpha = 0.15f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, if (remainingSeconds <= 3) colors.red else colors.gold.copy(alpha = 0.5f))
+                        color = if (remainingSeconds <= 3) colors.red.copy(alpha = 0.15f) else colors.gold.copy(alpha = 0.15f)
                     ) {
                         Text(
                             text = if (isEditing) "PAUSED" else "${remainingSeconds}s",
@@ -697,19 +689,19 @@ fun SmartChainageConfirmationDialog(
                         progress = { (remainingSeconds / 10f).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
                         color = if (remainingSeconds <= 3) colors.red else colors.gold,
-                        trackColor = colors.cardBorder.copy(alpha = 0.3f),
+                        trackColor = colors.surfaceHighlight,
                     )
                 }
 
-                HorizontalDivider(color = colors.divider)
+                SmartFadeDivider()
 
                 // Checkpoint Metrics Summary Card
                 Card(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (colors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+                        containerColor = colors.surfaceHighlight
                     ),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -734,7 +726,7 @@ fun SmartChainageConfirmationDialog(
                             }
                         }
 
-                        HorizontalDivider(color = colors.divider)
+                        SmartFadeDivider()
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Column {
@@ -790,15 +782,9 @@ fun SmartChainageConfirmationDialog(
                                     fontSize = 10.5.sp
                                 )
                             },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = colors.inputFocusedBorder,
-                                unfocusedBorderColor = colors.inputBorder,
-                                focusedTextColor = colors.textPrimary,
-                                unfocusedTextColor = colors.textPrimary,
-                                focusedLabelColor = colors.inputFocusedBorder,
-                                unfocusedLabelColor = colors.textSecondary,
-                                focusedContainerColor = colors.inputBackground,
-                                unfocusedContainerColor = colors.inputBackground
+                            colors = ctecsBorderlessInputColors(
+                                containerColor = colors.inputBackground,
+                                accentColor = colors.inputFocusedBorder
                             )
                         )
                     }
@@ -865,9 +851,9 @@ fun EndingChainageReachedDialog(
 
     Dialog(onDismissRequest = onContinueSurvey) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 480.dp)
                 .fillMaxWidth(0.92f)
@@ -905,7 +891,7 @@ fun EndingChainageReachedDialog(
                     }
                 }
 
-                HorizontalDivider(color = colors.divider)
+                SmartFadeDivider()
 
                 Text(
                     text = "Current Chainage: ${session.displayCurrentChainage}\nTotal Surveyed: ${String.format(Locale.US, "%.2f km", session.totalDistanceTravelledMetres / 1000.0)}\n\nWould you like to finish and finalize the survey, or continue surveying further along this highway?",
@@ -962,22 +948,16 @@ fun SurveyQuickSettingsDialog(
         mutableStateOf(session.plannedEndChainageMetres?.let { Chainage(it).format() } ?: "")
     }
 
-    val textFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = colors.inputFocusedBorder,
-        unfocusedBorderColor = colors.inputBorder,
-        focusedTextColor = colors.textPrimary,
-        unfocusedTextColor = colors.textPrimary,
-        focusedLabelColor = colors.inputFocusedBorder,
-        unfocusedLabelColor = colors.textSecondary,
-        focusedContainerColor = colors.inputBackground,
-        unfocusedContainerColor = colors.inputBackground
+    val textFieldColors = ctecsBorderlessInputColors(
+        containerColor = colors.inputBackground,
+        accentColor = colors.inputFocusedBorder
     )
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(0.94f)
@@ -1007,7 +987,7 @@ fun SurveyQuickSettingsDialog(
                     )
                 }
 
-                HorizontalDivider(color = colors.divider)
+                SmartFadeDivider()
 
                 // Road Side
                 Text("ROAD SIDE", style = MaterialTheme.typography.labelSmall, color = colors.sky, fontWeight = FontWeight.Bold)
@@ -1126,22 +1106,16 @@ fun AddKmStoneDialog(
     val nearestNext1Km = ((km + 1) * 1000)
     val nearest500m = (currentCalculatedChainageMetres / 500) * 500
 
-    val textFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = colors.inputFocusedBorder,
-        unfocusedBorderColor = colors.inputBorder,
-        focusedTextColor = colors.textPrimary,
-        unfocusedTextColor = colors.textPrimary,
-        focusedLabelColor = colors.inputFocusedBorder,
-        unfocusedLabelColor = colors.textSecondary,
-        focusedContainerColor = colors.inputBackground,
-        unfocusedContainerColor = colors.inputBackground
+    val textFieldColors = ctecsBorderlessInputColors(
+        containerColor = colors.inputBackground,
+        accentColor = colors.inputFocusedBorder
     )
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(0.94f)
@@ -1168,7 +1142,7 @@ fun AddKmStoneDialog(
                     }
                 }
 
-                HorizontalDivider(color = colors.divider, modifier = Modifier.padding(vertical = 10.dp))
+                SmartFadeDivider(modifier = Modifier.padding(vertical = 10.dp))
 
                 Text(
                     text = "GPS Position: ${String.format(Locale.US, "%.5f, %.5f", currentLocation?.latitude ?: 0.0, currentLocation?.longitude ?: 0.0)} • ±${currentAccuracy.toInt()}m",
@@ -1298,9 +1272,9 @@ fun RelocationDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 480.dp)
                 .fillMaxWidth(0.92f)
@@ -1382,22 +1356,16 @@ fun ChangeOffsetDialog(
     var offsetInput by remember { mutableStateOf(String.format(Locale.US, "%.2f", currentOffsetM)) }
     var selectedSide by remember { mutableStateOf(currentSide) }
 
-    val textFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = colors.inputFocusedBorder,
-        unfocusedBorderColor = colors.inputBorder,
-        focusedTextColor = colors.textPrimary,
-        unfocusedTextColor = colors.textPrimary,
-        focusedLabelColor = colors.inputFocusedBorder,
-        unfocusedLabelColor = colors.textSecondary,
-        focusedContainerColor = colors.inputBackground,
-        unfocusedContainerColor = colors.inputBackground
+    val textFieldColors = ctecsBorderlessInputColors(
+        containerColor = colors.inputBackground,
+        accentColor = colors.inputFocusedBorder
     )
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 480.dp)
                 .fillMaxWidth(0.92f)
@@ -1430,7 +1398,7 @@ fun ChangeOffsetDialog(
                     )
                 }
 
-                HorizontalDivider(color = colors.divider)
+                SmartFadeDivider()
 
                 Text("MODE", style = MaterialTheme.typography.labelSmall, color = colors.sky, fontWeight = FontWeight.Bold)
                 SurveyGlassSegmentedToggle(
@@ -1450,9 +1418,8 @@ fun ChangeOffsetDialog(
 
                 if (isAuto) {
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = colors.surfaceHighlight,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -1546,9 +1513,9 @@ fun SavedSurveysDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 560.dp)
                 .fillMaxWidth(0.95f)
@@ -1571,7 +1538,7 @@ fun SavedSurveysDialog(
                     )
                 }
 
-                HorizontalDivider(color = colors.divider, modifier = Modifier.padding(vertical = 8.dp))
+                SmartFadeDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                 if (sessions.isEmpty()) {
                     Box(modifier = Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
@@ -1581,11 +1548,11 @@ fun SavedSurveysDialog(
                     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(sessions) { s ->
                             Card(
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (colors.isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9)
+                                    containerColor = colors.surfaceHighlight
                                 ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { onSelectSession(s) }
@@ -1640,9 +1607,9 @@ fun ResumeSessionDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             modifier = Modifier
                 .widthIn(max = 480.dp)
                 .fillMaxWidth(0.92f)
@@ -1687,15 +1654,15 @@ fun ResumeSessionDialog(
                     }
                 }
 
-                HorizontalDivider(color = colors.divider)
+                SmartFadeDivider()
 
                 // Survey Details Card
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (colors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+                        containerColor = colors.surfaceHighlight
                     ),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.gold.copy(alpha = 0.35f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -1717,8 +1684,7 @@ fun ResumeSessionDialog(
                             )
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = colors.gold.copy(alpha = 0.15f),
-                                border = androidx.compose.foundation.BorderStroke(0.5.dp, colors.gold.copy(alpha = 0.5f))
+                                color = colors.gold.copy(alpha = 0.15f)
                             ) {
                                 Text(
                                     text = session.status.label,
@@ -1739,7 +1705,7 @@ fun ResumeSessionDialog(
                             )
                         }
 
-                        HorizontalDivider(color = colors.divider, modifier = Modifier.padding(vertical = 4.dp))
+                        SmartFadeDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                         // Chainage & Distance
                         Row(

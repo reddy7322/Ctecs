@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,12 +38,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,6 +70,8 @@ import com.example.backup.BackupValidationStatus
 import com.example.backup.RestoreMode
 import com.example.ui.MainViewModel
 import com.example.ui.ToastType
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 import com.example.ui.theme.isAppDarkTheme
 import com.example.ui.theme.rememberDialogColors
 import java.text.SimpleDateFormat
@@ -154,14 +153,17 @@ fun BackupRestoreContent(
                 Text("Export Backup", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
 
-            OutlinedButton(
+            Button(
                 onClick = {
                     importSafLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                 },
                 enabled = !isBusy,
                 shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.2.dp, accentColor),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accentColor.copy(alpha = 0.14f),
+                    contentColor = accentColor
+                ),
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp)
@@ -204,9 +206,8 @@ fun BackupRestoreContent(
         // 2. Last Backup Info & Validation Status
         val latestItem = history.firstOrNull()
         Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(12.dp),
+            color = CtecsTheme.colors.secondarySurface,
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
@@ -262,9 +263,8 @@ fun BackupRestoreContent(
 
         // 3. Restore Options
         Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(12.dp),
+            color = CtecsTheme.colors.secondarySurface,
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
@@ -284,8 +284,10 @@ fun BackupRestoreContent(
                     FilterChip(
                         selected = defaultRestoreMode == RestoreMode.COMPLETE,
                         onClick = { defaultRestoreMode = RestoreMode.COMPLETE },
+                        border = null,
                         label = { Text("Complete Restore", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.surface,
                             selectedContainerColor = accentColor,
                             selectedLabelColor = accentContentColor
                         ),
@@ -294,8 +296,10 @@ fun BackupRestoreContent(
                     FilterChip(
                         selected = defaultRestoreMode == RestoreMode.SELECTIVE,
                         onClick = { defaultRestoreMode = RestoreMode.SELECTIVE },
+                        border = null,
                         label = { Text("Selective Categories", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.surface,
                             selectedContainerColor = accentColor,
                             selectedLabelColor = accentContentColor
                         ),
@@ -408,6 +412,7 @@ fun BackupRestoreContent(
             onDismissRequest = { itemPendingDelete = null },
             shape = dialogColors.shape,
             containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
             title = { Text("Delete Backup File?", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
             text = {
                 Text(
@@ -446,9 +451,8 @@ private fun BackupHistoryCard(
     onDeleteClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        shape = RoundedCornerShape(12.dp),
+        color = CtecsTheme.colors.secondarySurface,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
@@ -527,6 +531,7 @@ private fun BackupPreviewConfirmationDialog(
         onDismissRequest = onDismiss,
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(
@@ -589,17 +594,29 @@ private fun BackupPreviewConfirmationDialog(
                 }
 
                 if (preview.isRestorable) {
-                    HorizontalDivider(color = dialogColors.borderColor)
+                    SmartFadeDivider()
                     Text("Restore Mode", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = restoreMode == RestoreMode.COMPLETE,
                             onClick = { restoreMode = RestoreMode.COMPLETE },
+                            border = null,
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CtecsTheme.colors.surface,
+                                selectedContainerColor = accentColor,
+                                selectedLabelColor = accentContentColor
+                            ),
                             label = { Text("Complete", fontSize = 11.sp) }
                         )
                         FilterChip(
                             selected = restoreMode == RestoreMode.SELECTIVE,
                             onClick = { restoreMode = RestoreMode.SELECTIVE },
+                            border = null,
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CtecsTheme.colors.surface,
+                                selectedContainerColor = accentColor,
+                                selectedLabelColor = accentContentColor
+                            ),
                             label = { Text("Selective", fontSize = 11.sp) }
                         )
                     }
@@ -682,6 +699,7 @@ private fun BackupRestoreSummaryDialog(
         onDismissRequest = onDismiss,
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(

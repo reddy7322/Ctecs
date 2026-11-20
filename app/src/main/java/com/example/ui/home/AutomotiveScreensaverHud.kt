@@ -449,7 +449,6 @@ fun AutomotiveChainageScreensaverContent(
                             Surface(
                                 shape = CircleShape,
                                 color = Color(0xFFF59E0B).copy(alpha = 0.20f),
-                                border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.7f)),
                                 modifier = Modifier
                                     .align(Alignment.TopCenter)
                                     .padding(top = 8.dp)
@@ -785,9 +784,7 @@ private fun ScreensaverScreenOffToggle(
     ) {
         Surface(
             shape = CircleShape,
-            color = bgColor,
-            border = BorderStroke(0.75.dp, borderColor),
-            shadowElevation = if (isScreenOff || isDarkPalette) 1.dp else 2.dp
+            color = bgColor
         ) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -849,9 +846,7 @@ private fun ScreensaverAodQuickToggle(
     ) {
         Surface(
             shape = CircleShape,
-            color = bgColor,
-            border = BorderStroke(0.75.dp, borderColor),
-            shadowElevation = if (isDarkPalette) 1.dp else 2.dp
+            color = bgColor
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

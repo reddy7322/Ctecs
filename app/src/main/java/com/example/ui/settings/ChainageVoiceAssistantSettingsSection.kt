@@ -3,7 +3,6 @@ package com.example.ui.settings
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,10 +36,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -77,6 +74,9 @@ import com.example.navigation.TtsEngineReadiness
 import com.example.navigation.TtsLanguageAvailability
 import com.example.navigation.TtsStatusSnapshot
 import com.example.navigation.TtsTestResult
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.rememberDialogColors
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -372,7 +372,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                 }
 
                 if (extraInstalledLanguages.isNotEmpty()) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    SmartFadeDivider(modifier = Modifier.padding(vertical = 4.dp))
                     extraInstalledLanguages.take(25).forEach { dynLang ->
                         val isSel = settings.customLanguageTag.equals(dynLang.languageTag, ignoreCase = true)
                         DropdownMenuItem(
@@ -409,7 +409,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // Voice Output ON/OFF with truthful readiness status in subtitle
         KmFlatSwitchRow(
@@ -575,7 +575,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                 }
 
                 if (ttsStatus.disabledEngines.isNotEmpty()) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    SmartFadeDivider(modifier = Modifier.padding(vertical = 4.dp))
                     ttsStatus.disabledEngines.forEach { disabled ->
                         DropdownMenuItem(
                             enabled = false,
@@ -671,7 +671,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                     }
                 }
 
-                OutlinedButton(
+                Button(
                     onClick = {
                         if (!settings.voiceOutputEnabled) {
                             onFeedbackMessage("Turn ON Voice Output to preview voices.")
@@ -691,8 +691,12 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f)),
+                    shape = RoundedCornerShape(10.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = Modifier
                         .heightIn(min = 48.dp)
@@ -755,6 +759,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                 FilterChip(
                     selected = selected,
                     onClick = { onUpdateSettings { it.copy(speechSpeed = spd) } },
+                    border = null,
                     label = {
                         Text(
                             text = spd.label,
@@ -765,6 +770,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
+                        containerColor = CtecsTheme.colors.secondarySurface,
                         selectedContainerColor = accentColor.copy(alpha = 0.18f),
                         selectedLabelColor = accentColor
                     ),
@@ -820,7 +826,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                 .testTag("cva_volume_slider")
         )
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
 
         // Voice Confirmation Before Navigation ON/OFF
         KmFlatSwitchRow(
@@ -850,7 +856,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val stackTestButtons = maxWidth < 310.dp
             val testMicButton: @Composable (Modifier) -> Unit = { btnMod ->
-                OutlinedButton(
+                Button(
                     onClick = {
                         val grantedNow = ChainageVoiceAssistantManager.hasRecordAudioPermission(context)
                         hasMicPermission = grantedNow
@@ -864,8 +870,12 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                             onFeedbackMessage(micTestStatus!!)
                         }
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(10.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = btnMod
                         .heightIn(min = 48.dp)
@@ -890,7 +900,7 @@ fun ChainageVoiceAssistantSettingsSectionContent(
             }
 
             val testVoiceButton: @Composable (Modifier) -> Unit = { btnMod ->
-                OutlinedButton(
+                Button(
                     onClick = {
                         if (!settings.voiceOutputEnabled) {
                             val disabledMsg = "Voice Output is currently OFF. Turn ON Voice Output to test speech."
@@ -919,8 +929,12 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(10.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = btnMod
                         .heightIn(min = 48.dp)
@@ -1154,11 +1168,14 @@ fun ChainageVoiceAssistantSettingsSectionContent(
         }
 
         // Reset Defaults
-        OutlinedButton(
+        Button(
             onClick = { showResetDialog = true },
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+            shape = RoundedCornerShape(10.dp),
+            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CtecsTheme.colors.error.copy(alpha = 0.14f),
+                contentColor = CtecsTheme.colors.error
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
@@ -1171,11 +1188,18 @@ fun ChainageVoiceAssistantSettingsSectionContent(
     }
 
     if (showResetDialog) {
+        val dialogColors = rememberDialogColors()
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            title = { Text("Reset Chainage Voice Assistant?") },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
+            title = { Text("Reset Chainage Voice Assistant?", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
             text = {
-                Text("This will restore default TTS engine, language, voice, speed, pitch, volume, confirmation, and auto-listen preferences.")
+                Text(
+                    "This will restore default TTS engine, language, voice, speed, pitch, volume, confirmation, and auto-listen preferences.",
+                    color = dialogColors.textSecondaryColor
+                )
             },
             confirmButton = {
                 TextButton(
@@ -1187,12 +1211,12 @@ fun ChainageVoiceAssistantSettingsSectionContent(
                     },
                     modifier = Modifier.testTag("cva_confirm_reset_btn")
                 ) {
-                    Text("Reset", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text("Reset", color = CtecsTheme.colors.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetDialog = false }) {
-                    Text("Cancel")
+                    Text("Cancel", color = dialogColors.textSecondaryColor)
                 }
             }
         )
@@ -1288,9 +1312,8 @@ internal fun TtsEngineStatusAndSetupCard(
             if (ttsStatus.isFallbackActive) {
                 // Transparent fallback notice: user's saved preference is untouched; user can keep fallback or retry/configure
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.50f),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.40f)),
+                    shape = RoundedCornerShape(12.dp),
+                    color = CtecsTheme.colors.secondarySurface,
                     modifier = modifier
                         .fillMaxWidth()
                         .testTag("tts_status_card_fallback")
@@ -1314,13 +1337,13 @@ internal fun TtsEngineStatusAndSetupCard(
                                     text = ttsStatus.statusHeadline,
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    color = CtecsTheme.colors.textPrimary
                                 )
                                 Text(
                                     text = ttsStatus.statusDetail,
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.9f)
+                                    color = CtecsTheme.colors.textSecondary
                                 )
                             }
                         }
@@ -1331,7 +1354,8 @@ internal fun TtsEngineStatusAndSetupCard(
                                 if (onKeepFallbackEngine != null) {
                                     Button(
                                         onClick = onKeepFallbackEngine,
-                                        shape = RoundedCornerShape(8.dp),
+                                        shape = RoundedCornerShape(10.dp),
+                                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                         modifier = mod
@@ -1349,9 +1373,14 @@ internal fun TtsEngineStatusAndSetupCard(
                                 }
                             }
                             val retryBtn: @Composable (Modifier) -> Unit = { mod ->
-                                OutlinedButton(
+                                Button(
                                     onClick = onCheckAgain,
-                                    shape = RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(10.dp),
+                                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = CtecsTheme.colors.surface,
+                                        contentColor = CtecsTheme.colors.textPrimary
+                                    ),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                     modifier = mod
                                         .heightIn(min = 48.dp)
@@ -1469,9 +1498,8 @@ internal fun TtsEngineStatusAndSetupCard(
             }
 
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(12.dp),
+                color = CtecsTheme.colors.warning.copy(alpha = 0.12f),
                 modifier = modifier
                     .fillMaxWidth()
                     .testTag("tts_status_card_setup")
@@ -1487,7 +1515,7 @@ internal fun TtsEngineStatusAndSetupCard(
                         Icon(
                             imageVector = Icons.Default.Warning,
                             contentDescription = "Voice engine setup required",
-                            tint = MaterialTheme.colorScheme.tertiary,
+                            tint = CtecsTheme.colors.warning,
                             modifier = Modifier.size(18.dp)
                         )
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1495,20 +1523,20 @@ internal fun TtsEngineStatusAndSetupCard(
                                 text = ttsStatus.statusHeadline,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                                color = CtecsTheme.colors.textPrimary
                             )
                             Text(
                                 text = ttsStatus.statusDetail.ifBlank { contextSuffix },
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.9f)
+                                color = CtecsTheme.colors.textSecondary
                             )
                             if (!inlineSetupNote.isNullOrBlank()) {
                                 Text(
                                     text = inlineSetupNote,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontSize = 10.5.sp,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f),
+                                    color = CtecsTheme.colors.textSecondary,
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                             }
@@ -1522,7 +1550,8 @@ internal fun TtsEngineStatusAndSetupCard(
                         val primaryButton: @Composable (Modifier) -> Unit = { btnMod ->
                             Button(
                                 onClick = { onInstallOrConfigure(isMissingLanguageData) },
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                 modifier = btnMod
@@ -1549,10 +1578,14 @@ internal fun TtsEngineStatusAndSetupCard(
                         }
 
                         val checkAgainButton: @Composable (Modifier) -> Unit = { btnMod ->
-                            OutlinedButton(
+                            Button(
                                 onClick = onCheckAgain,
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.65f)),
+                                shape = RoundedCornerShape(10.dp),
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CtecsTheme.colors.surface,
+                                    contentColor = CtecsTheme.colors.textPrimary
+                                ),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                 modifier = btnMod
                                     .heightIn(min = 48.dp)
@@ -1561,7 +1594,7 @@ internal fun TtsEngineStatusAndSetupCard(
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
                                     contentDescription = "Check Again",
-                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    tint = CtecsTheme.colors.textPrimary,
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))
@@ -1569,7 +1602,7 @@ internal fun TtsEngineStatusAndSetupCard(
                                     text = "Check Again",
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    color = CtecsTheme.colors.textPrimary,
                                     maxLines = 1,
                                     softWrap = false
                                 )

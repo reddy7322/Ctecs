@@ -505,7 +505,7 @@ internal fun BorderlessChainageRouteMiniPreview(
     }
     if (alignPoints.isEmpty()) return
 
-    val surfaceTint = if (isDark) Color(0xFF0B1220).copy(alpha = 0.55f) else Color(0xFFEFF6FF).copy(alpha = 0.65f)
+    val surfaceTint = if (isDark) Color(0xFF080B12) else Color(0xFFF1F4F8)
 
     Box(
         modifier = modifier
@@ -515,9 +515,9 @@ internal fun BorderlessChainageRouteMiniPreview(
             .background(
                 Brush.horizontalGradient(
                     colors = listOf(
-                        surfaceTint.copy(alpha = 0.25f),
+                        surfaceTint.copy(alpha = 0.30f),
                         surfaceTint,
-                        surfaceTint.copy(alpha = 0.25f)
+                        surfaceTint.copy(alpha = 0.30f)
                     )
                 )
             )

@@ -18,11 +18,9 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -92,13 +90,10 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -136,6 +131,9 @@ import com.example.data.HighwayProjectEntity
 import com.example.data.SmartActivityEntity
 import com.example.model.MatchConfidence
 import com.example.ui.MainViewModel
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
 import com.example.util.DprPdfGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -523,8 +521,7 @@ fun PdfDocumentPreviewDialog(
             Column(modifier = Modifier.fillMaxSize()) {
                 Surface(
                     color = dialogColors.surfaceColor,
-                    tonalElevation = 2.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                    tonalElevation = 0.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -586,8 +583,8 @@ fun PdfDocumentPreviewDialog(
                         }
                     } else if (pageBitmap != null) {
                         Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            shadowElevation = 8.dp,
+                            shape = RoundedCornerShape(8.dp),
+                            shadowElevation = 0.dp,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
@@ -600,13 +597,13 @@ fun PdfDocumentPreviewDialog(
                             )
                         }
                     } else {
-                        Text("Could not render page preview", color = Color.White)
+                        Text("Could not render page preview", color = dialogColors.textSecondaryColor)
                     }
                 }
 
                 Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 4.dp,
+                    color = dialogColors.surfaceColor,
+                    tonalElevation = 0.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -946,7 +943,10 @@ fun SmartNotesScreen(
         }
     }
 
+    val ctecsColors = CtecsTheme.colors
+
     Scaffold(
+        containerColor = ctecsColors.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -957,26 +957,27 @@ fun SmartNotesScreen(
                             Text(
                                 text = "SITE ACTIVITY – DPR",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
+                                fontSize = 16.sp,
+                                color = ctecsColors.textPrimary
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
+                                shape = RoundedCornerShape(6.dp),
+                                color = ctecsColors.accent.copy(alpha = 0.14f)
                             ) {
                                 Text(
                                     text = currentProject.id,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    color = ctecsColors.accent,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }
                         Text(
                             text = currentProject.name,
                             fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = ctecsColors.textSecondary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -984,16 +985,19 @@ fun SmartNotesScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = ctecsColors.textPrimary)
                     }
                 },
                 actions = {
                     IconButton(onClick = { showProjectSwitcherDialog = true }) {
-                        Icon(Icons.Default.FilterList, contentDescription = "Projects")
+                        Icon(Icons.Default.FilterList, contentDescription = "Projects", tint = ctecsColors.textPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = ctecsColors.background,
+                    titleContentColor = ctecsColors.textPrimary,
+                    navigationIconContentColor = ctecsColors.textPrimary,
+                    actionIconContentColor = ctecsColors.textPrimary
                 )
             )
         },
@@ -1005,8 +1009,8 @@ fun SmartNotesScreen(
                     }
                     showAddEditDialog = true
                 },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
+                containerColor = ctecsColors.accent,
+                contentColor = ctecsColors.onAccent
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Add Activity")
             }
@@ -1016,13 +1020,14 @@ fun SmartNotesScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(ctecsColors.background)
                 .padding(innerPadding)
         ) {
             // ---------------------------------------------------------
             // 1. DATE TOOLBAR & 4 CLEAR EXPORT BUTTONS
             // ---------------------------------------------------------
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                color = ctecsColors.secondaryBackground,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -1109,9 +1114,8 @@ fun SmartNotesScreen(
                     ) {
                         // 1. Single Export Button
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            shape = RoundedCornerShape(10.dp),
+                            color = ctecsColors.surface,
                             onClick = {
                                 if (activitiesForDate.isNotEmpty()) {
                                     singleActivityToExport = activitiesForDate.first()
@@ -1124,20 +1128,20 @@ fun SmartNotesScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Row(
-                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = ctecsColors.accent, modifier = Modifier.size(13.dp))
                                 Spacer(modifier = Modifier.width(3.dp))
-                                Text("Single", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text("Single", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = ctecsColors.textPrimary)
                             }
                         }
 
                         // 2. All Day Export Button
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(10.dp),
+                            color = ctecsColors.accent,
                             onClick = {
                                 if (activitiesForDate.isNotEmpty()) {
                                     dprExportMode = "ALL"
@@ -1149,22 +1153,21 @@ fun SmartNotesScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Row(
-                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp))
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = ctecsColors.onAccent, modifier = Modifier.size(13.dp))
                                 Spacer(modifier = Modifier.width(3.dp))
-                                Text("All Day", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                                Text("All Day", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = ctecsColors.onAccent)
                             }
                         }
 
                         // 3. Selected Export Button
                         val selCount = selectedActivityIds.size
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (selCount > 0) Color(0xFF16A34A) else MaterialTheme.colorScheme.surface,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, if (selCount > 0) Color(0xFF16A34A) else MaterialTheme.colorScheme.outlineVariant),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (selCount > 0) ctecsColors.success else ctecsColors.surface,
                             onClick = {
                                 if (selCount > 0) {
                                     dprExportMode = "SELECTED"
@@ -1176,14 +1179,14 @@ fun SmartNotesScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Row(
-                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     Icons.Default.CheckCircle,
                                     contentDescription = null,
-                                    tint = if (selCount > 0) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tint = if (selCount > 0) Color.White else ctecsColors.textSecondary,
                                     modifier = Modifier.size(13.dp)
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
@@ -1191,20 +1194,20 @@ fun SmartNotesScreen(
                                     text = if (selCount > 0) "Selected ($selCount)" else "Selected",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (selCount > 0) Color.White else MaterialTheme.colorScheme.onSurface
+                                    color = if (selCount > 0) Color.White else ctecsColors.textPrimary
                                 )
                             }
                         }
 
                         // 4. Weekly / Custom Date Export Button
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFF2563EB),
+                            shape = RoundedCornerShape(10.dp),
+                            color = ctecsColors.accentSecondary,
                             onClick = { showWeeklyExportDialog = true },
                             modifier = Modifier.weight(1f)
                         ) {
                             Row(
-                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1283,8 +1286,7 @@ fun SmartNotesScreen(
                     }
                 }
 
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1297,14 +1299,14 @@ fun SmartNotesScreen(
                             Text(
                                 "Search activities by name or chainage...",
                                 fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                color = ctecsColors.textMuted
                             )
                         },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = "Search",
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = ctecsColors.accent,
                                 modifier = Modifier.size(18.dp)
                             )
                         },
@@ -1314,20 +1316,15 @@ fun SmartNotesScreen(
                                     Icon(
                                         imageVector = Icons.Default.Clear,
                                         contentDescription = "Clear",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        tint = ctecsColors.textSecondary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
                         },
                         singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                        )
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ctecsBorderlessInputColors(containerColor = ctecsColors.surface)
                     )
                 }
 
@@ -1372,9 +1369,9 @@ fun SmartNotesScreen(
                         }
 
                         Card(
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = ctecsColors.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
@@ -1447,7 +1444,7 @@ fun SmartNotesScreen(
                                     }
                                 }
 
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                SmartFadeDivider(modifier = Modifier.padding(vertical = 6.dp))
 
                                 // Details Grid Row: Length, Width, Side, Location
                                 Row(
@@ -1589,7 +1586,7 @@ fun SmartNotesScreen(
                 Column(modifier = Modifier.fillMaxSize()) {
                     // Top Header Bar
                     Surface(
-                        color = MaterialTheme.colorScheme.surface,
+                        color = ctecsColors.secondaryBackground,
                         tonalElevation = 0.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -1624,16 +1621,15 @@ fun SmartNotesScreen(
                                                 resetEntryForm()
                                             }
                                         },
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = ctecsColors.surface,
                                         modifier = Modifier.size(btnHeight)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                                 contentDescription = "Close",
-                                                tint = MaterialTheme.colorScheme.onSurface,
+                                                tint = ctecsColors.textPrimary,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -1643,7 +1639,7 @@ fun SmartNotesScreen(
                                         text = if (isEditingActivity) "Edit Activity" else "Add Activity",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = if (isUltraCompact) 15.sp else 17.sp,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        color = ctecsColors.textPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -1651,8 +1647,7 @@ fun SmartNotesScreen(
                                     if (!isEditingActivity) {
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
-                                            color = Color(0xFF16A34A).copy(alpha = 0.12f),
-                                            border = BorderStroke(1.dp, Color(0xFF16A34A).copy(alpha = 0.3f))
+                                            color = ctecsColors.success.copy(alpha = 0.14f)
                                         ) {
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
@@ -1692,13 +1687,12 @@ fun SmartNotesScreen(
                                                 resetEntryForm()
                                                 Toast.makeText(context, "Draft cleared", Toast.LENGTH_SHORT).show()
                                             },
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(10.dp),
                                             elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
                                             colors = ButtonDefaults.buttonColors(
-                                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
-                                                contentColor = MaterialTheme.colorScheme.error
+                                                containerColor = ctecsColors.error.copy(alpha = 0.14f),
+                                                contentColor = ctecsColors.error
                                             ),
-                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
                                             contentPadding = PaddingValues(horizontal = btnPaddingHorizontal, vertical = 0.dp),
                                             modifier = Modifier
                                                 .height(btnHeight)
@@ -1723,13 +1717,12 @@ fun SmartNotesScreen(
                                             showAddEditDialog = false
                                             resetEntryForm()
                                         },
-                                        shape = RoundedCornerShape(8.dp),
+                                        shape = RoundedCornerShape(10.dp),
                                         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f),
-                                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                            containerColor = ctecsColors.surface,
+                                            contentColor = ctecsColors.textSecondary
                                         ),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
                                         contentPadding = PaddingValues(horizontal = btnPaddingHorizontal, vertical = 0.dp),
                                         modifier = Modifier
                                             .height(btnHeight)
@@ -1863,7 +1856,7 @@ fun SmartNotesScreen(
                         }
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    SmartFadeDivider()
 
                     // Scrollable Form Body with Clean Minimalist Flat UI
                     Column(
@@ -1873,7 +1866,7 @@ fun SmartNotesScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        Text("MAIN ACTIVITY DETAILS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
+                        Text("MAIN ACTIVITY DETAILS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = ctecsColors.accent, letterSpacing = 0.5.sp)
 
                         // 1. From Chainage
                         OutlinedTextField(
@@ -1882,7 +1875,8 @@ fun SmartNotesScreen(
                             label = { Text("From Chainage") },
                             placeholder = { Text("e.g. 198000 or 198+000") },
                             singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ctecsBorderlessInputColors(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
                             keyboardActions = KeyboardActions(onNext = { fromChainage = formatHighwayChainageInput(fromChainage) }),
                             modifier = Modifier.fillMaxWidth()
@@ -1895,7 +1889,8 @@ fun SmartNotesScreen(
                             label = { Text("To Chainage") },
                             placeholder = { Text("e.g. 198880 or 198+880") },
                             singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ctecsBorderlessInputColors(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { toChainage = formatHighwayChainageInput(toChainage) }),
                             modifier = Modifier.fillMaxWidth()
@@ -1928,7 +1923,8 @@ fun SmartNotesScreen(
                                 onValueChange = { customActivityText = it },
                                 label = { Text("Activity Layer") },
                                 readOnly = selectedActivity != "Manually Enter",
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ctecsBorderlessInputColors(),
                                 trailingIcon = {
                                     IconButton(onClick = { expandedAct = true }) {
                                         Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Select Activity")
@@ -1940,7 +1936,8 @@ fun SmartNotesScreen(
                             )
                             DropdownMenu(
                                 expanded = expandedAct,
-                                onDismissRequest = { expandedAct = false }
+                                onDismissRequest = { expandedAct = false },
+                                containerColor = ctecsColors.elevatedSurface
                             ) {
                                 val activitiesList = listOf("EMB", "SG", "GSB", "WMM", "DBM", "BC", "DLC", "PQC", "Milling", "None", "Manually Enter")
                                 activitiesList.forEach { item ->
@@ -1961,7 +1958,8 @@ fun SmartNotesScreen(
                                 onValueChange = { customActivityText = it },
                                 label = { Text("Custom Activity Name") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ctecsBorderlessInputColors(),
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -1976,7 +1974,8 @@ fun SmartNotesScreen(
                                 onValueChange = { activityWidthM = it },
                                 label = { Text("Width (m)") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ctecsBorderlessInputColors(),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
                             )
@@ -1986,7 +1985,8 @@ fun SmartNotesScreen(
                                 onValueChange = { activityDepthM = it },
                                 label = { Text("Depth (mm)") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ctecsBorderlessInputColors(),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
                             )
@@ -1999,8 +1999,8 @@ fun SmartNotesScreen(
                         val mainQtyUnit = if (mainDepth > 0 && mainWid > 0) "Cum (m³)" else if (mainWid > 0) "Sqm (m²)" else "Metres (m)"
 
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(12.dp),
+                            color = ctecsColors.surface,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -2010,8 +2010,8 @@ fun SmartNotesScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Smart Quantity: Length × Width × Depth", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                Text("${"%.2f".format(Locale.US, mainQty)} $mainQtyUnit", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                Text("Smart Quantity: Length × Width × Depth", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = ctecsColors.textSecondary)
+                                Text("${"%.2f".format(Locale.US, mainQty)} $mainQtyUnit", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ctecsColors.accent)
                             }
                         }
 
@@ -2023,7 +2023,8 @@ fun SmartNotesScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text("Carriageway Side") },
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ctecsBorderlessInputColors(),
                                 trailingIcon = {
                                     IconButton(onClick = { expandedSide = true }) {
                                         Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
@@ -2035,7 +2036,8 @@ fun SmartNotesScreen(
                             )
                             DropdownMenu(
                                 expanded = expandedSide,
-                                onDismissRequest = { expandedSide = false }
+                                onDismissRequest = { expandedSide = false },
+                                containerColor = ctecsColors.elevatedSurface
                             ) {
                                 listOf("Auto", "LHS", "RHS", "BHS").forEach { s ->
                                     DropdownMenuItem(
@@ -2057,7 +2059,8 @@ fun SmartNotesScreen(
                                 onValueChange = { customRoadLocationText = it },
                                 label = { Text("Road Location") },
                                 readOnly = selectedRoadLocation != "Manually Enter",
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ctecsBorderlessInputColors(),
                                 trailingIcon = {
                                     IconButton(onClick = { expandedLoc = true }) {
                                         Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
@@ -2069,7 +2072,8 @@ fun SmartNotesScreen(
                             )
                             DropdownMenu(
                                 expanded = expandedLoc,
-                                onDismissRequest = { expandedLoc = false }
+                                onDismissRequest = { expandedLoc = false },
+                                containerColor = ctecsColors.elevatedSurface
                             ) {
                                 listOf("O/L", "I/L", "Shoulder", "Median", "MCW", "None", "Manually Enter").forEach { l ->
                                     DropdownMenuItem(
@@ -2089,7 +2093,8 @@ fun SmartNotesScreen(
                                 onValueChange = { customRoadLocationText = it },
                                 label = { Text("Enter Custom Location") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ctecsBorderlessInputColors(),
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -2100,11 +2105,12 @@ fun SmartNotesScreen(
                             onValueChange = { mainComments = it },
                             label = { Text("Main Comments") },
                             maxLines = 3,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ctecsBorderlessInputColors(),
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        SmartFadeDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                         // -------------------------------------------------------------
                         // SUB ACTIVITY SECTION
@@ -2118,11 +2124,11 @@ fun SmartNotesScreen(
                                 text = "SUB ACTIVITIES (${subActivitiesList.size})",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = ctecsColors.accent,
                                 letterSpacing = 0.5.sp
                             )
 
-                            OutlinedButton(
+                            Button(
                                 onClick = {
                                     showSubActivitySection = true
                                     subActivitiesList.add(
@@ -2137,21 +2143,25 @@ fun SmartNotesScreen(
                                         )
                                     )
                                 },
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = ctecsColors.accent.copy(alpha = 0.14f),
+                                    contentColor = ctecsColors.accent
+                                ),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("+ Add Sub Activity", fontSize = 11.sp)
+                                Text("+ Add Sub Activity", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
 
                         if (showSubActivitySection && subActivitiesList.isNotEmpty()) {
                             subActivitiesList.forEachIndexed { subIndex, subItem ->
                                 Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = ctecsColors.surface,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2198,7 +2208,8 @@ fun SmartNotesScreen(
                                                         subActivitiesList[subIndex] = subItem.copy(name = newName)
                                                     },
                                                     label = { Text("Sub Activity Name", fontSize = 11.sp) },
-                                                    shape = RoundedCornerShape(8.dp),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    colors = ctecsBorderlessInputColors(containerColor = ctecsColors.secondarySurface),
                                                     trailingIcon = {
                                                         IconButton(onClick = { expandedSubName = true }) {
                                                             Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
@@ -2208,7 +2219,8 @@ fun SmartNotesScreen(
                                                 )
                                                 DropdownMenu(
                                                     expanded = expandedSubName,
-                                                    onDismissRequest = { expandedSubName = false }
+                                                    onDismissRequest = { expandedSubName = false },
+                                                    containerColor = ctecsColors.elevatedSurface
                                                 ) {
                                                     listOf("Glass Grid", "Geotextile", "Crack Sealing", "Milling", "Kerb / Drain", "None", "Manually Enter").forEach { s ->
                                                         DropdownMenuItem(
@@ -2230,7 +2242,8 @@ fun SmartNotesScreen(
                                                         subActivitiesList[subIndex] = subItem.copy(location = newLoc)
                                                     },
                                                     label = { Text("Sub Activity Location", fontSize = 11.sp) },
-                                                    shape = RoundedCornerShape(8.dp),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    colors = ctecsBorderlessInputColors(containerColor = ctecsColors.secondarySurface),
                                                     trailingIcon = {
                                                         IconButton(onClick = { expandedSubLoc = true }) {
                                                             Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
@@ -2240,7 +2253,8 @@ fun SmartNotesScreen(
                                                 )
                                                 DropdownMenu(
                                                     expanded = expandedSubLoc,
-                                                    onDismissRequest = { expandedSubLoc = false }
+                                                    onDismissRequest = { expandedSubLoc = false },
+                                                    containerColor = ctecsColors.elevatedSurface
                                                 ) {
                                                     listOf("I/L", "O/L", "MCW", "Shoulder", "Service Road", "None", "Enter Manually").forEach { locOpt ->
                                                         DropdownMenuItem(
@@ -2267,7 +2281,8 @@ fun SmartNotesScreen(
                                                     },
                                                     label = { Text("Sub From Ch", fontSize = 11.sp) },
                                                     singleLine = true,
-                                                    shape = RoundedCornerShape(8.dp),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    colors = ctecsBorderlessInputColors(containerColor = ctecsColors.secondarySurface),
                                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
                                                     keyboardActions = KeyboardActions(onNext = {
                                                         val fmt = formatHighwayChainageInput(subItem.fromChainage)
@@ -2285,7 +2300,8 @@ fun SmartNotesScreen(
                                                     },
                                                     label = { Text("Sub To Ch", fontSize = 11.sp) },
                                                     singleLine = true,
-                                                    shape = RoundedCornerShape(8.dp),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    colors = ctecsBorderlessInputColors(containerColor = ctecsColors.secondarySurface),
                                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
                                                     keyboardActions = KeyboardActions(onDone = {
                                                         val fmt = formatHighwayChainageInput(subItem.toChainage)
@@ -2302,14 +2318,15 @@ fun SmartNotesScreen(
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    color = ctecsColors.secondarySurface,
                                                     modifier = Modifier.weight(1f)
                                                 ) {
                                                     Text(
                                                         text = "Length: ${subItem.lengthM.toInt()} m",
                                                         fontSize = 11.sp,
                                                         fontWeight = FontWeight.Bold,
+                                                        color = ctecsColors.textPrimary,
                                                         modifier = Modifier.padding(10.dp)
                                                     )
                                                 }
@@ -2321,7 +2338,8 @@ fun SmartNotesScreen(
                                                      },
                                                      label = { Text("Width (m)", fontSize = 11.sp) },
                                                      singleLine = true,
-                                                     shape = RoundedCornerShape(8.dp),
+                                                     shape = RoundedCornerShape(10.dp),
+                                                     colors = ctecsBorderlessInputColors(containerColor = ctecsColors.secondarySurface),
                                                      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                                      modifier = Modifier.weight(1f)
                                                  )
@@ -2333,7 +2351,8 @@ fun SmartNotesScreen(
                                                      },
                                                      label = { Text("Depth (mm)", fontSize = 11.sp) },
                                                      singleLine = true,
-                                                     shape = RoundedCornerShape(8.dp),
+                                                     shape = RoundedCornerShape(10.dp),
+                                                     colors = ctecsBorderlessInputColors(containerColor = ctecsColors.secondarySurface),
                                                      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                                      modifier = Modifier.weight(1f)
                                                  )
@@ -2342,14 +2361,15 @@ fun SmartNotesScreen(
                                              val subQty = if (subItem.depthM > 0 && subItem.widthM > 0) subItem.lengthM * subItem.widthM * (subItem.depthM / 1000.0) else if (subItem.widthM > 0) subItem.lengthM * subItem.widthM else subItem.lengthM
                                              val subUnit = if (subItem.depthM > 0 && subItem.widthM > 0) "m³" else if (subItem.widthM > 0) "m²" else "m"
                                              Surface(
-                                                 shape = RoundedCornerShape(6.dp),
-                                                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                                 shape = RoundedCornerShape(8.dp),
+                                                 color = ctecsColors.accent.copy(alpha = 0.12f),
                                                  modifier = Modifier.fillMaxWidth()
                                              ) {
                                                  Text(
                                                      text = "Sub Qty: ${"%.2f".format(Locale.US, subQty)} $subUnit",
                                                      fontSize = 11.sp,
                                                      fontWeight = FontWeight.Bold,
+                                                     color = ctecsColors.accent,
                                                      modifier = Modifier.padding(8.dp)
                                                  )
                                              }
@@ -2361,7 +2381,8 @@ fun SmartNotesScreen(
                                                 },
                                                 label = { Text("Sub Comments", fontSize = 11.sp) },
                                                 singleLine = true,
-                                                shape = RoundedCornerShape(8.dp),
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = ctecsBorderlessInputColors(containerColor = ctecsColors.secondarySurface),
                                                 modifier = Modifier.fillMaxWidth()
                                             )
                                         }
@@ -2370,13 +2391,12 @@ fun SmartNotesScreen(
                             }
                         }
 
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        SmartFadeDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                         // 10. Site Register Photo
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(12.dp),
+                            color = ctecsColors.surface,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(
@@ -2385,33 +2405,43 @@ fun SmartNotesScreen(
                                     .padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text("SITE REGISTER PHOTO (OPTIONAL • NO METADATA)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, letterSpacing = 0.5.sp)
+                                Text("SITE REGISTER PHOTO (OPTIONAL • NO METADATA)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = ctecsColors.accent, letterSpacing = 0.5.sp)
 
                                 if (siteRegisterPhotoPath.isBlank()) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        OutlinedButton(
+                                        Button(
                                             onClick = { triggerRegisterCameraCapture() },
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(10.dp),
+                                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = ctecsColors.secondarySurface,
+                                                contentColor = ctecsColors.textPrimary
+                                            ),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(14.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Take Photo", fontSize = 11.sp)
+                                            Text("Take Photo", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                         }
 
-                                        OutlinedButton(
+                                        Button(
                                             onClick = {
                                                 pickRegisterPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                             },
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(10.dp),
+                                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = ctecsColors.secondarySurface,
+                                                contentColor = ctecsColors.textPrimary
+                                            ),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(14.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Pick Image", fontSize = 11.sp)
+                                            Text("Pick Image", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                         }
                                     }
                                 } else {
@@ -2456,6 +2486,7 @@ fun SmartNotesScreen(
                 onDismissRequest = { showUnsavedConfirmation = false },
                 shape = dialogColors.shape,
                 containerColor = dialogColors.containerColor,
+                tonalElevation = 0.dp,
                 title = { Text("Discard Unsaved Changes?", fontWeight = FontWeight.Bold, color = dialogColors.titleColor) },
                 text = { Text("You have un-saved activity details. Are you sure you want to close without saving?", color = dialogColors.textSecondaryColor) },
                 confirmButton = {
@@ -2505,9 +2536,10 @@ fun SmartNotesScreen(
             onDismissRequest = { showWeeklyExportDialog = false },
             shape = dialogColors.shape,
             containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Default.DateRange, contentDescription = null, tint = Color(0xFF2563EB))
+                    Icon(Icons.Default.DateRange, contentDescription = null, tint = ctecsColors.accent)
                     Text("Weekly / Custom Date Export", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = dialogColors.titleColor)
                 }
             },
@@ -2525,8 +2557,7 @@ fun SmartNotesScreen(
                     ) {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (selectedPreset == "THIS_WEEK") MaterialTheme.colorScheme.primary else dialogColors.surfaceColor,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                            color = if (selectedPreset == "THIS_WEEK") ctecsColors.accent else ctecsColors.surface,
                             onClick = {
                                 selectedPreset = "THIS_WEEK"
                                 val cal = Calendar.getInstance()
@@ -2542,14 +2573,13 @@ fun SmartNotesScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = if (selectedPreset == "THIS_WEEK") Color.White else dialogColors.textColor,
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(vertical = 6.dp)
+                                modifier = Modifier.padding(vertical = 7.dp)
                             )
                         }
 
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (selectedPreset == "LAST_WEEK") MaterialTheme.colorScheme.primary else dialogColors.surfaceColor,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                            color = if (selectedPreset == "LAST_WEEK") ctecsColors.accent else ctecsColors.surface,
                             onClick = {
                                 selectedPreset = "LAST_WEEK"
                                 val cal = Calendar.getInstance()
@@ -2566,14 +2596,13 @@ fun SmartNotesScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = if (selectedPreset == "LAST_WEEK") Color.White else dialogColors.textColor,
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(vertical = 6.dp)
+                                modifier = Modifier.padding(vertical = 7.dp)
                             )
                         }
 
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (selectedPreset == "CUSTOM") MaterialTheme.colorScheme.primary else dialogColors.surfaceColor,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                            color = if (selectedPreset == "CUSTOM") ctecsColors.accent else ctecsColors.surface,
                             onClick = { selectedPreset = "CUSTOM" },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -2583,7 +2612,7 @@ fun SmartNotesScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = if (selectedPreset == "CUSTOM") Color.White else dialogColors.textColor,
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(vertical = 6.dp)
+                                modifier = Modifier.padding(vertical = 7.dp)
                             )
                         }
                     }
@@ -2600,14 +2629,8 @@ fun SmartNotesScreen(
                             },
                             label = { Text("From Date (YYYY-MM-DD)", fontSize = 10.sp) },
                             singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = dialogColors.textColor,
-                                unfocusedTextColor = dialogColors.textColor,
-                                focusedBorderColor = Color(0xFF2563EB),
-                                unfocusedBorderColor = dialogColors.inputBorder,
-                                focusedLabelColor = Color(0xFF2563EB),
-                                unfocusedLabelColor = dialogColors.textSecondaryColor
-                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ctecsBorderlessInputColors(containerColor = ctecsColors.surface),
                             modifier = Modifier.weight(1f)
                         )
 
@@ -2619,14 +2642,8 @@ fun SmartNotesScreen(
                             },
                             label = { Text("To Date (YYYY-MM-DD)", fontSize = 10.sp) },
                             singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = dialogColors.textColor,
-                                unfocusedTextColor = dialogColors.textColor,
-                                focusedBorderColor = Color(0xFF2563EB),
-                                unfocusedBorderColor = dialogColors.inputBorder,
-                                focusedLabelColor = Color(0xFF2563EB),
-                                unfocusedLabelColor = dialogColors.textSecondaryColor
-                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ctecsBorderlessInputColors(containerColor = ctecsColors.surface),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -2638,17 +2655,13 @@ fun SmartNotesScreen(
                             value = exportProjectId,
                             onValueChange = {},
                             readOnly = true,
+                            shape = RoundedCornerShape(12.dp),
                             trailingIcon = {
                                 IconButton(onClick = { expandedPrj = true }) {
                                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = dialogColors.textSecondaryColor)
                                 }
                             },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = dialogColors.textColor,
-                                unfocusedTextColor = dialogColors.textColor,
-                                focusedBorderColor = Color(0xFF2563EB),
-                                unfocusedBorderColor = dialogColors.inputBorder
-                            ),
+                            colors = ctecsBorderlessInputColors(containerColor = ctecsColors.surface),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { expandedPrj = true }
@@ -2656,7 +2669,7 @@ fun SmartNotesScreen(
                         DropdownMenu(
                             expanded = expandedPrj,
                             onDismissRequest = { expandedPrj = false },
-                            modifier = Modifier.background(dialogColors.containerColor)
+                            containerColor = ctecsColors.elevatedSurface
                         ) {
                             appProjects.forEach { prj ->
                                 DropdownMenuItem(
@@ -2670,7 +2683,7 @@ fun SmartNotesScreen(
                         }
                     }
 
-                    HorizontalDivider(color = dialogColors.borderColor)
+                    SmartFadeDivider()
 
                     Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
 
@@ -2711,7 +2724,7 @@ fun SmartNotesScreen(
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(
+                    Button(
                         onClick = {
                             isGeneratingRangePdf = true
                             scope.launch {
@@ -2738,8 +2751,11 @@ fun SmartNotesScreen(
                                 showPdfPreviewModal = true
                             }
                         },
-                        border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.textColor),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ctecsColors.surface,
+                            contentColor = ctecsColors.textPrimary
+                        ),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -2827,19 +2843,12 @@ fun SmartNotesScreen(
                         onValueChange = { dprPreparedByName = it },
                         label = { Text("Prepared By (Site Engineer Name)") },
                         singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = dialogColors.inputFocusedBorder,
-                            unfocusedBorderColor = dialogColors.inputUnfocusedBorder,
-                            focusedTextColor = dialogColors.titleColor,
-                            unfocusedTextColor = dialogColors.titleColor,
-                            focusedLabelColor = dialogColors.primaryAccent,
-                            unfocusedLabelColor = dialogColors.textSecondaryColor,
-                            cursorColor = dialogColors.primaryAccent
-                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ctecsBorderlessInputColors(containerColor = ctecsColors.surface),
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    HorizontalDivider(color = dialogColors.dividerColor)
+                    SmartFadeDivider()
 
                     Text("Export Options:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
 
@@ -2880,7 +2889,7 @@ fun SmartNotesScreen(
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(
+                    Button(
                         onClick = {
                             val exportList = when (dprExportMode) {
                                 "SINGLE" -> listOfNotNull(singleActivityToExport)
@@ -2902,8 +2911,12 @@ fun SmartNotesScreen(
                             previewPdfFile = pdfFile
                             showPdfPreviewModal = true
                         },
-                        border = BorderStroke(1.dp, dialogColors.borderColor),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.titleColor)
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ctecsColors.surface,
+                            contentColor = dialogColors.titleColor
+                        ),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -3122,9 +3135,8 @@ fun SmartScanEditorDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(260.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(dialogColors.surfaceCardColor)
-                        .border(1.dp, dialogColors.borderColor, RoundedCornerShape(8.dp)),
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(dialogColors.surfaceCardColor),
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
@@ -3151,7 +3163,6 @@ fun SmartScanEditorDialog(
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = if (isSelected) dialogColors.primaryAccent else dialogColors.surfaceCardColor,
-                            border = if (!isSelected) BorderStroke(1.dp, dialogColors.borderColor) else null,
                             onClick = { selectedFilterMode = modeKey },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -3172,15 +3183,19 @@ fun SmartScanEditorDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedButton(
+                    Button(
                         onClick = { rotationDegrees = (rotationDegrees + 90f) % 360f },
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        border = BorderStroke(1.dp, dialogColors.borderColor),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = dialogColors.titleColor)
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = dialogColors.surfaceCardColor,
+                            contentColor = dialogColors.titleColor
+                        )
                     ) {
                         Icon(Icons.Default.RotateRight, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Rotate 90°", fontSize = 11.sp)
+                        Text("Rotate 90°", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     Text(

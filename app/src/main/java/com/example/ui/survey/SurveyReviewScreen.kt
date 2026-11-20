@@ -32,11 +32,9 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -67,6 +65,9 @@ import com.example.survey.model.SurveyPoint
 import com.example.survey.model.SurveySession
 import com.example.ui.MainViewModel
 import com.example.ui.ToastType
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -192,9 +193,9 @@ fun SurveyReviewScreen(
                 // 2. Export & Direct Integration Actions Card
                 item {
                     Card(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.sky.copy(alpha = 0.5f)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -286,16 +287,16 @@ fun SurveyReviewScreen(
                 // 3. Metadata Editing Card
                 item {
                     Card(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
                                 text = "EDIT SURVEY ATTRIBUTES",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = colors.gold,
+                                color = colors.sky,
                                 fontWeight = FontWeight.Bold
                             )
 
@@ -304,18 +305,10 @@ fun SurveyReviewScreen(
                                 onValueChange = { surveyName = it },
                                 label = { Text("Survey Name") },
                                 singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth(),
                                 textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.textPrimary),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = colors.inputFocusedBorder,
-                                    unfocusedBorderColor = colors.inputBorder,
-                                    focusedTextColor = colors.textPrimary,
-                                    unfocusedTextColor = colors.textPrimary,
-                                    focusedLabelColor = colors.inputFocusedBorder,
-                                    unfocusedLabelColor = colors.textSecondary,
-                                    focusedContainerColor = colors.inputBackground,
-                                    unfocusedContainerColor = colors.inputBackground
-                                )
+                                colors = ctecsBorderlessInputColors()
                             )
 
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -324,36 +317,20 @@ fun SurveyReviewScreen(
                                     onValueChange = { highwayName = it },
                                     label = { Text("Highway Name") },
                                     singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.weight(1f),
                                     textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.textPrimary),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = colors.inputFocusedBorder,
-                                        unfocusedBorderColor = colors.inputBorder,
-                                        focusedTextColor = colors.textPrimary,
-                                        unfocusedTextColor = colors.textPrimary,
-                                        focusedLabelColor = colors.inputFocusedBorder,
-                                        unfocusedLabelColor = colors.textSecondary,
-                                        focusedContainerColor = colors.inputBackground,
-                                        unfocusedContainerColor = colors.inputBackground
-                                    )
+                                    colors = ctecsBorderlessInputColors()
                                 )
                                 OutlinedTextField(
                                     value = stretchName,
                                     onValueChange = { stretchName = it },
                                     label = { Text("Stretch") },
                                     singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.weight(1f),
                                     textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.textPrimary),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = colors.inputFocusedBorder,
-                                        unfocusedBorderColor = colors.inputBorder,
-                                        focusedTextColor = colors.textPrimary,
-                                        unfocusedTextColor = colors.textPrimary,
-                                        focusedLabelColor = colors.inputFocusedBorder,
-                                        unfocusedLabelColor = colors.textSecondary,
-                                        focusedContainerColor = colors.inputBackground,
-                                        unfocusedContainerColor = colors.inputBackground
-                                    )
+                                    colors = ctecsBorderlessInputColors()
                                 )
                             }
 
@@ -418,9 +395,9 @@ fun SurveyReviewScreen(
                 if (markers.isEmpty()) {
                     item {
                         Card(
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -435,9 +412,9 @@ fun SurveyReviewScreen(
                 } else {
                     items(markers) { marker ->
                         Card(
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -598,9 +575,9 @@ fun SurveySummaryDashboardCard(
     val chDiff = kotlin.math.abs(session.currentChainageMetres - session.startChainageMetres)
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-        border = androidx.compose.foundation.BorderStroke(1.2.dp, colors.gold.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -648,8 +625,7 @@ fun SurveySummaryDashboardCard(
 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = colors.green.copy(alpha = 0.15f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.green.copy(alpha = 0.5f))
+                    color = colors.green.copy(alpha = 0.16f)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -671,7 +647,7 @@ fun SurveySummaryDashboardCard(
                 }
             }
 
-            HorizontalDivider(color = colors.divider)
+            SmartFadeDivider()
 
             // 4-Card Primary Metric Grid (2 Rows x 2 Columns)
             Row(
@@ -730,9 +706,8 @@ fun SurveySummaryDashboardCard(
 
             // Chainage Progression Bar
             Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (colors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9),
-                border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceHighlight,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -816,8 +791,7 @@ private fun DashboardMetricTile(
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = if (colors.isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9),
-        border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = if (colors.isDark) 0.35f else 0.5f)),
+        color = colors.surfaceHighlight,
         modifier = modifier
     ) {
         Column(

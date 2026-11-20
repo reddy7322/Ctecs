@@ -108,6 +108,8 @@ import com.example.navigation.ChainageVoiceAssistantStage
 import com.example.navigation.ChainageVoiceCommandParser
 import com.example.navigation.ExternalNavApp
 import com.example.navigation.ExternalNavigationLauncher
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 
 /**
  * Compact, minimalist Home Page shortcut button placed immediately to the right of the Next KM Stone card.
@@ -132,26 +134,16 @@ fun NavigateToChainageQuickButton(
         label = "nav_quick_btn_scale"
     )
 
-    val accentColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF2563EB)
-    val activeAccent = if (isDark) Color(0xFF10B981) else Color(0xFF059669)
-    val effectiveTint = if (hasActiveTarget) activeAccent else accentColor
+    val c = CtecsTheme.colors
+    val effectiveAccent = if (hasActiveTarget) c.success else c.accent
     val buttonSize = if (isCompact) 50.dp else 54.dp
-    val surfaceBg = if (isDark) cardBgColor.copy(alpha = 0.90f) else cardBgColor.copy(alpha = 0.97f)
-    val borderColor = if (hasActiveTarget) {
-        effectiveTint.copy(alpha = 0.65f)
-    } else {
-        cardBorderColor
-    }
 
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = surfaceBg,
-        border = BorderStroke(1.dp, borderColor),
-        shadowElevation = if (isDark) 0.dp else 1.dp,
+    Box(
         modifier = modifier
             .size(buttonSize)
             .scale(scale)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .background(effectiveAccent)
             .clickable(
                 interactionSource = interactionSource,
                 indication = androidx.compose.material3.ripple(),
@@ -160,57 +152,45 @@ fun NavigateToChainageQuickButton(
             .semantics {
                 contentDescription = "Navigate to Chainage"
             }
-            .testTag("home_navigate_to_chainage_button")
+            .testTag("home_navigate_to_chainage_button"),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp)
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(if (isCompact) 24.dp else 26.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(effectiveTint.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AltRoute,
-                        contentDescription = null,
-                        tint = effectiveTint,
-                        modifier = Modifier.size(if (isCompact) 15.dp else 16.5.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = if (hasActiveTarget && !activeTargetChainageText.isNullOrBlank()) {
-                        activeTargetChainageText
-                    } else {
-                        "GO KM"
-                    },
-                    color = if (hasActiveTarget) effectiveTint else mainTextColor.copy(alpha = 0.88f),
-                    fontSize = 8.sp,
-                    lineHeight = 9.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Icon(
+                imageVector = Icons.Default.AltRoute,
+                contentDescription = null,
+                tint = c.onAccent,
+                modifier = Modifier.size(if (isCompact) 18.dp else 20.dp)
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = if (hasActiveTarget && !activeTargetChainageText.isNullOrBlank()) {
+                    activeTargetChainageText
+                } else {
+                    "GO KM"
+                },
+                color = c.onAccent,
+                fontSize = 8.5.sp,
+                lineHeight = 9.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
 
-            if (hasActiveTarget) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(activeAccent)
-                )
-            }
+        if (hasActiveTarget) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(5.dp)
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+            )
         }
     }
 }
@@ -522,17 +502,18 @@ fun NavigateToChainageDialog(
         }
     }
 
-    // Premium minimalist Light/Dark color palette (borderless translucent blending)
-    val baseGlass = if (isDark) Color(0xFF0B1324) else Color(0xFFFDFEFF)
-    val edgeGlass = if (isDark) Color(0xFF0F1A30).copy(alpha = 0.88f) else Color(0xFFF5F8FF).copy(alpha = 0.92f)
-    val subtleSurface = if (isDark) Color(0xFF17253D).copy(alpha = 0.45f) else Color(0xFFEFF4FB).copy(alpha = 0.72f)
-    val hairlineColor = if (isDark) Color(0xFF334155).copy(alpha = 0.35f) else Color(0xFFCBD5E1).copy(alpha = 0.48f)
-    val primaryText = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val secondaryText = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val accentBlue = if (isDark) Color(0xFF38BDF8) else Color(0xFF2563EB)
-    val accentEmerald = if (isDark) Color(0xFF10B981) else Color(0xFF059669)
-    val errorColor = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626)
-    val warningColor = if (isDark) Color(0xFFFBBF24) else Color(0xFFD97706)
+    // AMOLED Deep Black Dark Mode & Professional Light Mode borderless palette
+    val c = CtecsTheme.colors
+    val baseGlass = if (isDark) c.surface else c.elevatedSurface
+    val edgeGlass = if (isDark) c.secondaryBackground else c.secondaryBackground
+    val subtleSurface = if (isDark) c.secondarySurface else c.surface
+    val hairlineColor = c.subtleSeparator
+    val primaryText = c.textPrimary
+    val secondaryText = c.textSecondary
+    val accentBlue = c.accent
+    val accentEmerald = c.success
+    val errorColor = c.error
+    val warningColor = c.warning
 
     val currentLiveFormatted = remember(matchResult) {
         if (matchResult.chainage != null) matchResult.displayChainage else "--+---"
@@ -953,7 +934,7 @@ fun NavigateToChainageDialog(
                             }
                         }
 
-                        HorizontalDivider(color = hairlineColor)
+                        SmartFadeDivider(color = hairlineColor)
 
                         // Remaining Road-Alignment Distance & Travel Direction Row
                         val displayDistanceText = remember(calculation) {
@@ -1041,7 +1022,7 @@ fun NavigateToChainageDialog(
                             )
                         }
 
-                        HorizontalDivider(color = hairlineColor)
+                        SmartFadeDivider(color = hairlineColor)
 
                         // Alignment Availability + Mini Route Preview
                         if (calculation.isLocationResolved && calculation.destinationPoint != null) {

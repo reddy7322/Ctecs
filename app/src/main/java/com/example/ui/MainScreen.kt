@@ -170,27 +170,25 @@ fun MainScreen(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY) {
-                val isDarkNav = com.example.ui.theme.isAppDarkTheme()
-                val navBarBg = if (isDarkNav) Color(0xFF131B2E).copy(alpha = 0.96f) else Color.White.copy(alpha = 0.98f)
-                val navBarBorder = if (isDarkNav) Color(0xFF263554) else Color(0xFFE2E8F0)
-                val selectedPillBg = if (isDarkNav) Color(0xFF2563EB).copy(alpha = 0.25f) else Color(0xFFEFF6FF)
-                val selectedIconColor = if (isDarkNav) Color(0xFF60A5FA) else Color(0xFF2563EB)
-                val unselectedIconColor = if (isDarkNav) Color(0xFF94A3B8) else Color(0xFF64748B)
+                val c = com.example.ui.theme.CtecsTheme.colors
+                val selectedPillBg = c.accent.copy(alpha = if (c.isDark) 0.16f else 0.12f)
+                val selectedIconColor = c.accent
+                val unselectedIconColor = c.textMuted
 
-                Surface(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars),
-                    shape = RoundedCornerShape(24.dp),
-                    color = navBarBg,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, navBarBorder),
-                    shadowElevation = if (isDarkNav) 6.dp else 4.dp
+                        .background(c.background)
+                        .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
                 ) {
+                    // Subtle smart fade top transition into seamless bottom navigation
+                    com.example.ui.theme.SmartFadeDivider(
+                        color = if (c.isDark) c.elevatedSurface.copy(alpha = 0.65f) else c.secondarySurface
+                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -202,7 +200,7 @@ fun MainScreen(
                             Triple(AppTab.SETTINGS, Icons.Default.Settings, "Settings")
                         )
 
-                        tabs.forEach { (tab, icon, contentDesc) ->
+                        tabs.forEach { (tab, icon, label) ->
                             val isSelected = currentTab == tab
                             val iconTint by animateColorAsState(
                                 targetValue = if (isSelected) selectedIconColor else unselectedIconColor,
@@ -215,26 +213,41 @@ fun MainScreen(
                                 label = "icon_bg"
                             )
 
-                            Box(
+                            Column(
                                 modifier = Modifier
-                                    .height(38.dp)
-                                    .width(if (isSelected) 52.dp else 40.dp)
-                                    .clip(RoundedCornerShape(19.dp))
-                                    .background(bgTint)
+                                    .clip(RoundedCornerShape(14.dp))
                                     .clickable {
                                         if (tab == AppTab.HIGHWAY_TOOLS) {
                                             previousTabBeforeTools = currentTab
                                         }
                                         viewModel.setTab(tab)
                                     }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
                                     .testTag("nav_item_${tab.name.lowercase()}"),
-                                contentAlignment = Alignment.Center
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
-                                Icon(
-                                    imageVector = icon,
-                                    contentDescription = contentDesc,
-                                    tint = iconTint,
-                                    modifier = Modifier.size(20.dp)
+                                Box(
+                                    modifier = Modifier
+                                        .height(30.dp)
+                                        .width(if (isSelected) 48.dp else 40.dp)
+                                        .clip(RoundedCornerShape(15.dp))
+                                        .background(bgTint),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = label,
+                                        tint = iconTint,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Text(
+                                    text = label,
+                                    color = iconTint,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                    maxLines = 1
                                 )
                             }
                         }
@@ -376,13 +389,14 @@ fun AnimatedGlassToast(
 
     val displayMessage = toastMessage ?: activeMessage
 
+    val c = com.example.ui.theme.CtecsTheme.colors
     val accentColor = when (displayMessage?.type) {
-        ToastType.SUCCESS -> Color(0xFF34D399) // Emerald
-        ToastType.ERROR -> Color(0xFFF87171)   // Soft Rose
-        ToastType.WARNING -> Color(0xFFFBBF24) // Amber
-        ToastType.SETTINGS_SAVED -> Color(0xFF2DD4BF) // Teal
-        ToastType.MODE_CHANGE -> Color(0xFF38BDF8)    // Sky
-        ToastType.INFO, null -> Color(0xFF818CF8)     // Indigo
+        ToastType.SUCCESS -> c.success
+        ToastType.ERROR -> c.error
+        ToastType.WARNING -> c.warning
+        ToastType.SETTINGS_SAVED -> c.accentSecondary
+        ToastType.MODE_CHANGE -> c.accent
+        ToastType.INFO, null -> c.accent
     }
 
     Box(
@@ -397,84 +411,49 @@ fun AnimatedGlassToast(
             enter = slideInVertically(
                 initialOffsetY = { -it },
                 animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMediumLow
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMedium
                 )
-            ) + fadeIn(animationSpec = androidx.compose.animation.core.tween(180)) + scaleIn(
-                initialScale = 0.85f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMediumLow
-                )
-            ),
+            ) + fadeIn(animationSpec = tween(160)),
             exit = slideOutVertically(
                 targetOffsetY = { -it / 2 },
-                animationSpec = androidx.compose.animation.core.tween(160, easing = FastOutLinearInEasing)
-            ) + fadeOut(animationSpec = androidx.compose.animation.core.tween(140)) + scaleOut(
-                targetScale = 0.90f,
-                animationSpec = androidx.compose.animation.core.tween(140)
-            )
+                animationSpec = tween(150, easing = FastOutLinearInEasing)
+            ) + fadeOut(animationSpec = tween(130))
         ) {
             displayMessage?.let { msg ->
-                // Only run breathing pulse animation while a toast is actually visible
-                val infiniteTransition = rememberInfiniteTransition(label = "toast_glow")
-                val pulseAlpha by infiniteTransition.animateFloat(
-                    initialValue = 0.35f,
-                    targetValue = 0.85f,
-                    animationSpec = infiniteRepeatable(
-                        animation = androidx.compose.animation.core.tween(durationMillis = 850, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "toast_pulse"
-                )
                 val smartText = remember(msg.message, msg.type) {
                     formatSmartTinyFeedback(msg.message, msg.type)
                 }
 
-                val isDark = com.example.ui.theme.isAppDarkTheme()
                 Surface(
                     shape = CircleShape,
-                    color = if (isDark) Color(0xB8090D14) else Color(0xF2FFFFFF), // Ultra sleek frosted glass
-                    border = BorderStroke(0.75.dp, if (isDark) Color(0x38FFFFFF) else Color(0x28000000)),
-                    shadowElevation = 6.dp,
+                    color = if (c.isDark) c.elevatedSurface else c.surface,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
                     modifier = Modifier
                         .testTag("tiny_glass_toast")
-                        .widthIn(max = 240.dp)
+                        .widthIn(max = 260.dp)
                         .clip(CircleShape)
                         .clickable { onDismiss() }
                 ) {
                     Row(
                         modifier = Modifier
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        // Smart tiny status indicator with gentle glowing aura
                         Box(
-                            modifier = Modifier.size(12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(CircleShape)
-                                    .background(accentColor.copy(alpha = pulseAlpha * 0.35f))
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(5.5.dp)
-                                    .clip(CircleShape)
-                                    .background(accentColor)
-                            )
-                        }
-
-                        // Smart tiny feedback text: minimal, single-line, no clutter
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(accentColor)
+                        )
                         Text(
                             text = smartText,
-                            color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A),
-                            fontSize = 11.5.sp,
+                            color = c.textPrimary,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 0.25.sp,
+                            letterSpacing = 0.15.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )

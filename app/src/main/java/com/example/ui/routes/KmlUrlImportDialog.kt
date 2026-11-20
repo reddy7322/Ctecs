@@ -1,6 +1,5 @@
 package com.example.ui.routes
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -44,6 +43,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.parser.KmlUrlImporter
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.ctecsBorderlessInputColors
 import com.example.ui.theme.rememberDialogColors
 
 /**
@@ -61,8 +62,9 @@ fun KmlUrlImportDialog(
     var urlInput by remember(initialUrl) { mutableStateOf(initialUrl) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
-    val primaryAccent = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
-    val greenAccent = Color(0xFF10B981)
+    val c = CtecsTheme.colors
+    val primaryAccent = c.accent
+    val greenAccent = c.success
     val isMyMapsDetected = remember(urlInput) {
         urlInput.isNotBlank() && KmlUrlImporter.isGoogleMyMapsUrl(urlInput)
     }
@@ -83,6 +85,7 @@ fun KmlUrlImportDialog(
         onDismissRequest = onDismiss,
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         title = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -170,6 +173,8 @@ fun KmlUrlImportDialog(
                             }
                         }
                     },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ctecsBorderlessInputColors(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("kml_url_input")
@@ -178,9 +183,8 @@ fun KmlUrlImportDialog(
                 if (isMyMapsDetected) {
                     val mapId = KmlUrlImporter.parseGoogleMyMapsId(urlInput).orEmpty()
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = greenAccent.copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, greenAccent.copy(alpha = 0.35f)),
+                        shape = RoundedCornerShape(10.dp),
+                        color = greenAccent.copy(alpha = 0.14f),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("mymaps_detected_badge")
@@ -210,7 +214,7 @@ fun KmlUrlImportDialog(
                     Text(
                         text = err,
                         fontSize = 11.5.sp,
-                        color = Color(0xFFEF4444),
+                        color = c.error,
                         modifier = Modifier.testTag("kml_url_validation_error")
                     )
                 }

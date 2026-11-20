@@ -54,9 +54,10 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import com.example.ui.ToastType
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -746,8 +747,7 @@ fun CameraScreen(
                     modifier = Modifier
                         .size(120.dp)
                         .clip(CircleShape)
-                        .background(SurfaceDark.copy(alpha = 0.90f))
-                        .border(4.dp, HighlightYellow, CircleShape),
+                        .background(Color(0xCC0D111A)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -762,10 +762,10 @@ fun CameraScreen(
 
         if (isLandscape) {
             // ==========================================================
-            // LANDSCAPE CAMERA CONTROLS: SMART MINIMALIST GLASS UI
-            // Full transparent background (Color.Transparent) for all elements & buttons
+            // LANDSCAPE CAMERA CONTROLS: FLAT BORDERLESS AMOLED HUD
             // ==========================================================
-            val glassBorderIdle = Color.White.copy(alpha = 0.38f)
+            val hudPillBg = Color(0x99080B12)
+            val hudPillActiveBg = Color(0xCC171E2B)
 
             // 1. TOP BAR: Collapsible Smart Minimalist Glass Toolbar (Left) & Status Checkmark (Right)
             Row(
@@ -789,8 +789,7 @@ fun CameraScreen(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(Color.Transparent)
-                            .border(0.8.dp, glassBorderIdle, CircleShape)
+                            .background(hudPillBg)
                             .testTag("landscape_toolbar_toggle")
                     ) {
                         Icon(
@@ -801,7 +800,7 @@ fun CameraScreen(
                         )
                     }
 
-                    // Expandable Smart Camera Secondary Controls (Full Transparent Glass)
+                    // Expandable Smart Camera Secondary Controls
                     AnimatedVisibility(
                         visible = isTopToolbarExpanded,
                         enter = fadeIn() + expandHorizontally(),
@@ -817,12 +816,7 @@ fun CameraScreen(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (isFlashOn) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(if (isFlashOn) hudPillActiveBg else hudPillBg)
                                     .testTag("landscape_flash_button")
                             ) {
                                 Icon(
@@ -838,12 +832,7 @@ fun CameraScreen(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (isHdrEnabled) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(if (isHdrEnabled) hudPillActiveBg else hudPillBg)
                                     .clickable {
                                         isHdrEnabled = !isHdrEnabled
                                         viewModel.showToast(if (isHdrEnabled) "HDR Mode Active" else "HDR Mode Disabled", ToastType.SETTINGS_SAVED)
@@ -853,11 +842,7 @@ fun CameraScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
-                                    color = Color.Transparent,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        0.8.dp,
-                                        if (isHdrEnabled) HighlightYellow else Color.White.copy(alpha = 0.75f)
-                                    )
+                                    color = if (isHdrEnabled) HighlightYellow.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.10f)
                                 ) {
                                     Text(
                                         text = "HDR",
@@ -875,12 +860,7 @@ fun CameraScreen(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (cameraSettings.gridMode != CameraGridMode.OFF) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(if (cameraSettings.gridMode != CameraGridMode.OFF) hudPillActiveBg else hudPillBg)
                                     .testTag("landscape_grid_button")
                             ) {
                                 Icon(
@@ -891,18 +871,14 @@ fun CameraScreen(
                                 )
                             }
 
-                            // 4. Smart Photo Output Button (Full Transparent Glass Pill)
+                            // 4. Smart Photo Output Button
                             val photoBadgeLandscape = CameraResolutionHelper.getPhotoBadgeText(
                                 cameraSettings.photoResolution,
                                 cameraSettings.photoAspectRatio
                             )
                             Surface(
                                 shape = RoundedCornerShape(19.dp),
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    0.8.dp,
-                                    if (activeOutputSettingsType == "PHOTO") HighlightYellow else glassBorderIdle
-                                ),
+                                color = if (activeOutputSettingsType == "PHOTO") hudPillActiveBg else hudPillBg,
                                 modifier = Modifier
                                     .heightIn(min = 38.dp)
                                     .clip(RoundedCornerShape(19.dp))
@@ -937,18 +913,14 @@ fun CameraScreen(
                                 }
                             }
 
-                            // 5. Smart Video Output Button (Full Transparent Glass Pill)
+                            // 5. Smart Video Output Button
                             val videoBadgeLandscape = CameraResolutionHelper.getVideoBadgeText(
                                 cameraSettings.videoResolution,
                                 cameraSettings.videoAspectRatio
                             )
                             Surface(
                                 shape = RoundedCornerShape(19.dp),
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    0.8.dp,
-                                    if (activeOutputSettingsType == "VIDEO") AccentRed else glassBorderIdle
-                                ),
+                                color = if (activeOutputSettingsType == "VIDEO") AccentRed.copy(alpha = 0.25f) else hudPillBg,
                                 modifier = Modifier
                                     .heightIn(min = 38.dp)
                                     .clip(RoundedCornerShape(19.dp))
@@ -989,12 +961,7 @@ fun CameraScreen(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (cameraSettings.captureTimer != CaptureTimer.OFF) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(if (cameraSettings.captureTimer != CaptureTimer.OFF) hudPillActiveBg else hudPillBg)
                                     .testTag("landscape_timer_button")
                             ) {
                                 Icon(
@@ -1015,12 +982,7 @@ fun CameraScreen(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(
-                                        0.8.dp,
-                                        if (cameraSettings.showHorizonLevel) HighlightYellow else glassBorderIdle,
-                                        CircleShape
-                                    )
+                                    .background(if (cameraSettings.showHorizonLevel) hudPillActiveBg else hudPillBg)
                                     .testTag("landscape_level_button")
                             ) {
                                 Icon(
@@ -1037,8 +999,7 @@ fun CameraScreen(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Transparent)
-                                    .border(0.8.dp, glassBorderIdle, CircleShape)
+                                    .background(hudPillBg)
                                     .testTag("landscape_settings_button")
                             ) {
                                 Icon(
@@ -1052,7 +1013,7 @@ fun CameraScreen(
                     }
                 }
 
-                // Center if recording: Minimalist Transparent Glass Recording Pill
+                // Center if recording: Flat Borderless Recording Pill
                 if (isRecording) {
                     val infiniteTransition = rememberInfiniteTransition(label = "pulse_rec")
                     val recAlpha by infiniteTransition.animateFloat(
@@ -1063,8 +1024,7 @@ fun CameraScreen(
                     )
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = Color.Transparent,
-                        border = androidx.compose.foundation.BorderStroke(0.9.dp, AccentRed)
+                        color = AccentRed.copy(alpha = 0.25f)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
@@ -1092,14 +1052,13 @@ fun CameraScreen(
                     Spacer(modifier = Modifier.weight(1f))
                 }
 
-                // Right: Minimalist Transparent Glass Alignment Status Checkmark Button
+                // Right: Alignment Status Checkmark Button
                 Box(
                     modifier = Modifier
                         .padding(end = 92.dp)
                         .size(38.dp)
                         .clip(CircleShape)
-                        .background(Color.Transparent)
-                        .border(0.8.dp, HighlightYellow.copy(alpha = 0.75f), CircleShape)
+                        .background(hudPillBg)
                         .clickable {
                             viewModel.showToast("Road Alignment: ${activeRoute?.name ?: "Active"}", ToastType.INFO)
                         },
@@ -1138,12 +1097,11 @@ fun CameraScreen(
                 val pillWidth = if (isUltraShortHeight) 144.dp else 150.dp
 
                 val sidePillContent: @Composable () -> Unit = {
-                    // Control 2: LHS / RHS / BHS / Median / None Segmented Pill (Full Transparent Glass)
+                    // Control 2: LHS / RHS / BHS / Median / None Segmented Pill
                     Box(modifier = Modifier.width(pillWidth)) {
                         Surface(
                             shape = RoundedCornerShape(18.dp),
-                            color = Color.Transparent,
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                            color = hudPillBg,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(pillHeight)
@@ -1299,8 +1257,7 @@ fun CameraScreen(
                     Box(modifier = Modifier.width(pillWidth)) {
                         Surface(
                             shape = RoundedCornerShape(18.dp),
-                            color = Color.Transparent,
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                            color = hudPillBg,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(pillHeight)
@@ -1370,8 +1327,7 @@ fun CameraScreen(
 
                         Surface(
                             shape = RoundedCornerShape(18.dp),
-                            color = Color.Transparent,
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, glassBorderIdle),
+                            color = hudPillBg,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(pillHeight)
@@ -1434,7 +1390,7 @@ fun CameraScreen(
                                     }
                                 )
                             }
-                            HorizontalDivider(color = glassBorderIdle)
+                            SmartFadeDivider()
                             DropdownMenuItem(
                                 text = { Text("Custom Activity / Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
                                 onClick = {
@@ -1450,19 +1406,15 @@ fun CameraScreen(
                     // Control 5: Always-visible Chainage Adjustment Pill (Value + Animated Status Bulbs Only)
                     val isManualSource = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
                     val isCustomCorrectionSource = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
-                    val sourceBorderColor = when {
-                        isManualSource -> HighlightYellow
-                        isCustomCorrectionSource -> Color(0xFFA855F7)
-                        chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
-                        else -> glassBorderIdle
+                    val sourceBgColor = when {
+                        isManualSource -> Color(0x40FFB52E)
+                        isCustomCorrectionSource -> Color(0x40A855F7)
+                        chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0x40F59E0B)
+                        else -> hudPillBg
                     }
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = Color.Transparent,
-                        border = androidx.compose.foundation.BorderStroke(
-                            0.8.dp,
-                            sourceBorderColor
-                        ),
+                        color = sourceBgColor,
                         modifier = Modifier
                             .width(pillWidth)
                             .height(pillHeight)
@@ -1501,15 +1453,11 @@ fun CameraScreen(
                 }
 
                 val commentPillContent: @Composable () -> Unit = {
-                    // Control 6: Comment Pill (Full Transparent Glass)
+                    // Control 6: Comment Pill
                     val hasComment = projectProfile.customDescription.isNotBlank() && !projectProfile.customDescription.equals("None", ignoreCase = true)
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = Color.Transparent,
-                        border = androidx.compose.foundation.BorderStroke(
-                            0.8.dp,
-                            if (hasComment) Color(0xFF38BDF8) else glassBorderIdle
-                        ),
+                        color = if (hasComment) Color(0x401685FF) else hudPillBg,
                         modifier = Modifier
                             .width(pillWidth)
                             .height(pillHeight)
@@ -1580,8 +1528,7 @@ fun CameraScreen(
             if (showExposureSlider) {
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = Color.Transparent,
-                    border = androidx.compose.foundation.BorderStroke(0.8.dp, HighlightYellow.copy(alpha = 0.8f)),
+                    color = hudPillBg,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 56.dp)
@@ -1677,11 +1624,10 @@ fun CameraScreen(
                 )
             }
 
-            // 5. RIGHT CORNER: MINIMALIST GLASS CAPTURE & RECORDING DOCK (Full Transparent Background)
+            // 5. RIGHT CORNER: FLAT BORDERLESS CAPTURE & RECORDING DOCK
             Surface(
                 shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
-                color = Color.Transparent,
-                border = androidx.compose.foundation.BorderStroke(0.8.dp, Color.White.copy(alpha = 0.28f)),
+                color = Color(0x88000000),
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
@@ -1696,13 +1642,12 @@ fun CameraScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // 1. Gallery Recent Photo Shortcut (Top — Full Transparent Glass)
+                    // 1. Gallery Recent Photo Shortcut
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color.Transparent)
-                            .border(0.8.dp, glassBorderIdle, RoundedCornerShape(12.dp))
+                            .background(hudPillBg)
                             .clickable { onNavigateToPhotos() }
                             .testTag("landscape_gallery_button"),
                         contentAlignment = Alignment.Center
@@ -1724,14 +1669,13 @@ fun CameraScreen(
                         }
                     }
 
-                    // 2. Camera Flip Button (Full Transparent Glass)
+                    // 2. Camera Flip Button
                     IconButton(
                         onClick = { viewModel.toggleCameraFacing() },
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
-                            .background(Color.Transparent)
-                            .border(0.8.dp, glassBorderIdle, CircleShape)
+                            .background(hudPillBg)
                             .testTag("landscape_camera_flip_button")
                     ) {
                         Icon(
@@ -1742,15 +1686,14 @@ fun CameraScreen(
                         )
                     }
 
-                    // 3. Main Shutter Button (Smart Minimalist Transparent Glass Ring + Aperture Icon)
+                    // 3. Main Shutter Button
                     if (isRecording) {
                         // Quick Photo Capture while Video Recording
                         Box(
                             modifier = Modifier
                                 .size(52.dp)
                                 .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(1.dp, HighlightYellow, CircleShape)
+                                .background(hudPillActiveBg)
                                 .clickable {
                                     try {
                                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
@@ -1845,12 +1788,7 @@ fun CameraScreen(
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(
-                                    0.9.dp,
-                                    if (captureMode == CaptureMode.VIDEO) AccentRed else glassBorderIdle,
-                                    CircleShape
-                                )
+                                .background(if (captureMode == CaptureMode.VIDEO) AccentRed.copy(alpha = 0.25f) else hudPillBg)
                                 .clickable(enabled = !isVideoPreparing) {
                                     if (captureMode != CaptureMode.VIDEO) {
                                         viewModel.setCaptureMode(CaptureMode.VIDEO)
@@ -1869,7 +1807,7 @@ fun CameraScreen(
                         }
                     }
 
-                    // 5. Bottom Action: Pause/Resume if recording, else Exposure Tune Button (Full Transparent Glass)
+                    // 5. Bottom Action: Pause/Resume if recording, else Exposure Tune Button
                     if (isRecording) {
                         IconButton(
                             onClick = {
@@ -1886,12 +1824,7 @@ fun CameraScreen(
                             modifier = Modifier
                                 .size(42.dp)
                                 .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(
-                                    0.8.dp,
-                                    if (isRecordingPaused) HighlightYellow else glassBorderIdle,
-                                    CircleShape
-                                )
+                                .background(if (isRecordingPaused) hudPillActiveBg else hudPillBg)
                                 .testTag("landscape_pause_resume_button")
                         ) {
                             Icon(
@@ -1907,12 +1840,7 @@ fun CameraScreen(
                             modifier = Modifier
                                 .size(42.dp)
                                 .clip(CircleShape)
-                                .background(Color.Transparent)
-                                .border(
-                                    0.8.dp,
-                                    if (showExposureSlider) HighlightYellow else glassBorderIdle,
-                                    CircleShape
-                                )
+                                .background(if (showExposureSlider) hudPillActiveBg else hudPillBg)
                                 .testTag("landscape_tune_button")
                         ) {
                             Icon(
@@ -2228,8 +2156,7 @@ fun CameraScreen(
                     ) {
                         Surface(
                             shape = RoundedCornerShape(14.dp),
-                            color = Color(0x95101726),
-                            border = androidx.compose.foundation.BorderStroke(0.8.dp, AccentRed)
+                            color = AccentRed.copy(alpha = 0.25f)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -2309,12 +2236,11 @@ fun CameraScreen(
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            HorizontalDivider(
+                            SmartFadeDivider(
                                 modifier = Modifier
                                     .padding(vertical = 2.dp)
                                     .fillMaxWidth(0.9f),
-                                thickness = 0.5.dp,
-                                color = Color(0x30FFFFFF)
+                                color = Color(0x40FFFFFF)
                             )
                             // GPS Coordinates (with accurate N/S & E/W notation)
                             if (locationState.point != null && overlayConfig.showCoordinates &&
@@ -2599,7 +2525,7 @@ fun CameraScreen(
                                         }
                                     )
                                 }
-                                HorizontalDivider(color = BorderColor)
+                                SmartFadeDivider()
                                 DropdownMenuItem(
                                     text = { Text("Custom Activity & Sub-Activity...", color = HighlightYellow, fontWeight = FontWeight.Bold) },
                                     onClick = {
@@ -2726,12 +2652,7 @@ fun CameraScreen(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(13.dp))
-                                .background(if (captureMode == CaptureMode.PHOTO) Color(0x35FACC15) else Color.Transparent)
-                                .border(
-                                    width = if (captureMode == CaptureMode.PHOTO) 0.8.dp else 0.dp,
-                                    color = if (captureMode == CaptureMode.PHOTO) HighlightYellow.copy(alpha = 0.6f) else Color.Transparent,
-                                    shape = RoundedCornerShape(13.dp)
-                                )
+                                .background(if (captureMode == CaptureMode.PHOTO) Color(0x38FFB52E) else Color.Transparent)
                                 .clickable { viewModel.setCaptureMode(CaptureMode.PHOTO) }
                                 .padding(horizontal = 14.dp, vertical = 5.dp)
                         ) {
@@ -2756,12 +2677,7 @@ fun CameraScreen(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(13.dp))
-                                .background(if (captureMode == CaptureMode.VIDEO) Color(0x35EF4444) else Color.Transparent)
-                                .border(
-                                    width = if (captureMode == CaptureMode.VIDEO) 0.8.dp else 0.dp,
-                                    color = if (captureMode == CaptureMode.VIDEO) AccentRed.copy(alpha = 0.6f) else Color.Transparent,
-                                    shape = RoundedCornerShape(13.dp)
-                                )
+                                .background(if (captureMode == CaptureMode.VIDEO) Color(0x38FF5263) else Color.Transparent)
                                 .clickable { viewModel.setCaptureMode(CaptureMode.VIDEO) }
                                 .padding(horizontal = 14.dp, vertical = 5.dp)
                         ) {
@@ -3145,8 +3061,8 @@ fun CameraScreen(
             val dialogColors = com.example.ui.theme.rememberDialogColors()
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
-            val primaryAccent = if (dialogColors.isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
-            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+            val primaryAccent = CtecsTheme.colors.accent
+            val onAccent = CtecsTheme.colors.onAccent
 
             // Lock initial input on dialog open so background KMZ updates never overwrite user input
             var chainageInput by remember(showManualDialog) {
@@ -3164,6 +3080,7 @@ fun CameraScreen(
                 onDismissRequest = { viewModel.closeManualChainageDialog() },
                 shape = dialogColors.shape,
                 containerColor = dialogColors.containerColor,
+                tonalElevation = 0.dp,
                 modifier = Modifier
                     .widthIn(min = 270.dp, max = if (isLandscape) 370.dp else 330.dp)
                     .testTag("manual_chainage_dialog"),
@@ -3260,12 +3177,9 @@ fun CameraScreen(
                                         }
                                     }
                                 ),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = dialogColors.textColor,
-                                    unfocusedTextColor = dialogColors.textColor,
-                                    focusedBorderColor = primaryAccent,
-                                    unfocusedBorderColor = dialogColors.inputBorder,
-                                    cursorColor = primaryAccent
+                                colors = ctecsBorderlessInputColors(
+                                    containerColor = dialogColors.inputBackground,
+                                    accentColor = primaryAccent
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
@@ -3274,8 +3188,7 @@ fun CameraScreen(
 
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = primaryAccent.copy(alpha = 0.14f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, primaryAccent),
+                                color = primaryAccent.copy(alpha = 0.16f),
                                 modifier = Modifier
                                     .size(48.dp)
                                     .clip(RoundedCornerShape(10.dp))
@@ -3326,8 +3239,7 @@ fun CameraScreen(
                             listOf(-50L to "-50m", -10L to "-10m", 10L to "+10m", 50L to "+50m").forEach { (delta, label) ->
                                 Surface(
                                     shape = RoundedCornerShape(50),
-                                    color = if (dialogColors.isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, dialogColors.borderColor),
+                                    color = dialogColors.surfaceColor,
                                     modifier = Modifier
                                         .weight(1f)
                                         .height(28.dp)
@@ -3368,17 +3280,8 @@ fun CameraScreen(
                                         color = when {
                                             isBeingEdited -> primaryAccent.copy(alpha = 0.16f)
                                             isSelected -> AccentRed.copy(alpha = 0.14f)
-                                            dialogColors.isDark -> Color(0xFF1E293B)
-                                            else -> Color(0xFFF8FAFC)
+                                            else -> dialogColors.surfaceColor
                                         },
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            1.dp,
-                                            when {
-                                                isBeingEdited -> primaryAccent
-                                                isSelected -> AccentRed
-                                                else -> dialogColors.borderColor
-                                            }
-                                        ),
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(50))
@@ -3527,13 +3430,14 @@ fun CameraScreen(
             }
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
-            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
-            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+            val primaryAccent = CtecsTheme.colors.accent
+            val onAccent = CtecsTheme.colors.onAccent
 
             AlertDialog(
                 onDismissRequest = { showManualActivityDialog = false },
                 shape = dialogColors.shape,
                 containerColor = dialogColors.containerColor,
+                tonalElevation = 0.dp,
                 title = { Text("Activity & Sub-Activity", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -3552,14 +3456,9 @@ fun CameraScreen(
                                 capitalization = KeyboardCapitalization.Words,
                                 imeAction = ImeAction.Next
                             ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = dialogColors.textColor,
-                                unfocusedTextColor = dialogColors.textColor,
-                                focusedBorderColor = primaryAccent,
-                                unfocusedBorderColor = dialogColors.inputBorder,
-                                focusedLabelColor = primaryAccent,
-                                unfocusedLabelColor = dialogColors.textSecondaryColor,
-                                cursorColor = primaryAccent
+                            colors = ctecsBorderlessInputColors(
+                                containerColor = dialogColors.inputBackground,
+                                accentColor = primaryAccent
                             ),
                             modifier = Modifier.fillMaxWidth().testTag("manual_activity_input")
                         )
@@ -3589,14 +3488,9 @@ fun CameraScreen(
                                     showManualActivityDialog = false
                                 }
                             ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = dialogColors.textColor,
-                                unfocusedTextColor = dialogColors.textColor,
-                                focusedBorderColor = primaryAccent,
-                                unfocusedBorderColor = dialogColors.inputBorder,
-                                focusedLabelColor = primaryAccent,
-                                unfocusedLabelColor = dialogColors.textSecondaryColor,
-                                cursorColor = primaryAccent
+                            colors = ctecsBorderlessInputColors(
+                                containerColor = dialogColors.inputBackground,
+                                accentColor = primaryAccent
                             ),
                             modifier = Modifier.fillMaxWidth().testTag("manual_sub_activity_input")
                         )
@@ -3647,13 +3541,14 @@ fun CameraScreen(
             val dialogColors = com.example.ui.theme.rememberDialogColors()
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
-            val primaryAccent = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
-            val onAccent = if (dialogColors.isDark) Color.Black else Color.White
+            val primaryAccent = CtecsTheme.colors.accent
+            val onAccent = CtecsTheme.colors.onAccent
 
             AlertDialog(
                 onDismissRequest = { showCustomCommentDialog = false },
                 shape = dialogColors.shape,
                 containerColor = dialogColors.containerColor,
+                tonalElevation = 0.dp,
                 title = { Text("Custom Comment Watermark", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3684,14 +3579,9 @@ fun CameraScreen(
                                     showCustomCommentDialog = false
                                 }
                             ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = dialogColors.textColor,
-                                unfocusedTextColor = dialogColors.textColor,
-                                focusedBorderColor = primaryAccent,
-                                unfocusedBorderColor = dialogColors.inputBorder,
-                                focusedLabelColor = primaryAccent,
-                                unfocusedLabelColor = dialogColors.textSecondaryColor,
-                                cursorColor = primaryAccent
+                            colors = ctecsBorderlessInputColors(
+                                containerColor = dialogColors.inputBackground,
+                                accentColor = primaryAccent
                             ),
                             modifier = Modifier.fillMaxWidth().testTag("custom_comment_input")
                         )
@@ -3742,6 +3632,7 @@ fun CameraScreen(
                 onDismissRequest = { showSimDialog = false },
                 shape = dialogColors.shape,
                 containerColor = dialogColors.containerColor,
+                tonalElevation = 0.dp,
                 title = { Text("GPS Location Test Presets", color = dialogColors.titleColor, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3757,7 +3648,7 @@ fun CameraScreen(
                                 showSimDialog = false
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = dialogColors.surfaceColor, contentColor = dialogColors.textColor),
-                            border = BorderStroke(1.dp, dialogColors.borderColor),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -3770,7 +3661,7 @@ fun CameraScreen(
                                 showSimDialog = false
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = dialogColors.surfaceColor, contentColor = dialogColors.textColor),
-                            border = BorderStroke(1.dp, dialogColors.borderColor),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -3783,23 +3674,27 @@ fun CameraScreen(
                                 showSimDialog = false
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = dialogColors.surfaceColor, contentColor = dialogColors.textColor),
-                            border = BorderStroke(1.dp, dialogColors.borderColor),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Muzaffarnagar Start (130+000, 29.4750N 77.7120E)")
                         }
 
-                        OutlinedButton(
+                        Button(
                             onClick = {
                                 viewModel.startLocation()
                                 showSimDialog = false
                             },
-                            border = BorderStroke(1.dp, if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CtecsTheme.colors.accent.copy(alpha = 0.16f),
+                                contentColor = CtecsTheme.colors.accent
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Use Real Device Hardware GPS", color = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7))
+                            Text("Use Real Device Hardware GPS", fontWeight = FontWeight.Bold)
                         }
                     }
                 },
@@ -3886,9 +3781,8 @@ fun CameraOutputSettingsPopup(
     ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = Color(0xF2121722),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
-            shadowElevation = 16.dp,
+            color = Color(0xF50D111A),
+            shadowElevation = 0.dp,
             modifier = Modifier
                 .widthIn(min = 280.dp, max = 330.dp)
                 .wrapContentHeight()
@@ -3999,11 +3893,7 @@ fun CameraOutputSettingsPopup(
 
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) HighlightYellow.copy(alpha = 0.22f) else Color(0x601A202C),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isSelected) HighlightYellow else Color.White.copy(alpha = 0.2f)
-                                ),
+                                color = if (isSelected) HighlightYellow.copy(alpha = 0.22f) else Color(0xFF171E2B),
                                 modifier = Modifier
                                     .weight(1f)
                                     .clickable {
@@ -4095,11 +3985,7 @@ fun CameraOutputSettingsPopup(
 
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) Color(0x35EAB308) else Color(0x50181F2E),
-                            border = BorderStroke(
-                                1.dp,
-                                if (isSelected) HighlightYellow else Color.White.copy(alpha = 0.12f)
-                            ),
+                            color = if (isSelected) Color(0x35FFB52E) else Color(0xFF171E2B),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
@@ -4255,13 +4141,14 @@ fun CameraQuickSettingsDialog(
     onDismiss: () -> Unit
 ) {
     val dialogColors = com.example.ui.theme.rememberDialogColors()
-    val accentColor = if (dialogColors.isDark) HighlightYellow else Color(0xFF0284C7)
-    val onAccentColor = if (dialogColors.isDark) Color.Black else Color.White
+    val accentColor = CtecsTheme.colors.accent
+    val onAccentColor = CtecsTheme.colors.onAccent
 
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -4375,7 +4262,7 @@ fun CameraQuickSettingsDialog(
                     )
                 }
 
-                HorizontalDivider(color = dialogColors.borderColor)
+                SmartFadeDivider()
 
                 // Section 2: Grid & Timer
                 Text("GRID & COUNTDOWN TIMER", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -4400,11 +4287,7 @@ fun CameraQuickSettingsDialog(
                                     containerColor = dialogColors.surfaceColor,
                                     labelColor = dialogColors.textColor
                                 ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    borderColor = dialogColors.borderColor,
-                                    enabled = true,
-                                    selected = isSel
-                                )
+                                border = null
                             )
                         }
                     }
@@ -4430,17 +4313,13 @@ fun CameraQuickSettingsDialog(
                                     containerColor = dialogColors.surfaceColor,
                                     labelColor = dialogColors.textColor
                                 ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    borderColor = dialogColors.borderColor,
-                                    enabled = true,
-                                    selected = isSel
-                                )
+                                border = null
                             )
                         }
                     }
                 }
 
-                HorizontalDivider(color = dialogColors.borderColor)
+                SmartFadeDivider()
 
                 // Section 3: Watermark Overlay Toggles
                 Text("CAMERA WATERMARK OVERLAYS", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -4774,27 +4653,19 @@ fun LiveViewfinderWatermarkBlock(
 fun FloatingGlassCard(
     modifier: Modifier = Modifier,
     shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(14.dp),
-    backgroundColor: Color = Color(0x1A101726), // 10% opacity dark glass
-    borderColor: Color = Color(0x35FFFFFF), // Translucent frosted border
-    borderWidth: androidx.compose.ui.unit.Dp = 0.5.dp,
+    backgroundColor: Color = Color(0x99080B12),
+    borderColor: Color = Color.Transparent,
+    borderWidth: androidx.compose.ui.unit.Dp = 0.dp,
     onClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
+    val flatFill = if (backgroundColor == Color(0x1A101726)) Color(0x99080B12) else backgroundColor
     Surface(
         shape = shape,
-        color = Color.Transparent,
-        border = androidx.compose.foundation.BorderStroke(borderWidth, borderColor),
-        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier
+        color = flatFill,
+        modifier = if (onClick != null) modifier.clip(shape).clickable(onClick = onClick) else modifier.clip(shape)
     ) {
-        Box {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .blur(4.dp)
-                    .background(backgroundColor)
-            )
-            content()
-        }
+        content()
     }
 }
 
@@ -5059,11 +4930,6 @@ internal fun ChainageStatusBubble(
                     }
                     .clip(CircleShape)
                     .background(bulbColor)
-                    .border(
-                        width = if (status == ChainageBubbleStatus.ACTIVE) 0.6.dp else 0.dp,
-                        color = if (status == ChainageBubbleStatus.ACTIVE) Color.White.copy(alpha = 0.75f) else Color.Transparent,
-                        shape = CircleShape
-                    )
                     .semantics {
                         contentDescription = accessibleDescription
                         stateDescription = if (shouldPulse) "ANIMATED_ACTIVE" else status.name
@@ -5087,19 +4953,12 @@ internal fun ChainageStatusBubble(
     val bgColor = when (status) {
         ChainageBubbleStatus.ACTIVE -> bulbColor.copy(alpha = if (isDarkTheme) 0.16f else 0.12f)
         ChainageBubbleStatus.WARNING -> bulbColor.copy(alpha = if (isDarkTheme) 0.16f else 0.12f)
-        ChainageBubbleStatus.INACTIVE -> if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.5f) else Color(0xFFF1F5F9)
-    }
-
-    val borderColor = when (status) {
-        ChainageBubbleStatus.ACTIVE -> bulbColor.copy(alpha = if (isDarkTheme) 0.55f else 0.45f)
-        ChainageBubbleStatus.WARNING -> bulbColor.copy(alpha = if (isDarkTheme) 0.55f else 0.45f)
-        ChainageBubbleStatus.INACTIVE -> if (isDarkTheme) Color(0xFF334155).copy(alpha = 0.5f) else Color(0xFFCBD5E1)
+        ChainageBubbleStatus.INACTIVE -> CtecsTheme.colors.surface
     }
 
     Surface(
         shape = RoundedCornerShape(50),
         color = bgColor,
-        border = BorderStroke(0.8.dp, borderColor),
         modifier = modifier
             .semantics {
                 contentDescription = accessibleDescription

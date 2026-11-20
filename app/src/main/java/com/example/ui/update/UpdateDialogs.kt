@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
+import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.rememberDialogColors
 import com.example.update.AppReleaseInfo
 import com.example.update.WhatsNewFeature
@@ -60,27 +61,28 @@ fun UpdateAvailableDialog(
     onDismiss: () -> Unit
 ) {
     val dialogColors = rememberDialogColors()
+    val c = CtecsTheme.colors
     val isBetaUpdate = releaseInfo.isBeta || releaseInfo.channel.equals("beta", ignoreCase = true)
-    val accentColor = if (isBetaUpdate) Color(0xFFF59E0B) else Color(0xFF0284C7)
-    val badgeBgColor = if (isBetaUpdate) Color(0xFFB45309) else Color(0xFF0369A1)
+    val accentColor = if (isBetaUpdate) c.warning else c.accent
 
     AlertDialog(
         onDismissRequest = { if (!isDownloading) onDismiss() },
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         icon = {
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(accentColor.copy(alpha = 0.15f)),
+                    .background(accentColor.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.SystemUpdate,
                     contentDescription = null,
                     tint = accentColor,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(26.dp)
                 )
             }
         },
@@ -116,27 +118,26 @@ fun UpdateAvailableDialog(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = dialogColors.surfaceColor,
-                        border = BorderStroke(1.dp, dialogColors.borderColor)
+                        color = dialogColors.surfaceColor
                     ) {
                         Text(
                             text = "Current: v${BuildConfig.VERSION_NAME}",
                             fontSize = 11.sp,
                             color = dialogColors.textSecondaryColor,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                         )
                     }
                     Text("→", color = dialogColors.textSecondaryColor, fontSize = 12.sp)
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = badgeBgColor
+                        color = accentColor
                     ) {
                         Text(
                             text = "New: ${releaseInfo.tagName}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                         )
                     }
                 }
@@ -158,15 +159,15 @@ fun UpdateAvailableDialog(
                     )
                 }
 
-                // Release notes box with adaptive colors
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = dialogColors.surfaceColor),
-                    border = BorderStroke(1.dp, dialogColors.borderColor)
+                // Borderless tonal release notes panel
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = dialogColors.surfaceColor,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(
-                            text = "Release Notes:",
+                            text = "Release Notes",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = accentColor
@@ -216,8 +217,9 @@ fun UpdateAvailableDialog(
             Button(
                 onClick = onDownloadAndInstall,
                 enabled = !isDownloading && releaseInfo.apkDownloadUrl != null,
+                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = Color.White),
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.testTag("install_update_button")
             ) {
                 Icon(imageVector = Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -242,6 +244,7 @@ fun WhatsNewDialog(
     onDismiss: () -> Unit
 ) {
     val dialogColors = rememberDialogColors()
+    val c = CtecsTheme.colors
 
     // Enforce simplified change log showing only the two requested descriptions
     val simplifiedFeatures = com.example.update.WhatsNewManager.SIMPLIFIED_FEATURES
@@ -250,19 +253,20 @@ fun WhatsNewDialog(
         onDismissRequest = onDismiss,
         shape = dialogColors.shape,
         containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
         icon = {
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFF59E0B).copy(alpha = 0.15f)),
+                    .background(c.warning.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.NewReleases,
                     contentDescription = null,
-                    tint = Color(0xFFF59E0B),
-                    modifier = Modifier.size(28.dp)
+                    tint = c.warning,
+                    modifier = Modifier.size(26.dp)
                 )
             }
         },
@@ -298,10 +302,11 @@ fun WhatsNewDialog(
         confirmButton = {
             Button(
                 onClick = onDismiss,
-                shape = RoundedCornerShape(10.dp),
+                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (dialogColors.isDark) Color(0xFF2563EB) else Color(0xFF0284C7),
-                    contentColor = Color.White
+                    containerColor = c.accent,
+                    contentColor = c.onAccent
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -320,16 +325,16 @@ fun WhatsNewSimplifiedRow(
     feature: WhatsNewFeature,
     dialogColors: com.example.ui.theme.DialogThemeTokens
 ) {
+    val c = CtecsTheme.colors
     val (icon, iconColor) = if (feature.title.contains("Bug", ignoreCase = true)) {
-        Pair(Icons.Default.Build, Color(0xFF10B981))
+        Pair(Icons.Default.Build, c.success)
     } else {
-        Pair(Icons.Default.Stars, Color(0xFFF59E0B))
+        Pair(Icons.Default.Stars, c.warning)
     }
 
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         color = dialogColors.surfaceColor,
-        border = BorderStroke(1.dp, dialogColors.borderColor),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -343,7 +348,7 @@ fun WhatsNewSimplifiedRow(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
-                    .background(iconColor.copy(alpha = 0.15f)),
+                    .background(iconColor.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

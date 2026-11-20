@@ -1,10 +1,8 @@
 package com.example.ui.settings
 
 import android.appwidget.AppWidgetManager
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -27,13 +25,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -71,6 +68,9 @@ import com.example.model.WidgetSizeTier
 import com.example.model.WidgetThemeMode
 import com.example.navigation.LockScreenNavStateResolver
 import com.example.navigation.LockScreenNavUiState
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.rememberDialogColors
 import com.example.widget.CtecsWidgetRenderer
 import com.example.widget.CtecsWidgetUpdater
 
@@ -242,7 +242,10 @@ fun WidgetSettingsSectionContent(
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
                         )
                     },
+                    border = null,
                     colors = FilterChipDefaults.filterChipColors(
+                        containerColor = CtecsTheme.colors.secondarySurface,
+                        labelColor = CtecsTheme.colors.textSecondary,
                         selectedContainerColor = accentColor.copy(alpha = 0.18f),
                         selectedLabelColor = accentColor
                     ),
@@ -260,7 +263,7 @@ fun WidgetSettingsSectionContent(
             Text(
                 text = "Preview Size",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = CtecsTheme.colors.textSecondary
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 WidgetSizeTier.entries.forEach { tier ->
@@ -275,7 +278,10 @@ fun WidgetSettingsSectionContent(
                                 fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
                             )
                         },
+                        border = null,
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.secondarySurface,
+                            labelColor = CtecsTheme.colors.textSecondary,
                             selectedContainerColor = accentColor.copy(alpha = 0.16f),
                             selectedLabelColor = accentColor
                         ),
@@ -287,9 +293,8 @@ fun WidgetSettingsSectionContent(
 
         // Rendered Native Flat UI Preview Box
         Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(14.dp),
+            color = CtecsTheme.colors.secondarySurface,
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("widget_live_preview_surface")
@@ -346,7 +351,7 @@ fun WidgetSettingsSectionContent(
         }
 
         // 2. Per-Widget Instance Target Selector (Default vs Individual Placed Widgets)
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
         Text(
             text = "TARGET WIDGET CONFIGURATION",
             style = MaterialTheme.typography.labelSmall,
@@ -369,7 +374,10 @@ fun WidgetSettingsSectionContent(
                         fontWeight = if (isDefaultSelected) FontWeight.Bold else FontWeight.Normal
                     )
                 },
+                border = null,
                 colors = FilterChipDefaults.filterChipColors(
+                    containerColor = CtecsTheme.colors.secondarySurface,
+                    labelColor = CtecsTheme.colors.textSecondary,
                     selectedContainerColor = accentColor.copy(alpha = 0.18f),
                     selectedLabelColor = accentColor
                 ),
@@ -390,7 +398,10 @@ fun WidgetSettingsSectionContent(
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                         )
                     },
+                    border = null,
                     colors = FilterChipDefaults.filterChipColors(
+                        containerColor = CtecsTheme.colors.secondarySurface,
+                        labelColor = CtecsTheme.colors.textSecondary,
                         selectedContainerColor = accentColor.copy(alpha = 0.18f),
                         selectedLabelColor = accentColor
                     ),
@@ -422,7 +433,7 @@ fun WidgetSettingsSectionContent(
         }
 
         // 3. Appearance: Theme, Flat Background Style & Restrained Accent Colour
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
         Text(
             text = "THEME, BACKGROUND & ACCENT",
             style = MaterialTheme.typography.labelSmall,
@@ -434,7 +445,7 @@ fun WidgetSettingsSectionContent(
             text = "Widget Theme",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = CtecsTheme.colors.textPrimary
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -457,7 +468,10 @@ fun WidgetSettingsSectionContent(
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                         )
                     },
+                    border = null,
                     colors = FilterChipDefaults.filterChipColors(
+                        containerColor = CtecsTheme.colors.secondarySurface,
+                        labelColor = CtecsTheme.colors.textSecondary,
                         selectedContainerColor = accentColor.copy(alpha = 0.18f),
                         selectedLabelColor = accentColor
                     ),
@@ -472,7 +486,7 @@ fun WidgetSettingsSectionContent(
             text = "Background Style",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = CtecsTheme.colors.textPrimary
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -495,7 +509,10 @@ fun WidgetSettingsSectionContent(
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                         )
                     },
+                    border = null,
                     colors = FilterChipDefaults.filterChipColors(
+                        containerColor = CtecsTheme.colors.secondarySurface,
+                        labelColor = CtecsTheme.colors.textSecondary,
                         selectedContainerColor = accentColor.copy(alpha = 0.18f),
                         selectedLabelColor = accentColor
                     ),
@@ -510,7 +527,7 @@ fun WidgetSettingsSectionContent(
             text = "Accent Colour",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = CtecsTheme.colors.textPrimary
         )
         Row(
             modifier = Modifier
@@ -525,15 +542,10 @@ fun WidgetSettingsSectionContent(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .background(
-                            if (selected) swatchColor.copy(alpha = 0.16f)
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                        )
-                        .border(
-                            width = if (selected) 1.5.dp else 0.75.dp,
-                            color = if (selected) swatchColor else MaterialTheme.colorScheme.outlineVariant,
-                            shape = RoundedCornerShape(8.dp)
+                            if (selected) swatchColor.copy(alpha = 0.22f)
+                            else CtecsTheme.colors.secondarySurface
                         )
                         .clickable {
                             applyConfigTransform(
@@ -541,7 +553,7 @@ fun WidgetSettingsSectionContent(
                                 instanceTransform = { it.copy(accentColor = preset) }
                             )
                         }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
                         .testTag("widget_accent_${preset.name.lowercase()}")
                 ) {
                     Box(
@@ -565,14 +577,14 @@ fun WidgetSettingsSectionContent(
                         text = preset.label,
                         fontSize = 11.sp,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = if (selected) swatchColor else CtecsTheme.colors.textPrimary
                     )
                 }
             }
         }
 
         // 4. Data Elements Visibility Toggles
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        SmartFadeDivider()
         Text(
             text = "VISIBLE WIDGET ELEMENTS",
             style = MaterialTheme.typography.labelSmall,
@@ -699,7 +711,10 @@ fun WidgetSettingsSectionContent(
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                         )
                     },
+                    border = null,
                     colors = FilterChipDefaults.filterChipColors(
+                        containerColor = CtecsTheme.colors.secondarySurface,
+                        labelColor = CtecsTheme.colors.textSecondary,
                         selectedContainerColor = accentColor.copy(alpha = 0.18f),
                         selectedLabelColor = accentColor
                     ),
@@ -711,12 +726,15 @@ fun WidgetSettingsSectionContent(
         }
 
         // 6. Reset Widget Settings
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-        OutlinedButton(
+        SmartFadeDivider()
+        Button(
             onClick = { showResetConfirmDialog = true },
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CtecsTheme.colors.error.copy(alpha = 0.14f),
+                contentColor = CtecsTheme.colors.error
+            ),
+            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("widget_reset_defaults_btn")
@@ -732,11 +750,18 @@ fun WidgetSettingsSectionContent(
     }
 
     if (showResetConfirmDialog) {
+        val dialogColors = rememberDialogColors()
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
-            title = { Text("Reset Widget Settings?") },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
+            title = { Text("Reset Widget Settings?", color = dialogColors.titleColor) },
             text = {
-                Text("This will restore default flat theme, colours, visibility switches, and clear per-widget overrides.")
+                Text(
+                    "This will restore default flat theme, colours, visibility switches, and clear per-widget overrides.",
+                    color = dialogColors.textColor
+                )
             },
             confirmButton = {
                 TextButton(
@@ -747,12 +772,12 @@ fun WidgetSettingsSectionContent(
                     },
                     modifier = Modifier.testTag("widget_confirm_reset_btn")
                 ) {
-                    Text("Reset", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text("Reset", color = CtecsTheme.colors.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetConfirmDialog = false }) {
-                    Text("Cancel")
+                    Text("Cancel", color = dialogColors.textSecondaryColor)
                 }
             }
         )

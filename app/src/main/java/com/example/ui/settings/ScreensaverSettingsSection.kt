@@ -5,7 +5,6 @@ import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -47,13 +46,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -117,6 +113,10 @@ import com.example.ui.home.ChainageScreensaverOverlay
 import com.example.ui.home.ScreensaverChainageStateHolder
 import com.example.ui.home.ScreensaverDisplayState
 import com.example.ui.home.applyScreensaverImmersiveMode
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.ctecsBorderlessInputColors
+import com.example.ui.theme.rememberDialogColors
 import com.example.util.KeepScreenOn
 import kotlin.math.roundToInt
 
@@ -250,9 +250,12 @@ fun ScreensaverSettingsSectionContent(
                         label = {
                             Text("${presetSec}s", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         },
+                        border = null,
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.surface,
+                            labelColor = CtecsTheme.colors.textSecondary,
                             selectedContainerColor = accentColor,
-                            selectedLabelColor = if (isDark) Color.Black else Color.White
+                            selectedLabelColor = CtecsTheme.colors.onAccent
                         ),
                         modifier = Modifier.testTag("screensaver_timeout_${presetSec}s")
                     )
@@ -266,7 +269,10 @@ fun ScreensaverSettingsSectionContent(
                     label = {
                         Text("Custom", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                     },
+                    border = null,
                     colors = FilterChipDefaults.filterChipColors(
+                        containerColor = CtecsTheme.colors.surface,
+                        labelColor = CtecsTheme.colors.textSecondary,
                         selectedContainerColor = secondaryColor,
                         selectedLabelColor = if (isDark) Color.Black else Color.White
                     ),
@@ -315,9 +321,10 @@ fun ScreensaverSettingsSectionContent(
                                 }
                             }
                         ),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = accentColor,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ctecsBorderlessInputColors(
+                            containerColor = CtecsTheme.colors.surface,
+                            accentColor = accentColor
                         ),
                         modifier = Modifier
                             .weight(1f)
@@ -336,8 +343,10 @@ fun ScreensaverSettingsSectionContent(
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = accentColor,
-                            contentColor = if (isDark) Color.Black else Color.White
+                            contentColor = CtecsTheme.colors.onAccent
                         ),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.testTag("screensaver_timeout_custom_apply")
                     ) {
                         Text("Apply", fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -374,25 +383,35 @@ fun ScreensaverSettingsSectionContent(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
+                Button(
                     onClick = { previewScreensaverMode = settings.displayMode },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("screensaver_quick_preview_btn"),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f))
+                        .testTag("screensaver_quick_preview_btn")
                 ) {
-                    Icon(Icons.Default.Visibility, contentDescription = null, tint = accentColor, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Preview Active Mode", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = accentColor)
+                    Text("Preview Active Mode", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 }
-                OutlinedButton(
+                Button(
                     onClick = { showResetConfirmDialog = true },
-                    modifier = Modifier.testTag("screensaver_quick_reset_btn"),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f))
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CtecsTheme.colors.error.copy(alpha = 0.14f),
+                        contentColor = CtecsTheme.colors.error
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    modifier = Modifier.testTag("screensaver_quick_reset_btn")
                 ) {
-                    Icon(Icons.Default.RestartAlt, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Reset", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                    Text("Reset", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -439,9 +458,12 @@ fun ScreensaverSettingsSectionContent(
                         selected = selected,
                         onClick = { onSelectDisplayMode(mode) },
                         label = { Text(mode.label, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
+                        border = null,
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.surface,
+                            labelColor = CtecsTheme.colors.textSecondary,
                             selectedContainerColor = accentColor,
-                            selectedLabelColor = if (isDark) Color.Black else Color.White
+                            selectedLabelColor = CtecsTheme.colors.onAccent
                         ),
                         modifier = Modifier.testTag("screensaver_mode_${mode.name.lowercase()}")
                     )
@@ -589,7 +611,10 @@ fun ScreensaverSettingsSectionContent(
                         enabled = settings.aodEnabled,
                         onClick = { onToggleItem(!checked) },
                         label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        border = null,
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.surface,
+                            labelColor = CtecsTheme.colors.textSecondary,
                             selectedContainerColor = secondaryColor,
                             selectedLabelColor = if (isDark) Color.Black else Color.White
                         ),
@@ -629,20 +654,27 @@ fun ScreensaverSettingsSectionContent(
             )
 
             Spacer(modifier = Modifier.height(6.dp))
-            OutlinedButton(
+            Button(
                 onClick = {
                     previewStartInAod = true
                     previewScreensaverMode = settings.displayMode
                 },
                 enabled = settings.aodEnabled,
-                border = BorderStroke(1.dp, secondaryColor.copy(alpha = 0.6f)),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = secondaryColor.copy(alpha = 0.14f),
+                    contentColor = secondaryColor,
+                    disabledContainerColor = CtecsTheme.colors.surface,
+                    disabledContentColor = CtecsTheme.colors.textMuted
+                ),
+                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("screensaver_preview_aod_btn")
             ) {
-                Icon(Icons.Default.NightlightRound, contentDescription = null, tint = secondaryColor, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.NightlightRound, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Preview Full-Screen AMOLED AOD", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = secondaryColor)
+                Text("Preview Full-Screen AMOLED AOD", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
             }
 
             Text(
@@ -961,31 +993,49 @@ fun ScreensaverSettingsSectionContent(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
+                Button(
                     onClick = onMiniMapZoomOut,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CtecsTheme.colors.surface,
+                        contentColor = CtecsTheme.colors.textPrimary
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier.testTag("screensaver_map_zoom_out_btn")
                 ) {
                     Icon(Icons.Default.Remove, contentDescription = "Zoom Out", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Out", fontSize = 11.5.sp)
                 }
-                OutlinedButton(
+                Button(
                     onClick = onMiniMapZoomIn,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CtecsTheme.colors.surface,
+                        contentColor = CtecsTheme.colors.textPrimary
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier.testTag("screensaver_map_zoom_in_btn")
                 ) {
                     Icon(Icons.Default.Add, contentDescription = "Zoom In", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("In", fontSize = 11.5.sp)
                 }
-                OutlinedButton(
+                Button(
                     onClick = onMiniMapRecenter,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("screensaver_map_recenter_btn")
                 ) {
-                    Icon(Icons.Default.MyLocation, contentDescription = "Recenter", tint = accentColor, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.MyLocation, contentDescription = "Recenter", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Recenter", fontSize = 11.5.sp, color = accentColor)
+                    Text("Recenter", fontSize = 11.5.sp)
                 }
             }
 
@@ -1097,30 +1147,53 @@ fun ScreensaverSettingsSectionContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
+                Button(
                     onClick = { previewScreensaverMode = ScreensaverDisplayMode.PORTRAIT },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CtecsTheme.colors.surface,
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier.testTag("screensaver_preview_portrait_btn")
                 ) {
-                    Text("Portrait Preview", fontSize = 11.5.sp)
+                    Text("Portrait Preview", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 }
-                OutlinedButton(
+                Button(
                     onClick = { previewScreensaverMode = ScreensaverDisplayMode.LANDSCAPE },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CtecsTheme.colors.surface,
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier.testTag("screensaver_preview_landscape_btn")
                 ) {
-                    Text("Landscape Preview", fontSize = 11.5.sp)
+                    Text("Landscape Preview", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 }
-                OutlinedButton(
+                Button(
                     onClick = { previewScreensaverMode = ScreensaverDisplayMode.MIRROR },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CtecsTheme.colors.surface,
+                        contentColor = accentColor
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     modifier = Modifier.testTag("screensaver_preview_mirror_btn")
                 ) {
-                    Text("Mirror HUD Preview", fontSize = 11.5.sp)
+                    Text("Mirror HUD Preview", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
-            OutlinedButton(
+            Button(
                 onClick = { showResetConfirmDialog = true },
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CtecsTheme.colors.error.copy(alpha = 0.14f),
+                    contentColor = CtecsTheme.colors.error
+                ),
+                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("screensaver_reset_btn")
@@ -1128,13 +1201,11 @@ fun ScreensaverSettingsSectionContent(
                 Icon(
                     imageVector = Icons.Default.RestartAlt,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Reset Screensaver Settings to Defaults",
-                    color = MaterialTheme.colorScheme.error,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1341,16 +1412,21 @@ fun ScreensaverSettingsSectionContent(
     // RESET CONFIRMATION DIALOG
     // ============================================================
     if (showResetConfirmDialog) {
+        val dialogColors = rememberDialogColors()
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
+            shape = dialogColors.shape,
+            containerColor = dialogColors.containerColor,
+            tonalElevation = 0.dp,
             modifier = Modifier.testTag("screensaver_reset_confirm_dialog"),
             title = {
-                Text("Reset Screensaver Settings?", fontWeight = FontWeight.Bold)
+                Text("Reset Screensaver Settings?", fontWeight = FontWeight.Bold, color = dialogColors.titleColor)
             },
             text = {
                 Text(
                     "This restores General Screensaver, Display Mode, Mirror HUD, Dashboard Elements, and Shared Mini Map preferences to default values.",
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    color = dialogColors.textColor
                 )
             },
             confirmButton = {
@@ -1360,9 +1436,11 @@ fun ScreensaverSettingsSectionContent(
                         onResetDefaults()
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
+                        containerColor = CtecsTheme.colors.error,
                         contentColor = Color.White
                     ),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("screensaver_reset_confirm_btn")
                 ) {
                     Text("Reset Defaults", fontWeight = FontWeight.Bold)
@@ -1373,7 +1451,7 @@ fun ScreensaverSettingsSectionContent(
                     onClick = { showResetConfirmDialog = false },
                     modifier = Modifier.testTag("screensaver_reset_cancel_btn")
                 ) {
-                    Text("Cancel")
+                    Text("Cancel", color = dialogColors.textSecondaryColor)
                 }
             }
         )
@@ -1392,12 +1470,8 @@ private fun ScreensaverSubDropdown(
     content: @Composable () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(
-            width = 0.75.dp,
-            color = if (isExpanded) accentColor.copy(alpha = 0.48f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-        ),
+        shape = RoundedCornerShape(14.dp),
+        color = CtecsTheme.colors.secondarySurface,
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(tween(220))
@@ -1462,10 +1536,7 @@ private fun ScreensaverSubDropdown(
                         .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
+                    SmartFadeDivider(modifier = Modifier.padding(bottom = 4.dp))
                     content()
                 }
             }
@@ -1620,11 +1691,12 @@ private fun <T> OptionChipGroup(
                             fontWeight = FontWeight.SemiBold
                         )
                     },
+                    border = null,
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = accentColor,
-                        selectedLabelColor = if (isDark) Color.Black else Color.White,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        selectedLabelColor = CtecsTheme.colors.onAccent,
+                        containerColor = CtecsTheme.colors.surface,
+                        labelColor = CtecsTheme.colors.textSecondary
                     ),
                     modifier = Modifier.testTag("${tagPrefix}_$sanitizedName")
                 )

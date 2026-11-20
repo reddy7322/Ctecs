@@ -1,7 +1,6 @@
 package com.example.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,9 +30,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -67,6 +64,8 @@ import com.example.navigation.KmStoneVoiceAnnouncementManager
 import com.example.navigation.KmStoneVoiceScriptFormatter
 import com.example.navigation.SmartTtsManager
 import com.example.navigation.TtsAvailabilityStatus
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.ctecsBorderlessInputColors
 import kotlin.math.roundToInt
 
 /**
@@ -391,6 +390,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                     FilterChip(
                         selected = selected,
                         onClick = { onUpdateSettings(updater) },
+                        border = null,
                         label = {
                             Text(
                                 text = label,
@@ -399,6 +399,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.secondarySurface,
                             selectedContainerColor = accentColor.copy(alpha = 0.18f),
                             selectedLabelColor = accentColor
                         ),
@@ -459,9 +460,8 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
 
             if (settings.voiceStyle == KmVoiceAnnouncementStyle.CUSTOM) {
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f),
-                    border = BorderStroke(0.75.dp, accentColor.copy(alpha = 0.35f)),
+                    shape = RoundedCornerShape(12.dp),
+                    color = CtecsTheme.colors.secondarySurface,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("km_voice_custom_builder_panel")
@@ -501,8 +501,10 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                                 FilterChip(
                                     selected = selected,
                                     onClick = { onUpdateSettings(updater) },
+                                    border = null,
                                     label = { Text(label, fontSize = 11.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
+                                        containerColor = CtecsTheme.colors.surface,
                                         selectedContainerColor = accentColor.copy(alpha = 0.20f),
                                         selectedLabelColor = accentColor
                                     ),
@@ -523,8 +525,9 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                                 )
                             },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             textStyle = MaterialTheme.typography.bodySmall,
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = accentColor),
+                            colors = ctecsBorderlessInputColors(containerColor = CtecsTheme.colors.surface, accentColor = accentColor),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("km_voice_custom_template_input")
@@ -534,7 +537,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            OutlinedButton(
+                            Button(
                                 onClick = {
                                     val rec = KmStoneVoiceAnnouncementManager.previewCustomAnnouncement(
                                         context = context,
@@ -543,8 +546,12 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                                     )
                                     onFeedbackMessage("Preview: ${rec.spokenText}")
                                 },
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                                shape = RoundedCornerShape(10.dp),
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = accentColor.copy(alpha = 0.14f),
+                                    contentColor = accentColor
+                                ),
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("km_voice_preview_custom_btn")
@@ -563,13 +570,14 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                                     onUpdateSettings { it.copy(voiceCustomTemplate = customTemplateDraft.trim()) }
                                     onFeedbackMessage("Custom announcement format saved")
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = CtecsTheme.colors.onAccent),
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("km_voice_custom_template_apply_btn")
                             ) {
-                                Text("Save Format", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                                Text("Save Format", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -590,9 +598,8 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                 )
             }
             Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
-                border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+                shape = RoundedCornerShape(12.dp),
+                color = CtecsTheme.colors.secondarySurface,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("km_voice_live_preview_card")
@@ -733,6 +740,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                     FilterChip(
                         selected = selected,
                         onClick = { onUpdateSettings { it.copy(voiceSpeed = spd) } },
+                        border = null,
                         label = {
                             Text(
                                 text = spd.label,
@@ -741,6 +749,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CtecsTheme.colors.secondarySurface,
                             selectedContainerColor = accentColor.copy(alpha = 0.18f),
                             selectedLabelColor = accentColor
                         ),
@@ -789,7 +798,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
+                Button(
                     onClick = {
                         val rec = KmStoneVoiceAnnouncementManager.previewAnnouncementStyle(
                             context = context,
@@ -799,8 +808,12 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                         )
                         onFeedbackMessage("Voice test: ${rec.spokenText}")
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(10.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("km_voice_test_style_btn")
@@ -822,7 +835,7 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                     )
                 }
 
-                OutlinedButton(
+                Button(
                     onClick = {
                         val rec = KmStoneVoiceAnnouncementManager.testArrivalVoiceAnnouncement(
                             context = context,
@@ -830,8 +843,12 @@ internal fun KmStoneVoiceAnnouncementSettingsSubsection(
                         )
                         onFeedbackMessage("Arrival test: ${rec.spokenText}")
                     },
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(10.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor.copy(alpha = 0.14f),
+                        contentColor = accentColor
+                    ),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("km_voice_test_arrival_btn")

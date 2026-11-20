@@ -10,7 +10,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -48,7 +47,6 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -86,6 +84,7 @@ import com.example.survey.model.SurveySession
 import com.example.survey.model.SurveyStatus
 import com.example.ui.MainViewModel
 import com.example.ui.ToastType
+import com.example.ui.theme.SmartFadeDivider
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.hypot
@@ -492,9 +491,9 @@ fun SurveyScreen(
             contentAlignment = Alignment.TopCenter
         ) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = colors.headerBackground,
-                border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                shape = RoundedCornerShape(16.dp),
+                color = colors.headerBackground.copy(alpha = 0.94f),
+                shadowElevation = 0.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 760.dp)
@@ -596,14 +595,11 @@ fun SurveyScreen(
             if (relocationPrompt != null) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Card(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isDark) Color(0xFF78350F).copy(alpha = 0.95f) else Color(0xFFFEF3C7)
+                        containerColor = if (isDark) Color(0xEE171E2B) else Color(0xFFFFF7E6)
                     ),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        if (isDark) Color(0xFFFFD700) else Color(0xFFD97706)
-                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -739,9 +735,9 @@ fun SurveyScreen(
                 .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
             Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.cardBackground),
-                border = androidx.compose.foundation.BorderStroke(1.dp, colors.cardBorder),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.cardBackground.copy(alpha = 0.95f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
@@ -762,13 +758,13 @@ fun SurveyScreen(
                             )
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = if (colors.isDark) Color(0xFF0369A1) else Color(0xFFE0F2FE)
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = colors.sky.copy(alpha = 0.16f)
                                 ) {
                                     Text(
                                         text = "${activeSession?.displayRoadSide ?: "RHS"} • ${activeSession?.displayLaneName ?: "Fast Lane"}",
                                         fontSize = 10.5.sp,
-                                        color = if (colors.isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1),
+                                        color = colors.sky,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
@@ -801,7 +797,7 @@ fun SurveyScreen(
                         }
                     }
 
-                    HorizontalDivider(color = colors.divider, modifier = Modifier.padding(vertical = 6.dp))
+                    SmartFadeDivider(modifier = Modifier.padding(vertical = 6.dp))
 
                     // Row 2: Starting Chainage, Ending Chainage & Remaining Distance
                     Row(
@@ -830,27 +826,15 @@ fun SurveyScreen(
                         val remMetres = activeSession?.remainingDistanceMetres
                         if (remMetres != null) {
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (remMetres <= 500L) {
-                                    if (colors.isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
-                                } else {
-                                    if (colors.isDark) Color(0xFF0369A1) else Color(0xFFE0F2FE)
-                                },
-                                border = androidx.compose.foundation.BorderStroke(
-                                    0.5.dp,
-                                    if (remMetres <= 500L) colors.gold else colors.sky
-                                )
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (remMetres <= 500L) colors.gold.copy(alpha = 0.16f) else colors.sky.copy(alpha = 0.16f)
                             ) {
                                 Text(
                                     text = "Remaining: ${String.format(Locale.US, "%.2f km", remMetres / 1000.0)}",
                                     fontSize = 10.5.sp,
-                                    color = if (remMetres <= 500L) {
-                                        if (colors.isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
-                                    } else {
-                                        if (colors.isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
-                                    },
+                                    color = if (remMetres <= 500L) colors.gold else colors.sky,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                         } else {

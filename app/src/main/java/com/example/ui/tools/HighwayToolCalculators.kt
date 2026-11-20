@@ -27,6 +27,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 import com.example.ui.theme.isAppDarkTheme
 import java.util.Locale
 import kotlin.math.*
@@ -436,7 +438,7 @@ fun DistanceGradientCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -629,7 +631,7 @@ fun DistanceGradientCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Text(
                         text = "Effective Slope Width: ${String.format(Locale.US, "%.2f m", effectiveW)} • Type: ${if (isTwoWayCrown) "Dual Slope Crown" else "Single Sloped Carriageway"}",
                         color = ToolColors.textSecondary,
@@ -786,7 +788,7 @@ fun AreaCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -972,7 +974,7 @@ fun VolumeCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Text(
                         String.format(Locale.US, "Cubic Feet: %,.1f cft", cft),
                         color = ToolColors.textSecondary,
@@ -1075,7 +1077,7 @@ fun VolumeCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Text(
                         String.format(Locale.US, "Toe-to-Toe Base Width: %.2f m", baseWidth),
                         color = ToolColors.textSecondary,
@@ -1198,7 +1200,7 @@ fun LevelCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1363,7 +1365,7 @@ fun CurveCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1384,7 +1386,7 @@ fun CurveCalculatorScreen(context: Context) {
                             fontSize = 12.sp
                         )
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1527,7 +1529,7 @@ fun SteelCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1689,7 +1691,7 @@ fun ConcreteCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1846,7 +1848,7 @@ fun JointCalculatorScreen(context: Context) {
                             )
                         }
                     }
-                    HorizontalDivider(color = ToolColors.border)
+                    SmartFadeDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -2058,7 +2060,7 @@ fun UnitConverterScreen(context: Context) {
                             )
                         }
                         if (index < results.lastIndex) {
-                            HorizontalDivider(color = ToolColors.border.copy(alpha = 0.6f))
+                            SmartFadeDivider()
                         }
                     }
                 }
@@ -2081,31 +2083,17 @@ fun ToolChoiceChip(
     modifier: Modifier = Modifier
 ) {
     val displayLabel = if (text.isNotBlank()) text else label
-    val isDark = isAppDarkTheme()
-    val containerColor = when {
-        selected && isDark -> Color(0xFF1E3A8A).copy(alpha = 0.55f)
-        selected && !isDark -> Color(0xFFEFF6FF)
-        isDark -> Color(0xFF1E293B)
-        else -> Color(0xFFFFFFFF)
-    }
-    val borderColor = when {
-        selected -> ToolColors.accentBlue
-        else -> ToolColors.border
-    }
-    val textColor = when {
-        selected && isDark -> Color(0xFF93C5FD)
-        selected && !isDark -> Color(0xFF1D4ED8)
-        else -> ToolColors.textPrimary
-    }
+    val c = CtecsTheme.colors
+    val containerColor = if (selected) c.accent.copy(alpha = if (c.isDark) 0.22f else 0.14f) else c.secondarySurface
+    val textColor = if (selected) c.accent else c.textPrimary
 
     Surface(
         modifier = modifier
-            .heightIn(min = 36.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .heightIn(min = 38.dp)
+            .clip(RoundedCornerShape(10.dp))
             .clickable { onClick() },
-        shape = RoundedCornerShape(8.dp),
-        color = containerColor,
-        border = BorderStroke(1.dp, borderColor)
+        shape = RoundedCornerShape(10.dp),
+        color = containerColor
     ) {
         Box(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),

@@ -2,30 +2,69 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Premium Black, White, Red & Yellow Mobile UI Color System
-val PrimaryBackground = Color(0xFF000000)
-val SecondaryBackground = Color(0xFF0A0A0A)
-val SurfaceDark = Color(0xFF141414)
-val ElevatedSurface = Color(0xFF1C1C1C)
+// ============================================================================
+// PART 1.1 – PREMIUM AMOLED DEEP BLACK DARK THEME PALETTE
+// ============================================================================
+val DarkMainBackground = Color(0xFF000000)
+val DarkSecondaryBackground = Color(0xFF080B12)
+val DarkPrimarySurface = Color(0xFF0D111A)
+val DarkSecondarySurface = Color(0xFF111827)
+val DarkElevatedSurface = Color(0xFF171E2B)
 
-val PrimaryText = Color(0xFFFFFFFF)
-val SecondaryText = Color(0xFFB3B3B3)
-val BorderColor = Color(0xFF292929)
+val DarkPrimaryText = Color(0xFFFFFFFF)
+val DarkSecondaryText = Color(0xFFA1AAB9)
+val DarkMutedText = Color(0xFF718096)
 
-val AccentRed = Color(0xFFFF3030)
-val DeepRed = Color(0xFFD71920)
-val HighlightYellow = Color(0xFFFFD600)
-val DarkYellowSurface = Color(0xFF332B00)
-val DisabledGray = Color(0xFF666666)
+val DarkPrimaryAccent = Color(0xFF1685FF)
+val DarkSecondaryAccent = Color(0xFF20B8F0)
+val DarkSuccess = Color(0xFF20C997)
+val DarkWarning = Color(0xFFFFB52E)
+val DarkError = Color(0xFFFF5263)
 
-// Compatibility aliases
-val HighwayCyan = HighlightYellow
-val RoadAmber = HighlightYellow
-val AlertRed = AccentRed
-val GPSGreen = HighlightYellow
-val Slate950 = PrimaryBackground
-val Slate900 = SurfaceDark
-val Slate800 = ElevatedSurface
-val Slate700 = BorderColor
-val Slate600 = DisabledGray
-val Slate400 = SecondaryText
+// ============================================================================
+// PART 1.2 – PROFESSIONAL MINIMALIST LIGHT THEME PALETTE
+// ============================================================================
+val LightMainBackground = Color(0xFFFFFFFF)
+val LightSecondaryBackground = Color(0xFFF7F9FC)
+val LightPrimarySurface = Color(0xFFF1F4F8)
+val LightSecondarySurface = Color(0xFFEAF0F7)
+val LightElevatedSurface = Color(0xFFFFFFFF)
+
+val LightPrimaryText = Color(0xFF101828)
+val LightSecondaryText = Color(0xFF526174)
+val LightMutedText = Color(0xFF8995A5)
+
+val LightPrimaryAccent = Color(0xFF1677F2)
+val LightSecondaryAccent = Color(0xFF159FD5)
+val LightSuccess = Color(0xFF159C72)
+val LightWarning = Color(0xFFD99A20)
+val LightError = Color(0xFFDC4455)
+
+// ============================================================================
+// COMPATIBILITY ALIASES (Mapped cleanly to the unified AMOLED/Light tokens)
+// ============================================================================
+val PrimaryBackground = DarkMainBackground
+val SecondaryBackground = DarkSecondaryBackground
+val SurfaceDark = DarkPrimarySurface
+val ElevatedSurface = DarkElevatedSurface
+
+val PrimaryText = DarkPrimaryText
+val SecondaryText = DarkSecondaryText
+val BorderColor = DarkElevatedSurface
+
+val AccentRed = DarkError
+val DeepRed = LightError
+val HighlightYellow = DarkWarning
+val DarkYellowSurface = DarkSecondarySurface
+val DisabledGray = DarkMutedText
+
+val HighwayCyan = DarkSecondaryAccent
+val RoadAmber = DarkWarning
+val AlertRed = DarkError
+val GPSGreen = DarkSuccess
+val Slate950 = DarkMainBackground
+val Slate900 = DarkPrimarySurface
+val Slate800 = DarkSecondarySurface
+val Slate700 = DarkElevatedSurface
+val Slate600 = DarkMutedText
+val Slate400 = DarkSecondaryText

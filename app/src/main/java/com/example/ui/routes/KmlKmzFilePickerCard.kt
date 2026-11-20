@@ -6,7 +6,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -40,7 +39,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.isAppDarkTheme
 
 /**
@@ -139,16 +138,16 @@ fun KmlKmzFilePickerCard(
         }
     }
 
-    val primaryColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
-    val greenAccent = Color(0xFF10B981)
-    val redAccent = Color(0xFFEF4444)
-    val cardBg = if (isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)
-    val borderColor = if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
+    val c = CtecsTheme.colors
+    val primaryColor = c.accent
+    val greenAccent = c.success
+    val redAccent = c.error
+    val cardBg = c.surface
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = cardBg),
-        border = BorderStroke(1.5.dp, borderColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
             .fillMaxWidth()
             .testTag("kml_kmz_file_picker_card")
@@ -181,7 +180,7 @@ fun KmlKmzFilePickerCard(
                 text = "Import Route Alignment (.KML / .KMZ / URL)",
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isDark) Color.White else Color(0xFF0F172A),
+                color = c.textPrimary,
                 textAlign = TextAlign.Center
             )
 
@@ -259,11 +258,14 @@ fun KmlKmzFilePickerCard(
             if (onImportFromUrl != null) {
                 Spacer(modifier = Modifier.height(10.dp))
 
-                OutlinedButton(
+                Button(
                     onClick = { showUrlImportDialog = true },
                     enabled = !isImporting,
-                    border = BorderStroke(1.2.dp, primaryColor.copy(alpha = 0.6f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryColor),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = primaryColor.copy(alpha = 0.14f),
+                        contentColor = primaryColor
+                    ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -298,9 +300,8 @@ fun KmlKmzFilePickerCard(
             if (!isImporting && !importErrorMessage.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = redAccent.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, redAccent.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(10.dp),
+                    color = redAccent.copy(alpha = 0.14f),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("kml_import_error_banner")
@@ -344,9 +345,8 @@ fun KmlKmzFilePickerCard(
             if (!isImporting && importErrorMessage.isNullOrBlank() && !importStatusMessage.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = greenAccent.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, greenAccent.copy(alpha = 0.35f)),
+                    shape = RoundedCornerShape(10.dp),
+                    color = greenAccent.copy(alpha = 0.14f),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("kml_import_status_banner")
@@ -420,16 +420,17 @@ fun KmlKmzFilePickerCard(
 
 @Composable
 private fun FormatBadge(label: String, isDark: Boolean) {
+    val c = CtecsTheme.colors
     Surface(
-        shape = RoundedCornerShape(6.dp),
-        color = if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0)
+        shape = RoundedCornerShape(8.dp),
+        color = c.secondarySurface
     ) {
         Text(
             text = label,
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
-            color = if (isDark) Color(0xFFCBD5E1) else Color(0xFF475569),
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            color = c.textSecondary,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
     }
 }
