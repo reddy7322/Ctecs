@@ -5,9 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.ExifInterface
 import android.os.Looper
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -16,7 +19,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
-import java.io.File
 import com.example.data.PreferencesManager
 import com.example.model.CameraSettings
 import com.example.model.CaptureSnapshot
@@ -36,6 +38,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -45,6 +48,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.io.File
 import kotlin.math.abs
 
 @RunWith(RobolectricTestRunner::class)
@@ -54,237 +58,307 @@ class SmartCameraBrightnessTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun advanceAndIdle(ms: Long = 250L) {
-        composeTestRule.mainClock.advanceTimeBy(ms)
+    private fun waitForComposeIdle() {
         shadowOf(Looper.getMainLooper()).idle()
+        composeTestRule.waitForIdle()
     }
 
     @Test
-    fun `manual right-side drag covers full dim to max brightness with fine-grained precision and zero EV drift`() {
-        val controller = AmbientBrightnessController(
-            initialAutoEnabled = false,
-            initialManualBrightness = 0.50f
+    fun `proportional hardware EV mapping covers full min to max across symmetric and asymmetric ranges`() {
+        // Symmetric standard lens (-12..+12)
+        assertEquals(-12, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.0f, -12, 12))
+        assertEquals(-6, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.25f, -12, 12))
+        assertEquals(0, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.5f, -12, 12))
+        assertEquals(6, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.75f, -12, 12))
+        assertEquals(12, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(1.0f, -12, 12))
+
+        // High-precision lens (-24..+24)
+        assertEquals(-24, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.0f, -24, 24))
+        assertEquals(0, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.5f, -24, 24))
+        assertEquals(24, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(1.0f, -24, 24))
+
+        // Asymmetric lens (-12..+8)
+        assertEquals(-12, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.0f, -12, 8))
+        assertEquals(0, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.5f, -12, 8))
+        assertEquals(4, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(0.75f, -12, 8))
+        assertEquals(8, CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(1.0f, -12, 8))
+
+        // Inverse mapping round-trip
+        assertEquals(0.0f, CameraBrightnessEngine.mapHardwareEvIndexToNormalized(-12, -12, 8), 0.001f)
+        assertEquals(0.5f, CameraBrightnessEngine.mapHardwareEvIndexToNormalized(0, -12, 8), 0.001f)
+        assertEquals(1.0f, CameraBrightnessEngine.mapHardwareEvIndexToNormalized(8, -12, 8), 0.001f)
+    }
+
+    @Test
+    fun `continuous finger drag accumulates slow micro-movements across full min-to-max range and retains value`() {
+        val caps = CaptureExposureCapabilities(
+            isExposureCompensationSupported = true,
+            minEvIndex = -12,
+            maxEvIndex = 12,
+            evStep = 1f / 3f
+        )
+        val controller = CaptureExposureController(
+            initialAutoExposure = true,
+            initialManualLevel = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
+            initialCapabilities = caps
         )
 
-        // Fine-grained upward drag to maximum supported brightness (1.0f)
-        repeat(60) {
-            controller.applyManualDragDelta(+0.015f)
-        }
-        val maxState = controller.getState()
-        assertEquals(CameraBrightnessEngine.MAX_SUPPORTED_BRIGHTNESS, maxState.effectiveDisplayBrightness, 0.0001f)
-        assertEquals(100, maxState.displayPercent)
-        assertEquals("Manual screen brightness must NEVER alter camera sensor EV", 0, maxState.recommendedAutoExposureOffset)
+        // Initial state: Auto Exposure (0.0 EV)
+        val initial = controller.getState()
+        assertTrue(initial.isAutoExposure)
+        assertEquals(0, initial.targetEvIndex)
+        assertEquals(0f, initial.targetEvStops, 0.001f)
 
-        // Fine-grained downward drag to lowest practical dim brightness (0.02f)
+        // 1. Slow micro-drag UP from Auto -> smooth zero-jump handoff from 0.5f neutral
+        val firstMicro = controller.applyContinuousDragDelta(+0.005f)
+        assertFalse("Dragging must immediately override Auto Exposure", firstMicro.isAutoExposure)
+        assertEquals(0.505f, firstMicro.effectiveNormalizedLevel, 0.0001f)
+
+        // Continue 100 tiny upward micro-movements -> smoothly reaches max bright (+12 EV / +4.0 stops)
+        var prevNormalized = firstMicro.effectiveNormalizedLevel
+        var prevEv = firstMicro.targetEvIndex
         repeat(100) {
-            controller.applyManualDragDelta(-0.015f)
+            val step = controller.applyContinuousDragDelta(+0.005f)
+            assertTrue("Normalized exposure must increase monotonically", step.effectiveNormalizedLevel >= prevNormalized)
+            assertTrue("Hardware EV index must increase monotonically without jitter", step.targetEvIndex >= prevEv)
+            prevNormalized = step.effectiveNormalizedLevel
+            prevEv = step.targetEvIndex
         }
-        val minState = controller.getState()
-        assertEquals(CameraBrightnessEngine.MIN_PRACTICAL_BRIGHTNESS, minState.effectiveDisplayBrightness, 0.0001f)
-        assertEquals(0, minState.displayPercent)
-        assertEquals("Manual dim brightness must NEVER underexpose camera sensor EV", 0, minState.recommendedAutoExposureOffset)
+        val atMax = controller.getState()
+        assertEquals(1.0f, atMax.effectiveNormalizedLevel, 0.0001f)
+        assertEquals(12, atMax.targetEvIndex)
+        assertEquals(4.0f, atMax.targetEvStops, 0.01f)
+        assertEquals("+4.0", atMax.evFormatted)
+
+        // 2. Smoothly drag all the way DOWN to minimum dim (-12 EV / -4.0 stops)
+        repeat(200) {
+            controller.applyContinuousDragDelta(-0.005f)
+        }
+        val atMin = controller.getState()
+        assertEquals(0.0f, atMin.effectiveNormalizedLevel, 0.0001f)
+        assertEquals(-12, atMin.targetEvIndex)
+        assertEquals(-4.0f, atMin.targetEvStops, 0.01f)
+        assertEquals("-4.0", atMin.evFormatted)
+
+        // 3. Repeated fine adjustments and retention after stopping finger movement
+        val fineUp = controller.applyContinuousDragDelta(+0.375f) // 0.375f -> -3 EV (-1.0 stops)
+        assertEquals(-3, fineUp.targetEvIndex)
+        assertEquals(-1.0f, fineUp.targetEvStops, 0.01f)
+        val retained = controller.getState()
+        assertEquals(fineUp, retained)
+
+        // 4. Re-enabling Auto Exposure cleanly restores 0.0 EV without losing saved manual level
+        val backToAuto = controller.setAutoExposure(true)
+        assertTrue(backToAuto.isAutoExposure)
+        assertEquals(0, backToAuto.targetEvIndex)
+        assertEquals(0f, backToAuto.targetEvStops, 0.001f)
+        assertEquals(0.375f, backToAuto.manualNormalizedLevel, 0.001f)
     }
 
     @Test
-    fun `auto brightness adapts smoothly across low normal high and direct sunlight with hysteresis stability`() {
-        val controller = AmbientBrightnessController(
-            initialAutoEnabled = true,
-            initialManualBrightness = 0.65f,
-            initialHasLightSensor = true
-        )
+    fun `smooth anti-jump EV ramp prevents harsh flashes during fast swipes and active video recording`() {
+        // 1. Active video recording: rapid swipe from -12 to +12 ramps smoothly by <=2 steps per frame
+        var currentVideoEv = -12
+        var videoTicks = 0
+        while (currentVideoEv != 12 && videoTicks < 50) {
+            val next = CameraBrightnessEngine.computeNextSmoothEvIndex(
+                currentAppliedEv = currentVideoEv,
+                targetEvIndex = 12,
+                isVideoRecording = true,
+                totalEvSpan = 24
+            )
+            val step = abs(next - currentVideoEv)
+            assertTrue("Video exposure step must stay smooth (<=2), was $step", step in 1..2)
+            currentVideoEv = next
+            videoTicks++
+        }
+        assertEquals("Video exposure must converge cleanly to exact target EV", 12, currentVideoEv)
+        assertTrue("Video ramp must span multiple frames to avoid harsh jump", videoTicks >= 12)
 
-        // 1. Low light (8 lux) -> dim comfortable preview, LOW_LIGHT zone, neutral EV
-        val low = controller.onAmbientLuxSample(8f)
-        assertEquals(AmbientLightZone.LOW_LIGHT, low.lightZone)
-        assertTrue("Low light display should dim comfortably (<0.30f), was ${low.effectiveDisplayBrightness}", low.effectiveDisplayBrightness < 0.30f)
-        assertEquals(0, low.recommendedAutoExposureOffset)
-
-        // 2. Oscillate around low-light exit boundary (42..55 lux) -> hysteresis prevents rapid zone flipping!
-        val osc1 = controller.onAmbientLuxSample(45f)
-        val osc2 = controller.onAmbientLuxSample(52f)
-        assertEquals("Hysteresis must hold LOW_LIGHT below 60 lux exit threshold", AmbientLightZone.LOW_LIGHT, osc1.lightZone)
-        assertEquals("Hysteresis must hold LOW_LIGHT below 60 lux exit threshold", AmbientLightZone.LOW_LIGHT, osc2.lightZone)
-
-        // 3. Bright daylight -> settles into HIGH_LIGHT
-        var bright = osc2
-        repeat(12) { bright = controller.onAmbientLuxSample(2_500f) }
-        assertEquals(AmbientLightZone.HIGH_LIGHT, bright.lightZone)
-        assertTrue("High light display should be bright (>0.70f), was ${bright.effectiveDisplayBrightness}", bright.effectiveDisplayBrightness > 0.70f)
-
-        // 4. Direct sunlight (>= 10,000 lux) -> maximum hardware brightness (1.0f) + anti-overexposure guard (-1 EV)
-        var sun = bright
-        repeat(20) { sun = controller.onAmbientLuxSample(25_000f) }
-        assertEquals(AmbientLightZone.HIGH_LIGHT, sun.lightZone)
-        assertEquals(CameraBrightnessEngine.MAX_SUPPORTED_BRIGHTNESS, sun.effectiveDisplayBrightness, 0.01f)
-        assertEquals("Extreme sunlight in Auto mode applies subtle highlight protection EV guard", -1, sun.recommendedAutoExposureOffset)
-
-        // 5. Small lux jitter in sunlight stays completely rock-steady (deadband suppression)
-        val jitter = controller.onAmbientLuxSample(24_200f)
-        assertEquals(sun.effectiveDisplayBrightness, jitter.effectiveDisplayBrightness, 0.0001f)
-    }
-
-    @Test
-    fun `manual right-side drag during Auto Brightness smoothly hands off without jump`() {
-        val controller = AmbientBrightnessController(
-            initialAutoEnabled = true,
-            initialManualBrightness = 0.85f,
-            initialHasLightSensor = true
-        )
-        val lowAuto = controller.onAmbientLuxSample(6f)
-        assertTrue(lowAuto.isAutoEnabled)
-        assertTrue(lowAuto.effectiveDisplayBrightness < 0.25f)
-
-        // User starts dragging slightly up -> hands off from current Auto display brightness, NOT old 0.85f!
-        val handedOff = controller.applyManualDragDelta(+0.05f)
-        assertFalse("Manual drag must transition cleanly out of Auto mode", handedOff.isAutoEnabled)
+        // 2. Slow 1-index drag in both photo & video tracks 1:1 immediately with zero lag
         assertEquals(
-            "Zero jump from Auto display brightness",
-            lowAuto.effectiveDisplayBrightness + 0.05f,
-            handedOff.effectiveDisplayBrightness,
-            0.001f
-        )
-        assertEquals(0, handedOff.recommendedAutoExposureOffset)
-    }
-
-    @Test
-    fun `manual drag before first lux sample hands off smoothly from manual level with zero jump`() {
-        val controller = AmbientBrightnessController(
-            initialAutoEnabled = true,
-            initialManualBrightness = 0.22f,
-            initialHasLightSensor = true
-        )
-        // No lux sample yet -> effective is 0.22f
-        val before = controller.getState()
-        assertEquals(0.22f, before.effectiveDisplayBrightness, 0.001f)
-
-        val after = controller.applyManualDragDelta(+0.03f)
-        assertFalse(after.isAutoEnabled)
-        assertEquals(0.25f, after.effectiveDisplayBrightness, 0.001f)
-    }
-
-    @Test
-    fun `PreferencesManager persists Auto Brightness and last manual brightness level reliably`() = runBlocking {
-        val app = ApplicationProvider.getApplicationContext<Application>()
-        val prefs = PreferencesManager(app)
-
-        val updated = prefs.editCameraSettings { current ->
-            current.copy(
-                autoBrightnessEnabled = true,
-                manualPreviewBrightness = 0.14f
+            4,
+            CameraBrightnessEngine.computeNextSmoothEvIndex(
+                currentAppliedEv = 3,
+                targetEvIndex = 4,
+                isVideoRecording = true,
+                totalEvSpan = 24
             )
-        }
-        assertTrue(updated.autoBrightnessEnabled)
-        assertEquals(0.14f, updated.manualPreviewBrightness, 0.001f)
-
-        val stored = prefs.cameraSettingsFlow.first()
-        assertTrue(stored.autoBrightnessEnabled)
-        assertEquals(0.14f, stored.manualPreviewBrightness, 0.001f)
-
-        // Toggle back OFF and persist max bright (1.0f)
-        prefs.editCameraSettings { current ->
-            current.copy(
-                autoBrightnessEnabled = false,
-                manualPreviewBrightness = 1.0f
+        )
+        assertEquals(
+            -5,
+            CameraBrightnessEngine.computeNextSmoothEvIndex(
+                currentAppliedEv = -4,
+                targetEvIndex = -5,
+                isVideoRecording = false,
+                totalEvSpan = 24
             )
-        }
-        val reloaded = prefs.cameraSettingsFlow.first()
-        assertFalse(reloaded.autoBrightnessEnabled)
-        assertEquals(1.0f, reloaded.manualPreviewBrightness, 0.001f)
+        )
     }
 
     @Test
-    fun `optimizeCapturedPhotoForLighting improves noisy low-light, protects high-light, and keeps clean normal-light natural`() {
-        // 1. Clean normal-light bitmap -> pass-through (zero artificial distortion)
-        val cleanNormal = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
-        for (y in 0 until 64) {
-            for (x in 0 until 64) {
-                val luma = 128 + ((x / 16) * 4)
-                cleanNormal.setPixel(x, y, Color.rgb(luma, luma, luma))
-            }
-        }
-        val normalResult = CameraBrightnessEngine.optimizeCapturedPhotoForLighting(
-            source = cleanNormal,
-            ambientLux = 400f,
-            ambientZone = AmbientLightZone.NORMAL_LIGHT
+    fun `manual sensor ISO and shutter fallback strictly respects FPS and hardware bounds`() {
+        val manualCaps = CaptureExposureCapabilities(
+            isExposureCompensationSupported = false,
+            minEvIndex = 0,
+            maxEvIndex = 0,
+            evStep = 0f,
+            supportsManualSensor = true,
+            isoRange = 100..6400,
+            exposureTimeRangeNs = 100_000L..250_000_000L // 1/10000s to 1/4s
         )
-        assertSame("Clean normal-light photo must stay untouched for natural colors", cleanNormal, normalResult)
 
-        // 2. Noisy low-light bitmap with sharp road-edge step -> reduces luma+chroma grain + lifts shadows while keeping edge crisp
-        val noisyLowLight = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
-        var seed = 1337
+        val dim30 = requireNotNull(CameraBrightnessEngine.computeSafeManualSensorExposure(0.0f, manualCaps, targetFps = 30))
+        val mid30 = requireNotNull(CameraBrightnessEngine.computeSafeManualSensorExposure(0.5f, manualCaps, targetFps = 30))
+        val max30 = requireNotNull(CameraBrightnessEngine.computeSafeManualSensorExposure(1.0f, manualCaps, targetFps = 30))
+        val max60 = requireNotNull(CameraBrightnessEngine.computeSafeManualSensorExposure(1.0f, manualCaps, targetFps = 60))
+
+        // Monotonic progression from dim -> mid -> bright
+        assertTrue(dim30.iso <= mid30.iso && mid30.iso <= max30.iso)
+        assertTrue(dim30.exposureTimeNs < mid30.exposureTimeNs && mid30.exposureTimeNs < max30.exposureTimeNs)
+
+        // FPS ceiling strictly respected so video frame rate never drops
+        assertTrue("30fps max shutter must not exceed 33.33ms", max30.exposureTimeNs <= 1_000_000_000L / 30L)
+        assertTrue("60fps max shutter must not exceed 16.66ms", max60.exposureTimeNs <= 1_000_000_000L / 60L)
+        assertTrue("ISO stays within conservative noise cap <=3200", max30.iso <= 3200)
+    }
+
+    @Test
+    fun `photo capture exposure preserves manual hardware exposure, denoises boosted low-light, and applies photometric fallback`() {
+        // 1. Hardware EV applied + intentional darker manual exposure (-2.5 EV) -> NEVER lifted or undone!
+        val intentionalDark = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        intentionalDark.eraseColor(Color.rgb(36, 38, 42))
+        val darkResult = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+            source = intentionalDark,
+            normalizedLevel = 0.15f,
+            evStops = -2.5f,
+            isAutoExposure = false,
+            hardwareEvApplied = true
+        )
+        assertSame(
+            "Manual darker hardware-captured photo must be preserved exactly without auto-lifting shadows",
+            intentionalDark,
+            darkResult
+        )
+
+        // 2. Hardware EV applied + user boosted brightness in noisy low-light -> reduces noise while keeping sharp edges
+        val noisyBoosted = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        var seed = 4242
         for (y in 0 until 64) {
             for (x in 0 until 64) {
                 seed = (seed * 1103515245 + 12345) and 0x7fffffff
-                val lumaNoise = ((seed % 19) - 9)
-                val chromaNoise = (((seed ushr 8) % 11) - 5)
-                val base = if (x < 32) 34 else 98 // crisp vertical road-edge contrast
+                val lumaNoise = (seed % 21) - 10
+                val chromaNoise = ((seed ushr 8) % 13) - 6
+                val base = if (x < 32) 48 else 124
                 val r = (base + lumaNoise + chromaNoise).coerceIn(0, 255)
                 val g = (base + lumaNoise).coerceIn(0, 255)
                 val b = (base + lumaNoise - chromaNoise).coerceIn(0, 255)
-                noisyLowLight.setPixel(x, y, Color.rgb(r, g, b))
+                noisyBoosted.setPixel(x, y, Color.rgb(r, g, b))
             }
         }
-        val beforeLowMetrics = CameraQualityEngine.analyzeScene(noisyLowLight)
-        val enhancedLow = CameraBrightnessEngine.optimizeCapturedPhotoForLighting(
-            source = noisyLowLight,
-            ambientLux = 10f,
-            ambientZone = AmbientLightZone.LOW_LIGHT
+        val beforeMetrics = CameraQualityEngine.analyzeScene(noisyBoosted)
+        val denoisedBoosted = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+            source = noisyBoosted,
+            normalizedLevel = 0.88f,
+            evStops = +2.8f,
+            isAutoExposure = false,
+            hardwareEvApplied = true
         )
-        assertNotSame(noisyLowLight, enhancedLow)
-        val afterLowMetrics = CameraQualityEngine.analyzeScene(enhancedLow)
+        assertNotSame(noisyBoosted, denoisedBoosted)
+        val afterMetrics = CameraQualityEngine.analyzeScene(denoisedBoosted)
         assertTrue(
-            "Low-light optimization must lift shadow visibility (${beforeLowMetrics.meanLuminance} -> ${afterLowMetrics.meanLuminance})",
-            afterLowMetrics.meanLuminance > beforeLowMetrics.meanLuminance
+            "Denoise must lower noise in boosted low-light (${beforeMetrics.estimatedNoiseLevel} -> ${afterMetrics.estimatedNoiseLevel})",
+            afterMetrics.estimatedNoiseLevel < beforeMetrics.estimatedNoiseLevel
         )
-        assertTrue(
-            "Low-light optimization must reduce grain/noise (${beforeLowMetrics.estimatedNoiseLevel} -> ${afterLowMetrics.estimatedNoiseLevel})",
-            afterLowMetrics.estimatedNoiseLevel < beforeLowMetrics.estimatedNoiseLevel
+        // Edge contrast preserved
+        val edgeDiff = abs(
+            Color.red(denoisedBoosted.getPixel(36, 32)) - Color.red(denoisedBoosted.getPixel(28, 32))
         )
+        assertTrue("Edge contrast must remain sharp (>50), was $edgeDiff", edgeDiff > 50)
 
-        // Verify sharp vertical edge is preserved (not smeared/plastic)
-        val leftPixel = enhancedLow.getPixel(28, 32)
-        val rightPixel = enhancedLow.getPixel(36, 32)
-        val edgeContrast = abs(Color.red(rightPixel) - Color.red(leftPixel))
-        assertTrue("Edge contrast must remain crisp (>40), was $edgeContrast", edgeContrast > 40)
-
-        // 3. Harsh overexposed high-light bitmap -> controls highlight washout
-        val harshSun = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
-        for (y in 0 until 64) {
-            for (x in 0 until 64) {
-                val v = if (y < 40) 246 else 185
-                harshSun.setPixel(x, y, Color.rgb(v, v, v))
-            }
-        }
-        val beforeHighMetrics = CameraQualityEngine.analyzeScene(harshSun)
-        val protectedHigh = CameraBrightnessEngine.optimizeCapturedPhotoForLighting(
-            source = harshSun,
-            ambientLux = 25_000f,
-            ambientZone = AmbientLightZone.HIGH_LIGHT
+        // 3. Hardware EV NOT available (fallback) -> photometric curve darkens for -EV and brightens for +EV
+        val midGrey = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        midGrey.eraseColor(Color.rgb(120, 120, 120))
+        val fallbackDim = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+            source = midGrey,
+            normalizedLevel = 0.15f,
+            evStops = -2.1f,
+            isAutoExposure = false,
+            hardwareEvApplied = false
         )
-        assertNotSame(harshSun, protectedHigh)
-        val afterHighMetrics = CameraQualityEngine.analyzeScene(protectedHigh)
-        assertTrue(
-            "High-light optimization must compress blown highlights (${beforeHighMetrics.meanLuminance} -> ${afterHighMetrics.meanLuminance})",
-            afterHighMetrics.meanLuminance < beforeHighMetrics.meanLuminance
+        val fallbackBright = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+            source = midGrey,
+            normalizedLevel = 0.85f,
+            evStops = +2.1f,
+            isAutoExposure = false,
+            hardwareEvApplied = false
         )
+        val fallbackAuto = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+            source = midGrey,
+            normalizedLevel = 0.5f,
+            evStops = 0f,
+            isAutoExposure = true,
+            hardwareEvApplied = false
+        )
+        val dimLuma = CameraQualityEngine.analyzeScene(fallbackDim).meanLuminance
+        val origLuma = CameraQualityEngine.analyzeScene(midGrey).meanLuminance
+        val brightLuma = CameraQualityEngine.analyzeScene(fallbackBright).meanLuminance
+        assertTrue("Fallback -EV must darken saved photo ($dimLuma < $origLuma)", dimLuma < origLuma - 20f)
+        assertTrue("Fallback +EV must brighten saved photo ($brightLuma > $origLuma)", brightLuma > origLuma + 20f)
+        assertSame("Auto exposure fallback must leave photo untouched", midGrey, fallbackAuto)
 
-        cleanNormal.recycle()
-        noisyLowLight.recycle()
-        enhancedLow.recycle()
-        harshSun.recycle()
-        protectedHigh.recycle()
+        intentionalDark.recycle()
+        noisyBoosted.recycle()
+        denoisedBoosted.recycle()
+        midGrey.recycle()
+        fallbackDim.recycle()
+        fallbackBright.recycle()
     }
 
     @Test
-    fun `existing timestamp GPS chainage and weather overlays render intact after lighting optimization`() {
+    fun `PreferencesManager persists Auto Exposure and full manual capture exposure range reliably`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val prefs = PreferencesManager(app)
+
+        prefs.editCameraSettings { current ->
+            current.copy(
+                autoBrightnessEnabled = false,
+                manualPreviewBrightness = 0.0f // Minimum dim hardware capture exposure
+            )
+        }
+        val storedMin = prefs.cameraSettingsFlow.first()
+        assertFalse(storedMin.autoBrightnessEnabled)
+        assertEquals(0.0f, storedMin.manualPreviewBrightness, 0.001f)
+
+        prefs.editCameraSettings { current ->
+            current.copy(
+                autoBrightnessEnabled = false,
+                manualPreviewBrightness = 1.0f // Maximum bright hardware capture exposure
+            )
+        }
+        val storedMax = prefs.cameraSettingsFlow.first()
+        assertFalse(storedMax.autoBrightnessEnabled)
+        assertEquals(1.0f, storedMax.manualPreviewBrightness, 0.001f)
+
+        prefs.editCameraSettings { current ->
+            current.copy(autoBrightnessEnabled = true)
+        }
+        val storedAuto = prefs.cameraSettingsFlow.first()
+        assertTrue(storedAuto.autoBrightnessEnabled)
+    }
+
+    @Test
+    fun `existing timestamp GPS chainage and EXIF metadata remain 100 percent intact after capture exposure pass`() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val rawPhoto = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
-        rawPhoto.eraseColor(Color.rgb(28, 30, 34))
+        rawPhoto.eraseColor(Color.rgb(90, 96, 102))
 
-        val optimized = CameraBrightnessEngine.optimizeCapturedPhotoForLighting(
+        val exposureProcessed = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
             source = rawPhoto,
-            ambientLux = 12f,
-            ambientZone = AmbientLightZone.LOW_LIGHT
+            normalizedLevel = 0.78f,
+            evStops = +1.7f,
+            isAutoExposure = false,
+            hardwareEvApplied = false
         )
 
         val snapshot = CaptureSnapshot(
@@ -314,12 +388,11 @@ class SmartCameraBrightnessTest {
             )
         )
 
-        val stamped = OverlayRenderer.renderOverlay(app, optimized, snapshot, isVideoFrame = false)
+        val stamped = OverlayRenderer.renderOverlay(app, exposureProcessed, snapshot, isVideoFrame = false)
         assertEquals(rawPhoto.width, stamped.width)
         assertEquals(rawPhoto.height, stamped.height)
 
-        // Verify EXIF timestamp, GPS, and project/chainage metadata are preserved intact after lighting optimization
-        val outFile = File(app.cacheDir, "ctecs_brightness_overlay_preserve_test.jpg")
+        val outFile = File(app.cacheDir, "ctecs_capture_exposure_overlay_preserve_test.jpg")
         if (outFile.exists()) outFile.delete()
         val saved = OverlayRenderer.saveBitmapWithExif(
             bitmap = stamped,
@@ -328,30 +401,29 @@ class SmartCameraBrightnessTest {
             jpegQuality = 92,
             context = app
         )
-        assertTrue("Stamped & lighting-optimized photo must save cleanly", saved)
+        assertTrue("Stamped photo must save cleanly", saved)
         assertTrue(outFile.exists())
 
         val exif = ExifInterface(outFile.absolutePath)
         assertTrue("EXIF timestamp must remain intact", !exif.getAttribute(ExifInterface.TAG_DATETIME).isNullOrBlank())
         assertEquals("N", exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE_REF))
         assertEquals("E", exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF))
-        val description = exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION).orEmpty()
-        assertTrue("EXIF project/chainage description must remain intact: $description", description.contains("125+400"))
+        val userComment = exif.getAttribute(ExifInterface.TAG_USER_COMMENT).orEmpty()
+        assertTrue("EXIF chainage & project comment must remain intact: $userComment", userComment.contains("125+400"))
+        assertTrue("EXIF project highway ID must remain intact: $userComment", userComment.contains("NH-44 Highway Audit"))
 
         outFile.delete()
         rawPhoto.recycle()
-        if (optimized !== rawPhoto) optimized.recycle()
+        if (exposureProcessed !== rawPhoto) exposureProcessed.recycle()
         stamped.recycle()
     }
 
     @Test
-    fun `CameraQuickSettingsDialog exposes Auto Brightness toggle inside existing Camera Settings`() {
-        composeTestRule.mainClock.autoAdvance = false
-
+    fun `CameraQuickSettingsDialog shows capture exposure EV and toggles cleanly back to Auto Exposure`() {
         var settings by mutableStateOf(
             CameraSettings(
                 autoBrightnessEnabled = false,
-                manualPreviewBrightness = 0.02f
+                manualPreviewBrightness = 0.72f
             )
         )
 
@@ -361,8 +433,7 @@ class SmartCameraBrightnessTest {
                     cameraSettings = settings,
                     overlayConfig = OverlayConfig(),
                     isFlashOn = false,
-                    ambientLightZone = AmbientLightZone.HIGH_LIGHT,
-                    ambientLux = 14_500f,
+                    captureExposureEvStops = 1.7f,
                     onToggleFlash = {},
                     onUpdateCameraSettings = { settings = it },
                     onUpdateOverlayConfig = {},
@@ -371,54 +442,79 @@ class SmartCameraBrightnessTest {
                 )
             }
         }
-        advanceAndIdle()
+        waitForComposeIdle()
 
-        composeTestRule.onNodeWithText("Auto Brightness").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Auto Brightness", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText(
+            "Right-side capture exposure (+1.7 EV) • Tap ON for Auto",
+            useUnmergedTree = true
+        ).assertIsDisplayed()
         composeTestRule.onNodeWithTag("camera_auto_brightness_switch").assertIsDisplayed().assertIsOff()
 
-        // Toggle Auto Brightness ON inside existing Camera Settings dialog
+        // Toggle Auto Brightness ON -> returns to automatic camera exposure (0.0 EV)
         composeTestRule.onNodeWithTag("camera_auto_brightness_switch").performClick()
-        advanceAndIdle()
-        assertTrue("Auto Brightness toggle must update CameraSettings", settings.autoBrightnessEnabled)
+        waitForComposeIdle()
+        assertTrue("Auto Brightness switch must update CameraSettings", settings.autoBrightnessEnabled)
         composeTestRule.onNodeWithTag("camera_auto_brightness_switch").assertIsOn()
-        composeTestRule.onNodeWithText("Adapts to light (High Light • 14500 lux)").assertIsDisplayed()
+        composeTestRule.onNodeWithText(
+            "Automatic camera exposure active (0.0 EV)",
+            useUnmergedTree = true
+        ).assertIsDisplayed()
     }
 
     @Test
-    fun `CameraBrightnessIndicator reflects full manual DIM to MAX range and AUTO mode cleanly`() {
-        composeTestRule.mainClock.autoAdvance = false
-
-        var indicatorBrightness by mutableStateOf(CameraBrightnessEngine.MIN_PRACTICAL_BRIGHTNESS)
-        var indicatorAuto by mutableStateOf(false)
+    fun `CameraBrightnessIndicator shows continuous MIN EV MAX exposure levels and resets to AUTO on tap`() {
+        var exposureNorm by mutableStateOf(CameraBrightnessEngine.MIN_EXPOSURE_LEVEL)
+        var evStops by mutableStateOf(-4.0f)
+        var isAuto by mutableStateOf(false)
 
         composeTestRule.setContent {
             MyApplicationTheme(themeMode = "dark") {
-                CameraBrightnessIndicator(
-                    visible = true,
-                    brightness = indicatorBrightness,
-                    isAutoBrightness = indicatorAuto,
-                    lightZone = AmbientLightZone.HIGH_LIGHT,
-                    onToggleAutoOrReset = { indicatorAuto = !indicatorAuto }
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    CameraBrightnessIndicator(
+                        visible = true,
+                        exposureNormalized = exposureNorm,
+                        evStops = evStops,
+                        isAutoExposure = isAuto,
+                        onToggleAutoOrReset = {
+                            isAuto = true
+                            exposureNorm = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL
+                            evStops = 0f
+                        }
+                    )
+                }
             }
         }
-        advanceAndIdle()
+        waitForComposeIdle()
 
-        // Manual Maximum Dim (0% DIM)
+        // 1. Minimum Dim Hardware Exposure (-4.0 MIN)
         composeTestRule.onNodeWithTag("camera_brightness_indicator").assertIsDisplayed()
-        composeTestRule.onNodeWithText("0%").assertIsDisplayed()
-        composeTestRule.onNodeWithText("DIM").assertIsDisplayed()
+        composeTestRule.onNodeWithText("-4.0", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("MIN", useUnmergedTree = true).assertIsDisplayed()
 
-        // Manual Maximum Bright (100% MAX)
-        indicatorBrightness = CameraBrightnessEngine.MAX_SUPPORTED_BRIGHTNESS
-        advanceAndIdle()
-        composeTestRule.onNodeWithText("100%").assertIsDisplayed()
-        composeTestRule.onNodeWithText("MAX").assertIsDisplayed()
+        // 2. Intermediate Continuous Manual Exposure (+1.7 EV)
+        composeTestRule.runOnIdle {
+            exposureNorm = 0.72f
+            evStops = 1.7f
+        }
+        waitForComposeIdle()
+        composeTestRule.onNodeWithText("+1.7", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("EV", useUnmergedTree = true).assertIsDisplayed()
 
-        // Tap indicator -> toggles into AUTO mode
+        // 3. Maximum Bright Hardware Exposure (+4.0 MAX)
+        composeTestRule.runOnIdle {
+            exposureNorm = CameraBrightnessEngine.MAX_EXPOSURE_LEVEL
+            evStops = 4.0f
+        }
+        waitForComposeIdle()
+        composeTestRule.onNodeWithText("+4.0", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("MAX", useUnmergedTree = true).assertIsDisplayed()
+
+        // 4. Tap indicator -> cleanly returns to Auto Exposure (0.0 AUTO)
         composeTestRule.onNodeWithTag("camera_brightness_indicator").performClick()
-        advanceAndIdle()
-        assertTrue(indicatorAuto)
-        composeTestRule.onNodeWithText("AUTO").assertIsDisplayed()
+        waitForComposeIdle()
+        assertTrue(isAuto)
+        composeTestRule.onNodeWithText("0.0", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("AUTO", useUnmergedTree = true).assertIsDisplayed()
     }
 }

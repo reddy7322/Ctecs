@@ -154,9 +154,11 @@ import com.example.model.OverlayConfig
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.VideoQualityOption
+import com.example.geo.OfflineSyncStatus
 import com.example.overlay.LogoProvider
 import com.example.ui.MainViewModel
 import com.example.ui.ToastType
+import com.example.ui.map.OfflineMapSyncStatusStrip
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.SmartFadeDivider
 import com.example.ui.theme.ctecsBorderlessInputColors
@@ -205,6 +207,9 @@ fun SettingsScreen(
     val compassState by viewModel.compassState.collectAsStateWithLifecycle()
     val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
     val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
+    val offlineSyncState by viewModel.offlineMapSyncState.collectAsStateWithLifecycle()
+    val offlineAutoPreload by viewModel.offlineMapAutoPreload.collectAsStateWithLifecycle()
+    val offlineWifiOnly by viewModel.offlineMapWifiOnly.collectAsStateWithLifecycle()
 
     // In-App Update States
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
@@ -300,6 +305,7 @@ fun SettingsScreen(
             "mini_map" to false,
             "gps" to false,
             "chainage" to false,
+            "offline_maps" to false,
             "logo" to false,
             "storage" to false,
             "display" to false,
@@ -838,7 +844,8 @@ fun SettingsScreen(
                         onClick = {
                             listOf(
                                 "project", "camera", "timestamp", "mini_map", "gps", "chainage",
-                                "logo", "storage", "display", "screensaver", "backup_restore", "permissions_about"
+                                "offline_maps", "logo", "storage", "display", "screensaver",
+                                "backup_restore", "permissions_about"
                             ).forEach { expandedSections[it] = true }
                         }
                     ) {
@@ -848,7 +855,8 @@ fun SettingsScreen(
                         onClick = {
                             listOf(
                                 "project", "camera", "timestamp", "mini_map", "gps", "chainage",
-                                "logo", "storage", "display", "screensaver", "backup_restore", "permissions_about"
+                                "offline_maps", "logo", "storage", "display", "screensaver",
+                                "backup_restore", "permissions_about"
                             ).forEach { expandedSections[it] = false }
                         }
                     ) {
@@ -3341,6 +3349,86 @@ fun SettingsScreen(
                         onCheckedChange = { viewModel.setVoiceDirectionAnnouncementsEnabled(it) },
                         tag = "settings_dir_voice_switch"
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ====================================================
+            // 8b. OFFLINE MAPS & CORRIDOR CACHING
+            // ====================================================
+            if (matchesSearch("offline maps preload kmz corridor cache tiles wifi sync mini map", searchQuery)) {
+                val offlineSummary = when (offlineSyncState.status) {
+                    OfflineSyncStatus.COMPLETE -> "Ready • ${offlineSyncState.totalTiles} tiles (${offlineSyncState.formattedBytes})"
+                    OfflineSyncStatus.SYNCING, OfflineSyncStatus.PREPARING -> "Syncing ${offlineSyncState.cachedTiles}/${offlineSyncState.totalTiles} tiles"
+                    OfflineSyncStatus.PAUSED -> "Paused • ${offlineSyncState.cachedTiles}/${offlineSyncState.totalTiles}"
+                    OfflineSyncStatus.WAITING_FOR_WIFI -> "Waiting for Wi-Fi"
+                    OfflineSyncStatus.WAITING_FOR_NETWORK -> "Offline • ${offlineSyncState.cachedTiles}/${offlineSyncState.totalTiles}"
+                    OfflineSyncStatus.PARTIAL_ERROR -> "Partial • ${offlineSyncState.cachedTiles}/${offlineSyncState.totalTiles}"
+                    OfflineSyncStatus.IDLE -> if (offlineAutoPreload) "Auto-Preload ON" else "Auto-Preload OFF"
+                }
+                SmartDropdownSection(
+                    title = "Offline Maps & Caching",
+                    subtitle = offlineSummary,
+                    icon = Icons.Default.Map,
+                    accentColor = primaryAccent,
+                    isExpanded = expandedSections["offline_maps"] ?: false,
+                    onToggleExpand = {
+                        expandedSections["offline_maps"] = !(expandedSections["offline_maps"] ?: false)
+                    }
+                ) {
+                    OfflineMapSyncStatusStrip(
+                        syncState = offlineSyncState,
+                        onPauseSync = { viewModel.pauseOfflineMapSync() },
+                        onResumeSync = { viewModel.resumeOfflineMapSync() },
+                        onRetrySync = { viewModel.retryOfflineMapSync() }
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    CompactSwitchRow(
+                        title = "Auto-Preload Active KMZ Route",
+                        subtitle = "Cache corridor tiles and 25m viewing zoom when route activates",
+                        checked = offlineAutoPreload,
+                        onCheckedChange = { viewModel.setOfflineMapAutoPreload(it) },
+                        tag = "switch_offline_map_auto_preload"
+                    )
+
+                    CompactSwitchRow(
+                        title = "Download Over Wi-Fi Only",
+                        subtitle = "Pause corridor downloads on metered cellular data",
+                        checked = offlineWifiOnly,
+                        onCheckedChange = { viewModel.setOfflineMapWifiOnly(it) },
+                        tag = "switch_offline_map_wifi_only"
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = { viewModel.clearInactiveOfflineMapCache() },
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = c.secondarySurface,
+                            contentColor = c.textPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
+                            .testTag("button_clear_inactive_offline_cache")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Clear Inactive Project Map Cache",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 

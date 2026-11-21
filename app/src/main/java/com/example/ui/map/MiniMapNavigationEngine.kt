@@ -6,13 +6,28 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ExploreOff
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,19 +36,25 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.geo.MapHeadingManager
+import com.example.geo.OfflineMapSyncState
+import com.example.geo.OfflineSyncStatus
 import com.example.geo.OsmTileManager
 import com.example.model.GeoPoint
 import com.example.model.MiniMapOrientationMode
 import com.example.model.RouteData
+import com.example.ui.theme.CtecsTheme
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -51,14 +72,70 @@ import kotlin.math.tan
  */
 object MiniMapViewportMath {
     const val MIN_ZOOM = 1.0f
-    const val MAX_ZOOM = 19.0f
+    const val MAX_ZOOM = 23.0f
     const val TILE_SIZE = 256.0
+    const val EARTH_EQUATORIAL_CIRCUMFERENCE_METRES = 40_075_016.686
+
+    /**
+     * Global standard initial ground viewing range (metres) for every Mini Map across CTECS.
+     * Always converted dynamically to continuous Web Mercator zoom using latitude, viewport
+     * dimensions, and aspect ratio — never a hardcoded zoom number.
+     */
+    const val DEFAULT_GROUND_VIEW_RANGE_METRES = 25.0
 
     /**
      * Vertical screen fraction where the live vehicle marker is framed during Follow + Direction-Up mode.
      * 0.62 places the vehicle slightly below vertical center so ~62% of the viewport looks ahead.
      */
     const val FOLLOW_FORWARD_Y_FRACTION = 0.62f
+
+    /**
+     * Dynamically calculates the continuous Web Mercator zoom level required to show exactly
+     * [groundRangeMetres] across the limiting viewport dimension (`min(width, height)`),
+     * accounting for latitude distortion (`cos(lat)`), viewport pixel dimensions, and aspect ratio.
+     */
+    fun computeZoomForGroundRangeMetres(
+        latitude: Double,
+        viewportWidthPx: Float,
+        viewportHeightPx: Float,
+        groundRangeMetres: Double = DEFAULT_GROUND_VIEW_RANGE_METRES
+    ): Float {
+        val safeRange = groundRangeMetres.coerceIn(5.0, 20_000_000.0)
+        val clampedLat = if (latitude.isFinite()) latitude.coerceIn(-85.0, 85.0) else 0.0
+        val cosLat = cos(Math.toRadians(clampedLat)).coerceAtLeast(0.05)
+        val limitingSpanPx = if (viewportWidthPx > 1f && viewportHeightPx > 1f) {
+            minOf(viewportWidthPx, viewportHeightPx).toDouble()
+        } else {
+            360.0
+        }
+        val metersPerPixel = safeRange / limitingSpanPx
+        val worldScale = (EARTH_EQUATORIAL_CIRCUMFERENCE_METRES * cosLat) / (TILE_SIZE * metersPerPixel)
+        val zoom = (ln(worldScale) / ln(2.0)).toFloat()
+        return if (zoom.isFinite()) zoom.coerceIn(MIN_ZOOM, MAX_ZOOM) else 19.0f
+    }
+
+    /**
+     * Computes the actual ground distance (in metres) spanning the limiting viewport dimension
+     * at [continuousZoom] and [latitude]. Exact inverse of [computeZoomForGroundRangeMetres].
+     */
+    fun computeGroundRangeMetres(
+        continuousZoom: Float,
+        latitude: Double,
+        viewportWidthPx: Float,
+        viewportHeightPx: Float
+    ): Double {
+        val clampedZoom = continuousZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
+        val clampedLat = if (latitude.isFinite()) latitude.coerceIn(-85.0, 85.0) else 0.0
+        val cosLat = cos(Math.toRadians(clampedLat)).coerceAtLeast(0.05)
+        val limitingSpanPx = if (viewportWidthPx > 1f && viewportHeightPx > 1f) {
+            minOf(viewportWidthPx, viewportHeightPx).toDouble()
+        } else {
+            360.0
+        }
+        val metersPerPixel = (EARTH_EQUATORIAL_CIRCUMFERENCE_METRES * cosLat) /
+            (TILE_SIZE * 2.0.pow(clampedZoom.toDouble()))
+        return metersPerPixel * limitingSpanPx
+    }
 
     /**
      * Resolves canvas rotation in degrees for the active orientation mode and heading.
@@ -114,12 +191,12 @@ object MiniMapViewportMath {
 
     /**
      * Computes base integer tile zoom and smooth fractional scale factor `2^(zoom - baseZoom)`
-     * so pinch zoom is continuous without integer jump snapping.
+     * so pinch zoom and close-range 25m viewing remain smooth beyond integer tile zoom 19.
      */
     fun splitContinuousZoom(continuousZoom: Float): Pair<Int, Float> {
         val clamped = continuousZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
         val baseZoom = floor(clamped).toInt().coerceIn(OsmTileManager.MIN_TILE_ZOOM, OsmTileManager.MAX_TILE_ZOOM)
-        val fracScale = 2.0.pow((clamped - baseZoom).toDouble()).toFloat().coerceIn(0.5f, 2.5f)
+        val fracScale = 2.0.pow((clamped - baseZoom).toDouble()).toFloat().coerceIn(0.5f, 16.0f)
         return Pair(baseZoom, fracScale)
     }
 
@@ -300,6 +377,44 @@ object MiniMapViewportMath {
         return (diag + 8).coerceIn(64, maxPx)
     }
 
+    data class TileRenderPlan(
+        val renderBaseZoom: Int,
+        val renderScale: Float,
+        val renderSizePx: Int
+    )
+
+    /**
+     * Resolves `(renderBaseZoom, renderScale, renderSizePx)` so that even on large high-DPI
+     * portrait/landscape screens or rotated containers, `renderSizePx * renderScale` ALWAYS
+     * covers the full rotated diagonal `hypot(widthPx, heightPx)` without ever cropping edges
+     * or allocating oversized bitmaps.
+     */
+    fun resolveTileRenderPlan(
+        widthPx: Float,
+        heightPx: Float,
+        continuousZoom: Float,
+        maxBitmapPx: Int = 1152
+    ): TileRenderPlan {
+        val (initialBase, initialScale) = splitContinuousZoom(continuousZoom)
+        var renderBase = initialBase
+        var renderScale = initialScale
+        val rawDiag = hypot(widthPx.toDouble().coerceAtLeast(1.0), heightPx.toDouble().coerceAtLeast(1.0))
+
+        while (ceil(rawDiag / renderScale).toInt() + 12 > maxBitmapPx &&
+            renderBase > OsmTileManager.MIN_TILE_ZOOM
+        ) {
+            renderBase -= 1
+            renderScale *= 2f
+        }
+
+        val renderSizePx = (ceil(rawDiag / renderScale).toInt() + 12).coerceIn(64, 1800)
+        return TileRenderPlan(
+            renderBaseZoom = renderBase,
+            renderScale = renderScale,
+            renderSizePx = renderSizePx
+        )
+    }
+
     /**
      * Dynamically computes the optimal center and continuous zoom to fit an entire [routeData]
      * inside a container of `[viewportWidthPx x viewportHeightPx]` without cropping or distortion.
@@ -438,3 +553,223 @@ fun MiniMapHeadingUnavailableBadge(
         }
     }
 }
+
+/**
+ * Clean, subtle indicator shown when map tiles are unavailable or incomplete offline,
+ * preventing misleading blank tiles from looking like normal empty terrain.
+ */
+@Composable
+fun MiniMapOfflineCoverageBadge(
+    isDark: Boolean,
+    hasPartialCoverage: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val bg = if (isDark) Color(0xD90D111A) else Color(0xEBFFFFFF)
+    val fg = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
+    val label = if (hasPartialCoverage) "Partial offline map" else "Offline • Vector alignment"
+    Surface(
+        shape = CircleShape,
+        color = bg,
+        shadowElevation = 0.dp,
+        modifier = modifier.testTag("minimap_offline_coverage_badge")
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.CloudOff,
+                contentDescription = label,
+                tint = fg,
+                modifier = Modifier.size(10.dp)
+            )
+            Text(
+                text = label,
+                color = fg,
+                fontSize = 8.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+/**
+ * Shared compact Material 3 card displaying active KMZ/KML offline tile synchronization state,
+ * progress bar, reused tile count, and accessible Pause / Resume / Retry action controls.
+ */
+@Composable
+fun OfflineMapSyncStatusStrip(
+    syncState: OfflineMapSyncState,
+    onPauseSync: () -> Unit,
+    onResumeSync: () -> Unit,
+    onRetrySync: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val c = CtecsTheme.colors
+    val statusColor = when (syncState.status) {
+        OfflineSyncStatus.COMPLETE -> c.success
+        OfflineSyncStatus.SYNCING, OfflineSyncStatus.PREPARING -> c.accent
+        OfflineSyncStatus.PAUSED, OfflineSyncStatus.WAITING_FOR_WIFI -> c.warning
+        OfflineSyncStatus.WAITING_FOR_NETWORK, OfflineSyncStatus.PARTIAL_ERROR -> c.error
+        OfflineSyncStatus.IDLE -> c.textMuted
+    }
+    val statusIcon = when (syncState.status) {
+        OfflineSyncStatus.COMPLETE -> Icons.Default.CloudDone
+        OfflineSyncStatus.SYNCING, OfflineSyncStatus.PREPARING -> Icons.Default.CloudDownload
+        OfflineSyncStatus.WAITING_FOR_WIFI -> Icons.Default.Wifi
+        OfflineSyncStatus.WAITING_FOR_NETWORK -> Icons.Default.CloudOff
+        else -> Icons.Default.CloudDownload
+    }
+    val statusHeadline = when (syncState.status) {
+        OfflineSyncStatus.IDLE -> "Corridor Cache Standby"
+        OfflineSyncStatus.PREPARING -> "Scanning Route Corridor…"
+        OfflineSyncStatus.SYNCING -> "Preloading Corridor (${syncState.cachedTiles}/${syncState.totalTiles})"
+        OfflineSyncStatus.PAUSED -> "Corridor Sync Paused (${syncState.cachedTiles}/${syncState.totalTiles})"
+        OfflineSyncStatus.WAITING_FOR_WIFI -> "Waiting for Wi-Fi (${syncState.cachedTiles}/${syncState.totalTiles})"
+        OfflineSyncStatus.WAITING_FOR_NETWORK -> "Offline • Cached ${syncState.cachedTiles}/${syncState.totalTiles}"
+        OfflineSyncStatus.COMPLETE -> "Offline Corridor Ready (${syncState.totalTiles} tiles)"
+        OfflineSyncStatus.PARTIAL_ERROR -> "Partial Offline Cache (${syncState.cachedTiles}/${syncState.totalTiles})"
+    }
+
+    val detailsLine = buildString {
+        if (syncState.totalTiles > 0) {
+            append("${(syncState.progressFraction * 100f).toInt()}% • ${syncState.formattedBytes}")
+            if (syncState.reusedTiles > 0) {
+                append(" • ${syncState.reusedTiles} reused")
+            }
+        } else if (!syncState.autoPreloadEnabled) {
+            append("Auto-preload paused in settings")
+        } else {
+            append("Activate a KMZ/KML route to cache corridor tiles")
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = c.secondarySurface,
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("offline_sync_status_strip")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = statusColor.copy(alpha = 0.14f)
+                    ) {
+                        Icon(
+                            imageVector = statusIcon,
+                            contentDescription = statusHeadline,
+                            tint = statusColor,
+                            modifier = Modifier
+                                .padding(6.dp)
+                                .size(16.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = statusHeadline,
+                            color = c.textPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = detailsLine,
+                            color = c.textSecondary,
+                            fontSize = 10.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                when (syncState.status) {
+                    OfflineSyncStatus.SYNCING, OfflineSyncStatus.PREPARING -> {
+                        IconButton(
+                            onClick = onPauseSync,
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                .testTag("offline_sync_action_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Pause,
+                                contentDescription = "Pause offline map preload",
+                                tint = c.accent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    OfflineSyncStatus.PAUSED -> {
+                        IconButton(
+                            onClick = onResumeSync,
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                .testTag("offline_sync_action_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Resume offline map preload",
+                                tint = c.accent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    OfflineSyncStatus.WAITING_FOR_WIFI,
+                    OfflineSyncStatus.WAITING_FOR_NETWORK,
+                    OfflineSyncStatus.PARTIAL_ERROR,
+                    OfflineSyncStatus.COMPLETE -> {
+                        if (syncState.totalTiles > 0) {
+                            IconButton(
+                                onClick = onRetrySync,
+                                modifier = Modifier
+                                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                    .testTag("offline_sync_action_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh offline map preload",
+                                    tint = statusColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                    OfflineSyncStatus.IDLE -> Unit
+                }
+            }
+
+            if (syncState.totalTiles > 0 && syncState.status != OfflineSyncStatus.COMPLETE) {
+                LinearProgressIndicator(
+                    progress = { syncState.progressFraction },
+                    color = statusColor,
+                    trackColor = c.surface,
+                    strokeCap = StrokeCap.Round,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                )
+            }
+        }
+    }
+}
+

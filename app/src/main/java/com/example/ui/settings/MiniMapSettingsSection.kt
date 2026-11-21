@@ -394,6 +394,7 @@ fun MiniMapSettingsSection(
                                                 miniMapConfig = activeStyleConfig,
                                                 chainageLabel = currentChainage,
                                                 sideLabel = currentSide,
+                                                fadeToColor = Color(0xFF171E2B),
                                                 modifier = Modifier.fillMaxSize()
                                             )
                                         }

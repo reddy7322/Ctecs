@@ -11,6 +11,8 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.roundToLong
 
 /**
@@ -46,6 +48,16 @@ object ChainageMatcher {
     fun getLastMatchLatencyMicros(): Long = lastMatchLatencyMicros.get()
     fun getAutomaticJumpRecoveries(): Long = automaticJumpRecoveries.get()
 
+    private const val SPATIAL_GRID_CELL_DEG = 0.002 // ~220m spatial grid cells for O(1) lookup
+    private const val MAX_CELLS_PER_SEGMENT = 64
+
+    private fun packGridKey(cellLat: Int, cellLng: Int): Long {
+        return (cellLat.toLong() shl 32) or (cellLng.toLong() and 0xFFFF_FFFFL)
+    }
+
+    private fun latToCell(lat: Double): Int = floor(lat / SPATIAL_GRID_CELL_DEG).toInt()
+    private fun lngToCell(lng: Double): Int = floor(lng / SPATIAL_GRID_CELL_DEG).toInt()
+
     /**
      * Precomputed spatial index and geometry cache for a single alignment polyline.
      */
@@ -57,8 +69,13 @@ object ChainageMatcher {
         val points: List<GeoPoint>,
         val segmentCount: Int,
         val segmentLengths: DoubleArray,
+        val segmentBearingsDeg: DoubleArray,
         val cumulativeDistances: DoubleArray,
         val totalLengthM: Double,
+        // 2D spatial hash grid mapping packed (cellLat, cellLng) -> segment indices intersecting cell
+        val spatialGrid: Map<Long, IntArray>,
+        // Segments spanning more than MAX_CELLS_PER_SEGMENT cells checked directly on query
+        val longSegmentIndices: IntArray,
         // Cached marker projections along this alignment
         val mappedMarkers: List<MappedMarkerRef>
     )
@@ -90,41 +107,84 @@ object ChainageMatcher {
 
         val pts = alignment.points
         val n = pts.size
-        val segLengths = DoubleArray(maxOf(0, n - 1))
+        val segCount = maxOf(0, n - 1)
+        val segLengths = DoubleArray(segCount)
+        val segBearings = DoubleArray(segCount)
         val cumDist = DoubleArray(n)
         var totalDist = 0.0
 
-        for (i in 0 until n - 1) {
-            val len = GeoUtils.distanceMetres(pts[i], pts[i + 1])
+        val gridBuilder = HashMap<Long, MutableList<Int>>(segCount.coerceAtLeast(16))
+        val longSegments = ArrayList<Int>()
+
+        for (i in 0 until segCount) {
+            val p1 = pts[i]
+            val p2 = pts[i + 1]
+            val len = GeoUtils.distanceMetres(p1, p2)
             segLengths[i] = len
+            segBearings[i] = GeoUtils.bearingDegrees(p1, p2)
             totalDist += len
             cumDist[i + 1] = totalDist
+
+            val minCellLat = latToCell(minOf(p1.latitude, p2.latitude))
+            val maxCellLat = latToCell(maxOf(p1.latitude, p2.latitude))
+            val minCellLng = lngToCell(minOf(p1.longitude, p2.longitude))
+            val maxCellLng = lngToCell(maxOf(p1.longitude, p2.longitude))
+            val spanCells = (maxCellLat - minCellLat + 1L) * (maxCellLng - minCellLng + 1L)
+            if (spanCells > MAX_CELLS_PER_SEGMENT) {
+                longSegments.add(i)
+            } else {
+                for (cLat in minCellLat..maxCellLat) {
+                    for (cLng in minCellLng..maxCellLng) {
+                        val key = packGridKey(cLat, cLng)
+                        var bucket = gridBuilder[key]
+                        if (bucket == null) {
+                            bucket = ArrayList(4)
+                            gridBuilder[key] = bucket
+                        }
+                        bucket.add(i)
+                    }
+                }
+            }
         }
 
-        // Map reference markers to their cumulative distance along this alignment polyline
+        val spatialGrid = HashMap<Long, IntArray>(gridBuilder.size)
+        for ((k, list) in gridBuilder) {
+            spatialGrid[k] = list.toIntArray()
+        }
+        val longSegmentIndices = longSegments.toIntArray()
+
+        // Map reference markers to their cumulative distance along this alignment polyline via O(1) spatial grid
         data class CandidateMarkerProj(
             val ref: MappedMarkerRef,
             val perpDist: Double
         )
         val rawMapped = ArrayList<CandidateMarkerProj>(allMarkers.size)
+        val seenMarkerSegments = HashSet<Int>(32)
         for (m in allMarkers) {
             val mLat = m.point.latitude
             val mLng = m.point.longitude
+            val cLat = latToCell(mLat)
+            val cLng = lngToCell(mLng)
+            seenMarkerSegments.clear()
             var bestDist = Double.MAX_VALUE
             var bestAlong = 0.0
-            for (i in 0 until n - 1) {
-                val p1 = pts[i]
-                val p2 = pts[i + 1]
-                // Fast bounding-box pre-filter (~220m margin around segment)
-                val minLat = if (p1.latitude < p2.latitude) p1.latitude else p2.latitude
-                val maxLat = if (p1.latitude > p2.latitude) p1.latitude else p2.latitude
-                if (mLat < minLat - 0.002 || mLat > maxLat + 0.002) continue
 
-                val minLng = if (p1.longitude < p2.longitude) p1.longitude else p2.longitude
-                val maxLng = if (p1.longitude > p2.longitude) p1.longitude else p2.longitude
-                if (mLng < minLng - 0.002 || mLng > maxLng + 0.002) continue
-
-                val proj = GeoUtils.projectPointToSegment(m.point, p1, p2)
+            for (dLat in -1..1) {
+                for (dLng in -1..1) {
+                    val segs = spatialGrid[packGridKey(cLat + dLat, cLng + dLng)] ?: continue
+                    for (i in segs) {
+                        if (!seenMarkerSegments.add(i)) continue
+                        val proj = GeoUtils.projectPointToSegment(m.point, pts[i], pts[i + 1])
+                        if (proj.perpendicularDistance < bestDist) {
+                            bestDist = proj.perpendicularDistance
+                            bestAlong = cumDist[i] + proj.t * segLengths[i]
+                        }
+                    }
+                }
+            }
+            for (i in longSegmentIndices) {
+                if (!seenMarkerSegments.add(i)) continue
+                val proj = GeoUtils.projectPointToSegment(m.point, pts[i], pts[i + 1])
                 if (proj.perpendicularDistance < bestDist) {
                     bestDist = proj.perpendicularDistance
                     bestAlong = cumDist[i] + proj.t * segLengths[i]
@@ -197,10 +257,13 @@ object ChainageMatcher {
             direction = dir,
             carriagewayType = alignment.carriagewayType,
             points = pts,
-            segmentCount = maxOf(0, n - 1),
+            segmentCount = segCount,
             segmentLengths = segLengths,
+            segmentBearingsDeg = segBearings,
             cumulativeDistances = cumDist,
             totalLengthM = totalDist,
+            spatialGrid = spatialGrid,
+            longSegmentIndices = longSegmentIndices,
             mappedMarkers = mapped
         )
 
@@ -281,46 +344,95 @@ object ChainageMatcher {
                 return matchToMarkersDirectly(gpsPoint, gpsAccuracy, routeData.markers)
             }
 
-            // 2. Perform nearest-segment projection across alignments with spatial bounding filter
+            // 2. Perform O(1) spatial-grid nearest-segment projection across alignments
             var bestProj: SegmentProjection? = null
             var bestAlignment: CachedAlignmentGeometry? = null
             var bestSegIdx = -1
             var bestDistanceAlongM = 0.0
             var minScore = Double.MAX_VALUE
 
+            val queryCellLat = latToCell(gpsPoint.latitude)
+            val queryCellLng = lngToCell(gpsPoint.longitude)
+            val hasMultiAlignments = alignments.size > 1
+            val validBearing = bearing?.takeIf { !it.isNaN() }?.toDouble()
+            val seenSegments = HashSet<Int>(32)
+
+            fun evaluateSegment(
+                cached: CachedAlignmentGeometry,
+                alignName: String,
+                segIdx: Int
+            ) {
+                val p1 = cached.points[segIdx]
+                val p2 = cached.points[segIdx + 1]
+                val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
+
+                // Parallel carriageway continuity hysteresis (5.0m advantage for previously matched alignment)
+                val isPrevAlignment = prevAlignmentName.isNotBlank() && alignName == prevAlignmentName
+                val continuityBonus = if (isPrevAlignment) 5.0 else 0.0
+
+                // Parallel carriageway travel-bearing tie-breaker when multiple directional carriageways exist
+                var bearingBonus = 0.0
+                if (hasMultiAlignments && validBearing != null && segIdx in cached.segmentBearingsDeg.indices) {
+                    val segBearing = cached.segmentBearingsDeg[segIdx]
+                    val diff = abs(((validBearing - segBearing + 540.0) % 360.0) - 180.0)
+                    val cosAlign = cos(Math.toRadians(diff))
+                    if (cosAlign >= 0.5) {
+                        bearingBonus = 4.5
+                    } else if (cosAlign <= -0.5) {
+                        bearingBonus = -4.5
+                    }
+                }
+
+                val score = proj.perpendicularDistance - continuityBonus - bearingBonus
+                if (score < minScore) {
+                    minScore = score
+                    bestProj = proj
+                    bestAlignment = cached
+                    bestSegIdx = segIdx
+                    bestDistanceAlongM = cached.cumulativeDistances[segIdx] + proj.t * cached.segmentLengths[segIdx]
+                }
+            }
+
             for (align in alignments) {
                 if (align.points.size < 2) continue
                 val cached = getOrCreateCachedGeometry(align, routeData.markers)
-                val pts = cached.points
+                seenSegments.clear()
+                var checkedAnyGridSegment = false
 
-                for (i in 0 until cached.segmentCount) {
-                    val p1 = pts[i]
-                    val p2 = pts[i + 1]
-
-                    // Fast spatial bounding box rejection (with ~500m / 0.005° margin)
-                    val minLat = minOf(p1.latitude, p2.latitude) - 0.005
-                    val maxLat = maxOf(p1.latitude, p2.latitude) + 0.005
-                    val minLng = minOf(p1.longitude, p2.longitude) - 0.005
-                    val maxLng = maxOf(p1.longitude, p2.longitude) + 0.005
-
-                    if (gpsPoint.latitude !in minLat..maxLat || gpsPoint.longitude !in minLng..maxLng) {
-                        continue
+                // Fast O(1) 3x3 neighborhood lookup (~±220m..440m around current GPS fix)
+                for (dLat in -1..1) {
+                    for (dLng in -1..1) {
+                        val bucket = cached.spatialGrid[packGridKey(queryCellLat + dLat, queryCellLng + dLng)] ?: continue
+                        for (segIdx in bucket) {
+                            if (seenSegments.add(segIdx)) {
+                                checkedAnyGridSegment = true
+                                evaluateSegment(cached, align.name, segIdx)
+                            }
+                        }
                     }
+                }
+                for (segIdx in cached.longSegmentIndices) {
+                    if (seenSegments.add(segIdx)) {
+                        checkedAnyGridSegment = true
+                        evaluateSegment(cached, align.name, segIdx)
+                    }
+                }
 
-                    val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
-
-                    // Parallel carriageway & continuity bonus:
-                    // Give previously matched alignment a 5.0m hysteresis advantage
-                    val isPrevAlignment = prevAlignmentName.isNotBlank() && align.name == prevAlignmentName
-                    val continuityBonus = if (isPrevAlignment) 5.0 else 0.0
-                    val score = proj.perpendicularDistance - continuityBonus
-
-                    if (score < minScore) {
-                        minScore = score
-                        bestProj = proj
-                        bestAlignment = cached
-                        bestSegIdx = i
-                        bestDistanceAlongM = cached.cumulativeDistances[i] + proj.t * cached.segmentLengths[i]
+                // Fallback bounded scan ONLY if vehicle is farther away (>~220m) and grid had no close hit
+                if (!checkedAnyGridSegment || (bestProj != null && bestProj!!.perpendicularDistance > MAXIMUM_OFF_ROUTE_DISTANCE_METRES)) {
+                    val pts = cached.points
+                    for (i in 0 until cached.segmentCount) {
+                        if (seenSegments.contains(i)) continue
+                        val p1 = pts[i]
+                        val p2 = pts[i + 1]
+                        val minLat = minOf(p1.latitude, p2.latitude) - 0.005
+                        val maxLat = maxOf(p1.latitude, p2.latitude) + 0.005
+                        val minLng = minOf(p1.longitude, p2.longitude) - 0.005
+                        val maxLng = maxOf(p1.longitude, p2.longitude) + 0.005
+                        if (gpsPoint.latitude !in minLat..maxLat || gpsPoint.longitude !in minLng..maxLng) {
+                            continue
+                        }
+                        evaluateSegment(cached, align.name, i)
                     }
                 }
             }

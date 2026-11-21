@@ -36,7 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -64,11 +63,14 @@ import com.example.model.MiniMapStyleConfig
 import com.example.model.RouteData
 import com.example.overlay.MiniMapRenderer
 import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapOfflineCoverageBadge
 import com.example.ui.map.MiniMapViewportMath
 import com.example.ui.map.miniMapNavigationGestures
 import com.example.ui.map.rememberResolvedMapColors
 import com.example.ui.theme.AccentRed
+import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.HighlightYellow
+import com.example.ui.theme.smartMapEdgeFade
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -100,6 +102,7 @@ fun MiniMapPreview(
     interactive: Boolean = false,
     autoFitRoute: Boolean = false,
     orientationMode: MiniMapOrientationMode = MiniMapOrientationMode.DIRECTION_UP,
+    fadeToColor: Color? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -164,25 +167,25 @@ fun MiniMapPreview(
 
     // Embedded / Routes / Photos dynamic interactive map path
     val mapTheme = rememberResolvedMapColors(mapThemePreference)
-    val outerGlowBrush = remember(mapTheme.isDark) {
-        Brush.verticalGradient(
-            colors = listOf(
-                mapTheme.mapBackground.copy(alpha = 0.0f),
-                mapTheme.mapBackground.copy(alpha = 0.30f)
-            )
-        )
-    }
+    val resolvedFadeColor = fadeToColor ?: CtecsTheme.colors.surface
+    val isTileLoading by OsmTileManager.isLoading.collectAsStateWithLifecycle()
 
     BoxWithConstraints(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .background(mapTheme.mapBackground)
+            .smartMapEdgeFade(
+                fadeToColor = resolvedFadeColor,
+                edgeSize = 11.dp,
+                cornerRadius = 14.dp
+            )
             .clipToBounds()
     ) {
         val viewportWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
         val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
-        val defaultFit = remember(routeData?.id, location, autoFitRoute, viewportWidthPx, viewportHeightPx) {
+        val baseCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+        val defaultFit = remember(routeData?.id, baseCenter.latitude, autoFitRoute, viewportWidthPx, viewportHeightPx) {
             if (autoFitRoute && routeData != null && routeData.alignments.isNotEmpty()) {
                 MiniMapViewportMath.computeRouteFitCamera(
                     routeData = routeData,
@@ -191,19 +194,33 @@ fun MiniMapPreview(
                     paddingFraction = 0.14f
                 )
             } else {
-                val baseCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-                Pair(baseCenter, 15.5f)
+                val zoom25m = MiniMapViewportMath.computeZoomForGroundRangeMetres(
+                    latitude = baseCenter.latitude,
+                    viewportWidthPx = viewportWidthPx,
+                    viewportHeightPx = viewportHeightPx,
+                    groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+                )
+                Pair(baseCenter, zoom25m)
             }
         }
 
         var isFollowingDefault by remember(routeData?.id, autoFitRoute) { mutableStateOf(true) }
         var exploredCenter by remember(routeData?.id, autoFitRoute) { mutableStateOf<GeoPoint?>(null) }
+        var hasUserAdjustedZoom by remember(routeData?.id, autoFitRoute) { mutableStateOf(false) }
+        var lastAutoFitLat by remember(routeData?.id, autoFitRoute) { mutableStateOf(baseCenter.latitude) }
         var continuousZoom by remember(routeData?.id, autoFitRoute) { mutableFloatStateOf(defaultFit.second) }
 
-        LaunchedEffect(defaultFit.second, isFollowingDefault) {
-            if (isFollowingDefault) {
+        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom, isFollowingDefault) {
+            if (isFollowingDefault && !hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
                 continuousZoom = defaultFit.second
                 exploredCenter = null
+                lastAutoFitLat = baseCenter.latitude
+            }
+        }
+        LaunchedEffect(baseCenter.latitude) {
+            if (isFollowingDefault && !hasUserAdjustedZoom && kotlin.math.abs(baseCenter.latitude - lastAutoFitLat) > 0.5) {
+                continuousZoom = defaultFit.second
+                lastAutoFitLat = baseCenter.latitude
             }
         }
 
@@ -237,12 +254,12 @@ fun MiniMapPreview(
         )
 
         val isDirectionUpActive = effectiveOrientation != MiniMapOrientationMode.NORTH_UP && effectiveBearing != null
-        val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
 
         val cameraCenter = remember(
             isFollowingDefault,
             exploredCenter,
             location,
+            baseCenter,
             defaultFit.first,
             continuousZoom,
             viewportHeightPx,
@@ -260,6 +277,8 @@ fun MiniMapPreview(
                     mapRotationDeg = animatedRotation,
                     isDirectionUpActive = true
                 )
+            } else if (!autoFitRoute) {
+                baseCenter
             } else {
                 defaultFit.first
             }
@@ -270,12 +289,42 @@ fun MiniMapPreview(
             location != null &&
             effectiveOrientation != MiniMapOrientationMode.NORTH_UP
 
+        val renderPlan = remember(viewportWidthPx, viewportHeightPx, continuousZoom) {
+            MiniMapViewportMath.resolveTileRenderPlan(
+                widthPx = viewportWidthPx,
+                heightPx = viewportHeightPx,
+                continuousZoom = continuousZoom
+            )
+        }
+        val tileResult = remember(
+            cameraCenter,
+            renderPlan,
+            mapTheme.isDark,
+            mapTypePreference,
+            tileUpdate
+        ) {
+            OsmTileManager.renderMapBitmapWithCoverage(
+                context = context,
+                center = cameraCenter,
+                widthPx = renderPlan.renderSizePx,
+                heightPx = renderPlan.renderSizePx,
+                zoom = renderPlan.renderBaseZoom,
+                panOffsetX = 0f,
+                panOffsetY = 0f,
+                darkTheme = mapTheme.isDark,
+                mapType = mapTypePreference
+            )
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .miniMapNavigationGestures(enabled = interactive) { centroid, pan, zoom ->
                     val startCenter = if (isFollowingDefault) cameraCenter else (exploredCenter ?: cameraCenter)
                     isFollowingDefault = false
+                    if (kotlin.math.abs(zoom - 1f) > 0.002f) {
+                        hasUserAdjustedZoom = true
+                    }
                     val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
                         currentCenter = startCenter,
                         currentZoom = continuousZoom,
@@ -299,37 +348,20 @@ fun MiniMapPreview(
                 val cx = w / 2f
                 val cy = h / 2f
 
-                val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
-                    widthPx = w,
-                    heightPx = h,
-                    fractionalScale = fractionalScale,
-                    maxPx = 1024
-                )
-
-                val osmBitmap = OsmTileManager.renderMapBitmap(
-                    context = context,
-                    center = cameraCenter,
-                    widthPx = diagPx,
-                    heightPx = diagPx,
-                    zoom = baseZoom,
-                    panOffsetX = 0f,
-                    panOffsetY = 0f,
-                    darkTheme = mapTheme.isDark,
-                    mapType = mapTypePreference
-                )
+                val osmBitmap = tileResult.bitmap
 
                 drawRect(color = mapTheme.mapBackground)
 
                 rotate(degrees = animatedRotation, pivot = Offset(cx, cy)) {
                     if (osmBitmap != null) {
-                        scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                        scale(scale = renderPlan.renderScale, pivot = Offset(cx, cy)) {
                             drawImage(
                                 image = osmBitmap.asImageBitmap(),
                                 dstOffset = IntOffset(
-                                    x = (cx - diagPx / 2f).toInt(),
-                                    y = (cy - diagPx / 2f).toInt()
+                                    x = (cx - renderPlan.renderSizePx / 2f).toInt(),
+                                    y = (cy - renderPlan.renderSizePx / 2f).toInt()
                                 ),
-                                dstSize = IntSize(diagPx, diagPx)
+                                dstSize = IntSize(renderPlan.renderSizePx, renderPlan.renderSizePx)
                             )
                         }
                     } else {
@@ -446,40 +478,21 @@ fun MiniMapPreview(
                 }
             }
 
-            // Soft bottom gradient for badge readability
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(outerGlowBrush)
-            )
-
-            // Highway / Project Tag (Top-Left)
-            if (showProjectTag && highwayTag.isNotBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = mapTheme.badgeBg,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                ) {
-                    Text(
-                        text = highwayTag,
-                        color = if (mapTheme.isDark) HighlightYellow else mapTheme.badgeTextColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-            }
-
-            // Heading unavailable indicator (only when no reliable heading exists)
+            // Heading unavailable or offline coverage status indicator
             if (showHeadingUnavailable) {
                 MiniMapHeadingUnavailableBadge(
                     isDark = mapTheme.isDark,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 6.dp)
+                )
+            } else if (!isTileLoading && tileResult.hasMissingTiles && this@BoxWithConstraints.maxHeight >= 88.dp) {
+                MiniMapOfflineCoverageBadge(
+                    isDark = mapTheme.isDark,
+                    hasPartialCoverage = tileResult.hasAnyCoverage,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 6.dp)
                 )
             }
 
@@ -539,6 +552,7 @@ fun MiniMapPreview(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(
                                 onClick = {
+                                    hasUserAdjustedZoom = true
                                     continuousZoom = (continuousZoom + 0.8f).coerceAtMost(MiniMapViewportMath.MAX_ZOOM)
                                 },
                                 modifier = Modifier
@@ -554,6 +568,7 @@ fun MiniMapPreview(
                             }
                             IconButton(
                                 onClick = {
+                                    hasUserAdjustedZoom = true
                                     continuousZoom = (continuousZoom - 0.8f).coerceAtLeast(MiniMapViewportMath.MIN_ZOOM)
                                 },
                                 modifier = Modifier
@@ -579,7 +594,9 @@ fun MiniMapPreview(
                             onClick = {
                                 isFollowingDefault = true
                                 exploredCenter = null
+                                hasUserAdjustedZoom = false
                                 continuousZoom = defaultFit.second
+                                lastAutoFitLat = baseCenter.latitude
                             },
                             modifier = Modifier
                                 .size(32.dp)

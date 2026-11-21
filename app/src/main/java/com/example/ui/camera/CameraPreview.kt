@@ -1,9 +1,7 @@
 package com.example.ui.camera
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -12,8 +10,6 @@ import android.media.CamcorderProfile
 import android.os.Environment
 import android.util.Log
 import android.view.Surface
-import android.view.Window
-import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -101,11 +97,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.camera.AmbientBrightnessController
-import com.example.camera.AmbientLightSensorMonitor
-import com.example.camera.AmbientLightZone
 import com.example.camera.CameraBrightnessEngine
-import com.example.camera.CameraQualityEngine
+import com.example.camera.CaptureExposureController
 import com.example.model.CaptureSnapshot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -139,12 +132,6 @@ enum class CameraFocusStatus {
     FAILED
 }
 
-private tailrec fun Context.findActivityWindow(): Window? = when (this) {
-    is Activity -> this.window
-    is ContextWrapper -> this.baseContext?.findActivityWindow()
-    else -> null
-}
-
 @Composable
 fun CameraPreview(
     isFrontCamera: Boolean,
@@ -152,14 +139,15 @@ fun CameraPreview(
     zoomRatio: Float,
     exposureIndex: Int,
     isVideoMode: Boolean,
+    isVideoRecording: Boolean = false,
     rotationDegrees: Int = 0,
     isLandscape: Boolean = false,
     photoResolution: String = "1920 x 1080",
     videoResolution: String = "1920 x 1080",
     photoAspectRatio: String = "4:3",
     videoAspectRatio: String = "16:9",
-    autoBrightnessEnabled: Boolean = false,
-    manualPreviewBrightness: Float = CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS,
+    autoBrightnessEnabled: Boolean = true,
+    manualPreviewBrightness: Float = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
     targetVideoFps: Int = 30,
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
@@ -169,7 +157,7 @@ fun CameraPreview(
     onZoomChanged: ((Float) -> Unit)? = null,
     onAutoBrightnessChanged: ((Boolean) -> Unit)? = null,
     onManualBrightnessChanged: ((Float) -> Unit)? = null,
-    onAmbientLightChanged: ((Float?, AmbientLightZone) -> Unit)? = null,
+    onCaptureExposureTelemetry: ((Float, Float, Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -177,7 +165,7 @@ fun CameraPreview(
     val latestSnapshotProvider by rememberUpdatedState(currentSnapshotProvider)
     val latestOnAutoBrightnessChanged by rememberUpdatedState(onAutoBrightnessChanged)
     val latestOnManualBrightnessChanged by rememberUpdatedState(onManualBrightnessChanged)
-    val latestOnAmbientLightChanged by rememberUpdatedState(onAmbientLightChanged)
+    val latestOnCaptureExposureTelemetry by rememberUpdatedState(onCaptureExposureTelemetry)
     val latestZoomRatio by rememberUpdatedState(zoomRatio)
 
     // Camera Hardware Zoom Range State
@@ -210,47 +198,57 @@ fun CameraPreview(
         }
     }
 
-    // Smart Right-Side Display Brightness & Ambient Light Controller
-    val ambientLightMonitor = remember(context) { AmbientLightSensorMonitor(context) }
-    val brightnessController = remember {
-        AmbientBrightnessController(
-            initialAutoEnabled = autoBrightnessEnabled,
-            initialManualBrightness = manualPreviewBrightness,
-            initialHasLightSensor = ambientLightMonitor.isAvailable
+    // Smooth Continuous Photo & Video Capture Exposure Controller (actual camera sensor exposure — NOT screen brightness)
+    val exposureController = remember {
+        CaptureExposureController(
+            initialAutoExposure = autoBrightnessEnabled,
+            initialManualLevel = manualPreviewBrightness
         )
     }
-    var brightnessState by remember { mutableStateOf(brightnessController.getState()) }
+    var captureExposureState by remember { mutableStateOf(exposureController.getState()) }
+    var lastAppliedHardwareEv by remember { mutableIntStateOf(0) }
     var isDraggingBrightness by remember { mutableStateOf(false) }
     var showBrightnessIndicator by remember { mutableStateOf(false) }
     var brightnessDismissKey by remember { mutableIntStateOf(0) }
+    var lastSyncedSliderEv by remember { mutableIntStateOf(exposureIndex) }
 
-    // Synchronize persisted Auto Brightness / Manual Brightness changes without interrupting active drag
+    // Publish live capture exposure telemetry silently so photo capture & UI readout stay synchronized
+    LaunchedEffect(
+        captureExposureState.effectiveNormalizedLevel,
+        captureExposureState.targetEvStops,
+        captureExposureState.capabilities.hasUsableEvRange
+    ) {
+        latestOnCaptureExposureTelemetry?.invoke(
+            captureExposureState.effectiveNormalizedLevel,
+            captureExposureState.targetEvStops,
+            captureExposureState.capabilities.hasUsableEvRange
+        )
+    }
+
+    // Synchronize persisted Auto Exposure / Manual Capture Exposure preferences without interrupting active drag
     LaunchedEffect(autoBrightnessEnabled) {
-        brightnessState = brightnessController.setAutoEnabled(autoBrightnessEnabled)
-        if (!autoBrightnessEnabled) {
-            latestOnAmbientLightChanged?.invoke(null, AmbientLightZone.NORMAL_LIGHT)
+        if (!isDraggingBrightness) {
+            captureExposureState = exposureController.setAutoExposure(autoBrightnessEnabled)
         }
     }
 
     LaunchedEffect(manualPreviewBrightness) {
         if (!isDraggingBrightness) {
-            brightnessState = brightnessController.setManualBrightness(manualPreviewBrightness)
+            captureExposureState = exposureController.setManualNormalizedLevel(manualPreviewBrightness)
         }
     }
 
-    // Restore system screen brightness cleanly when leaving Camera screen
-    DisposableEffect(context) {
-        val window = context.findActivityWindow()
-        onDispose {
-            try {
-                if (window != null) {
-                    val lp = window.attributes
-                    if (lp.screenBrightness != WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE) {
-                        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-                        window.attributes = lp
-                    }
-                }
-            } catch (ignored: Throwable) {}
+    // Cooperate cleanly with explicit EV slider changes without overriding right-side manual drags
+    LaunchedEffect(exposureIndex) {
+        if (exposureIndex != lastSyncedSliderEv && !isDraggingBrightness) {
+            lastSyncedSliderEv = exposureIndex
+            val caps = captureExposureState.capabilities
+            if (caps.hasUsableEvRange) {
+                val scaledTarget = ((exposureIndex.toFloat() / 4f) * maxOf(kotlin.math.abs(caps.minEvIndex), caps.maxEvIndex))
+                    .toInt()
+                    .coerceIn(caps.minEvIndex, caps.maxEvIndex)
+                captureExposureState = exposureController.setFromHardwareEvIndex(scaledTarget)
+            }
         }
     }
 
@@ -274,10 +272,16 @@ fun CameraPreview(
                 )
             val meteringPoint = factory.createPoint(tapOffset.x, tapOffset.y)
 
-            // Enhanced focus with AF (Autofocus), AE (Auto Exposure), and AWB (Auto White Balance)
+            // When user manually adjusted capture exposure via gesture, lock AF without letting AE
+            // cancel or reset the user's chosen capture brightness!
+            val meteringFlags = if (captureExposureState.isAutoExposure) {
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
+            } else {
+                FocusMeteringAction.FLAG_AF
+            }
             val focusAction = FocusMeteringAction.Builder(
                 meteringPoint,
-                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
+                meteringFlags
             ).setAutoCancelDuration(3, TimeUnit.SECONDS)
                 .build()
 
@@ -310,35 +314,29 @@ fun CameraPreview(
         }
     }
 
-    fun updateManualDisplayBrightness(deltaDragPx: Float, dragSpanPx: Float) {
-        val wasAuto = brightnessState.isAutoEnabled
-        val deltaNormalized = -deltaDragPx / dragSpanPx.coerceAtLeast(180f) // Drag UP -> brighter, DOWN -> dimmer
-        val updated = brightnessController.applyManualDragDelta(deltaNormalized)
-        brightnessState = updated
-        if (wasAuto && !updated.isAutoEnabled) {
+    fun updateContinuousCaptureExposure(deltaDragPx: Float, dragSpanPx: Float) {
+        val wasAuto = captureExposureState.isAutoExposure
+        // Map continuous vertical right-side drag proportionally across full capture exposure range [0.0f..1.0f]
+        // Dragging UP (negative deltaY) increases capture exposure; dragging DOWN decreases exposure.
+        val deltaNormalized = -deltaDragPx / dragSpanPx.coerceAtLeast(180f)
+        val updated = exposureController.applyContinuousDragDelta(deltaNormalized)
+        captureExposureState = updated
+        if (wasAuto && !updated.isAutoExposure) {
             latestOnAutoBrightnessChanged?.invoke(false)
-            latestOnAmbientLightChanged?.invoke(null, AmbientLightZone.NORMAL_LIGHT)
         }
     }
 
-    fun persistCurrentManualBrightness() {
-        val current = brightnessController.getState()
-        latestOnManualBrightnessChanged?.invoke(current.manualBrightness)
+    fun persistCurrentCaptureExposure() {
+        val current = exposureController.getState()
+        if (!current.isAutoExposure) {
+            latestOnManualBrightnessChanged?.invoke(current.manualNormalizedLevel)
+        }
     }
 
     fun onBrightnessIndicatorTapped() {
-        if (brightnessState.hasLightSensor) {
-            val nextAuto = !brightnessState.isAutoEnabled
-            brightnessState = brightnessController.setAutoEnabled(nextAuto)
-            latestOnAutoBrightnessChanged?.invoke(nextAuto)
-            if (!nextAuto) {
-                latestOnAmbientLightChanged?.invoke(null, AmbientLightZone.NORMAL_LIGHT)
-            }
-        } else {
-            val resetState = brightnessController.setManualBrightness(CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS)
-            brightnessState = resetState
-            latestOnManualBrightnessChanged?.invoke(resetState.manualBrightness)
-        }
+        val nextAuto = !captureExposureState.isAutoExposure
+        captureExposureState = exposureController.setAutoExposure(nextAuto)
+        latestOnAutoBrightnessChanged?.invoke(nextAuto)
         brightnessDismissKey++
     }
 
@@ -505,63 +503,23 @@ fun CameraPreview(
         }
     }
 
-    // Single lifecycle-aware ambient light sensor listener — active ONLY while Camera is visible & Auto Brightness is ON
-    DisposableEffect(lifecycleOwner, hasCameraPermission, autoBrightnessEnabled, ambientLightMonitor) {
-        fun startSensorIfNeeded() {
-            if (!hasCameraPermission || !autoBrightnessEnabled) {
-                ambientLightMonitor.stop()
-                return
-            }
-            if (!ambientLightMonitor.isAvailable) {
-                brightnessState = brightnessController.setHasLightSensor(false)
-                return
-            }
-            brightnessState = brightnessController.setHasLightSensor(true)
-            ambientLightMonitor.start { rawLux ->
-                val updated = brightnessController.onAmbientLuxSample(rawLux)
-                brightnessState = updated
-                latestOnAmbientLightChanged?.invoke(updated.ambientLux, updated.lightZone)
-            }
-        }
-
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_RESUME -> startSensorIfNeeded()
-                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> ambientLightMonitor.stop()
-                else -> Unit
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-            startSensorIfNeeded()
-        }
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            ambientLightMonitor.stop()
-        }
-    }
-
-    // Smooth real display brightness adjustment (0.02f..1.0f) without artificial scrim overlay
-    val animatedDisplayBrightness by animateFloatAsState(
-        targetValue = brightnessState.effectiveDisplayBrightness,
-        animationSpec = tween(
-            durationMillis = if (isDraggingBrightness) 45 else 240,
-            easing = FastOutSlowInEasing
-        ),
-        label = "camera_display_brightness"
-    )
-
-    LaunchedEffect(animatedDisplayBrightness, hasCameraPermission) {
+    // Query real hardware exposure limits (EV range, step, ISO, shutter) whenever lens/lifecycle initializes
+    LaunchedEffect(hasCameraPermission, isFrontCamera, lifecycleResumeVersion) {
         if (!hasCameraPermission) return@LaunchedEffect
-        try {
-            val window = context.findActivityWindow() ?: return@LaunchedEffect
-            val lp = window.attributes
-            val clamped = CameraBrightnessEngine.clampBrightness(animatedDisplayBrightness)
-            if (kotlin.math.abs(lp.screenBrightness - clamped) >= 0.002f) {
-                lp.screenBrightness = clamped
-                window.attributes = lp
-            }
-        } catch (ignored: Throwable) {}
+        val caps = CameraBrightnessEngine.queryCaptureExposureCapabilities(
+            context = context,
+            controller = controller,
+            isFrontCamera = isFrontCamera
+        )
+        captureExposureState = exposureController.updateCapabilities(caps)
+        // Re-query shortly after CameraX finishes async lens bind so live ExposureState is picked up
+        delay(450L)
+        val boundCaps = CameraBrightnessEngine.queryCaptureExposureCapabilities(
+            context = context,
+            controller = controller,
+            isFrontCamera = isFrontCamera
+        )
+        captureExposureState = exposureController.updateCapabilities(boundCaps)
     }
 
     LaunchedEffect(isFlashOn) {
@@ -576,34 +534,75 @@ fun CameraPreview(
         } catch (ignored: Exception) {}
     }
 
-    // Coordinated Camera2 lighting, exposure & noise-reduction tuning (decoupled from manual screen brightness;
-    // applies non-destructive CaptureRequestOptions so active video recording is never interrupted)
+    // Real-time Smooth Continuous Hardware Capture Exposure Application (preview + photo + active video recording).
+    // Applies immediately during drag with frame-paced smoothing on fast jumps to eliminate flicker/hunting,
+    // without touching Android screen brightness or interrupting active video recording.
     LaunchedEffect(
         hasCameraPermission,
-        exposureIndex,
-        autoBrightnessEnabled,
-        brightnessState.lightZone,
-        brightnessState.recommendedAutoExposureOffset,
+        captureExposureState.targetEvIndex,
+        captureExposureState.isAutoExposure,
+        captureExposureState.effectiveNormalizedLevel,
+        captureExposureState.capabilities,
         isVideoMode,
+        isVideoRecording,
         targetVideoFps,
         isFrontCamera,
         lifecycleResumeVersion
     ) {
         if (!hasCameraPermission) return@LaunchedEffect
-        try {
-            val capabilities = CameraQualityEngine.queryHardwareCapabilities(context, isFrontCamera)
-            CameraBrightnessEngine.applyLightConditionCameraTuning(
+        val caps = captureExposureState.capabilities
+        val targetEv = captureExposureState.targetEvIndex
+        val totalSpan = (caps.maxEvIndex - caps.minEvIndex).coerceAtLeast(1)
+
+        if (!caps.hasUsableEvRange) {
+            // Hardware EV unavailable -> apply safe MANUAL_SENSOR fallback if supported
+            CameraBrightnessEngine.applyHardwareCaptureExposure(
                 controller = controller,
                 cameraControl = controller.cameraControl,
-                capabilities = capabilities,
-                lightZone = brightnessState.lightZone,
+                state = captureExposureState,
+                appliedEvIndex = 0,
                 isVideoMode = isVideoMode,
-                targetVideoFps = targetVideoFps,
-                autoBrightnessEnabled = autoBrightnessEnabled,
-                recommendedAutoEvOffset = brightnessState.recommendedAutoExposureOffset,
-                userExposureIndex = exposureIndex
+                isVideoRecording = isVideoRecording,
+                targetVideoFps = targetVideoFps
             )
-        } catch (ignored: Throwable) {}
+            return@LaunchedEffect
+        }
+
+        // First step applies immediately without waiting for gesture end
+        var currentApplied = lastAppliedHardwareEv.coerceIn(caps.minEvIndex, caps.maxEvIndex)
+        if (currentApplied == targetEv) {
+            CameraBrightnessEngine.applyHardwareCaptureExposure(
+                controller = controller,
+                cameraControl = controller.cameraControl,
+                state = captureExposureState,
+                appliedEvIndex = targetEv,
+                isVideoMode = isVideoMode,
+                isVideoRecording = isVideoRecording,
+                targetVideoFps = targetVideoFps
+            )
+        } else {
+            while (currentApplied != targetEv) {
+                currentApplied = CameraBrightnessEngine.computeNextSmoothEvIndex(
+                    currentAppliedEv = currentApplied,
+                    targetEvIndex = targetEv,
+                    isVideoRecording = isVideoRecording,
+                    totalEvSpan = totalSpan
+                )
+                lastAppliedHardwareEv = currentApplied
+                CameraBrightnessEngine.applyHardwareCaptureExposure(
+                    controller = controller,
+                    cameraControl = controller.cameraControl,
+                    state = captureExposureState,
+                    appliedEvIndex = currentApplied,
+                    isVideoMode = isVideoMode,
+                    isVideoRecording = isVideoRecording,
+                    targetVideoFps = targetVideoFps
+                )
+                if (currentApplied != targetEv) {
+                    delay(16L) // ~60Hz smooth anti-jump ramp during fast swipes & video recording
+                }
+            }
+        }
     }
 
     LaunchedEffect(photoResolution, isLandscape, hasCameraPermission) {
@@ -691,7 +690,7 @@ fun CameraPreview(
                                         if (isDraggingDisplayBrightness) {
                                             isDraggingDisplayBrightness = false
                                             isDraggingBrightness = false
-                                            persistCurrentManualBrightness()
+                                            persistCurrentCaptureExposure()
                                             brightnessDismissKey++
                                         }
 
@@ -726,12 +725,12 @@ fun CameraPreview(
                                                 isDraggingBrightness = true
                                                 showBrightnessIndicator = true
                                                 change.consume()
-                                                updateManualDisplayBrightness(totalDistY, dragSpanPx)
+                                                updateContinuousCaptureExposure(totalDistY, dragSpanPx)
                                                 lastY = currentPos.y
                                             }
                                         } else {
                                             change.consume()
-                                            updateManualDisplayBrightness(deltaY, dragSpanPx)
+                                            updateContinuousCaptureExposure(deltaY, dragSpanPx)
                                             lastY = currentPos.y
                                         }
                                     }
@@ -743,7 +742,7 @@ fun CameraPreview(
                                             triggerTouchToFocus(startPos, constraints.maxWidth, constraints.maxHeight)
                                         } else if (isDraggingDisplayBrightness) {
                                             isDraggingBrightness = false
-                                            persistCurrentManualBrightness()
+                                            persistCurrentCaptureExposure()
                                             brightnessDismissKey++
                                         }
                                         break
@@ -759,12 +758,12 @@ fun CameraPreview(
                     position = focusPosition
                 )
 
-                // 4. Existing Right-Side Brightness Control Indicator (Full Range + Auto Status)
+                // 4. Existing Right-Side Capture Exposure Indicator (Full Hardware EV Range + Auto Status)
                 CameraBrightnessIndicator(
                     visible = showBrightnessIndicator,
-                    brightness = brightnessState.effectiveDisplayBrightness,
-                    isAutoBrightness = brightnessState.isAutoEnabled,
-                    lightZone = brightnessState.lightZone,
+                    exposureNormalized = captureExposureState.effectiveNormalizedLevel,
+                    evStops = captureExposureState.targetEvStops,
+                    isAutoExposure = captureExposureState.isAutoExposure,
                     onToggleAutoOrReset = { onBrightnessIndicatorTapped() },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
@@ -951,41 +950,41 @@ fun CameraFocusIndicator(
 }
 
 /**
- * Minimalist Glass Brightness Indicator shown on the right side of the preview when the user
+ * Minimalist Glass Capture Exposure Indicator shown on the right side of the preview when the user
  * drags vertically in the existing right-side brightness control zone.
- * Displays full practical dim-to-max brightness (`0%..100%`) and Auto Brightness status.
+ * Displays continuous camera capture exposure (`min dim` to `max bright`), EV stops, and Auto status.
  */
 @Composable
 fun CameraBrightnessIndicator(
     visible: Boolean,
-    brightness: Float,
-    isAutoBrightness: Boolean = false,
-    lightZone: AmbientLightZone = AmbientLightZone.NORMAL_LIGHT,
+    exposureNormalized: Float,
+    evStops: Float = 0f,
+    isAutoExposure: Boolean = true,
     onToggleAutoOrReset: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(180)) + scaleIn(tween(180)),
-        exit = fadeOut(tween(280)),
+        enter = fadeIn(tween(140)) + scaleIn(tween(140)),
+        exit = fadeOut(tween(240)),
         modifier = modifier
     ) {
-        val clamped = CameraBrightnessEngine.clampBrightness(brightness)
-        val percent = CameraBrightnessEngine.brightnessToPercent(clamped)
-        val progress = (percent / 100f).coerceIn(0f, 1f)
+        val clamped = CameraBrightnessEngine.clampNormalizedExposure(exposureNormalized)
+        val progress = clamped.coerceIn(0f, 1f)
+        val evText = CameraBrightnessEngine.formatEvStops(evStops)
         val badgeText = when {
-            isAutoBrightness -> "AUTO"
-            percent <= 5 -> "DIM"
-            percent >= 98 -> "MAX"
-            else -> "BRI"
+            isAutoExposure -> "AUTO"
+            progress <= 0.04f -> "MIN"
+            progress >= 0.96f -> "MAX"
+            else -> "EV"
         }
 
         Surface(
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(24.dp),
             color = Color(0xD80D111A),
             modifier = Modifier
-                .width(48.dp)
-                .height(172.dp)
+                .width(54.dp)
+                .height(176.dp)
                 .then(
                     if (onToggleAutoOrReset != null) {
                         Modifier.clickable { onToggleAutoOrReset() }
@@ -998,23 +997,23 @@ fun CameraBrightnessIndicator(
                 verticalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(vertical = 12.dp, horizontal = 6.dp)
+                    .padding(vertical = 12.dp, horizontal = 4.dp)
             ) {
-                // Top: Brightness / Auto Icon
+                // Top: Exposure / Auto Icon
                 val sunTint = when {
-                    isAutoBrightness -> HighlightYellow
-                    percent >= 80 -> HighlightYellow
-                    percent <= 20 -> Color(0xFF94A3B8)
+                    isAutoExposure -> Color(0xFF38BDF8)
+                    progress >= 0.65f -> HighlightYellow
+                    progress <= 0.35f -> Color(0xFF94A3B8)
                     else -> Color.White
                 }
                 Icon(
-                    imageVector = if (isAutoBrightness) Icons.Default.BrightnessAuto else Icons.Default.LightMode,
-                    contentDescription = if (isAutoBrightness) "Auto Brightness (${lightZone.label})" else "Brightness $percent%",
+                    imageVector = if (isAutoExposure) Icons.Default.BrightnessAuto else Icons.Default.LightMode,
+                    contentDescription = if (isAutoExposure) "Auto Capture Exposure" else "Capture Exposure $evText EV",
                     tint = sunTint,
                     modifier = Modifier.size(20.dp)
                 )
 
-                // Middle: Vertical Fill Slider Track (full practical dim to max bright)
+                // Middle: Smooth Continuous Vertical Exposure Bar (min dim -> balanced -> max bright)
                 Box(
                     modifier = Modifier
                         .width(4.dp)
@@ -1028,24 +1027,30 @@ fun CameraBrightnessIndicator(
                             .fillMaxWidth()
                             .fillMaxHeight(progress.coerceAtLeast(0.04f))
                             .clip(RoundedCornerShape(2.dp))
-                            .background(if (isAutoBrightness) Color(0xFF38BDF8) else HighlightYellow)
+                            .background(if (isAutoExposure) Color(0xFF38BDF8) else HighlightYellow)
                     )
                 }
 
-                // Bottom: Percentage & Mode Readout
+                // Bottom: Continuous EV Stops & Mode Readout
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "$percent%",
-                        color = if (isAutoBrightness || percent >= 85) HighlightYellow else Color.White,
+                        text = evText,
+                        color = if (isAutoExposure) Color(0xFF38BDF8) else if (kotlin.math.abs(evStops) >= 0.05f) HighlightYellow else Color.White,
                         fontSize = 10.sp,
+                        lineHeight = 12.sp,
                         fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        softWrap = false,
                         textAlign = TextAlign.Center
                     )
                     Text(
                         text = badgeText,
-                        color = if (isAutoBrightness) Color(0xFF38BDF8) else SecondaryText,
+                        color = if (isAutoExposure) Color(0xFF38BDF8) else SecondaryText,
                         fontSize = 7.sp,
+                        lineHeight = 9.sp,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
                         textAlign = TextAlign.Center
                     )
                 }

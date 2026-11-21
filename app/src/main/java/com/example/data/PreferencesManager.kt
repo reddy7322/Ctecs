@@ -302,6 +302,10 @@ class PreferencesManager(context: Context) {
         val KEY_SURVEY_SHOW_LANE_TRACK = booleanPreferencesKey("survey_show_lane_track")
         val KEY_SURVEY_SHOW_MARKERS = booleanPreferencesKey("survey_show_markers")
         val KEY_SURVEY_MAP_TYPE = stringPreferencesKey("survey_map_type")
+
+        // Offline Mini Map Preloading Preferences
+        val KEY_OFFLINE_MAP_AUTO_PRELOAD = booleanPreferencesKey("offline_map_auto_preload")
+        val KEY_OFFLINE_MAP_WIFI_ONLY = booleanPreferencesKey("offline_map_wifi_only")
     }
 
     private val observedDataFlow: Flow<Preferences> = appContext.dataStore.data.onEach { prefs ->
@@ -471,6 +475,12 @@ class PreferencesManager(context: Context) {
     fun getInitialSurveyMapType(): String =
         getInitialPreferences()[KEY_SURVEY_MAP_TYPE] ?: "standard"
 
+    fun getInitialOfflineMapAutoPreload(): Boolean =
+        getInitialPreferences()[KEY_OFFLINE_MAP_AUTO_PRELOAD] ?: true
+
+    fun getInitialOfflineMapWifiOnly(): Boolean =
+        getInitialPreferences()[KEY_OFFLINE_MAP_WIFI_ONLY] ?: false
+
     // -------------------------------------------------------------------------
     // Reactive Flows & Safe Mutations
     // -------------------------------------------------------------------------
@@ -522,6 +532,24 @@ class PreferencesManager(context: Context) {
     suspend fun updateMapType(type: String) {
         safeEdit { prefs ->
             prefs[KEY_MAP_TYPE] = type
+        }
+    }
+
+    val offlineMapAutoPreloadFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
+        prefs[KEY_OFFLINE_MAP_AUTO_PRELOAD] ?: true
+    }.distinctUntilChanged()
+
+    val offlineMapWifiOnlyFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
+        prefs[KEY_OFFLINE_MAP_WIFI_ONLY] ?: false
+    }.distinctUntilChanged()
+
+    suspend fun updateOfflineMapPreferences(
+        autoPreload: Boolean? = null,
+        wifiOnly: Boolean? = null
+    ) {
+        safeEdit { prefs ->
+            if (autoPreload != null) prefs[KEY_OFFLINE_MAP_AUTO_PRELOAD] = autoPreload
+            if (wifiOnly != null) prefs[KEY_OFFLINE_MAP_WIFI_ONLY] = wifiOnly
         }
     }
 
@@ -676,8 +704,8 @@ class PreferencesManager(context: Context) {
             videoResolution = prefs[KEY_VIDEO_RESOLUTION] ?: "1920 x 1080",
             photoAspectRatio = prefs[KEY_PHOTO_ASPECT_RATIO] ?: "4:3",
             videoAspectRatio = prefs[KEY_VIDEO_ASPECT_RATIO] ?: "16:9",
-            autoBrightnessEnabled = prefs[KEY_CAMERA_AUTO_BRIGHTNESS] ?: false,
-            manualPreviewBrightness = (prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] ?: 0.65f).coerceIn(0.02f, 1.0f)
+            autoBrightnessEnabled = prefs[KEY_CAMERA_AUTO_BRIGHTNESS] ?: true,
+            manualPreviewBrightness = (prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] ?: 0.5f).coerceIn(0.0f, 1.0f)
         )
     }
 
@@ -1105,7 +1133,7 @@ class PreferencesManager(context: Context) {
         prefs[KEY_PHOTO_ASPECT_RATIO] = settings.photoAspectRatio
         prefs[KEY_VIDEO_ASPECT_RATIO] = settings.videoAspectRatio
         prefs[KEY_CAMERA_AUTO_BRIGHTNESS] = settings.autoBrightnessEnabled
-        prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] = settings.manualPreviewBrightness.coerceIn(0.02f, 1.0f)
+        prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] = settings.manualPreviewBrightness.coerceIn(0.0f, 1.0f)
     }
 
     suspend fun updateIsFlashOn(enabled: Boolean) {

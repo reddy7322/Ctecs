@@ -205,6 +205,7 @@ import com.example.ui.dialogs.ChainageSourceBadge
 import com.example.ui.dialogs.NavigateToChainageDialog
 import com.example.ui.dialogs.NavigateToChainageQuickButton
 import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapOfflineCoverageBadge
 import com.example.ui.map.MiniMapViewportMath
 import com.example.ui.map.miniMapNavigationGestures
 import com.example.ui.theme.AccentRed
@@ -654,7 +655,7 @@ fun HomeScreen(
                             )
                         )
                         .clip(RoundedCornerShape(16.dp))
-                        .smartMapEdgeFade(fadeToColor = pageBgColor, edgeSize = 14.dp)
+                        .smartMapEdgeFade(fadeToColor = pageBgColor, edgeSize = 12.dp, cornerRadius = 16.dp)
                         .testTag("home_interactive_map_container")
                 ) {
                     InteractiveSmartMap(
@@ -2483,27 +2484,38 @@ fun InteractiveSmartMap(
     var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
     var continuousZoom by remember {
         mutableFloatStateOf(
-            (sharedZoomLevel ?: screensaverSettings.miniMapZoomLevel).coerceIn(
-                MiniMapViewportMath.MIN_ZOOM,
-                MiniMapViewportMath.MAX_ZOOM
+            MiniMapViewportMath.computeZoomForGroundRangeMetres(
+                latitude = (location ?: routeData?.bounds?.center)?.latitude ?: 28.6139,
+                viewportWidthPx = 360f,
+                viewportHeightPx = 360f,
+                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
             )
         )
     }
+    var hasUserAdjustedZoom by remember { mutableStateOf(false) }
+    var lastAutoFitLat by remember {
+        mutableStateOf((location ?: routeData?.bounds?.center)?.latitude ?: 28.6139)
+    }
+    var lastObservedSharedZoom by remember { mutableStateOf(sharedZoomLevel) }
+    var ignoreNextSharedZoomSync by remember { mutableStateOf(false) }
     var isFollowingUser by remember { mutableStateOf(true) }
 
     LaunchedEffect(sharedZoomLevel) {
-        if (sharedZoomLevel != null) {
-            continuousZoom = sharedZoomLevel.coerceIn(
-                MiniMapViewportMath.MIN_ZOOM,
-                MiniMapViewportMath.MAX_ZOOM
-            )
-        }
-    }
-
-    LaunchedEffect(sharedRecenterEpoch) {
-        if (sharedRecenterEpoch > 0L) {
-            isFollowingUser = true
-            exploredCenter = null
+        val prev = lastObservedSharedZoom
+        if (sharedZoomLevel != null && prev != null && sharedZoomLevel != prev) {
+            lastObservedSharedZoom = sharedZoomLevel
+            if (ignoreNextSharedZoomSync) {
+                ignoreNextSharedZoomSync = false
+            } else {
+                val delta = sharedZoomLevel - prev
+                hasUserAdjustedZoom = true
+                continuousZoom = (continuousZoom + delta).coerceIn(
+                    MiniMapViewportMath.MIN_ZOOM,
+                    MiniMapViewportMath.MAX_ZOOM
+                )
+            }
+        } else {
+            lastObservedSharedZoom = sharedZoomLevel
         }
     }
 
@@ -2528,11 +2540,6 @@ fun InteractiveSmartMap(
         anim
     } else {
         0.35f
-    }
-
-    val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
-    val viewRangeMetres = remember(continuousZoom) {
-        OsmTileManager.viewRangeMetresForZoom(continuousZoom)
     }
 
     val controlSurfaceColor = if (mapTheme.isDark) Color(0xEB0D111A) else Color(0xF5FFFFFF)
@@ -2580,6 +2587,49 @@ fun InteractiveSmartMap(
         val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
         val gpsOrRouteCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
+        val initial25mZoom = remember(gpsOrRouteCenter.latitude, viewportWidthPx, viewportHeightPx) {
+            MiniMapViewportMath.computeZoomForGroundRangeMetres(
+                latitude = gpsOrRouteCenter.latitude,
+                viewportWidthPx = viewportWidthPx,
+                viewportHeightPx = viewportHeightPx,
+                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+            )
+        }
+
+        // Automatically initialize and adapt 25m viewing range on layout/orientation change until user manually zooms
+        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom) {
+            if (!hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
+                continuousZoom = initial25mZoom
+                lastAutoFitLat = gpsOrRouteCenter.latitude
+            }
+        }
+        // If first GPS fix jumps significantly in latitude (e.g. from default fallback to real region), recalibrate 25m range
+        LaunchedEffect(gpsOrRouteCenter.latitude) {
+            if (!hasUserAdjustedZoom && kotlin.math.abs(gpsOrRouteCenter.latitude - lastAutoFitLat) > 0.5) {
+                continuousZoom = initial25mZoom
+                lastAutoFitLat = gpsOrRouteCenter.latitude
+            }
+        }
+        // Restore initial 25m viewing range on shared recenter command
+        LaunchedEffect(sharedRecenterEpoch) {
+            if (sharedRecenterEpoch > 0L) {
+                isFollowingUser = true
+                exploredCenter = null
+                hasUserAdjustedZoom = false
+                continuousZoom = initial25mZoom
+                lastAutoFitLat = gpsOrRouteCenter.latitude
+            }
+        }
+
+        val viewRangeMetres = remember(continuousZoom, gpsOrRouteCenter.latitude, viewportWidthPx, viewportHeightPx) {
+            MiniMapViewportMath.computeGroundRangeMetres(
+                continuousZoom = continuousZoom,
+                latitude = gpsOrRouteCenter.latitude,
+                viewportWidthPx = viewportWidthPx,
+                viewportHeightPx = viewportHeightPx
+            )
+        }
+
         val cameraCenter = if (isFollowingUser) {
             MiniMapViewportMath.computeFollowCameraCenter(
                 vehicleGeo = gpsOrRouteCenter,
@@ -2592,12 +2642,47 @@ fun InteractiveSmartMap(
             exploredCenter ?: gpsOrRouteCenter
         }
 
+        val renderPlan = remember(viewportWidthPx, viewportHeightPx, continuousZoom) {
+            MiniMapViewportMath.resolveTileRenderPlan(
+                widthPx = viewportWidthPx,
+                heightPx = viewportHeightPx,
+                continuousZoom = continuousZoom
+            )
+        }
+        val tileResult = remember(
+            cameraCenter,
+            renderPlan,
+            mapTheme.isDark,
+            mapTypePreference,
+            tileUpdate,
+            isVisible
+        ) {
+            if (isVisible) {
+                OsmTileManager.renderMapBitmapWithCoverage(
+                    context = context,
+                    center = cameraCenter,
+                    widthPx = renderPlan.renderSizePx,
+                    heightPx = renderPlan.renderSizePx,
+                    zoom = renderPlan.renderBaseZoom,
+                    panOffsetX = 0f,
+                    panOffsetY = 0f,
+                    darkTheme = mapTheme.isDark,
+                    mapType = mapTypePreference
+                )
+            } else {
+                null
+            }
+        }
+
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
                 .miniMapNavigationGestures(enabled = true) { centroid, pan, zoom ->
                     val startCenter = if (isFollowingUser) cameraCenter else (exploredCenter ?: cameraCenter)
                     isFollowingUser = false
+                    if (kotlin.math.abs(zoom - 1f) > 0.002f) {
+                        hasUserAdjustedZoom = true
+                    }
                     val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
                         currentCenter = startCenter,
                         currentZoom = continuousZoom,
@@ -2620,42 +2705,21 @@ fun InteractiveSmartMap(
             val cx = w / 2f
             val cy = h / 2f
 
-            val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
-                widthPx = w,
-                heightPx = h,
-                fractionalScale = fractionalScale,
-                maxPx = 1024
-            )
-
+            val osmBmp = tileResult?.bitmap
             var hasOsmTiles = false
-            val osmBmp = if (isVisible) {
-                OsmTileManager.renderMapBitmap(
-                    context = context,
-                    center = cameraCenter,
-                    widthPx = diagPx,
-                    heightPx = diagPx,
-                    zoom = baseZoom,
-                    panOffsetX = 0f,
-                    panOffsetY = 0f,
-                    darkTheme = mapTheme.isDark,
-                    mapType = mapTypePreference
-                )
-            } else {
-                null
-            }
 
             drawRect(color = mapTheme.mapBackground)
 
             rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
                 if (osmBmp != null) {
-                    scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                    scale(scale = renderPlan.renderScale, pivot = Offset(cx, cy)) {
                         drawImage(
                             image = osmBmp.asImageBitmap(),
                             dstOffset = IntOffset(
-                                x = (cx - diagPx / 2f).toInt(),
-                                y = (cy - diagPx / 2f).toInt()
+                                x = (cx - renderPlan.renderSizePx / 2f).toInt(),
+                                y = (cy - renderPlan.renderSizePx / 2f).toInt()
                             ),
-                            dstSize = IntSize(diagPx, diagPx)
+                            dstSize = IntSize(renderPlan.renderSizePx, renderPlan.renderSizePx)
                         )
                     }
                     hasOsmTiles = true
@@ -2949,6 +3013,9 @@ fun InteractiveSmartMap(
                     .clickable {
                         isFollowingUser = true
                         exploredCenter = null
+                        hasUserAdjustedZoom = false
+                        continuousZoom = initial25mZoom
+                        lastAutoFitLat = gpsOrRouteCenter.latitude
                         onSharedRecenter?.invoke()
                     }
                     .testTag("map_follow_button")
@@ -2992,6 +3059,10 @@ fun InteractiveSmartMap(
                 .clickable {
                     isFollowingUser = true
                     exploredCenter = null
+                    hasUserAdjustedZoom = false
+                    continuousZoom = initial25mZoom
+                    lastAutoFitLat = gpsOrRouteCenter.latitude
+                    onSharedRecenter?.invoke()
                 }
                 .testTag("map_compass_widget")
         ) {
@@ -3114,6 +3185,8 @@ fun InteractiveSmartMap(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 IconButton(
                     onClick = {
+                        hasUserAdjustedZoom = true
+                        ignoreNextSharedZoomSync = true
                         continuousZoom = (continuousZoom + screensaverSettings.miniMapZoomStep.coerceIn(0.25f, 1.5f))
                             .coerceAtMost(MiniMapViewportMath.MAX_ZOOM)
                         onSharedZoomIn?.invoke()
@@ -3137,6 +3210,8 @@ fun InteractiveSmartMap(
                 )
                 IconButton(
                     onClick = {
+                        hasUserAdjustedZoom = true
+                        ignoreNextSharedZoomSync = true
                         continuousZoom = (continuousZoom - screensaverSettings.miniMapZoomStep.coerceIn(0.25f, 1.5f))
                             .coerceAtLeast(MiniMapViewportMath.MIN_ZOOM)
                         onSharedZoomOut?.invoke()
@@ -3157,18 +3232,19 @@ fun InteractiveSmartMap(
 
         // Bottom-Right Dynamic Scale Badge (Flat Borderless)
         val scaleText = remember(viewRangeMetres) {
-            val tenthRange = (viewRangeMetres / 10.0).coerceAtLeast(10.0)
             val roundedMetres = when {
-                tenthRange <= 25.0 -> 25.0
-                tenthRange <= 50.0 -> 50.0
-                tenthRange <= 100.0 -> 100.0
-                tenthRange <= 250.0 -> 250.0
-                tenthRange <= 500.0 -> 500.0
-                tenthRange <= 1_000.0 -> 1_000.0
-                tenthRange <= 5_000.0 -> 5_000.0
-                tenthRange <= 25_000.0 -> 25_000.0
-                tenthRange <= 100_000.0 -> 100_000.0
-                tenthRange <= 500_000.0 -> 500_000.0
+                viewRangeMetres <= 7.5 -> 5.0
+                viewRangeMetres <= 15.0 -> 10.0
+                viewRangeMetres <= 35.0 -> 25.0
+                viewRangeMetres <= 75.0 -> 50.0
+                viewRangeMetres <= 150.0 -> 100.0
+                viewRangeMetres <= 350.0 -> 250.0
+                viewRangeMetres <= 750.0 -> 500.0
+                viewRangeMetres <= 1_500.0 -> 1_000.0
+                viewRangeMetres <= 5_000.0 -> 5_000.0
+                viewRangeMetres <= 25_000.0 -> 25_000.0
+                viewRangeMetres <= 100_000.0 -> 100_000.0
+                viewRangeMetres <= 500_000.0 -> 500_000.0
                 else -> 2_000_000.0
             }
             OsmTileManager.formatScaleLabel(roundedMetres)
@@ -3188,6 +3264,16 @@ fun InteractiveSmartMap(
                 fontSize = 9.5.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            )
+        }
+
+        if (isVisible && !isTileLoading && tileResult?.hasMissingTiles == true) {
+            MiniMapOfflineCoverageBadge(
+                isDark = mapTheme.isDark,
+                hasPartialCoverage = tileResult.hasAnyCoverage,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 8.dp)
             )
         }
     }

@@ -89,58 +89,102 @@ fun Modifier.smartFadeSurface(
     }
 
 /**
- * Smart Edge Fade overlay for maps and visual panels: feathers all four edges softly
- * into [fadeToColor] (pure AMOLED black in Dark Mode, pure white in Light Mode)
- * to eliminate harsh rectangular boundaries while keeping inner map content crystal clear.
+ * Smart Faded Outline Border modifier for Mini Maps and visual panels:
+ * - Softly feathers the perimeter edges into [fadeToColor] (pure dark / crisp light surface)
+ *   without darkening/clipping inner map content or causing muddy corners.
+ * - Adds a subtle, minimalist translucent outline around the rounded container bounds so the
+ *   Mini Map blends harmoniously into Light, Dark, and Screensaver themes.
  */
 fun Modifier.smartMapEdgeFade(
     fadeToColor: Color,
-    edgeSize: Dp = 14.dp
+    edgeSize: Dp = 12.dp,
+    cornerRadius: Dp = 16.dp,
+    outlineColor: Color? = null,
+    showSubtleOutline: Boolean = true
 ): Modifier = this.drawWithContent {
     drawContent()
-    val px = edgeSize.toPx().coerceAtMost(size.minDimension * 0.22f)
-    if (px <= 0f) return@drawWithContent
+    val px = edgeSize.toPx().coerceAtMost(size.minDimension * 0.14f)
+    if (px > 0.5f) {
+        val peakAlpha = 0.54f
+        val midAlpha = 0.16f
 
-    // Top fade
-    drawRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(fadeToColor.copy(alpha = 0.85f), Color.Transparent),
-            startY = 0f,
-            endY = px
-        ),
-        topLeft = Offset.Zero,
-        size = Size(size.width, px)
-    )
-    // Bottom fade
-    drawRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(Color.Transparent, fadeToColor.copy(alpha = 0.88f)),
-            startY = size.height - px,
-            endY = size.height
-        ),
-        topLeft = Offset(0f, size.height - px),
-        size = Size(size.width, px)
-    )
-    // Left fade
-    drawRect(
-        brush = Brush.horizontalGradient(
-            colors = listOf(fadeToColor.copy(alpha = 0.70f), Color.Transparent),
-            startX = 0f,
-            endX = px * 0.85f
-        ),
-        topLeft = Offset.Zero,
-        size = Size(px * 0.85f, size.height)
-    )
-    // Right fade
-    drawRect(
-        brush = Brush.horizontalGradient(
-            colors = listOf(Color.Transparent, fadeToColor.copy(alpha = 0.70f)),
-            startX = size.width - px * 0.85f,
-            endX = size.width
-        ),
-        topLeft = Offset(size.width - px * 0.85f, 0f),
-        size = Size(px * 0.85f, size.height)
-    )
+        // Top & Bottom vertical peripheral fade
+        drawRect(
+            brush = Brush.verticalGradient(
+                0.0f to fadeToColor.copy(alpha = peakAlpha),
+                0.42f to fadeToColor.copy(alpha = midAlpha),
+                1.0f to Color.Transparent,
+                startY = 0f,
+                endY = px
+            ),
+            topLeft = Offset.Zero,
+            size = Size(size.width, px)
+        )
+        drawRect(
+            brush = Brush.verticalGradient(
+                0.0f to Color.Transparent,
+                0.58f to fadeToColor.copy(alpha = midAlpha),
+                1.0f to fadeToColor.copy(alpha = peakAlpha + 0.04f),
+                startY = size.height - px,
+                endY = size.height
+            ),
+            topLeft = Offset(0f, size.height - px),
+            size = Size(size.width, px)
+        )
+
+        // Left & Right horizontal peripheral fade (inset between top/bottom fades? No, soft low-alpha overlap keeps corners natural)
+        val sideW = px * 0.78f
+        val sideAlpha = 0.40f
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0.0f to fadeToColor.copy(alpha = sideAlpha),
+                0.45f to fadeToColor.copy(alpha = sideAlpha * 0.28f),
+                1.0f to Color.Transparent,
+                startX = 0f,
+                endX = sideW
+            ),
+            topLeft = Offset.Zero,
+            size = Size(sideW, size.height)
+        )
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0.0f to Color.Transparent,
+                0.55f to fadeToColor.copy(alpha = sideAlpha * 0.28f),
+                1.0f to fadeToColor.copy(alpha = sideAlpha),
+                startX = size.width - sideW,
+                endX = size.width
+            ),
+            topLeft = Offset(size.width - sideW, 0f),
+            size = Size(sideW, size.height)
+        )
+    }
+
+    if (showSubtleOutline) {
+        val isDarkBg = (fadeToColor.red * 0.299f + fadeToColor.green * 0.587f + fadeToColor.blue * 0.114f) < 0.5f
+        val resolvedOutline = outlineColor ?: if (isDarkBg) {
+            Color(0xFF94A3B8).copy(alpha = 0.26f)
+        } else {
+            Color(0xFF0F172A).copy(alpha = 0.14f)
+        }
+        val strokePx = 1.dp.toPx()
+        val halfStroke = strokePx * 0.5f
+        val radPx = cornerRadius.toPx().coerceAtLeast(0f)
+        drawRoundRect(
+            brush = Brush.linearGradient(
+                colors = listOf(
+                    resolvedOutline,
+                    resolvedOutline.copy(alpha = resolvedOutline.alpha * 0.45f),
+                    resolvedOutline.copy(alpha = resolvedOutline.alpha * 0.85f)
+                ),
+                start = Offset.Zero,
+                end = Offset(size.width, size.height)
+            ),
+            topLeft = Offset(halfStroke, halfStroke),
+            size = Size((size.width - strokePx).coerceAtLeast(1f), (size.height - strokePx).coerceAtLeast(1f)),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(radPx, radPx),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx)
+        )
+    }
 }
 
 /**

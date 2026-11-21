@@ -13,16 +13,19 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import com.example.model.DirectionDetectionState
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.SmartDirectionState
+import com.example.overlay.OverlayTextGenerator
 import com.example.ui.MainViewModel
 import com.example.ui.camera.CameraScreen
 import com.example.ui.camera.CameraSideOption
-import com.example.ui.camera.resolveCameraSideOption
+import com.example.ui.camera.resolveCameraSideDisplayState
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -43,70 +46,104 @@ class CameraSideDirectTapSwitchingTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    private fun assertNoManualOrDropdownUiPresent() {
-        // Zero visible MANUAL / Manual / MAN / • M labels anywhere on Camera Screen
+    private fun assertNoAutoManualOrDropdownUiPresent() {
+        // Zero visible MANUAL / AUTO / dropdown labels anywhere on Camera Screen
         assertEquals(0, composeTestRule.onAllNodesWithText("MANUAL", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("MAN▾", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("• M", substring = true).fetchSemanticsNodes().size)
-        // Zero dropdown / popup menu items
+        assertEquals(0, composeTestRule.onAllNodesWithText("AUTO", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
+        assertEquals(0, composeTestRule.onAllNodesWithText("MEDIAN", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("Auto (Smart Direction)", substring = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("Smart Direction Mode", substring = true).fetchSemanticsNodes().size)
-        assertEquals(0, composeTestRule.onAllNodesWithText("AUTO▾", substring = true).fetchSemanticsNodes().size)
     }
 
     @Test
-    fun `CameraSideOption cycles strictly in RHS LHS BOTH MEDIAN NONE AUTO RHS order`() {
+    fun `CameraSideOption cycles strictly in LHS RHS BHS NONE LHS order and never exposes AUTO`() {
+        assertEquals(
+            listOf(CameraSideOption.LHS, CameraSideOption.RHS, CameraSideOption.BHS, CameraSideOption.NONE),
+            CameraSideOption.entries
+        )
+
         val sequence = buildList {
-            var current = CameraSideOption.RHS
-            repeat(7) {
+            var current = CameraSideOption.LHS
+            repeat(5) {
                 add(current)
                 current = current.next()
             }
         }
         assertEquals(
             listOf(
-                CameraSideOption.RHS,
                 CameraSideOption.LHS,
-                CameraSideOption.BOTH,
-                CameraSideOption.MEDIAN,
+                CameraSideOption.RHS,
+                CameraSideOption.BHS,
                 CameraSideOption.NONE,
-                CameraSideOption.AUTO,
-                CameraSideOption.RHS
+                CameraSideOption.LHS
             ),
             sequence
         )
 
-        // Verify resolveCameraSideOption handles AUTO, all manual sides, and BHS -> BOTH cleanly
-        assertEquals(
-            CameraSideOption.AUTO,
-            resolveCameraSideOption(
-                SmartDirectionState(isManualOverride = false, confirmedSide = "LHS"),
-                ProjectProfile(roadSide = RoadSide.RHS)
-            )
+        // Underlying AUTO mode with confirmed LHS displays ONLY "LHS" (never "AUTO"), and tapping advances to RHS
+        val autoLhs = resolveCameraSideDisplayState(
+            SmartDirectionState(
+                detectionState = DirectionDetectionState.LHS_CONFIRMED,
+                isManualOverride = false,
+                confirmedSide = "LHS"
+            ),
+            ProjectProfile(roadSide = RoadSide.RHS)
         )
-        assertEquals(
-            CameraSideOption.BOTH,
-            resolveCameraSideOption(
-                SmartDirectionState(isManualOverride = true, confirmedSide = "BHS"),
-                ProjectProfile(roadSide = RoadSide.BOTH)
-            )
+        assertEquals("LHS", autoLhs.displayLabel)
+        assertEquals(CameraSideOption.LHS, autoLhs.activeOption)
+        assertEquals(CameraSideOption.RHS, autoLhs.nextOptionOnTap())
+
+        // Underlying AUTO mode with confirmed RHS displays ONLY "RHS", and tapping advances to BHS
+        val autoRhs = resolveCameraSideDisplayState(
+            SmartDirectionState(
+                detectionState = DirectionDetectionState.RHS_CONFIRMED,
+                isManualOverride = false,
+                confirmedSide = "RHS"
+            ),
+            ProjectProfile(roadSide = RoadSide.LHS)
         )
-        assertEquals(
-            CameraSideOption.NONE,
-            resolveCameraSideOption(
-                SmartDirectionState(isManualOverride = true, confirmedSide = "NONE"),
-                ProjectProfile(roadSide = RoadSide.NONE)
-            )
+        assertEquals("RHS", autoRhs.displayLabel)
+        assertEquals(CameraSideOption.RHS, autoRhs.activeOption)
+        assertEquals(CameraSideOption.BHS, autoRhs.nextOptionOnTap())
+
+        // Underlying AUTO mode when uncertain / weak GPS never shows "AUTO" and never guesses LHS/RHS
+        val autoUncertain = resolveCameraSideDisplayState(
+            SmartDirectionState(
+                detectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
+                isManualOverride = false,
+                confirmedSide = null
+            ),
+            ProjectProfile(roadSide = RoadSide.RHS)
         )
+        assertEquals("---", autoUncertain.displayLabel)
+        assertNull(autoUncertain.activeOption)
+        assertEquals(CameraSideOption.LHS, autoUncertain.nextOptionOnTap())
+
+        // Manual BHS & NONE map cleanly
+        val manualBhs = resolveCameraSideDisplayState(
+            SmartDirectionState(isManualOverride = true, confirmedSide = "BHS"),
+            ProjectProfile(roadSide = RoadSide.BOTH)
+        )
+        assertEquals("BHS", manualBhs.displayLabel)
+        assertEquals(CameraSideOption.NONE, manualBhs.nextOptionOnTap())
+
+        val manualNone = resolveCameraSideDisplayState(
+            SmartDirectionState(isManualOverride = true, confirmedSide = "NONE"),
+            ProjectProfile(roadSide = RoadSide.NONE)
+        )
+        assertEquals("NONE", manualNone.displayLabel)
+        assertEquals(CameraSideOption.LHS, manualNone.nextOptionOnTap())
     }
 
     @Test
     @Config(qualifiers = "w411dp-h891dp-port")
-    fun `Portrait CameraScreen cycles RHS LHS BOTH MEDIAN NONE AUTO RHS on direct tap with no dropdown and no MANUAL text`() {
+    fun `Portrait CameraScreen cycles LHS RHS BHS NONE LHS on direct tap with no AUTO or MANUAL text and synchronized capture output`() {
         composeTestRule.mainClock.autoAdvance = false
         val app = ApplicationProvider.getApplicationContext<Application>()
         val viewModel = MainViewModel(app)
-        viewModel.updateSide(RoadSide.RHS)
+        viewModel.updateSide(RoadSide.LHS)
 
         composeTestRule.setContent {
             MyApplicationTheme(themeMode = "dark") {
@@ -120,69 +157,64 @@ class CameraSideDirectTapSwitchingTest {
         }
         advanceAndIdle(200L)
 
-        // Step 0: Starts on RHS
-        composeTestRule.onNodeWithTag("side_chip").assertIsDisplayed().assertTextEquals("RHS")
-        assertNoManualOrDropdownUiPresent()
+        // Step 0: Starts on LHS
+        composeTestRule.onNodeWithTag("side_chip").assertIsDisplayed().assertTextEquals("LHS")
+        assertNoAutoManualOrDropdownUiPresent()
+        assertEquals("LHS", OverlayTextGenerator.resolveAuthoritativeCaptureSide(viewModel.createCurrentSnapshot()).first)
 
-        // Step 1: Tap -> LHS
-        composeTestRule.onNodeWithTag("side_chip").performClick()
-        advanceAndIdle(150L)
-        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("LHS")
-        assertEquals(RoadSide.LHS, viewModel.projectProfile.value.roadSide)
-        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 2: Tap -> BOTH
-        composeTestRule.onNodeWithTag("side_chip").performClick()
-        advanceAndIdle(150L)
-        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("BOTH")
-        assertEquals(RoadSide.BOTH, viewModel.projectProfile.value.roadSide)
-        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 3: Tap -> MEDIAN
-        composeTestRule.onNodeWithTag("side_chip").performClick()
-        advanceAndIdle(150L)
-        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("MEDIAN")
-        assertEquals(RoadSide.MEDIAN, viewModel.projectProfile.value.roadSide)
-        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 4: Tap -> NONE
-        composeTestRule.onNodeWithTag("side_chip").performClick()
-        advanceAndIdle(150L)
-        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("NONE")
-        assertEquals(RoadSide.NONE, viewModel.projectProfile.value.roadSide)
-        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 5: Tap -> AUTO
-        composeTestRule.onNodeWithTag("side_chip").performClick()
-        advanceAndIdle(200L)
-        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("AUTO")
-        assertFalse("AUTO mode must clear manual override so GPS/KMZ auto detection runs", viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 6: Tap -> wraps back to RHS
+        // Step 1: Tap -> RHS
         composeTestRule.onNodeWithTag("side_chip").performClick()
         advanceAndIdle(150L)
         composeTestRule.onNodeWithTag("side_chip").assertTextEquals("RHS")
         assertEquals(RoadSide.RHS, viewModel.projectProfile.value.roadSide)
         assertTrue(viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
+        assertEquals("RHS", OverlayTextGenerator.resolveAuthoritativeCaptureSide(viewModel.createCurrentSnapshot()).first)
+        assertNoAutoManualOrDropdownUiPresent()
 
-        // Metadata snapshot stays synchronized cleanly
-        val snapshot = viewModel.createCurrentSnapshot()
-        assertEquals("RHS", snapshot.matchResult.smartDirectionState?.confirmedSide)
+        // Step 2: Tap -> BHS
+        composeTestRule.onNodeWithTag("side_chip").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("BHS")
+        assertEquals(RoadSide.BOTH, viewModel.projectProfile.value.roadSide)
+        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
+        assertEquals("BHS", OverlayTextGenerator.resolveAuthoritativeCaptureSide(viewModel.createCurrentSnapshot()).first)
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Step 3: Tap -> NONE (omits side cleanly from capture output!)
+        composeTestRule.onNodeWithTag("side_chip").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("NONE")
+        assertEquals(RoadSide.NONE, viewModel.projectProfile.value.roadSide)
+        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
+        assertNull(
+            "NONE must omit side field from capture overlay/metadata",
+            OverlayTextGenerator.resolveAuthoritativeCaptureSide(viewModel.createCurrentSnapshot()).first
+        )
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Step 4: Tap -> wraps cleanly back to LHS
+        composeTestRule.onNodeWithTag("side_chip").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("LHS")
+        assertEquals(RoadSide.LHS, viewModel.projectProfile.value.roadSide)
+        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
+        assertEquals("LHS", OverlayTextGenerator.resolveAuthoritativeCaptureSide(viewModel.createCurrentSnapshot()).first)
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Underlying resetSideToAuto still works internally and NEVER displays "AUTO" on Camera Screen
+        viewModel.resetSideToAuto()
+        advanceAndIdle(200L)
+        assertFalse(viewModel.smartDirectionState.value.isManualOverride)
+        assertNoAutoManualOrDropdownUiPresent()
     }
 
     @Test
     @Config(qualifiers = "w800dp-h400dp-land")
-    fun `Landscape CameraScreen cycles RHS LHS BOTH MEDIAN NONE AUTO RHS on direct tap with no dropdown no MANUAL text and aligned pill`() {
+    fun `Landscape CameraScreen cycles LHS RHS BHS NONE LHS on direct tap with aligned pill and no AUTO or MANUAL text`() {
         composeTestRule.mainClock.autoAdvance = false
         val app = ApplicationProvider.getApplicationContext<Application>()
         val viewModel = MainViewModel(app)
-        viewModel.updateSide(RoadSide.RHS)
+        viewModel.updateSide(RoadSide.LHS)
 
         composeTestRule.setContent {
             MyApplicationTheme(themeMode = "dark") {
@@ -202,51 +234,37 @@ class CameraSideDirectTapSwitchingTest {
         assertEquals("Landscape side pill width must match sibling pill width", laneBounds.right - laneBounds.left, sideBounds.right - sideBounds.left)
         assertEquals("Landscape side pill height must match sibling pill height", laneBounds.bottom - laneBounds.top, sideBounds.bottom - sideBounds.top)
 
-        // Step 0: RHS
-        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("RHS")
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 1: LHS
-        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
-        advanceAndIdle(150L)
+        // Step 0: LHS
         composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("LHS")
-        assertEquals(RoadSide.LHS, viewModel.projectProfile.value.roadSide)
-        assertNoManualOrDropdownUiPresent()
+        assertNoAutoManualOrDropdownUiPresent()
 
-        // Step 2: BOTH
-        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
-        advanceAndIdle(150L)
-        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("BOTH")
-        assertEquals(RoadSide.BOTH, viewModel.projectProfile.value.roadSide)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 3: MEDIAN
-        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
-        advanceAndIdle(150L)
-        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("MEDIAN")
-        assertEquals(RoadSide.MEDIAN, viewModel.projectProfile.value.roadSide)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 4: NONE
-        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
-        advanceAndIdle(150L)
-        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("NONE")
-        assertEquals(RoadSide.NONE, viewModel.projectProfile.value.roadSide)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 5: AUTO
-        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
-        advanceAndIdle(200L)
-        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("AUTO")
-        assertFalse(viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
-
-        // Step 6: Wraps to RHS
+        // Step 1: RHS
         composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
         advanceAndIdle(150L)
         composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("RHS")
         assertEquals(RoadSide.RHS, viewModel.projectProfile.value.roadSide)
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Step 2: BHS
+        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("BHS")
+        assertEquals(RoadSide.BOTH, viewModel.projectProfile.value.roadSide)
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Step 3: NONE
+        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("NONE")
+        assertEquals(RoadSide.NONE, viewModel.projectProfile.value.roadSide)
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Step 4: Wraps back to LHS
+        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("LHS")
+        assertEquals(RoadSide.LHS, viewModel.projectProfile.value.roadSide)
         assertTrue(viewModel.smartDirectionState.value.isManualOverride)
-        assertNoManualOrDropdownUiPresent()
+        assertNoAutoManualOrDropdownUiPresent()
     }
 }

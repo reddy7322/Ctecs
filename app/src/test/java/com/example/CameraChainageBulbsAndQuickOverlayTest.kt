@@ -198,14 +198,14 @@ class CameraChainageBulbsAndQuickOverlayTest {
         assertEquals(0, composeTestRule.onAllNodesWithText("CUSTOM").fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("MANUAL").fetchSemanticsNodes().size)
 
-        // Verify Side chip cycles directly through RHS -> LHS -> BOTH -> MEDIAN -> NONE -> AUTO
-        composeTestRule.onNodeWithTag("side_chip").performClick()
-        advanceAndIdle(150L)
-        assertEquals(RoadSide.RHS, viewModel.projectProfile.value.roadSide)
-        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
+        // Verify Side chip cycles directly through LHS -> RHS -> BHS -> NONE -> LHS
         composeTestRule.onNodeWithTag("side_chip").performClick()
         advanceAndIdle(150L)
         assertEquals(RoadSide.LHS, viewModel.projectProfile.value.roadSide)
+        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
+        composeTestRule.onNodeWithTag("side_chip").performClick()
+        advanceAndIdle(150L)
+        assertEquals(RoadSide.RHS, viewModel.projectProfile.value.roadSide)
 
         // Verify Activity dropdown opens on click and updates activity when preset selected
         composeTestRule.onNodeWithTag("activity_chip").performClick()

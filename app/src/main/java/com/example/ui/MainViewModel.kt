@@ -24,7 +24,6 @@ import com.example.backup.BackupPreviewInfo
 import com.example.backup.BackupRestoreReport
 import com.example.backup.RestoreMode
 import com.example.backup.SettingsBackupManager
-import com.example.camera.AmbientLightZone
 import com.example.camera.CameraBrightnessEngine
 import com.example.data.AppDatabase
 import com.example.data.MediaDeleteResult
@@ -451,6 +450,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val label = if (type.equals("satellite", ignoreCase = true)) "Satellite" else "Standard (Street)"
             _uiMessages.emit(UiMessage.Info("Map Type: $label"))
+        }
+    }
+
+    val offlineMapSyncManager: com.example.geo.OfflineMapSyncManager =
+        com.example.geo.OfflineMapSyncManager.shared
+    val offlineMapSyncState: StateFlow<com.example.geo.OfflineMapSyncState> =
+        offlineMapSyncManager.syncState
+
+    val offlineMapAutoPreload: StateFlow<Boolean> = preferencesManager.offlineMapAutoPreloadFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialOfflineMapAutoPreload()
+    )
+
+    val offlineMapWifiOnly: StateFlow<Boolean> = preferencesManager.offlineMapWifiOnlyFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = preferencesManager.getInitialOfflineMapWifiOnly()
+    )
+
+    fun setOfflineMapAutoPreload(enabled: Boolean) {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateOfflineMapPreferences(autoPreload = enabled)
+        }
+        offlineMapSyncManager.updatePreferences(
+            context = getApplication(),
+            autoPreload = enabled,
+            wifiOnly = offlineMapWifiOnly.value
+        )
+    }
+
+    fun setOfflineMapWifiOnly(enabled: Boolean) {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateOfflineMapPreferences(wifiOnly = enabled)
+        }
+        offlineMapSyncManager.updatePreferences(
+            context = getApplication(),
+            autoPreload = offlineMapAutoPreload.value,
+            wifiOnly = enabled
+        )
+    }
+
+    fun pauseOfflineMapSync() {
+        offlineMapSyncManager.pauseSync(getApplication())
+    }
+
+    fun resumeOfflineMapSync() {
+        offlineMapSyncManager.resumeSync(getApplication())
+    }
+
+    fun retryOfflineMapSync() {
+        offlineMapSyncManager.retrySync(getApplication())
+    }
+
+    fun clearInactiveOfflineMapCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            offlineMapSyncManager.clearInactiveProjectCaches(
+                context = getApplication(),
+                activeRouteId = activeRouteData.value?.id
+            )
+            showToast("Cleared inactive project offline map cache", ToastType.SUCCESS)
         }
     }
 
@@ -996,12 +1056,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _exposureCompensation = MutableStateFlow(preferencesManager.getInitialCameraSettings().exposureCompensationStep)
     val exposureCompensation: StateFlow<Int> = _exposureCompensation.asStateFlow()
 
-    // Smart Camera Ambient Light State (transient runtime telemetry for preview/capture optimization)
-    private val _cameraAmbientLux = MutableStateFlow<Float?>(null)
-    val cameraAmbientLux: StateFlow<Float?> = _cameraAmbientLux.asStateFlow()
+    // Live Camera Capture Exposure Telemetry (tracks real sensor exposure for photo/video & UI readout)
+    private val _captureExposureEvStops = MutableStateFlow(0f)
+    val captureExposureEvStops: StateFlow<Float> = _captureExposureEvStops.asStateFlow()
 
-    private val _cameraAmbientLightZone = MutableStateFlow(AmbientLightZone.NORMAL_LIGHT)
-    val cameraAmbientLightZone: StateFlow<AmbientLightZone> = _cameraAmbientLightZone.asStateFlow()
+    private val _captureExposureNormalized = MutableStateFlow(
+        preferencesManager.getInitialCameraSettings().let { s ->
+            if (s.autoBrightnessEnabled) CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL else s.manualPreviewBrightness
+        }
+    )
+    val captureExposureNormalized: StateFlow<Float> = _captureExposureNormalized.asStateFlow()
+
+    private val _captureExposureHardwareSupported = MutableStateFlow(true)
+    val captureExposureHardwareSupported: StateFlow<Boolean> = _captureExposureHardwareSupported.asStateFlow()
 
     // Manual chainage override state (Camera Screen simple custom chainage, independent of Chainage Control System)
     private val _manualChainage = MutableStateFlow<Chainage?>(preferencesManager.getInitialManualChainageOverride())
@@ -1578,10 +1645,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             activeRouteData.collect { route ->
+                lastCalculatedMatchResult = null
                 CtecsNavigationTelemetryHub.sharedDirectionManager.onAlignmentChanged(
                     routeId = route?.id,
                     alignmentId = selectedAlignmentId.value ?: route?.selectedAlignmentId ?: route?.activeAlignment?.id
                 )
+                val refreshedDir = evaluateAndPublishSmartDirection(
+                    loc = locationTracker.locationState.value,
+                    matchResult = _autoMatchStateFlow.value,
+                    route = route
+                )
+                _autoMatchStateFlow.update { current ->
+                    current.copy(
+                        detectedSide = refreshedDir.confirmedSide ?: "Unknown",
+                        smartDirectionState = refreshedDir
+                    )
+                }
                 CtecsNavigationTelemetryHub.updateTelemetry(routeData = route)
                 syncBackgroundNavigationService()
                 com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
@@ -1679,6 +1758,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     accuracyMetres = loc.accuracy.takeIf { it > 0f },
                     routeData = activeRouteData.value,
                     timestampMs = loc.lastFixTime.takeIf { it > 0L } ?: System.currentTimeMillis()
+                )
+            }
+        }
+
+        // Shared KMZ/KML offline Mini Map synchronization across all screens
+        viewModelScope.launch {
+            combine(
+                offlineMapAutoPreload,
+                offlineMapWifiOnly
+            ) { autoPreload, wifiOnly -> autoPreload to wifiOnly }
+                .distinctUntilChanged()
+                .collect { (autoPreload, wifiOnly) ->
+                    offlineMapSyncManager.updatePreferences(
+                        context = getApplication(),
+                        autoPreload = autoPreload,
+                        wifiOnly = wifiOnly
+                    )
+                }
+        }
+        viewModelScope.launch {
+            combine(
+                activeRouteData,
+                mapTypePreference,
+                _homeScreensaverSettings
+            ) { route, mapType, hudSettings ->
+                val effectiveType = if (hudSettings.miniMapStyle == MiniMapStyle.SATELLITE ||
+                    mapType.equals("satellite", ignoreCase = true)
+                ) {
+                    "satellite"
+                } else {
+                    "standard"
+                }
+                route to effectiveType
+            }.distinctUntilChanged().collect { (route, effectiveType) ->
+                offlineMapSyncManager.syncRoute(
+                    context = getApplication(),
+                    routeData = route,
+                    mapType = effectiveType
                 )
             }
         }
@@ -2469,14 +2586,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateSide(side: RoadSide) {
-        progressionTracker.setManualSide(side.label)
         val updatedPrefs = _smartDirectionPreferences.value.copy(
             controlMode = com.example.model.DirectionControlMode.MANUAL_OVERRIDE,
             manualOverrideSide = side.label
         )
+        val normalizedLabel = updatedPrefs.normalizedManualSide ?: side.label
+        progressionTracker.setManualSide(normalizedLabel)
         _smartDirectionPreferences.value = updatedPrefs
         CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
         _projectProfile.update { it.copy(roadSide = side) }
+
+        // Synchronously publish authoritative direction state so Camera preview, immediate captures,
+        // Home, Screensaver, Survey, and Notifications stay 100% consistent without async lag.
+        val loc = locationTracker.locationState.value
+        val currentMatch = _autoMatchStateFlow.value
+        val route = activeRouteData.value
+        val dirState = evaluateAndPublishSmartDirection(loc, currentMatch, route)
+        _autoMatchStateFlow.value = currentMatch.copy(
+            detectedSide = dirState.confirmedSide ?: "Unknown",
+            smartDirectionState = dirState
+        )
+
         preferencesManager.launchSafeEdit {
             preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
             preferencesManager.editProjectProfile { it.copy(roadSide = side) }
@@ -2781,25 +2911,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setCameraAutoBrightness(enabled: Boolean) {
+        if (enabled) {
+            _exposureCompensation.value = 0
+            _captureExposureNormalized.value = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL
+            _captureExposureEvStops.value = 0f
+        }
         preferencesManager.launchSafeEdit {
             preferencesManager.editCameraSettings { current ->
-                current.copy(autoBrightnessEnabled = enabled)
+                current.copy(
+                    autoBrightnessEnabled = enabled,
+                    exposureCompensationStep = if (enabled) 0 else current.exposureCompensationStep
+                )
             }
         }
     }
 
-    fun setCameraManualBrightness(brightness: Float) {
-        val clamped = CameraBrightnessEngine.clampBrightness(brightness)
+    fun setCameraManualBrightness(normalizedLevel: Float) {
+        val clamped = CameraBrightnessEngine.clampNormalizedExposure(normalizedLevel)
+        _captureExposureNormalized.value = clamped
         preferencesManager.launchSafeEdit {
             preferencesManager.editCameraSettings { current ->
-                current.copy(manualPreviewBrightness = clamped)
+                current.copy(
+                    autoBrightnessEnabled = false,
+                    manualPreviewBrightness = clamped
+                )
             }
         }
     }
 
-    fun updateCameraAmbientLight(lux: Float?, zone: AmbientLightZone) {
-        _cameraAmbientLux.value = lux
-        _cameraAmbientLightZone.value = zone
+    fun updateCaptureExposureTelemetry(
+        normalizedLevel: Float,
+        evStops: Float,
+        hardwareEvSupported: Boolean
+    ) {
+        _captureExposureNormalized.value = CameraBrightnessEngine.clampNormalizedExposure(normalizedLevel)
+        _captureExposureEvStops.value = evStops
+        _captureExposureHardwareSupported.value = hardwareEvSupported
     }
 
     fun cycleTimer() {
@@ -3297,6 +3444,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             lastCalculatedMatchResult = null
             progressionTracker.resetChainageFilter()
             routeRepository.deleteRoute(id)
+            offlineMapSyncManager.deleteProjectOfflineData(getApplication(), id)
             _routeImportStatus.value = null
             _routeImportError.value = null
             _uiMessages.emit(UiMessage.Info("Alignment removed"))
@@ -3440,16 +3588,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var optimizedBitmap: Bitmap? = null
             try {
                 val snapshot = createCurrentSnapshot()
-                val ambientLux = _cameraAmbientLux.value
-                val ambientZone = _cameraAmbientLightZone.value
+                val settingsNow = cameraSettings.value
+                val activeLevel = _captureExposureNormalized.value
+                val activeEvStops = _captureExposureEvStops.value
+                val hwEvApplied = _captureExposureHardwareSupported.value
 
-                // Optimize captured photo strictly for actual scene/ambient lighting BEFORE overlays
-                // so all timestamp/GPS/project/chainage/weather/logo/watermark/EXIF overlays stay untouched.
+                // Retain the user's selected capture exposure with low-light noise reduction BEFORE overlays
+                // so all timestamp/GPS/project/chainage/LHS-RHS/weather/logo/watermark/EXIF overlays stay untouched.
                 val captureBitmap = withContext(Dispatchers.Default) {
-                    CameraBrightnessEngine.optimizeCapturedPhotoForLighting(
+                    CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
                         source = bitmap,
-                        ambientLux = ambientLux,
-                        ambientZone = ambientZone
+                        normalizedLevel = activeLevel,
+                        evStops = activeEvStops,
+                        isAutoExposure = settingsNow.autoBrightnessEnabled,
+                        hardwareEvApplied = hwEvApplied
                     )
                 }
                 if (captureBitmap !== bitmap) {

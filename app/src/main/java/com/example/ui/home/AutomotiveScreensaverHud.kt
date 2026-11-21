@@ -132,8 +132,10 @@ import com.example.model.ScreensaverThemeMode
 import com.example.model.resolveEffectiveScreensaverPresentation
 import com.example.overlay.MiniMapRenderer
 import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapOfflineCoverageBadge
 import com.example.ui.map.MiniMapViewportMath
 import com.example.ui.map.miniMapNavigationGestures
+import com.example.ui.theme.smartMapEdgeFade
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -1344,6 +1346,13 @@ private fun GlassMiniMapContainer(
     modifier: Modifier = Modifier
 ) {
     val edgeShape = RoundedCornerShape(22.dp)
+    val adaptiveOutlineColor = if (screensaverSettings.miniMapShowBorder) {
+        Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(
+            alpha = if (palette.isDark) 0.28f else 0.16f
+        )
+    } else {
+        null
+    }
 
     Box(
         modifier = modifier
@@ -1353,6 +1362,13 @@ private fun GlassMiniMapContainer(
                 if (palette.isHudMirror) Color.Black
                 else if (palette.isDark) Color(0xFF060E1D).copy(alpha = 0.38f)
                 else Color(0xFFE2E8F0).copy(alpha = 0.42f)
+            )
+            .smartMapEdgeFade(
+                fadeToColor = palette.rootBackground,
+                edgeSize = 12.dp,
+                cornerRadius = 22.dp,
+                outlineColor = adaptiveOutlineColor,
+                showSubtleOutline = true
             )
     ) {
         ScreensaverLiveMiniMapPanel(
@@ -1367,29 +1383,6 @@ private fun GlassMiniMapContainer(
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("screensaver_glass_map")
-        )
-
-        // Soft peripheral fade so map blends seamlessly into the screensaver surface with zero borders
-        val edgeGlowColor = if (screensaverSettings.miniMapShowBorder) {
-            Color(screensaverSettings.miniMapBorderColorPreset.colorLong).copy(
-                alpha = if (palette.isDark) 0.10f else 0.06f
-            )
-        } else {
-            Color.Transparent
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color.Transparent,
-                            edgeGlowColor,
-                            palette.rootBackground.copy(alpha = if (palette.isHudMirror) 0.42f else 0.34f)
-                        )
-                    )
-                )
         )
     }
 }
@@ -2356,6 +2349,7 @@ private fun ScreensaverLiveMiniMapPanel(
     val context = LocalContext.current
     val density = LocalDensity.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
+    val isTileLoading by OsmTileManager.isLoading.collectAsStateWithLifecycle()
     val reusableRoutePath = remember { Path() }
 
     val mapStyle = screensaverSettings.miniMapStyle
@@ -2368,17 +2362,23 @@ private fun ScreensaverLiveMiniMapPanel(
 
     var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
     var localZoomOffset by remember { mutableFloatStateOf(0f) }
+    var hasUserAdjustedZoom by remember { mutableStateOf(false) }
+    var lastSharedZoom by remember { mutableFloatStateOf(screensaverSettings.miniMapZoomLevel) }
+
+    LaunchedEffect(screensaverSettings.miniMapZoomLevel) {
+        val delta = screensaverSettings.miniMapZoomLevel - lastSharedZoom
+        if (kotlin.math.abs(delta) > 0.001f) {
+            lastSharedZoom = screensaverSettings.miniMapZoomLevel
+            hasUserAdjustedZoom = true
+            localZoomOffset += delta
+        }
+    }
 
     LaunchedEffect(screensaverSettings.recenterEpoch) {
         exploredCenter = null
         localZoomOffset = 0f
+        hasUserAdjustedZoom = false
     }
-
-    val continuousZoom = (screensaverSettings.miniMapZoomLevel + localZoomOffset).coerceIn(
-        MiniMapViewportMath.MIN_ZOOM,
-        MiniMapViewportMath.MAX_ZOOM
-    )
-    val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
 
     var lastValidLocation by remember { mutableStateOf(location) }
     LaunchedEffect(location) {
@@ -2438,6 +2438,39 @@ private fun ScreensaverLiveMiniMapPanel(
         val viewportWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
         val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
+        val base25mZoom = remember(vehicleGeo.latitude, viewportWidthPx, viewportHeightPx) {
+            MiniMapViewportMath.computeZoomForGroundRangeMetres(
+                latitude = vehicleGeo.latitude,
+                viewportWidthPx = viewportWidthPx,
+                viewportHeightPx = viewportHeightPx,
+                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+            )
+        }
+        var anchoredBaseZoom by remember { mutableFloatStateOf(base25mZoom) }
+        var lastAutoFitLat by remember { mutableStateOf(vehicleGeo.latitude) }
+
+        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom) {
+            if (!hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
+                anchoredBaseZoom = base25mZoom
+                lastAutoFitLat = vehicleGeo.latitude
+            }
+        }
+        LaunchedEffect(vehicleGeo.latitude) {
+            if (!hasUserAdjustedZoom && kotlin.math.abs(vehicleGeo.latitude - lastAutoFitLat) > 0.5) {
+                anchoredBaseZoom = base25mZoom
+                lastAutoFitLat = vehicleGeo.latitude
+            }
+        }
+        LaunchedEffect(screensaverSettings.recenterEpoch) {
+            anchoredBaseZoom = base25mZoom
+            lastAutoFitLat = vehicleGeo.latitude
+        }
+
+        val continuousZoom = (anchoredBaseZoom + localZoomOffset).coerceIn(
+            MiniMapViewportMath.MIN_ZOOM,
+            MiniMapViewportMath.MAX_ZOOM
+        )
+
         val followTargetAnchor = remember(
             exploredCenter,
             vehicleGeo,
@@ -2486,15 +2519,45 @@ private fun ScreensaverLiveMiniMapPanel(
             longitude = startAnchor.longitude + (endAnchor.longitude - startAnchor.longitude) * glideAnim.value.toDouble()
         )
 
+        val renderPlan = remember(viewportWidthPx, viewportHeightPx, continuousZoom) {
+            MiniMapViewportMath.resolveTileRenderPlan(
+                widthPx = viewportWidthPx,
+                heightPx = viewportHeightPx,
+                continuousZoom = continuousZoom
+            )
+        }
+        val tileResult = remember(
+            interpolatedAnchor,
+            renderPlan,
+            darkTiles,
+            osmMapType,
+            tileUpdate
+        ) {
+            OsmTileManager.renderMapBitmapWithCoverage(
+                context = context,
+                center = interpolatedAnchor,
+                widthPx = renderPlan.renderSizePx,
+                heightPx = renderPlan.renderSizePx,
+                zoom = renderPlan.renderBaseZoom,
+                panOffsetX = 0f,
+                panOffsetY = 0f,
+                darkTheme = darkTiles,
+                mapType = osmMapType
+            )
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .miniMapNavigationGestures(enabled = true) { centroid, pan, zoom ->
                     val currentCenter = exploredCenter ?: interpolatedAnchor
-                    val curZoom = (screensaverSettings.miniMapZoomLevel + localZoomOffset).coerceIn(
+                    val curZoom = (anchoredBaseZoom + localZoomOffset).coerceIn(
                         MiniMapViewportMath.MIN_ZOOM,
                         MiniMapViewportMath.MAX_ZOOM
                     )
+                    if (kotlin.math.abs(zoom - 1f) > 0.002f) {
+                        hasUserAdjustedZoom = true
+                    }
                     val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
                         currentCenter = currentCenter,
                         currentZoom = curZoom,
@@ -2508,9 +2571,9 @@ private fun ScreensaverLiveMiniMapPanel(
                         mapRotationDeg = animatedMapRotation
                     )
                     exploredCenter = nextCenter
-                    localZoomOffset = (nextZoom - screensaverSettings.miniMapZoomLevel).coerceIn(
-                        MiniMapViewportMath.MIN_ZOOM - screensaverSettings.miniMapZoomLevel,
-                        MiniMapViewportMath.MAX_ZOOM - screensaverSettings.miniMapZoomLevel
+                    localZoomOffset = (nextZoom - anchoredBaseZoom).coerceIn(
+                        MiniMapViewportMath.MIN_ZOOM - anchoredBaseZoom,
+                        MiniMapViewportMath.MAX_ZOOM - anchoredBaseZoom
                     )
                 }
         ) {
@@ -2520,37 +2583,20 @@ private fun ScreensaverLiveMiniMapPanel(
                 val h = size.height
                 val cx = w / 2f
                 val cy = h / 2f
-                val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
-                    widthPx = w,
-                    heightPx = h,
-                    fractionalScale = fractionalScale,
-                    maxPx = 1024
-                )
-
-                val osmBmp = OsmTileManager.renderMapBitmap(
-                    context = context,
-                    center = interpolatedAnchor,
-                    widthPx = diagPx,
-                    heightPx = diagPx,
-                    zoom = baseZoom,
-                    panOffsetX = 0f,
-                    panOffsetY = 0f,
-                    darkTheme = darkTiles,
-                    mapType = osmMapType
-                )
+                val osmBmp = tileResult.bitmap
 
                 drawRect(color = if (isHudMirror) Color(0xFF030712) else mapTheme.mapBackground)
 
                 rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
                     if (osmBmp != null) {
-                        scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                        scale(scale = renderPlan.renderScale, pivot = Offset(cx, cy)) {
                             drawImage(
                                 image = osmBmp.asImageBitmap(),
                                 dstOffset = IntOffset(
-                                    x = (cx - diagPx / 2f).toInt(),
-                                    y = (cy - diagPx / 2f).toInt()
+                                    x = (cx - renderPlan.renderSizePx / 2f).toInt(),
+                                    y = (cy - renderPlan.renderSizePx / 2f).toInt()
                                 ),
-                                dstSize = IntSize(diagPx, diagPx),
+                                dstSize = IntSize(renderPlan.renderSizePx, renderPlan.renderSizePx),
                                 alpha = if (isHudMirror) 0.72f else 0.90f
                             )
                         }
@@ -2724,6 +2770,16 @@ private fun ScreensaverLiveMiniMapPanel(
                         maxLines = 1
                     )
                 }
+            }
+
+            if (!isTileLoading && tileResult.hasMissingTiles && this@BoxWithConstraints.maxHeight >= 88.dp) {
+                MiniMapOfflineCoverageBadge(
+                    isDark = isDarkPalette || isHudMirror,
+                    hasPartialCoverage = tileResult.hasAnyCoverage,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 8.dp)
+                )
             }
         }
     }

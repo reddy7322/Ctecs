@@ -2,10 +2,8 @@ package com.example.camera
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.util.Log
@@ -17,461 +15,579 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraControl
 import androidx.camera.core.ImageCapture
 import androidx.camera.view.LifecycleCameraController
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
-import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
- * Surrounding ambient lighting band detected via the device ambient light sensor (or scene photometry).
+ * Hardware camera exposure capabilities queried from CameraX / Camera2 for the active lens.
+ * Strictly respects actual hardware exposure limits, ISO range, shutter speed range, and FPS.
  */
-enum class AmbientLightZone(val label: String) {
-    LOW_LIGHT("Low Light"),
-    NORMAL_LIGHT("Normal Light"),
-    HIGH_LIGHT("High Light")
+data class CaptureExposureCapabilities(
+    val isExposureCompensationSupported: Boolean = true,
+    val minEvIndex: Int = -12,
+    val maxEvIndex: Int = 12,
+    val evStep: Float = 1f / 3f,
+    val supportsManualSensor: Boolean = false,
+    val isoRange: IntRange? = null,
+    val exposureTimeRangeNs: LongRange? = null,
+    val supportsHighQualityNoiseReduction: Boolean = false,
+    val supportedFpsOptions: List<Int> = listOf(30)
+) {
+    val hasUsableEvRange: Boolean
+        get() = isExposureCompensationSupported && minEvIndex < maxEvIndex && evStep > 0f
+
+    val minEvStops: Float
+        get() = if (hasUsableEvRange) minEvIndex * evStep else -CameraBrightnessEngine.FALLBACK_MAX_EV_STOPS
+
+    val maxEvStops: Float
+        get() = if (hasUsableEvRange) maxEvIndex * evStep else CameraBrightnessEngine.FALLBACK_MAX_EV_STOPS
 }
 
 /**
- * Immutable snapshot coordinating three logically separate camera brightness functions:
- * 1. Display Brightness ([effectiveDisplayBrightness]) — live camera preview visibility.
- * 2. Camera Exposure ([recommendedAutoExposureOffset]) — sensor exposure guidance in Auto mode.
- * 3. Photo/Video Processing ([lightZone], [ambientLux]) — actual lighting optimization for media output.
+ * Immutable snapshot of actual camera capture exposure (for live preview, photo capture, and video recording).
+ * Never modifies Android screen brightness.
  */
-data class CameraBrightnessState(
-    val isAutoEnabled: Boolean = false,
-    val manualBrightness: Float = CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS,
-    val effectiveDisplayBrightness: Float = CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS,
-    val ambientLux: Float? = null,
-    val lightZone: AmbientLightZone = AmbientLightZone.NORMAL_LIGHT,
-    val recommendedAutoExposureOffset: Int = 0,
-    val hasLightSensor: Boolean = true
+data class CaptureExposureState(
+    val isAutoExposure: Boolean = true,
+    val manualNormalizedLevel: Float = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
+    val effectiveNormalizedLevel: Float = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
+    val targetEvIndex: Int = 0,
+    val targetEvStops: Float = 0f,
+    val capabilities: CaptureExposureCapabilities = CaptureExposureCapabilities()
 ) {
     val displayPercent: Int
-        get() = CameraBrightnessEngine.brightnessToPercent(effectiveDisplayBrightness)
+        get() = CameraBrightnessEngine.normalizedToPercent(effectiveNormalizedLevel)
+
+    val evFormatted: String
+        get() = CameraBrightnessEngine.formatEvStops(targetEvStops)
 }
 
 /**
- * Stateful, thread-safe ambient-light brightness engine with adaptive thresholds,
- * hysteresis, and low-pass smoothing to prevent flickering or sudden jumps.
- *
- * Pure JVM-testable (no Android framework dependency required for core state transitions).
+ * Computed FPS-safe manual ISO & shutter parameters used ONLY as a safe fallback on hardware that
+ * supports MANUAL_SENSOR but does not expose a usable AE exposure compensation range.
  */
-class AmbientBrightnessController(
-    initialAutoEnabled: Boolean = false,
-    initialManualBrightness: Float = CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS,
-    initialHasLightSensor: Boolean = true
+data class SafeManualSensorExposure(
+    val iso: Int,
+    val exposureTimeNs: Long
+)
+
+/**
+ * Pure JVM-testable continuous camera capture exposure controller.
+ *
+ * Maps continuous finger movement (`0.0f..1.0f`, where `0.5f` = balanced `0.0 EV`) proportionally
+ * to the camera hardware's full supported exposure range `[minEvIndex..maxEvIndex]` with:
+ * - Zero dropped micro-movements (full continuous floating-point accumulation)
+ * - Smooth transition from Auto Exposure to Manual on finger drag without sudden jump
+ * - Safe frame-paced anti-jump ramp for rapid swipes & active video recording
+ * - Full retention after finger stops or releases
+ */
+class CaptureExposureController(
+    initialAutoExposure: Boolean = true,
+    initialManualLevel: Float = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
+    initialCapabilities: CaptureExposureCapabilities = CaptureExposureCapabilities()
 ) {
     private val lock = Any()
 
-    private var autoEnabled: Boolean = initialAutoEnabled
-    private var manualBrightness: Float = CameraBrightnessEngine.clampBrightness(initialManualBrightness)
-    private var hasLightSensor: Boolean = initialHasLightSensor
-    private var filteredLux: Float? = null
-    private var currentZone: AmbientLightZone = AmbientLightZone.NORMAL_LIGHT
-    private var currentAutoBrightness: Float = CameraBrightnessEngine.DEFAULT_MANUAL_BRIGHTNESS
+    private var autoExposure: Boolean = initialAutoExposure
+    private var manualLevel: Float = CameraBrightnessEngine.clampNormalizedExposure(initialManualLevel)
+    private var capabilities: CaptureExposureCapabilities = initialCapabilities
 
-    companion object {
-        // Hysteresis thresholds (lux) preventing oscillation near boundaries
-        const val LOW_LIGHT_ENTER_LUX = 35f
-        const val LOW_LIGHT_EXIT_LUX = 60f
-        const val HIGH_LIGHT_ENTER_LUX = 1_200f
-        const val HIGH_LIGHT_EXIT_LUX = 820f
-        const val EXTREME_SUNLIGHT_LUX = 10_000f
+    fun getState(): CaptureExposureState = synchronized(lock) { buildStateLocked() }
 
-        // Smoothness & anti-flicker guards
-        const val LUX_EMA_ALPHA = 0.28f
-        const val BRIGHTNESS_DEADBAND = 0.015f
-    }
-
-    fun getState(): CameraBrightnessState = synchronized(lock) { buildStateLocked() }
-
-    fun setHasLightSensor(available: Boolean): CameraBrightnessState = synchronized(lock) {
-        hasLightSensor = available
+    fun updateCapabilities(newCapabilities: CaptureExposureCapabilities): CaptureExposureState = synchronized(lock) {
+        capabilities = newCapabilities
         buildStateLocked()
     }
 
-    fun setAutoEnabled(enabled: Boolean): CameraBrightnessState = synchronized(lock) {
-        autoEnabled = enabled
+    fun setAutoExposure(enabled: Boolean): CaptureExposureState = synchronized(lock) {
+        autoExposure = enabled
         buildStateLocked()
     }
 
-    fun setManualBrightness(level: Float): CameraBrightnessState = synchronized(lock) {
-        manualBrightness = CameraBrightnessEngine.clampBrightness(level)
+    fun setManualNormalizedLevel(level: Float): CaptureExposureState = synchronized(lock) {
+        manualLevel = CameraBrightnessEngine.clampNormalizedExposure(level)
         buildStateLocked()
     }
 
     /**
-     * Adjusts manual brightness by a fine-grained normalized delta (`-1f..+1f`) across the full
-     * `[MIN_PRACTICAL_BRIGHTNESS..MAX_SUPPORTED_BRIGHTNESS]` range.
-     * If Auto Brightness was active when the user manually dragged the right-side control,
-     * smoothly hands off from the current effective display brightness to manual mode with zero jump.
+     * Applies continuous normalized drag movement (`-1f..+1f`) directly to capture exposure.
+     * - Dragging UP (`+delta`) increases capture exposure toward hardware max.
+     * - Dragging DOWN (`-delta`) decreases capture exposure toward hardware min.
+     * - If Auto Exposure was active, smoothly starts from balanced neutral (`0.5f` / `0.0 EV`)
+     *   and overrides Auto Exposure cleanly with zero jump.
      */
-    fun applyManualDragDelta(deltaNormalized: Float): CameraBrightnessState = synchronized(lock) {
-        val base = if (autoEnabled) {
-            val currentEffective = if (hasLightSensor && filteredLux != null) {
-                currentAutoBrightness
-            } else {
-                manualBrightness
-            }
-            autoEnabled = false
-            currentEffective
+    fun applyContinuousDragDelta(deltaNormalized: Float): CaptureExposureState = synchronized(lock) {
+        if (!deltaNormalized.isFinite()) return buildStateLocked()
+        val base = if (autoExposure) {
+            autoExposure = false
+            CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL
         } else {
-            manualBrightness
+            manualLevel
         }
-        manualBrightness = CameraBrightnessEngine.clampBrightness(base + deltaNormalized)
+        manualLevel = CameraBrightnessEngine.clampNormalizedExposure(base + deltaNormalized)
         buildStateLocked()
     }
 
     /**
-     * Processes a new ambient light sensor sample in lux (`>= 0f`).
-     * Applies exponential smoothing, adaptive zone hysteresis, and deadband suppression
-     * so display brightness and camera exposure remain rock-steady without flickering.
+     * Syncs an explicit EV compensation index (e.g. from the existing EV slider) into normalized space
+     * so all exposure controls remain synchronized.
      */
-    fun onAmbientLuxSample(rawLux: Float): CameraBrightnessState = synchronized(lock) {
-        if (!rawLux.isFinite() || rawLux < 0f) return buildStateLocked()
-        val clampedLux = rawLux.coerceIn(0f, 120_000f)
-
-        // 1. Exponential smoothing in log-lux space (matches human perceptual luminance response)
-        val prevLux = filteredLux
-        val smoothedLux = if (prevLux == null) {
-            clampedLux
-        } else {
-            val prevLog = ln((prevLux + 1f).toDouble())
-            val curLog = ln((clampedLux + 1f).toDouble())
-            val blendedLog = prevLog + (curLog - prevLog) * LUX_EMA_ALPHA
-            (exp(blendedLog) - 1.0).toFloat().coerceAtLeast(0f)
+    fun setFromHardwareEvIndex(evIndex: Int): CaptureExposureState = synchronized(lock) {
+        if (evIndex == 0 && autoExposure) {
+            return buildStateLocked()
         }
-        filteredLux = smoothedLux
-
-        // 2. Hysteresis light-zone classification (prevents frequent zone flipping)
-        currentZone = when (currentZone) {
-            AmbientLightZone.LOW_LIGHT -> when {
-                smoothedLux >= HIGH_LIGHT_ENTER_LUX -> AmbientLightZone.HIGH_LIGHT
-                smoothedLux > LOW_LIGHT_EXIT_LUX -> AmbientLightZone.NORMAL_LIGHT
-                else -> AmbientLightZone.LOW_LIGHT
-            }
-            AmbientLightZone.NORMAL_LIGHT -> when {
-                smoothedLux < LOW_LIGHT_ENTER_LUX -> AmbientLightZone.LOW_LIGHT
-                smoothedLux > HIGH_LIGHT_ENTER_LUX -> AmbientLightZone.HIGH_LIGHT
-                else -> AmbientLightZone.NORMAL_LIGHT
-            }
-            AmbientLightZone.HIGH_LIGHT -> when {
-                smoothedLux < LOW_LIGHT_ENTER_LUX -> AmbientLightZone.LOW_LIGHT
-                smoothedLux < HIGH_LIGHT_EXIT_LUX -> AmbientLightZone.NORMAL_LIGHT
-                else -> AmbientLightZone.HIGH_LIGHT
-            }
-        }
-
-        // 3. Target display brightness with deadband suppression
-        val targetBrightness = CameraBrightnessEngine.luxToTargetDisplayBrightness(smoothedLux)
-        if (prevLux == null || abs(targetBrightness - currentAutoBrightness) >= BRIGHTNESS_DEADBAND) {
-            currentAutoBrightness = targetBrightness
-        }
-
+        autoExposure = (evIndex == 0)
+        manualLevel = CameraBrightnessEngine.mapHardwareEvIndexToNormalized(
+            evIndex = evIndex,
+            minEv = capabilities.minEvIndex,
+            maxEv = capabilities.maxEvIndex
+        )
         buildStateLocked()
     }
 
-    private fun buildStateLocked(): CameraBrightnessState {
-        val effectiveDisplay = if (autoEnabled && hasLightSensor && filteredLux != null) {
-            currentAutoBrightness
+    private fun buildStateLocked(): CaptureExposureState {
+        val effective = if (autoExposure) {
+            CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL
         } else {
-            manualBrightness
+            manualLevel
         }
 
-        // Subtle sensor exposure coordination ONLY in Auto mode; manual display brightness never
-        // alters camera exposure so dimming/brightening the screen never ruins photo/video exposure!
-        val autoEvOffset = if (autoEnabled && filteredLux != null) {
-            val lux = filteredLux!!
-            when {
-                currentZone == AmbientLightZone.HIGH_LIGHT && lux >= EXTREME_SUNLIGHT_LUX -> -1
-                else -> 0
-            }
+        val targetIndex = if (autoExposure) {
+            0
+        } else if (capabilities.hasUsableEvRange) {
+            CameraBrightnessEngine.mapNormalizedToHardwareEvIndex(
+                normalizedLevel = effective,
+                minEv = capabilities.minEvIndex,
+                maxEv = capabilities.maxEvIndex
+            )
         } else {
             0
         }
 
-        return CameraBrightnessState(
-            isAutoEnabled = autoEnabled,
-            manualBrightness = manualBrightness,
-            effectiveDisplayBrightness = CameraBrightnessEngine.clampBrightness(effectiveDisplay),
-            ambientLux = filteredLux,
-            lightZone = currentZone,
-            recommendedAutoExposureOffset = autoEvOffset,
-            hasLightSensor = hasLightSensor
+        val targetStops = if (autoExposure) {
+            0f
+        } else if (capabilities.hasUsableEvRange) {
+            targetIndex * capabilities.evStep
+        } else {
+            (effective - 0.5f) * 2f * CameraBrightnessEngine.FALLBACK_MAX_EV_STOPS
+        }
+
+        return CaptureExposureState(
+            isAutoExposure = autoExposure,
+            manualNormalizedLevel = manualLevel,
+            effectiveNormalizedLevel = effective,
+            targetEvIndex = targetIndex,
+            targetEvStops = targetStops,
+            capabilities = capabilities
         )
     }
 }
 
 /**
- * Single lightweight lifecycle-bound Android ambient light sensor listener (`Sensor.TYPE_LIGHT`).
- * Unregisters immediately when Camera is paused/disposed or when Auto Brightness is turned OFF.
- */
-class AmbientLightSensorMonitor(context: Context) {
-    private val sensorManager = context.applicationContext.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-    private val lightSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_LIGHT)
-
-    val isAvailable: Boolean
-        get() = lightSensor != null
-
-    private var activeListener: SensorEventListener? = null
-
-    fun start(onLux: (Float) -> Unit): Boolean {
-        stop()
-        val sm = sensorManager ?: return false
-        val sensor = lightSensor ?: return false
-        val listener = object : SensorEventListener {
-            override fun onSensorChanged(event: SensorEvent?) {
-                val lux = event?.values?.firstOrNull() ?: return
-                if (lux.isFinite() && lux >= 0f) {
-                    onLux(lux)
-                }
-            }
-
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-        }
-        return try {
-            val registered = sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
-            if (registered) {
-                activeListener = listener
-            }
-            registered
-        } catch (e: Throwable) {
-            Log.w("AmbientLightMonitor", "Failed to register ambient light sensor: ${e.message}")
-            false
-        }
-    }
-
-    fun stop() {
-        val listener = activeListener ?: return
-        activeListener = null
-        try {
-            sensorManager?.unregisterListener(listener)
-        } catch (ignored: Throwable) {}
-    }
-}
-
-/**
- * Smart Camera Brightness, Exposure & Light-Condition Optimization Engine.
+ * Smooth Continuous Photo & Video Capture Brightness / Exposure Engine.
  *
- * Coordinates three strictly separated layers:
- * 1. **Display Brightness** (`0.02f..1.0f`): Full practical dim to maximum device screen brightness.
- * 2. **Camera Exposure**: Smooth continuous AE, stable AWB, and ambient-light optimization (never
- *    corrupted by manual preview dimming/brightening).
- * 3. **Photo/Video Processing**: Scene-adaptive low-light denoise + highlight recovery running
- *    strictly BEFORE overlays so existing timestamp/watermark/EXIF overlays remain 100% untouched.
+ * Strictly controls **actual camera sensor exposure** via CameraX & Camera2Interop so that
+ * live preview, saved photos, and recorded videos all faithfully reflect the user's continuous
+ * right-side gesture adjustment. Never touches Android screen brightness or draws preview scrims.
  */
 object CameraBrightnessEngine {
 
-    private const val TAG = "CameraBrightnessEngine"
+    private const val TAG = "CaptureExposureEngine"
 
-    /** Lowest practical dim screen brightness (prevents complete blackout while enabling max dim). */
-    const val MIN_PRACTICAL_BRIGHTNESS = 0.02f
+    /** Minimum dim capture exposure normalized bound (`0.0f` -> hardware `minEvIndex`). */
+    const val MIN_EXPOSURE_LEVEL = 0.0f
 
-    /** Maximum supported hardware display brightness (100% for bright outdoor sunlight visibility). */
-    const val MAX_SUPPORTED_BRIGHTNESS = 1.00f
+    /** Balanced neutral capture exposure (`0.5f` -> `0.0 EV`). */
+    const val NEUTRAL_EXPOSURE_LEVEL = 0.5f
 
-    /** Comfortable default manual preview brightness. */
-    const val DEFAULT_MANUAL_BRIGHTNESS = 0.65f
+    /** Maximum bright capture exposure normalized bound (`1.0f` -> hardware `maxEvIndex`). */
+    const val MAX_EXPOSURE_LEVEL = 1.0f
 
-    fun clampBrightness(value: Float): Float {
-        if (!value.isFinite()) return DEFAULT_MANUAL_BRIGHTNESS
-        return value.coerceIn(MIN_PRACTICAL_BRIGHTNESS, MAX_SUPPORTED_BRIGHTNESS)
+    /** Fallback photometric EV span (`-3.0..+3.0` stops) only if a camera HAL reports no hardware EV range. */
+    const val FALLBACK_MAX_EV_STOPS = 3.0f
+
+    fun clampNormalizedExposure(value: Float): Float {
+        if (!value.isFinite()) return NEUTRAL_EXPOSURE_LEVEL
+        return value.coerceIn(MIN_EXPOSURE_LEVEL, MAX_EXPOSURE_LEVEL)
     }
 
-    /**
-     * Maps `[MIN_PRACTICAL_BRIGHTNESS..MAX_SUPPORTED_BRIGHTNESS]` cleanly to `0..100`% display readout.
-     */
-    fun brightnessToPercent(brightness: Float): Int {
-        val clamped = clampBrightness(brightness)
-        val norm = (clamped - MIN_PRACTICAL_BRIGHTNESS) / (MAX_SUPPORTED_BRIGHTNESS - MIN_PRACTICAL_BRIGHTNESS)
-        return (norm * 100f).roundToInt().coerceIn(0, 100)
+    fun normalizedToPercent(level: Float): Int {
+        return (clampNormalizedExposure(level) * 100f).roundToInt().coerceIn(0, 100)
     }
 
-    /**
-     * Maps ambient light in lux to comfortable, perceptually smooth display brightness (`0.08f..1.0f`):
-     * - Dark / night (`0..35 lux`): `0.08f..0.28f` (comfortable low-glare dim preview)
-     * - Normal indoor / overcast (`35..1200 lux`): `0.28f..0.72f` (clear balanced visibility)
-     * - Bright outdoor (`1200..10,000 lux`): `0.72f..0.96f` (high clarity)
-     * - Direct sunlight (`>= 10,000 lux`): `1.00f` (maximum supported display brightness)
-     */
-    fun luxToTargetDisplayBrightness(lux: Float): Float {
-        val safeLux = lux.coerceIn(0f, 120_000f)
-        val brightness = when {
-            safeLux <= 2f -> 0.08f
-            safeLux < 35f -> {
-                val t = ln((safeLux / 2f).toDouble()) / ln(35.0 / 2.0)
-                (0.08 + t * 0.20).toFloat()
-            }
-            safeLux < 1_200f -> {
-                val t = ln((safeLux / 35f).toDouble()) / ln(1_200.0 / 35.0)
-                (0.28 + t * 0.44).toFloat()
-            }
-            safeLux < 10_000f -> {
-                val t = ln((safeLux / 1_200f).toDouble()) / ln(10_000.0 / 1_200.0)
-                (0.72 + t * 0.24).toFloat()
-            }
-            else -> MAX_SUPPORTED_BRIGHTNESS
+    fun formatEvStops(evStops: Float): String {
+        val rounded = (evStops * 10f).roundToInt() / 10f
+        return when {
+            abs(rounded) < 0.05f -> "0.0"
+            rounded > 0f -> String.format(Locale.US, "+%.1f", rounded)
+            else -> String.format(Locale.US, "%.1f", rounded)
         }
-        return clampBrightness(brightness)
     }
 
     /**
-     * Applies non-destructive Camera2 AE / AWB / Noise-Reduction / FPS lighting optimization
-     * for live preview, photo capture, and active video recording without interrupting recording
-     * or altering existing overlays, output formats, autofocus, or stabilization settings.
+     * Maps continuous `[0.0f..1.0f]` (`0.5f` = balanced `0`) proportionally onto hardware `[minEv..maxEv]`.
+     * Handles both symmetric (e.g. `-12..+12`, `-24..+24`) and asymmetric (e.g. `-12..+8`) ranges cleanly.
      */
-    @OptIn(ExperimentalCamera2Interop::class)
-    fun applyLightConditionCameraTuning(
-        controller: LifecycleCameraController,
-        cameraControl: CameraControl?,
-        capabilities: CameraHardwareCapabilities,
-        lightZone: AmbientLightZone,
-        isVideoMode: Boolean,
-        targetVideoFps: Int,
-        autoBrightnessEnabled: Boolean,
-        recommendedAutoEvOffset: Int,
-        userExposureIndex: Int
-    ) {
-        try {
-            // 1. Engage multi-frame quality capture in low-light or high-light photo scenes where supported
-            if (!isVideoMode) {
-                val captureMode = when (lightZone) {
-                    AmbientLightZone.LOW_LIGHT,
-                    AmbientLightZone.HIGH_LIGHT -> ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
-                    AmbientLightZone.NORMAL_LIGHT -> ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
-                }
-                if (controller.imageCaptureMode != captureMode) {
-                    controller.imageCaptureMode = captureMode
-                }
-            }
-        } catch (ignored: Throwable) {}
+    fun mapNormalizedToHardwareEvIndex(
+        normalizedLevel: Float,
+        minEv: Int,
+        maxEv: Int
+    ): Int {
+        if (minEv >= maxEv) return 0
+        val clamped = clampNormalizedExposure(normalizedLevel)
+        val signed = (clamped - NEUTRAL_EXPOSURE_LEVEL) * 2f // -1.0f..+1.0f
+        return if (signed >= 0f) {
+            (signed * maxEv.toFloat()).roundToInt().coerceIn(0, maxEv)
+        } else {
+            (signed * abs(minEv).toFloat()).roundToInt().coerceIn(minEv, 0)
+        }
+    }
 
-        val control = cameraControl ?: return
+    /**
+     * Inverse mapping from hardware EV index `[minEv..maxEv]` back to normalized `[0.0f..1.0f]`.
+     */
+    fun mapHardwareEvIndexToNormalized(
+        evIndex: Int,
+        minEv: Int,
+        maxEv: Int
+    ): Float {
+        if (minEv >= maxEv || evIndex == 0) return NEUTRAL_EXPOSURE_LEVEL
+        return if (evIndex > 0 && maxEv > 0) {
+            (NEUTRAL_EXPOSURE_LEVEL + (evIndex.toFloat() / maxEv.toFloat()) * 0.5f)
+                .coerceIn(MIN_EXPOSURE_LEVEL, MAX_EXPOSURE_LEVEL)
+        } else if (evIndex < 0 && minEv < 0) {
+            (NEUTRAL_EXPOSURE_LEVEL - (abs(evIndex).toFloat() / abs(minEv).toFloat()) * 0.5f)
+                .coerceIn(MIN_EXPOSURE_LEVEL, MAX_EXPOSURE_LEVEL)
+        } else {
+            NEUTRAL_EXPOSURE_LEVEL
+        }
+    }
 
-        // 2. Coordinate sensor exposure index cleanly:
-        // - Manual preview brightness NEVER modifies sensor EV (protects captured media!).
-        // - In Auto mode, apply gentle anti-overexposure highlight guard in harsh sunlight,
-        //   combined with any explicit user EV offset from the EV slider.
+    /**
+     * Computes the next smooth hardware EV index step toward [targetEvIndex] so rapid gesture jumps
+     * or Auto-resets transition fluidly without harsh single-frame flashes during video recording,
+     * while normal/slow drags track 1:1 with zero perceived lag.
+     */
+    fun computeNextSmoothEvIndex(
+        currentAppliedEv: Int,
+        targetEvIndex: Int,
+        isVideoRecording: Boolean,
+        totalEvSpan: Int = 24
+    ): Int {
+        val delta = targetEvIndex - currentAppliedEv
+        if (delta == 0) return targetEvIndex
+        // Scale max step per ~16ms frame proportionally to hardware granularity
+        val maxStepPerTick = when {
+            isVideoRecording -> max(1, (totalEvSpan / 12).coerceIn(1, 2))
+            else -> max(2, (totalEvSpan / 8).coerceIn(2, 4))
+        }
+        return when {
+            abs(delta) <= maxStepPerTick -> targetEvIndex
+            delta > 0 -> currentAppliedEv + maxStepPerTick
+            else -> currentAppliedEv - maxStepPerTick
+        }
+    }
+
+    /**
+     * Computes FPS-safe manual ISO & shutter exposure time within strict hardware sensor bounds
+     * (used ONLY if a device lacks AE exposure compensation support but exposes MANUAL_SENSOR).
+     */
+    fun computeSafeManualSensorExposure(
+        normalizedLevel: Float,
+        capabilities: CaptureExposureCapabilities,
+        targetFps: Int
+    ): SafeManualSensorExposure? {
+        val isoRange = capabilities.isoRange ?: return null
+        val timeRange = capabilities.exposureTimeRangeNs ?: return null
+        if (!capabilities.supportsManualSensor) return null
+
+        val safeFps = targetFps.coerceIn(15, 60)
+        // Never allow shutter time longer than frame duration so selected FPS is maintained without motion blur
+        val maxFrameShutterNs = (1_000_000_000L / safeFps.toLong()).coerceIn(timeRange.first, timeRange.last)
+        val minShutterNs = max(timeRange.first, 250_000L).coerceAtMost(maxFrameShutterNs) // >= 1/4000s
+
+        val clamped = clampNormalizedExposure(normalizedLevel)
+        // Exponential exposure progression matches perceptual stops cleanly
+        val shutterLogRatio = clamped.toDouble()
+        val shutterNs = (minShutterNs.toDouble() *
+            (maxFrameShutterNs.toDouble() / minShutterNs.toDouble().coerceAtLeast(1.0)).pow(shutterLogRatio)
+            ).toLong().coerceIn(minShutterNs, maxFrameShutterNs)
+
+        // Keep ISO conservative in mid/low levels to avoid noise; scale gently only when boosting brightness
+        val maxPracticalIso = min(isoRange.last, max(isoRange.first, 3200))
+        val isoRatio = clamped.toDouble().pow(1.25)
+        val iso = (isoRange.first.toDouble() *
+            (maxPracticalIso.toDouble() / isoRange.first.toDouble().coerceAtLeast(1.0)).pow(isoRatio)
+            ).roundToInt().coerceIn(isoRange.first, maxPracticalIso)
+
+        return SafeManualSensorExposure(iso = iso, exposureTimeNs = shutterNs)
+    }
+
+    /**
+     * Queries actual hardware capture exposure capabilities from CameraX [LifecycleCameraController]
+     * and Android Camera2 [CameraCharacteristics] for the active front/back lens.
+     */
+    fun queryCaptureExposureCapabilities(
+        context: Context,
+        controller: LifecycleCameraController?,
+        isFrontCamera: Boolean
+    ): CaptureExposureCapabilities {
+        val hwCaps = CameraQualityEngine.queryHardwareCapabilities(context, isFrontCamera)
+
+        var evSupported = false
+        var minEv = 0
+        var maxEv = 0
+        var evStep = 0f
+
+        // 1. Prefer live CameraX ExposureState when bound
         try {
-            val exposureState = controller.cameraInfo?.exposureState
+            val exposureState = controller?.cameraInfo?.exposureState
             if (exposureState != null && exposureState.isExposureCompensationSupported) {
                 val range = exposureState.exposureCompensationRange
-                if (range.lower < range.upper) {
-                    val targetEv = if (autoBrightnessEnabled) {
-                        (userExposureIndex + recommendedAutoEvOffset).coerceIn(range.lower, range.upper)
-                    } else {
-                        userExposureIndex.coerceIn(range.lower, range.upper)
-                    }
-                    control.setExposureCompensationIndex(targetEv)
+                val step = exposureState.exposureCompensationStep
+                if (range.lower < range.upper && step.denominator != 0 && step.numerator != 0) {
+                    evSupported = true
+                    minEv = range.lower
+                    maxEv = range.upper
+                    evStep = step.toFloat()
                 }
             }
         } catch (ignored: Throwable) {}
 
-        // 3. Camera2 CaptureRequestOptions: smooth continuous AE, stable AWB, low-light noise reduction
+        // 2. Query Camera2 characteristics for ISO range, shutter speed range, MANUAL_SENSOR, and EV fallback
+        var supportsManualSensor = false
+        var isoRange: IntRange? = null
+        var timeRange: LongRange? = null
+
         try {
-            val c2Control = Camera2CameraControl.from(control)
-            val builder = CaptureRequestOptions.Builder()
-
-            // Always maintain continuous auto-exposure & stable auto white balance (no sudden flickers)
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_AE_MODE,
-                CameraMetadata.CONTROL_AE_MODE_ON
-            )
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_AWB_MODE,
-                CameraMetadata.CONTROL_AWB_MODE_AUTO
-            )
-
-            // Supported hardware noise reduction (prioritize HQ in low-light; preserve 60fps smoothness in video)
-            if (capabilities.supportsHighQualityNoiseReduction) {
-                val nrMode = when {
-                    isVideoMode && targetVideoFps >= 60 -> CameraMetadata.NOISE_REDUCTION_MODE_FAST
-                    lightZone == AmbientLightZone.LOW_LIGHT -> CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
-                    else -> CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
-                }
-                builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, nrMode)
-            }
-
-            // Smooth exposure FPS ranges (allow lower floor in photo low-light for brighter cleaner frames;
-            // keep stable video FPS floor so recording stays smooth and uninterrupted)
-            if (isVideoMode) {
-                val maxFps = if (targetVideoFps >= 60 && capabilities.supportedFpsOptions.contains(60)) 60 else 30
-                val minFps = when {
-                    maxFps >= 60 -> 30
-                    lightZone == AmbientLightZone.LOW_LIGHT -> 20 // slight light-gathering headroom without stutter
-                    else -> 24
-                }
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                    Range(minFps, maxFps)
-                )
+            val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+            val desiredFacing = if (isFrontCamera) {
+                CameraCharacteristics.LENS_FACING_FRONT
             } else {
-                val minFps = if (lightZone == AmbientLightZone.LOW_LIGHT) 10 else 15
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                    Range(minFps, 30)
-                )
+                CameraCharacteristics.LENS_FACING_BACK
+            }
+            val cameraId = manager?.cameraIdList?.firstOrNull { id ->
+                manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == desiredFacing
+            } ?: manager?.cameraIdList?.firstOrNull()
+
+            if (manager != null && cameraId != null) {
+                val chars = manager.getCameraCharacteristics(cameraId)
+                if (!evSupported) {
+                    val aeRange = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+                    val aeStep = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+                    if (aeRange != null && aeRange.lower < aeRange.upper &&
+                        aeStep != null && aeStep.denominator != 0 && aeStep.numerator != 0
+                    ) {
+                        evSupported = true
+                        minEv = aeRange.lower
+                        maxEv = aeRange.upper
+                        evStep = aeStep.toFloat()
+                    }
+                }
+
+                val caps = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: IntArray(0)
+                supportsManualSensor = caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
+
+                val iso = chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+                if (iso != null && iso.lower < iso.upper) {
+                    isoRange = iso.lower..iso.upper
+                }
+
+                val expTime = chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+                if (expTime != null && expTime.lower < expTime.upper) {
+                    timeRange = expTime.lower..expTime.upper
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Camera2 exposure capability query fallback: ${e.message}")
+        }
+
+        return CaptureExposureCapabilities(
+            isExposureCompensationSupported = evSupported,
+            minEvIndex = minEv,
+            maxEvIndex = maxEv,
+            evStep = evStep,
+            supportsManualSensor = supportsManualSensor,
+            isoRange = isoRange,
+            exposureTimeRangeNs = timeRange,
+            supportsHighQualityNoiseReduction = hwCaps.supportsHighQualityNoiseReduction,
+            supportedFpsOptions = hwCaps.supportedFpsOptions
+        )
+    }
+
+    /**
+     * Applies real-time camera sensor exposure using CameraX & Camera2Interop for live preview,
+     * photo capture, and active video recording — with ZERO screen brightness changes, ZERO preview
+     * filters, and ZERO recording interruptions or camera restarts.
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    fun applyHardwareCaptureExposure(
+        controller: LifecycleCameraController,
+        cameraControl: CameraControl?,
+        state: CaptureExposureState,
+        appliedEvIndex: Int,
+        isVideoMode: Boolean,
+        isVideoRecording: Boolean,
+        targetVideoFps: Int
+    ) {
+        val control = cameraControl ?: return
+        val caps = state.capabilities
+
+        // 1. Primary smooth hardware exposure path (works across preview, photo & active video recording!)
+        if (caps.hasUsableEvRange) {
+            val clampedEv = appliedEvIndex.coerceIn(caps.minEvIndex, caps.maxEvIndex)
+            try {
+                control.setExposureCompensationIndex(clampedEv)
+            } catch (e: Throwable) {
+                Log.w(TAG, "CameraX EV update skipped safely: ${e.message}")
             }
 
-            c2Control.addCaptureRequestOptions(builder.build())
-        } catch (e: Throwable) {
-            Log.w(TAG, "Camera2 light-condition tuning skipped gracefully: ${e.message}")
+            try {
+                val c2Control = Camera2CameraControl.from(control)
+                val builder = CaptureRequestOptions.Builder()
+
+                // Keep continuous AE ON + apply hardware EV bias so exposure stays smooth, never hunts,
+                // never snaps back to 0, and never interrupts active video recording.
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_MODE,
+                    CameraMetadata.CONTROL_AE_MODE_ON
+                )
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,
+                    clampedEv
+                )
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_LOCK,
+                    false
+                )
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AWB_MODE,
+                    CameraMetadata.CONTROL_AWB_MODE_AUTO
+                )
+
+                // Apply hardware noise reduction when boosting exposure in low-light (respecting 60fps video)
+                if (caps.supportsHighQualityNoiseReduction) {
+                    val nrMode = when {
+                        isVideoMode && targetVideoFps >= 60 -> CameraMetadata.NOISE_REDUCTION_MODE_FAST
+                        clampedEv > 0 -> CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                        else -> CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                    }
+                    builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, nrMode)
+                }
+
+                // Respect selected FPS strictly during video mode so brightness adjustments never cause FPS drops
+                if (isVideoMode) {
+                    val maxFps = if (targetVideoFps >= 60 && caps.supportedFpsOptions.contains(60)) 60 else 30
+                    val minFps = if (maxFps >= 60) 30 else 24
+                    builder.setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                        Range(minFps, maxFps)
+                    )
+                }
+
+                c2Control.addCaptureRequestOptions(builder.build())
+            } catch (e: Throwable) {
+                Log.w(TAG, "Camera2 exposure request option skipped safely: ${e.message}")
+            }
+
+            // Engage multi-frame quality capture for brighter low-light still photos when idle (never mid-recording!)
+            if (!isVideoMode && !isVideoRecording) {
+                try {
+                    if (controller.imageCaptureMode != ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY) {
+                        controller.imageCaptureMode = ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+                    }
+                } catch (ignored: Throwable) {}
+            }
+            return
+        }
+
+        // 2. Fallback ONLY when device HAL lacks hardware EV compensation but exposes MANUAL_SENSOR
+        if (!state.isAutoExposure && caps.supportsManualSensor && !isVideoRecording) {
+            val manualSensor = computeSafeManualSensorExposure(
+                normalizedLevel = state.effectiveNormalizedLevel,
+                capabilities = caps,
+                targetFps = if (isVideoMode) targetVideoFps else 30
+            )
+            if (manualSensor != null) {
+                try {
+                    val c2Control = Camera2CameraControl.from(control)
+                    val options = CaptureRequestOptions.Builder()
+                        .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+                        .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, manualSensor.iso)
+                        .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, manualSensor.exposureTimeNs)
+                        .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_AUTO)
+                        .build()
+                    c2Control.addCaptureRequestOptions(options)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Manual ISO/shutter fallback skipped safely: ${e.message}")
+                }
+            }
+        } else if (state.isAutoExposure && caps.supportsManualSensor && !isVideoRecording) {
+            try {
+                val c2Control = Camera2CameraControl.from(control)
+                val options = CaptureRequestOptions.Builder()
+                    .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                    .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, false)
+                    .build()
+                c2Control.addCaptureRequestOptions(options)
+            } catch (ignored: Throwable) {}
         }
     }
 
     /**
-     * Optimizes the final captured photo bitmap strictly according to ACTUAL scene & ambient lighting
-     * (NEVER copying the screen display brightness!).
+     * Ensures the saved photograph faithfully retains the user's selected capture exposure while
+     * preserving natural colours, sharpness, highlight/shadow integrity, and low-light noise reduction.
      *
      * Runs strictly BEFORE `OverlayRenderer.renderOverlay(...)` so all existing timestamp, GPS,
-     * location, project, chainage, LHS/RHS, lane, weather, watermark, logo, minimap, and EXIF
-     * metadata remain 100% untouched.
-     *
-     * - **Low-light**: Gentle shadow recovery + edge-preserving luminance & chroma noise reduction
-     *   (reduces grain & color noise while keeping crisp natural road/text textures without plastic smoothing).
-     * - **High-light**: Highlight roll-off protection against overexposure + shadow detail preservation
-     *   + natural colors without washed-out appearance.
-     * - **Normal-light**: Preserves natural colors and clean textures with zero artificial distortion.
+     * chainage, project, LHS/RHS, weather, logo, minimap, and EXIF metadata remain 100% untouched.
      */
-    fun optimizeCapturedPhotoForLighting(
+    fun processCapturedPhotoForCaptureExposure(
         source: Bitmap,
-        ambientLux: Float? = null,
-        ambientZone: AmbientLightZone? = null
+        normalizedLevel: Float,
+        evStops: Float,
+        isAutoExposure: Boolean,
+        hardwareEvApplied: Boolean
     ): Bitmap {
         if (source.isRecycled || source.width <= 4 || source.height <= 4) return source
 
         return try {
             val metrics = CameraQualityEngine.analyzeScene(source)
 
-            // Combine actual image photometry with ambient light hint (image photometry always guards
-            // against misclassifying e.g. a bright screen/sign photographed in a dark room)
-            val isEffectiveLowLight = metrics.isLowLight ||
-                (ambientZone == AmbientLightZone.LOW_LIGHT && metrics.meanLuminance < 112f) ||
-                (ambientLux != null && ambientLux < 35f && metrics.meanLuminance < 112f)
+            // Case 1: Hardware EV already captured the user's selected exposure directly on the sensor!
+            if (hardwareEvApplied) {
+                if (!isAutoExposure) {
+                    // NEVER fight or undo the user's intentional darker/brighter capture exposure!
+                    // Only apply edge-preserving noise reduction when the user boosted exposure in noisy low-light.
+                    val userBoostedExposure = normalizedLevel > 0.62f || evStops > 0.6f
+                    if (userBoostedExposure && (metrics.estimatedNoiseLevel > 6.5f || metrics.isLowLight)) {
+                        return applyEdgePreservingDenoiseOnly(source, strong = metrics.isVeryLowLight || metrics.estimatedNoiseLevel > 11f)
+                    }
+                    return source
+                }
 
-            val isEffectiveHighLight = (metrics.meanLuminance > 182f && metrics.highlightClipFraction > 0.08f) ||
-                metrics.highlightClipFraction > 0.16f ||
-                (ambientZone == AmbientLightZone.HIGH_LIGHT && metrics.highlightClipFraction > 0.06f)
+                // Auto Exposure mode: preserve clean natural shots untouched; apply gentle low-light denoise if needed
+                if (metrics.isLowLight && metrics.estimatedNoiseLevel > 6.0f) {
+                    return applyEdgePreservingDenoiseOnly(source, strong = metrics.isVeryLowLight)
+                }
+                return source
+            }
 
-            // In clean normal light with low noise & no clipping, keep natural sensor output untouched!
-            if (!isEffectiveLowLight && !isEffectiveHighLight && metrics.estimatedNoiseLevel <= 6.5f) {
+            // Case 2: Device HAL did NOT apply hardware EV (e.g., restricted HAL or emulator)
+            // Apply an accurate photometric exposure-stop curve so saved photos STILL match the selected brightness!
+            if (isAutoExposure || abs(evStops) < 0.08f) {
                 return source
             }
 
             val w = source.width
             val h = source.height
             val totalPixels = w * h
+            val lut = buildPhotometricExposureLut(evStops)
 
-            val lut = buildLightingToneLut(
-                metrics = metrics,
-                isLowLight = isEffectiveLowLight,
-                isHighLight = isEffectiveHighLight
-            )
-
-            // Memory guard for ultra-high-MP images (> 20MP)
             if (totalPixels > 20_000_000) {
                 return applyRowBandLut(source, lut)
             }
@@ -479,92 +595,11 @@ object CameraBrightnessEngine {
             val pixels = IntArray(totalPixels)
             source.getPixels(pixels, 0, w, 0, 0, w, h)
 
-            // 1. Low-light edge-preserving luminance + chroma noise reduction FIRST (ISP-correct order:
-            //    denoise raw dark signal BEFORE lifting shadows so grain is never amplified!)
-            if (isEffectiveLowLight || metrics.estimatedNoiseLevel > 7.0f) {
-                val snapshot = pixels.copyOf()
-                val lumaThreshold = if (metrics.isVeryLowLight) 24 else 18
-                val chromaThreshold = if (metrics.isVeryLowLight) 34 else 24
-                val lumaBlend = if (metrics.isVeryLowLight) 0.58f else 0.45f
-                val chromaBlend = if (metrics.isVeryLowLight) 0.68f else 0.55f
-
-                for (y in 1 until h - 1) {
-                    val row = y * w
-                    for (x in 1 until w - 1) {
-                        val idx = row + x
-                        val c = snapshot[idx]
-                        val cr = (c shr 16) and 0xFF
-                        val cg = (c shr 8) and 0xFF
-                        val cb = c and 0xFF
-                        val cLuma = (cr * 77 + cg * 150 + cb * 29) shr 8
-
-                        var sumLuma = cLuma * 2
-                        var wLuma = 2
-                        var sumCrDiff = (cr - cLuma) * 2
-                        var sumCbDiff = (cb - cLuma) * 2
-                        var wChroma = 2
-
-                        val n0 = snapshot[idx - 1]
-                        val n1 = snapshot[idx + 1]
-                        val n2 = snapshot[idx - w]
-                        val n3 = snapshot[idx + w]
-
-                        // Unrolled 4-neighbor edge-preserving accumulation (zero array allocation per pixel)
-                        for (k in 0..3) {
-                            val n = when (k) {
-                                0 -> n0
-                                1 -> n1
-                                2 -> n2
-                                else -> n3
-                            }
-                            val nr = (n shr 16) and 0xFF
-                            val ng = (n shr 8) and 0xFF
-                            val nb = n and 0xFF
-                            val nLuma = (nr * 77 + ng * 150 + nb * 29) shr 8
-                            val lumaDiff = abs(cLuma - nLuma)
-
-                            if (lumaDiff <= lumaThreshold) {
-                                sumLuma += nLuma
-                                wLuma++
-                            }
-                            if (lumaDiff <= chromaThreshold) {
-                                sumCrDiff += (nr - nLuma)
-                                sumCbDiff += (nb - nLuma)
-                                wChroma++
-                            }
-                        }
-
-                        val finalLuma = if (wLuma > 2) {
-                            val avgLuma = sumLuma.toFloat() / wLuma.toFloat()
-                            cLuma + (avgLuma - cLuma) * lumaBlend
-                        } else {
-                            cLuma.toFloat()
-                        }
-
-                        val cCr = (cr - cLuma).toFloat()
-                        val cCb = (cb - cLuma).toFloat()
-                        val finalCr = if (wChroma > 2) {
-                            val avgCr = sumCrDiff.toFloat() / wChroma.toFloat()
-                            cCr + (avgCr - cCr) * chromaBlend
-                        } else {
-                            cCr
-                        }
-                        val finalCb = if (wChroma > 2) {
-                            val avgCb = sumCbDiff.toFloat() / wChroma.toFloat()
-                            cCb + (avgCb - cCb) * chromaBlend
-                        } else {
-                            cCb
-                        }
-
-                        val outR = (finalLuma + finalCr).roundToInt().coerceIn(0, 255)
-                        val outB = (finalLuma + finalCb).roundToInt().coerceIn(0, 255)
-                        val outG = ((finalLuma - 0.299f * outR - 0.114f * outB) / 0.587f).roundToInt().coerceIn(0, 255)
-                        pixels[idx] = (c and -0x1000000) or (outR shl 16) or (outG shl 8) or outB
-                    }
-                }
+            // Denoise raw signal BEFORE boosting brightness in low-light so grain is never amplified
+            if (evStops > 0.5f && (metrics.isLowLight || metrics.estimatedNoiseLevel > 5.5f)) {
+                denoisePixelsInPlace(pixels, w, h, strong = metrics.isVeryLowLight || evStops > 1.5f)
             }
 
-            // 2. Apply lighting-adaptive exposure & highlight/shadow protection LUT
             for (i in 0 until totalPixels) {
                 val p = pixels[i]
                 val a = p and -0x1000000
@@ -578,51 +613,130 @@ object CameraBrightnessEngine {
             result.setPixels(pixels, 0, w, 0, 0, w, h)
             result
         } catch (e: Throwable) {
-            Log.w(TAG, "Light-condition photo optimization skipped safely: ${e.message}")
+            Log.w(TAG, "Capture exposure photo pass skipped safely: ${e.message}")
             source
         }
     }
 
     /**
-     * Builds a 256-entry luminance tone curve tuned for actual low-light vs high-light conditions.
+     * Builds a smooth photometric exposure LUT for [evStops] (`-3.0..+3.0`) with natural highlight
+     * shoulder roll-off and shadow toe protection so colors remain natural without harsh clipping.
      */
-    fun buildLightingToneLut(
-        metrics: SceneAnalysisMetrics,
-        isLowLight: Boolean,
-        isHighLight: Boolean
-    ): IntArray {
+    fun buildPhotometricExposureLut(evStops: Float): IntArray {
         val lut = IntArray(256)
-        val gamma = when {
-            isLowLight && metrics.isVeryLowLight -> 0.82
-            isLowLight -> 0.90
-            isHighLight -> 1.08
-            else -> 1.0
-        }
-        val contrast = when {
-            isLowLight -> 1.03
-            isHighLight -> 1.02
-            else -> 1.0
-        }
+        val clampedStops = evStops.coerceIn(-FALLBACK_MAX_EV_STOPS, FALLBACK_MAX_EV_STOPS)
+        // Perceptually calibrated exposure gain in sRGB space
+        val gain = 2.0.pow(clampedStops.toDouble() * 0.55)
 
         for (i in 0..255) {
-            val norm = i / 255.0
-            var v = norm.pow(gamma)
-
-            // High-light highlight shoulder compression to preserve sky/cloud/concrete detail
-            if (isHighLight && v > 0.72) {
-                val excess = (v - 0.72) / 0.28
-                v = 0.72 + 0.28 * (1.0 - exp(-1.85 * excess)) / (1.0 - exp(-1.85))
+            val srgb = i / 255.0
+            // Convert approximate sRGB -> linear, scale by exposure gain, soft-roll highlights, return to sRGB
+            val linear = srgb.pow(2.2)
+            var exposed = linear * gain
+            if (exposed > 0.75) {
+                // Filmic highlight roll-off prevents harsh blown-out whites when raising brightness
+                val excess = exposed - 0.75
+                exposed = 0.75 + 0.25 * (1.0 - exp(-excess / 0.35))
             }
-
-            // Shadow detail preservation in high-contrast sunlight
-            if (isHighLight && metrics.shadowFraction > 0.12f && v < 0.25) {
-                v += (0.25 - v) * 0.12
-            }
-
-            val shaped = (v - 0.5) * contrast + 0.5
-            lut[i] = (shaped * 255.0).roundToInt().coerceIn(0, 255)
+            val outSrgb = exposed.coerceIn(0.0, 1.0).pow(1.0 / 2.2)
+            lut[i] = (outSrgb * 255.0).roundToInt().coerceIn(0, 255)
         }
         return lut
+    }
+
+    private fun applyEdgePreservingDenoiseOnly(source: Bitmap, strong: Boolean): Bitmap {
+        val w = source.width
+        val h = source.height
+        val totalPixels = w * h
+        if (totalPixels > 20_000_000) return source
+        val pixels = IntArray(totalPixels)
+        source.getPixels(pixels, 0, w, 0, 0, w, h)
+        denoisePixelsInPlace(pixels, w, h, strong = strong)
+        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        result.setPixels(pixels, 0, w, 0, 0, w, h)
+        return result
+    }
+
+    private fun denoisePixelsInPlace(pixels: IntArray, w: Int, h: Int, strong: Boolean) {
+        val snapshot = pixels.copyOf()
+        val lumaThreshold = if (strong) 24 else 18
+        val chromaThreshold = if (strong) 34 else 24
+        val lumaBlend = if (strong) 0.56f else 0.42f
+        val chromaBlend = if (strong) 0.66f else 0.52f
+
+        for (y in 1 until h - 1) {
+            val row = y * w
+            for (x in 1 until w - 1) {
+                val idx = row + x
+                val c = snapshot[idx]
+                val cr = (c shr 16) and 0xFF
+                val cg = (c shr 8) and 0xFF
+                val cb = c and 0xFF
+                val cLuma = (cr * 77 + cg * 150 + cb * 29) shr 8
+
+                var sumLuma = cLuma * 2
+                var wLuma = 2
+                var sumCrDiff = (cr - cLuma) * 2
+                var sumCbDiff = (cb - cLuma) * 2
+                var wChroma = 2
+
+                val n0 = snapshot[idx - 1]
+                val n1 = snapshot[idx + 1]
+                val n2 = snapshot[idx - w]
+                val n3 = snapshot[idx + w]
+
+                for (k in 0..3) {
+                    val n = when (k) {
+                        0 -> n0
+                        1 -> n1
+                        2 -> n2
+                        else -> n3
+                    }
+                    val nr = (n shr 16) and 0xFF
+                    val ng = (n shr 8) and 0xFF
+                    val nb = n and 0xFF
+                    val nLuma = (nr * 77 + ng * 150 + nb * 29) shr 8
+                    val lumaDiff = abs(cLuma - nLuma)
+
+                    if (lumaDiff <= lumaThreshold) {
+                        sumLuma += nLuma
+                        wLuma++
+                    }
+                    if (lumaDiff <= chromaThreshold) {
+                        sumCrDiff += (nr - nLuma)
+                        sumCbDiff += (nb - nLuma)
+                        wChroma++
+                    }
+                }
+
+                val finalLuma = if (wLuma > 2) {
+                    val avgLuma = sumLuma.toFloat() / wLuma.toFloat()
+                    cLuma + (avgLuma - cLuma) * lumaBlend
+                } else {
+                    cLuma.toFloat()
+                }
+
+                val cCr = (cr - cLuma).toFloat()
+                val cCb = (cb - cLuma).toFloat()
+                val finalCr = if (wChroma > 2) {
+                    val avgCr = sumCrDiff.toFloat() / wChroma.toFloat()
+                    cCr + (avgCr - cCr) * chromaBlend
+                } else {
+                    cCr
+                }
+                val finalCb = if (wChroma > 2) {
+                    val avgCb = sumCbDiff.toFloat() / wChroma.toFloat()
+                    cCb + (avgCb - cCb) * chromaBlend
+                } else {
+                    cCb
+                }
+
+                val outR = (finalLuma + finalCr).roundToInt().coerceIn(0, 255)
+                val outB = (finalLuma + finalCb).roundToInt().coerceIn(0, 255)
+                val outG = ((finalLuma - 0.299f * outR - 0.114f * outB) / 0.587f).roundToInt().coerceIn(0, 255)
+                pixels[idx] = (c and -0x1000000) or (outR shl 16) or (outG shl 8) or outB
+            }
+        }
     }
 
     private fun applyRowBandLut(source: Bitmap, lut: IntArray): Bitmap {

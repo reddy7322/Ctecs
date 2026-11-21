@@ -539,7 +539,7 @@ data class HomeScreensaverSettings(
         const val DEFAULT_AOD_DIM_LEVEL = 0.38f
 
         const val MIN_ZOOM_LEVEL = 2.0f
-        const val MAX_ZOOM_LEVEL = 19.0f
+        const val MAX_ZOOM_LEVEL = 23.0f
         const val DEFAULT_ZOOM_LEVEL = 16.0f
         const val ZOOM_STEP = 0.75f
         const val MIN_MINI_MAP_OPACITY = 0.35f

@@ -92,9 +92,11 @@ import com.example.survey.model.SurveyStatus
 import com.example.ui.MainViewModel
 import com.example.ui.ToastType
 import com.example.ui.map.MiniMapHeadingUnavailableBadge
+import com.example.ui.map.MiniMapOfflineCoverageBadge
 import com.example.ui.map.MiniMapViewportMath
 import com.example.ui.map.miniMapNavigationGestures
 import com.example.ui.theme.SmartFadeDivider
+import com.example.ui.theme.smartMapEdgeFade
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.hypot
@@ -153,12 +155,26 @@ fun SurveyScreen(
     val show200mLabels by viewModel.surveyShow200mLabels.collectAsStateWithLifecycle()
     val mapType by viewModel.surveyMapType.collectAsStateWithLifecycle()
 
-    // Interactive Map State (Full-Earth continuous pan & pinch zoom, Always Direction-Up)
+    // Interactive Map State (Full-Earth continuous pan & pinch zoom, Always Direction-Up, 25m initial range)
     var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
-    var continuousZoom by remember { mutableFloatStateOf(16.0f) }
+    var continuousZoom by remember {
+        mutableFloatStateOf(
+            MiniMapViewportMath.computeZoomForGroundRangeMetres(
+                latitude = (currentGps ?: activePoints.lastOrNull()?.geoPoint)?.latitude ?: 28.6139,
+                viewportWidthPx = 360f,
+                viewportHeightPx = 360f,
+                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+            )
+        )
+    }
+    var hasUserAdjustedZoom by remember { mutableStateOf(false) }
+    var lastAutoFitLat by remember {
+        mutableStateOf((currentGps ?: activePoints.lastOrNull()?.geoPoint)?.latitude ?: 28.6139)
+    }
     var isFollowingLocation by remember { mutableStateOf(true) }
 
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
+    val isTileLoading by OsmTileManager.isLoading.collectAsStateWithLifecycle()
 
     LaunchedEffect(currentGps, isFollowingLocation) {
         if (isFollowingLocation) {
@@ -197,10 +213,7 @@ fun SurveyScreen(
         label = "pulseAlpha"
     )
 
-    val (baseZoom, fractionalScale) = MiniMapViewportMath.splitContinuousZoom(continuousZoom)
-    val viewRangeMetres = remember(continuousZoom) {
-        OsmTileManager.viewRangeMetresForZoom(continuousZoom)
-    }
+    val baseZoom = MiniMapViewportMath.splitContinuousZoom(continuousZoom).first
 
     // If review screen is open, show SurveyReviewScreen
     if (reviewSessionTarget != null) {
@@ -226,6 +239,36 @@ fun SurveyScreen(
             ?: activePoints.lastOrNull()?.geoPoint
             ?: GeoPoint(28.6139, 77.2090)
 
+        val initial25mZoom = remember(gpsOrRoutePoint.latitude, viewportWidthPx, viewportHeightPx) {
+            MiniMapViewportMath.computeZoomForGroundRangeMetres(
+                latitude = gpsOrRoutePoint.latitude,
+                viewportWidthPx = viewportWidthPx,
+                viewportHeightPx = viewportHeightPx,
+                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+            )
+        }
+        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom) {
+            if (!hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
+                continuousZoom = initial25mZoom
+                lastAutoFitLat = gpsOrRoutePoint.latitude
+            }
+        }
+        LaunchedEffect(gpsOrRoutePoint.latitude) {
+            if (!hasUserAdjustedZoom && kotlin.math.abs(gpsOrRoutePoint.latitude - lastAutoFitLat) > 0.5) {
+                continuousZoom = initial25mZoom
+                lastAutoFitLat = gpsOrRoutePoint.latitude
+            }
+        }
+
+        val viewRangeMetres = remember(continuousZoom, gpsOrRoutePoint.latitude, viewportWidthPx, viewportHeightPx) {
+            MiniMapViewportMath.computeGroundRangeMetres(
+                continuousZoom = continuousZoom,
+                latitude = gpsOrRoutePoint.latitude,
+                viewportWidthPx = viewportWidthPx,
+                viewportHeightPx = viewportHeightPx
+            )
+        }
+
         val cameraCenter = if (isFollowingLocation) {
             MiniMapViewportMath.computeFollowCameraCenter(
                 vehicleGeo = gpsOrRoutePoint,
@@ -238,15 +281,51 @@ fun SurveyScreen(
             exploredCenter ?: gpsOrRoutePoint
         }
 
+        val renderPlan = remember(viewportWidthPx, viewportHeightPx, continuousZoom) {
+            MiniMapViewportMath.resolveTileRenderPlan(
+                widthPx = viewportWidthPx,
+                heightPx = viewportHeightPx,
+                continuousZoom = continuousZoom
+            )
+        }
+        val tileResult = remember(
+            cameraCenter,
+            renderPlan,
+            isDark,
+            mapType,
+            tileUpdate
+        ) {
+            OsmTileManager.renderMapBitmapWithCoverage(
+                context = context,
+                center = cameraCenter,
+                widthPx = renderPlan.renderSizePx,
+                heightPx = renderPlan.renderSizePx,
+                zoom = renderPlan.renderBaseZoom,
+                panOffsetX = 0f,
+                panOffsetY = 0f,
+                darkTheme = isDark,
+                mapType = mapType
+            )
+        }
+
         // ----------------------------------------------------
         // 1. LIVE INTERACTIVE DIRECTION-UP OSM MAP CANVAS
         // ----------------------------------------------------
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
+                .smartMapEdgeFade(
+                    fadeToColor = colors.background,
+                    edgeSize = 10.dp,
+                    cornerRadius = 0.dp,
+                    showSubtleOutline = false
+                )
                 .miniMapNavigationGestures(enabled = true) { centroid, pan, zoom ->
                     val startCenter = if (isFollowingLocation) cameraCenter else (exploredCenter ?: cameraCenter)
                     isFollowingLocation = false
+                    if (kotlin.math.abs(zoom - 1f) > 0.002f) {
+                        hasUserAdjustedZoom = true
+                    }
                     val (nextCenter, nextZoom) = MiniMapViewportMath.applyFocalPinchAndPan(
                         currentCenter = startCenter,
                         currentZoom = continuousZoom,
@@ -269,25 +348,7 @@ fun SurveyScreen(
             val cx = w / 2f
             val cy = h / 2f
 
-            val diagPx = MiniMapViewportMath.computeDiagonalRenderSizePx(
-                widthPx = w,
-                heightPx = h,
-                fractionalScale = fractionalScale,
-                maxPx = 1024
-            )
-
-            // Render OSM Street or Satellite tile background with active theme (diagonal coverage prevents rotated corner clipping)
-            val osmBitmap = OsmTileManager.renderMapBitmap(
-                context = context,
-                center = cameraCenter,
-                widthPx = diagPx,
-                heightPx = diagPx,
-                zoom = baseZoom,
-                panOffsetX = 0f,
-                panOffsetY = 0f,
-                darkTheme = isDark,
-                mapType = mapType
-            )
+            val osmBitmap = tileResult.bitmap
 
             drawRect(color = colors.background)
 
@@ -321,14 +382,14 @@ fun SurveyScreen(
 
             rotate(degrees = animatedMapRotation, pivot = Offset(cx, cy)) {
                 if (osmBitmap != null) {
-                    scale(scale = fractionalScale, pivot = Offset(cx, cy)) {
+                    scale(scale = renderPlan.renderScale, pivot = Offset(cx, cy)) {
                         drawImage(
                             image = osmBitmap.asImageBitmap(),
                             dstOffset = IntOffset(
-                                x = (cx - diagPx / 2f).toInt(),
-                                y = (cy - diagPx / 2f).toInt()
+                                x = (cx - renderPlan.renderSizePx / 2f).toInt(),
+                                y = (cy - renderPlan.renderSizePx / 2f).toInt()
                             ),
-                            dstSize = IntSize(diagPx, diagPx)
+                            dstSize = IntSize(renderPlan.renderSizePx, renderPlan.renderSizePx)
                         )
                     }
                 }
@@ -539,15 +600,28 @@ fun SurveyScreen(
             }
         }
 
-        // Heading unavailable indicator (only when no reliable heading exists)
-        if (mapHeadingState.isDirectionUnavailable && activeHeadingDeg == null && currentGps != null) {
-            MiniMapHeadingUnavailableBadge(
-                isDark = isDark,
+        // Heading unavailable and offline coverage indicators cleanly positioned below toolbar
+        val showHeadingBadge = mapHeadingState.isDirectionUnavailable && activeHeadingDeg == null && currentGps != null
+        val showOfflineBadge = !isTileLoading && tileResult.hasMissingTiles
+        if (showHeadingBadge || showOfflineBadge) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()
                     .padding(top = 66.dp)
-            )
+            ) {
+                if (showHeadingBadge) {
+                    MiniMapHeadingUnavailableBadge(isDark = isDark)
+                }
+                if (showOfflineBadge) {
+                    MiniMapOfflineCoverageBadge(
+                        isDark = isDark,
+                        hasPartialCoverage = tileResult.hasAnyCoverage
+                    )
+                }
+            }
         }
 
         // ----------------------------------------------------
@@ -722,13 +796,16 @@ fun SurveyScreen(
                 .padding(end = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Re-centre Location
+            // Re-centre Location (restores 25m viewing range & GPS follow)
             SurveyGlassIconButton(
                 icon = Icons.Default.MyLocation,
                 contentDescription = "Center Location",
                 onClick = {
                     isFollowingLocation = true
                     exploredCenter = null
+                    hasUserAdjustedZoom = false
+                    continuousZoom = initial25mZoom
+                    lastAutoFitLat = gpsOrRoutePoint.latitude
                 },
                 variant = if (isFollowingLocation) GlassButtonVariant.SKY else GlassButtonVariant.NEUTRAL,
                 active = isFollowingLocation,
@@ -741,6 +818,7 @@ fun SurveyScreen(
                 icon = Icons.Default.ZoomIn,
                 contentDescription = "Zoom In",
                 onClick = {
+                    hasUserAdjustedZoom = true
                     continuousZoom = (continuousZoom + 0.75f).coerceAtMost(MiniMapViewportMath.MAX_ZOOM)
                 },
                 variant = GlassButtonVariant.NEUTRAL,
@@ -753,6 +831,7 @@ fun SurveyScreen(
                 icon = Icons.Default.ZoomOut,
                 contentDescription = "Zoom Out",
                 onClick = {
+                    hasUserAdjustedZoom = true
                     continuousZoom = (continuousZoom - 0.75f).coerceAtLeast(MiniMapViewportMath.MIN_ZOOM)
                 },
                 variant = GlassButtonVariant.NEUTRAL,

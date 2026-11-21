@@ -2611,6 +2611,7 @@ fun PhotoDetailsDialog(
                         showGpsBadge = true,
                         showProjectTag = true,
                         interactive = true,
+                        fadeToColor = dialogColors.containerColor,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(152.dp)

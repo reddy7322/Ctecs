@@ -308,8 +308,8 @@ class MiniMapNavigationAndScreensaverPortraitTest {
                         gpsAccuracy = 5f,
                         bearing = null,
                         compassHeading = 123f,
-                        routeData = sampleRoute(),
-                        matchedProjectedPoint = GeoPoint(29.5150, 77.7150),
+                        routeData = null,
+                        matchedProjectedPoint = null,
                         onSharedRecenter = { recenterCount++ },
                         mapHeadingState = unavailableHeading,
                         modifier = Modifier.fillMaxSize()
@@ -319,10 +319,9 @@ class MiniMapNavigationAndScreensaverPortraitTest {
         }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("smart_mini_map").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("map_zoom_in_btn").assertIsDisplayed().performClick()
-        composeTestRule.onNodeWithTag("map_zoom_out_btn").assertIsDisplayed().performClick()
-        composeTestRule.onNodeWithTag("map_recenter_btn").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("map_zoom_in").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("map_zoom_out").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("map_follow_button").assertIsDisplayed().performClick()
         composeTestRule.onNodeWithTag("minimap_heading_unavailable_badge").assertIsDisplayed()
         assertEquals(1, recenterCount)
     }
@@ -422,7 +421,7 @@ class MiniMapNavigationAndScreensaverPortraitTest {
         val location = composeTestRule.onNodeWithTag("screensaver_location_name").assertIsDisplayed()
         val miniMap = composeTestRule.onNodeWithTag("screensaver_glass_map").assertIsDisplayed()
 
-        val rootBounds = composeTestRule.onNodeWithTag("chainage_screensaver_overlay").fetchSemanticsNode().boundsInRoot
+        val rootBounds = composeTestRule.onNodeWithTag("home_chainage_screensaver").fetchSemanticsNode().boundsInRoot
         val topBarRect = topBar.fetchSemanticsNode().boundsInRoot
         val chainageRect = chainage.fetchSemanticsNode().boundsInRoot
         val directionRect = direction.fetchSemanticsNode().boundsInRoot
@@ -536,7 +535,7 @@ class MiniMapNavigationAndScreensaverPortraitTest {
         }
         composeTestRule.waitForIdle()
 
-        val mirrorNode = composeTestRule.onNodeWithTag("screensaver_mirror_container").assertIsDisplayed()
+        val mirrorNode = composeTestRule.onNodeWithTag("screensaver_dashboard_root").assertIsDisplayed()
         assertEquals(-1f, mirrorNode.fetchSemanticsNode().config[DashboardMirrorScaleXKey], 0.01f)
         composeTestRule.onNodeWithTag("screensaver_top_controls_bar").assertIsDisplayed()
         composeTestRule.onNodeWithTag("screensaver_chainage_text").assertIsDisplayed()

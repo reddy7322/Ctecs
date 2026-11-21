@@ -306,7 +306,7 @@ data class CameraSettings(
     val videoStabilizationMode: VideoStabilizationMode = VideoStabilizationMode.AUTO,
     val autofocusMode: CameraAutofocusMode = CameraAutofocusMode.CONTINUOUS,
 
-    // Smart Camera Preview Brightness (Full Range 0.02f..1.0f + Ambient-Light Auto Brightness)
-    val autoBrightnessEnabled: Boolean = false,
-    val manualPreviewBrightness: Float = 0.65f
+    // Smooth Continuous Photo & Video Capture Exposure (0.0f = min dim, 0.5f = balanced 0.0 EV, 1.0f = max bright)
+    val autoBrightnessEnabled: Boolean = true,
+    val manualPreviewBrightness: Float = 0.5f
 )

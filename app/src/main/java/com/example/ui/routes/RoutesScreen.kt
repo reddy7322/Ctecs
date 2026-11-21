@@ -62,11 +62,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.RouteEntity
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
+import com.example.geo.OfflineMapSyncState
 import com.example.ui.camera.MiniMapPreview
+import com.example.ui.map.OfflineMapSyncStatusStrip
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.SmartFadeDivider
 import com.example.ui.theme.isAppDarkTheme
-import com.example.ui.theme.smartMapEdgeFade
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -86,6 +87,7 @@ fun RoutesScreen(
     val isImporting by viewModel.isImportingRoute.collectAsStateWithLifecycle()
     val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
     val routeImportError by viewModel.routeImportError.collectAsStateWithLifecycle()
+    val offlineSyncState by viewModel.offlineMapSyncState.collectAsStateWithLifecycle()
 
     var routeToDelete by remember { mutableStateOf<RouteEntity?>(null) }
     var showMarkerInspector by remember { mutableStateOf(false) }
@@ -137,6 +139,10 @@ fun RoutesScreen(
                     liveBearing = mapHeadingState.headingDegrees ?: locationState.bearing,
                     gpsAccuracy = locationState.accuracy,
                     mapHeadingState = mapHeadingState,
+                    offlineSyncState = offlineSyncState,
+                    onPauseOfflineSync = { viewModel.pauseOfflineMapSync() },
+                    onResumeOfflineSync = { viewModel.resumeOfflineMapSync() },
+                    onRetryOfflineSync = { viewModel.retryOfflineMapSync() },
                     onInspectMarkers = { showMarkerInspector = true },
                     onCalibrate = { showCalibrationDialog = true }
                 )
@@ -274,6 +280,10 @@ fun ActiveRouteCard(
     liveBearing: Float? = null,
     gpsAccuracy: Float = 0f,
     mapHeadingState: com.example.geo.MapHeadingState? = null,
+    offlineSyncState: OfflineMapSyncState = OfflineMapSyncState(),
+    onPauseOfflineSync: () -> Unit = {},
+    onResumeOfflineSync: () -> Unit = {},
+    onRetryOfflineSync: () -> Unit = {},
     onInspectMarkers: () -> Unit,
     onCalibrate: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -375,12 +385,21 @@ fun ActiveRouteCard(
                     showProjectTag = true,
                     mapHeadingState = mapHeadingState,
                     interactive = true,
-                    autoFitRoute = true,
+                    autoFitRoute = false,
                     orientationMode = com.example.model.MiniMapOrientationMode.DIRECTION_UP,
+                    fadeToColor = c.surface,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(176.dp)
-                        .smartMapEdgeFade(fadeToColor = c.surface, edgeSize = 10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OfflineMapSyncStatusStrip(
+                    syncState = offlineSyncState,
+                    onPauseSync = onPauseOfflineSync,
+                    onResumeSync = onResumeOfflineSync,
+                    onRetrySync = onRetryOfflineSync
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))

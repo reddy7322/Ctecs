@@ -211,26 +211,49 @@ class SmartDirectionManager {
 
         if (isGpsWeak) {
             clearPendingCandidate()
+            val isHardGpsLoss = locationState == null ||
+                locationState.point == null ||
+                locationState.status == LocationStatus.DISABLED ||
+                locationState.status == LocationStatus.PERMISSION_DENIED ||
+                fixAgeMs > MAX_GPS_FIX_AGE_MS
+            val canBrieflyHoldLastSide = !isHardGpsLoss &&
+                confirmedSide != null &&
+                lastConfirmedTimestampMs > 0L &&
+                (nowMs - lastConfirmedTimestampMs) in 0L..TRANSIENT_WEAK_GPS_HOLD_MS
+
             val reason = when {
                 locationState == null || locationState.point == null -> "Waiting for GPS signal"
                 locationState.status == LocationStatus.DISABLED -> "GPS is turned off"
                 locationState.status == LocationStatus.PERMISSION_DENIED -> "Location permission required"
                 fixAgeMs > MAX_GPS_FIX_AGE_MS -> "GPS fix is stale"
+                canBrieflyHoldLastSide -> String.format(
+                    Locale.US,
+                    "Brief weak GPS (±%.0fm) — holding last reliable %s",
+                    locationState.accuracy,
+                    confirmedSide
+                )
                 else -> String.format(Locale.US, "GPS accuracy weak (±%.0fm)", locationState.accuracy)
+            }
+            val heldSide = if (canBrieflyHoldLastSide) confirmedSide else null
+            val heldInc = if (canBrieflyHoldLastSide) confirmedIncreasing else null
+            val heldTrend = when (heldInc) {
+                true -> ChainageProgressionTrend.INCREASING
+                false -> ChainageProgressionTrend.DECREASING
+                null -> ChainageProgressionTrend.UNKNOWN
             }
             val state = SmartDirectionState(
                 detectionState = DirectionDetectionState.GPS_SIGNAL_WEAK,
-                confirmedSide = null,
+                confirmedSide = heldSide,
                 pendingCandidateSide = null,
-                chainageTrend = ChainageProgressionTrend.UNKNOWN,
-                isIncreasingChainage = null,
-                directionArrow = "",
+                chainageTrend = heldTrend,
+                isIncreasingChainage = heldInc,
+                directionArrow = heldTrend.arrow,
                 isManualOverride = false,
-                confidenceScore = 0f,
+                confidenceScore = if (heldSide != null) 0.35f else 0f,
                 routeId = routeId,
                 alignmentId = alignmentId,
                 effectiveConvention = resolvedConvention,
-                statusLabel = DirectionDetectionState.GPS_SIGNAL_WEAK.shortLabel,
+                statusLabel = heldSide ?: DirectionDetectionState.GPS_SIGNAL_WEAK.shortLabel,
                 detailReason = reason,
                 lastConfirmedTimestampMs = lastConfirmedTimestampMs,
                 lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
@@ -418,14 +441,44 @@ class SmartDirectionManager {
             if (alignmentChainageIncreasesForward) stepAlignDeltaM else -stepAlignDeltaM
         }
 
-        // Check geometric vector alignment (prevProjected -> curProjected vs alignment tangent)
+        // Check local geometric vector alignment against local segment tangent (accurate on curves & bends!)
         var vectorAlignmentCos = 0.0
-        if (alignmentTangentDeg != null && baselineSample != null && rawGpsMoveM >= 3.5) {
-            val moveBearing = GeoUtils.bearingDegrees(
-                baselineSample.projectedPoint ?: baselineSample.point,
-                sample.projectedPoint ?: sample.point
+        if (alignmentTangentDeg != null) {
+            if (prevSample != null && stepGpsMoveM >= 2.5) {
+                val localStepBearing = GeoUtils.bearingDegrees(
+                    prevSample.projectedPoint ?: prevSample.point,
+                    sample.projectedPoint ?: sample.point
+                )
+                vectorAlignmentCos = cos(Math.toRadians(angleDifferenceDegrees(localStepBearing, alignmentTangentDeg)))
+            } else if (baselineSample != null && rawGpsMoveM >= 3.5) {
+                val moveBearing = GeoUtils.bearingDegrees(
+                    baselineSample.projectedPoint ?: baselineSample.point,
+                    sample.projectedPoint ?: sample.point
+                )
+                vectorAlignmentCos = cos(Math.toRadians(angleDifferenceDegrees(moveBearing, alignmentTangentDeg)))
+            }
+        }
+
+        // Geometric centreline lateral-offset cue for single-centreline divided highways
+        val lateralOffsetSideCue: String? = if (
+            !activeAlign.carriagewayType.equals("LHS", ignoreCase = true) &&
+            !activeAlign.carriagewayType.equals("RHS", ignoreCase = true) &&
+            cachedGeometry.points.size >= 2 &&
+            sample.accuracyM <= 15f
+        ) {
+            val segIdx = matchResult.matchedSegmentIndex.coerceIn(0, cachedGeometry.points.size - 2)
+            val signedLatM = ChainageMatcher.calculateSignedLateralOffsetMetres(
+                point = gpsPoint,
+                p1 = cachedGeometry.points[segIdx],
+                p2 = cachedGeometry.points[segIdx + 1]
             )
-            vectorAlignmentCos = cos(Math.toRadians(angleDifferenceDegrees(moveBearing, alignmentTangentDeg)))
+            if (abs(signedLatM) in 3.5..35.0) {
+                if ((signedLatM > 0.0) == alignmentChainageIncreasesForward) "LHS" else "RHS"
+            } else {
+                null
+            }
+        } else {
+            null
         }
 
         // Secondary Cue (ONLY when moving >= 2.5 m/s with good GPS accuracy <= 18m): GPS course bearing
@@ -472,7 +525,7 @@ class SmartDirectionManager {
             sideForProgression(isIncreasing = inc, convention = resolvedConvention)
         }
 
-        // Confidence scoring combining GPS accuracy, map-match offset, vector agreement, and bearing corroboration
+        // Confidence scoring combining GPS accuracy, map-match offset, vector agreement, lateral offset, and bearing corroboration
         val observationConfidence = computeObservationConfidence(
             accuracyM = sample.accuracyM,
             offsetM = matchResult.offsetMetres,
@@ -481,6 +534,7 @@ class SmartDirectionManager {
             alignmentChainageIncreasesForward = alignmentChainageIncreasesForward,
             observedIncreasing = observedIncreasing,
             dedicatedCarriageway = activeAlign.carriagewayType.uppercase(Locale.ROOT),
+            lateralOffsetSideCue = lateralOffsetSideCue,
             observedSide = observedSide,
             isSlowSpeed = isSlowSpeed
         )
@@ -764,6 +818,7 @@ class SmartDirectionManager {
         alignmentChainageIncreasesForward: Boolean,
         observedIncreasing: Boolean?,
         dedicatedCarriageway: String,
+        lateralOffsetSideCue: String?,
         observedSide: String?,
         isSlowSpeed: Boolean
     ): Float {
@@ -796,6 +851,13 @@ class SmartDirectionManager {
         // Dedicated carriageway bonus (when KMZ separates LHS and RHS polylines)
         if ((dedicatedCarriageway == "LHS" || dedicatedCarriageway == "RHS") && dedicatedCarriageway == observedSide) {
             score += 0.08f
+        } else if (lateralOffsetSideCue != null) {
+            // Corroborate single-centreline divided highway travel side using lateral offset relative to centreline
+            if (lateralOffsetSideCue == observedSide) {
+                score += 0.07f
+            } else {
+                score -= 0.05f
+            }
         }
 
         if (isSlowSpeed) {
@@ -808,6 +870,7 @@ class SmartDirectionManager {
     companion object {
         const val MAX_RELIABLE_GPS_ACCURACY_M = 30f
         const val MAX_GPS_FIX_AGE_MS = 12_000L
+        const val TRANSIENT_WEAK_GPS_HOLD_MS = 6_000L
         const val MAX_ALIGNMENT_CORRIDOR_OFFSET_M = 95.0
 
         const val STATIONARY_SPEED_MPS = 0.8f      // ~2.9 km/h
@@ -931,9 +994,9 @@ class SmartDirectionManager {
             cached: ChainageMatcher.CachedAlignmentGeometry,
             segmentIndex: Int
         ): Double? {
-            if (cached.points.size < 2) return null
-            val idx = segmentIndex.coerceIn(0, cached.points.size - 2)
-            return GeoUtils.bearingDegrees(cached.points[idx], cached.points[idx + 1])
+            if (cached.segmentBearingsDeg.isEmpty()) return null
+            val idx = segmentIndex.coerceIn(0, cached.segmentBearingsDeg.lastIndex)
+            return cached.segmentBearingsDeg[idx]
         }
 
         private fun isAlignmentChainageIncreasingForward(

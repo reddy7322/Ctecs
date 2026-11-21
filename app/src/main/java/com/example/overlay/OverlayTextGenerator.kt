@@ -17,19 +17,59 @@ import kotlin.math.abs
 object OverlayTextGenerator {
 
     /**
+     * Single authoritative resolver for displaying or stamping road side across:
+     * - Camera Portrait & Landscape live preview
+     * - Captured photos, recorded videos, and EXIF metadata
+     * - Mini Maps & HUD panels
+     *
+     * Rules:
+     * - Manual LHS -> "LHS"
+     * - Manual RHS -> "RHS"
+     * - Manual BHS / BOTH -> "BHS"
+     * - Manual NONE -> null (omitted cleanly)
+     * - Automatic mode -> ONLY confirmed "LHS" or "RHS", or null when uncertain/weak GPS (never "AUTO", never "BHS").
+     */
+    fun resolveAuthoritativeDisplaySide(
+        smartDirectionState: com.example.model.SmartDirectionState?,
+        projectProfile: ProjectProfile
+    ): String? {
+        if (smartDirectionState != null) {
+            if (smartDirectionState.isManualOverride) {
+                return when (smartDirectionState.confirmedSide?.trim()?.uppercase(Locale.ROOT)) {
+                    "LHS" -> "LHS"
+                    "RHS" -> "RHS"
+                    "BHS", "BOTH" -> "BHS"
+                    "MEDIAN" -> "MEDIAN"
+                    "NONE", null, "" -> null
+                    else -> null
+                }
+            }
+            return smartDirectionState.confirmedBinarySide
+        }
+        return when (projectProfile.roadSide) {
+            com.example.model.RoadSide.LHS -> "LHS"
+            com.example.model.RoadSide.RHS -> "RHS"
+            com.example.model.RoadSide.BOTH -> "BHS"
+            com.example.model.RoadSide.MEDIAN -> "MEDIAN"
+            com.example.model.RoadSide.NONE -> null
+        }
+    }
+
+    /**
      * Resolves the authoritative road side for camera overlays, video stamps, EXIF, and gallery metadata.
      * Returns `(sideLabelOrNull, useOverride)`. When [com.example.model.SmartDirectionState] is attached
-     * to the capture snapshot, only a confirmed or manually overridden side is stamped—uncertain or
-     * weak-GPS states intentionally omit a guessed LHS/RHS token.
+     * to the capture snapshot, only a confirmed or manually overridden side is stamped—uncertain,
+     * weak-GPS, or explicit NONE states intentionally omit any side token.
      */
     fun resolveAuthoritativeCaptureSide(snapshot: CaptureSnapshot): Pair<String?, Boolean> {
         val smartDir = snapshot.matchResult.smartDirectionState
         if (smartDir != null) {
-            return smartDir.confirmedSide to true
+            return resolveAuthoritativeDisplaySide(smartDir, snapshot.projectProfile) to true
         }
-        val fallback = snapshot.projectProfile.roadSide.label
-            .takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
-        return fallback to false
+        val resolved = resolveAuthoritativeDisplaySide(null, snapshot.projectProfile)
+        val forceOverride = snapshot.projectProfile.roadSide == com.example.model.RoadSide.BOTH ||
+            snapshot.projectProfile.roadSide == com.example.model.RoadSide.NONE
+        return resolved to forceOverride
     }
 
     fun generateLines(

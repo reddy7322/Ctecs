@@ -78,41 +78,23 @@ object MiniMapRenderer {
     }
 
     /**
-     * Computes a suitable Web Mercator zoom level so the current GPS coordinate
-     * and the nearest imported KMZ/KML alignment remain visible together.
+     * Dynamically computes the continuous Web Mercator zoom level for the standard 25-metre
+     * ground viewing range around [center] based on latitude, map dimensions, and aspect ratio.
      */
-    fun computeAutoZoom(center: GeoPoint?, routeData: RouteData?): Float {
-        if (center == null) return 15.0f
-        if (routeData == null || routeData.alignments.isEmpty()) return 15.8f
-
-        var minDistMeters = Double.MAX_VALUE
-        for (align in routeData.alignments) {
-            val pts = align.points
-            if (pts.isEmpty()) continue
-            val step = max(1, pts.size / 120)
-            var idx = 0
-            while (idx < pts.size) {
-                val d = GeoUtils.distanceMetres(center, pts[idx])
-                if (d < minDistMeters) minDistMeters = d
-                idx += step
-            }
-            val lastD = GeoUtils.distanceMetres(center, pts.last())
-            if (lastD < minDistMeters) minDistMeters = lastD
-        }
-
-        return when {
-            minDistMeters == Double.MAX_VALUE -> 15.8f
-            minDistMeters <= 90.0 -> 16.0f
-            minDistMeters <= 220.0 -> 15.3f
-            minDistMeters <= 480.0 -> 14.5f
-            minDistMeters <= 1100.0 -> 13.6f
-            minDistMeters <= 2600.0 -> 12.6f
-            else -> {
-                // Keep reasonable regional scale without zooming out to continent level
-                val ratio = (2600.0 / minDistMeters).coerceIn(0.25, 1.0)
-                (12.6 + ln(ratio) / ln(2.0)).toFloat().coerceIn(11.5f, 16.0f)
-            }
-        }
+    fun computeAutoZoom(
+        center: GeoPoint?,
+        routeData: RouteData?,
+        viewportWidthPx: Float = 360f,
+        viewportHeightPx: Float = 360f,
+        groundRangeMetres: Double = com.example.ui.map.MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+    ): Float {
+        val anchorLat = center?.latitude ?: routeData?.bounds?.center?.latitude ?: 28.6139
+        return com.example.ui.map.MiniMapViewportMath.computeZoomForGroundRangeMetres(
+            latitude = anchorLat,
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+            groundRangeMetres = groundRangeMetres
+        )
     }
 
     /**
@@ -246,12 +228,19 @@ object MiniMapRenderer {
 
         val centerGeo = location ?: routeData?.bounds?.center
         val effectiveZoom = if (config.autoZoom) {
-            computeAutoZoom(centerGeo, routeData)
+            computeAutoZoom(
+                center = centerGeo,
+                routeData = routeData,
+                viewportWidthPx = bounds.width(),
+                viewportHeightPx = bounds.height()
+            )
         } else {
-            config.zoomLevel.coerceIn(1.0f, 19.0f)
+            config.zoomLevel.coerceIn(
+                com.example.ui.map.MiniMapViewportMath.MIN_ZOOM,
+                com.example.ui.map.MiniMapViewportMath.MAX_ZOOM
+            )
         }
-        val baseZoom = floor(effectiveZoom).toInt().coerceIn(1, 19)
-        val zoomScale = 2.0.pow((effectiveZoom - baseZoom).toDouble()).toFloat().coerceIn(0.5f, 2.5f)
+        val (baseZoom, zoomScale) = com.example.ui.map.MiniMapViewportMath.splitContinuousZoom(effectiveZoom)
         val effectiveBearing = resolveEffectiveBearing(centerGeo, bearing, routeData)
         val mapRotationDeg = resolveMapRotationDegrees(config.orientationMode, effectiveBearing)
 
@@ -264,29 +253,33 @@ object MiniMapRenderer {
         val cx = bounds.centerX()
         val cy = if (useForwardPivot) bounds.top + h * 0.58f else bounds.centerY()
 
-        // 4. Real map tiles background when available
+        // 4. Real map tiles background when available (resolved dynamically to guarantee zero clipped edges)
         var hasOsmTiles = false
         if (context != null && centerGeo != null && config.backgroundAlpha > 0.04f) {
-            val coverHeight = if (useForwardPivot) h * 1.18 else h.toDouble()
-            val diagPx = ceil(hypot(w.toDouble(), coverHeight) / zoomScale).toInt().coerceIn(32, 1024)
+            val coverHeight = if (useForwardPivot) h * 1.24f else h
+            val renderPlan = com.example.ui.map.MiniMapViewportMath.resolveTileRenderPlan(
+                widthPx = w,
+                heightPx = coverHeight,
+                continuousZoom = effectiveZoom
+            )
             val osmMapType = if (config.mapStyle == MiniMapStyle.SATELLITE) "satellite" else "standard"
             val osmBitmap = getOrRenderCachedTileBitmap(
                 context = context,
                 center = centerGeo,
-                zoom = baseZoom,
-                sizePx = diagPx,
+                zoom = renderPlan.renderBaseZoom,
+                sizePx = renderPlan.renderSizePx,
                 darkTheme = config.mapStyle == MiniMapStyle.DARK,
                 mapType = osmMapType
             )
             if (osmBitmap != null) {
                 hasOsmTiles = true
-                val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+                val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
                     alpha = bgAlphaInt
                     if (toneFilter != null) colorFilter = toneFilter
                 }
                 canvas.save()
                 canvas.rotate(mapRotationDeg, cx, cy)
-                canvas.scale(zoomScale, zoomScale, cx, cy)
+                canvas.scale(renderPlan.renderScale, renderPlan.renderScale, cx, cy)
                 canvas.drawBitmap(
                     osmBitmap,
                     cx - osmBitmap.width / 2f,
@@ -654,18 +647,51 @@ object MiniMapRenderer {
             )
         }
 
+        // 8b. Subtle smart peripheral edge feathering for seamless surface integration
+        if (config.backgroundAlpha > 0.10f) {
+            val edgeSpan = (min(w, h) * 0.11f).coerceIn(4f * dpScale, 14f * dpScale)
+            val edgeAlpha = (95f * config.backgroundAlpha).toInt().coerceIn(25, 110)
+            val edgeColor = Color.argb(edgeAlpha, Color.red(baseBgRgb), Color.green(baseBgRgb), Color.blue(baseBgRgb))
+            val clearColor = Color.argb(0, Color.red(baseBgRgb), Color.green(baseBgRgb), Color.blue(baseBgRgb))
+            val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+            edgePaint.shader = android.graphics.LinearGradient(
+                bounds.left, bounds.top, bounds.left, bounds.top + edgeSpan,
+                edgeColor, clearColor, android.graphics.Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(bounds.left, bounds.top, bounds.right, bounds.top + edgeSpan, edgePaint)
+            edgePaint.shader = android.graphics.LinearGradient(
+                bounds.left, bounds.bottom - edgeSpan, bounds.left, bounds.bottom,
+                clearColor, edgeColor, android.graphics.Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(bounds.left, bounds.bottom - edgeSpan, bounds.right, bounds.bottom, edgePaint)
+        }
+
         canvas.restore() // Remove inner clip
 
-        // 9. Border outline
+        // 9. Refined minimalist faded outline border
         if (config.borderEnabled && config.borderThicknessDp > 0f) {
             val defaultBorder = if (isDarkStyle) Color.parseColor("#64748B") else Color.parseColor("#94A3B8")
-            val borderColor = parseColorSafe(config.borderColorHex, defaultBorder)
+            val rawBorderColor = parseColorSafe(config.borderColorHex, defaultBorder)
+            val translucentBorder = Color.argb(
+                ((Color.alpha(rawBorderColor) * 0.62f).toInt()).coerceIn(50, 175),
+                Color.red(rawBorderColor),
+                Color.green(rawBorderColor),
+                Color.blue(rawBorderColor)
+            )
             val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = borderColor
+                color = translucentBorder
                 style = Paint.Style.STROKE
-                strokeWidth = (config.borderThicknessDp * dpScale).coerceIn(1f, 16f)
+                strokeWidth = (config.borderThicknessDp * dpScale).coerceIn(1f, 12f)
             }
-            canvas.drawRoundRect(bounds, cornerRadiusPx, cornerRadiusPx, borderPaint)
+            val inset = borderPaint.strokeWidth * 0.5f
+            val borderRect = RectF(
+                bounds.left + inset,
+                bounds.top + inset,
+                bounds.right - inset,
+                bounds.bottom - inset
+            )
+            val adjustedRadius = (cornerRadiusPx - inset).coerceAtLeast(0f)
+            canvas.drawRoundRect(borderRect, adjustedRadius, adjustedRadius, borderPaint)
         }
 
         canvas.restoreToCount(layerSaveCount)

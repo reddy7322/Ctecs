@@ -169,7 +169,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.example.camera.AmbientLightZone
 import com.example.camera.CameraBrightnessEngine
 import com.example.location.LocationStatus
 import com.example.model.CameraGridMode
@@ -209,57 +208,70 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Direct-tap Camera Screen side/direction options in strict cycling order:
- * RHS -> LHS -> BOTH -> MEDIAN -> NONE -> AUTO -> RHS
+ * Direct-tap Camera Screen side options in strict cycling order:
+ * LHS -> RHS -> BHS -> NONE -> LHS
  */
 internal enum class CameraSideOption(val label: String) {
-    RHS("RHS"),
     LHS("LHS"),
-    BOTH("BOTH"),
-    MEDIAN("MEDIAN"),
-    NONE("NONE"),
-    AUTO("AUTO");
+    RHS("RHS"),
+    BHS("BHS"),
+    NONE("NONE");
 
     fun next(): CameraSideOption = when (this) {
-        RHS -> LHS
-        LHS -> BOTH
-        BOTH -> MEDIAN
-        MEDIAN -> NONE
-        NONE -> AUTO
-        AUTO -> RHS
+        LHS -> RHS
+        RHS -> BHS
+        BHS -> NONE
+        NONE -> LHS
     }
 }
 
-internal fun resolveCameraSideOption(
+/**
+ * Resolved Camera Screen side display state.
+ * - Never displays "AUTO" or "MANUAL".
+ * - In underlying Automatic Detection mode, displays ONLY detected "LHS" or "RHS"
+ *   (or neutral "---" if internally uncertain, without guessing).
+ * - In Manual mode, displays ONLY "LHS", "RHS", "BHS", or "NONE".
+ */
+internal data class CameraSideDisplayState(
+    val activeOption: CameraSideOption?,
+    val displayLabel: String
+) {
+    fun nextOptionOnTap(): CameraSideOption = activeOption?.next() ?: CameraSideOption.LHS
+}
+
+internal fun resolveCameraSideDisplayState(
     smartDirectionState: com.example.model.SmartDirectionState,
     projectProfile: ProjectProfile
-): CameraSideOption {
+): CameraSideDisplayState {
     if (!smartDirectionState.isManualOverride) {
-        return CameraSideOption.AUTO
-    }
-    return when (smartDirectionState.confirmedSide?.trim()?.uppercase(Locale.ROOT)) {
-        "RHS" -> CameraSideOption.RHS
-        "LHS" -> CameraSideOption.LHS
-        "BOTH", "BHS" -> CameraSideOption.BOTH
-        "MEDIAN" -> CameraSideOption.MEDIAN
-        "NONE" -> CameraSideOption.NONE
-        else -> when (projectProfile.roadSide) {
-            RoadSide.RHS -> CameraSideOption.RHS
-            RoadSide.LHS -> CameraSideOption.LHS
-            RoadSide.BOTH -> CameraSideOption.BOTH
-            RoadSide.MEDIAN -> CameraSideOption.MEDIAN
-            RoadSide.NONE -> CameraSideOption.NONE
+        return when (smartDirectionState.confirmedBinarySide) {
+            "LHS" -> CameraSideDisplayState(CameraSideOption.LHS, CameraSideOption.LHS.label)
+            "RHS" -> CameraSideDisplayState(CameraSideOption.RHS, CameraSideOption.RHS.label)
+            else -> CameraSideDisplayState(null, "---")
         }
     }
+    val option = when (smartDirectionState.confirmedSide?.trim()?.uppercase(Locale.ROOT)) {
+        "LHS" -> CameraSideOption.LHS
+        "RHS" -> CameraSideOption.RHS
+        "BHS", "BOTH" -> CameraSideOption.BHS
+        "NONE" -> CameraSideOption.NONE
+        else -> when (projectProfile.roadSide) {
+            RoadSide.LHS -> CameraSideOption.LHS
+            RoadSide.RHS -> CameraSideOption.RHS
+            RoadSide.BOTH -> CameraSideOption.BHS
+            RoadSide.NONE -> CameraSideOption.NONE
+            RoadSide.MEDIAN -> CameraSideOption.BHS
+        }
+    }
+    return CameraSideDisplayState(option, option.label)
 }
 
-private fun cameraSideOptionTint(option: CameraSideOption): Color = when (option) {
-    CameraSideOption.RHS -> Color(0xFF38BDF8)
+private fun cameraSideOptionTint(option: CameraSideOption?): Color = when (option) {
     CameraSideOption.LHS -> Color(0xFF34D399)
-    CameraSideOption.BOTH -> HighlightYellow
-    CameraSideOption.MEDIAN -> Color(0xFFF59E0B)
+    CameraSideOption.RHS -> Color(0xFF38BDF8)
+    CameraSideOption.BHS -> HighlightYellow
     CameraSideOption.NONE -> Color.White.copy(alpha = 0.78f)
-    CameraSideOption.AUTO -> Color(0xFF38BDF8)
+    null -> Color.White.copy(alpha = 0.82f)
 }
 
 @Composable
@@ -372,8 +384,7 @@ fun CameraScreen(
     val captureMode by viewModel.captureMode.collectAsStateWithLifecycle()
     val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
     val isRecordingPaused by viewModel.isRecordingPaused.collectAsStateWithLifecycle()
-    val cameraAmbientLux by viewModel.cameraAmbientLux.collectAsStateWithLifecycle()
-    val cameraAmbientLightZone by viewModel.cameraAmbientLightZone.collectAsStateWithLifecycle()
+    val captureExposureEvStops by viewModel.captureExposureEvStops.collectAsStateWithLifecycle()
     val recordingSessionState by videoManager.sessionState.collectAsStateWithLifecycle()
     val isVideoPreparing = recordingSessionState == RecordingSessionState.PREPARING ||
         recordingSessionState == RecordingSessionState.FINALIZING
@@ -432,14 +443,11 @@ fun CameraScreen(
             ""
         }
     }
-    val reliableMiniMapSide = remember(matchResult.detectedSide, projectProfile.roadSide) {
-        matchResult.detectedSide
-            .takeIf { it.equals("LHS", ignoreCase = true) || it.equals("RHS", ignoreCase = true) }
-            ?.uppercase(Locale.US)
-            ?: projectProfile.roadSide
-                .takeIf { it == RoadSide.LHS || it == RoadSide.RHS }
-                ?.label
-            ?: ""
+    val authoritativePreviewSide: String? = remember(smartDirectionState, projectProfile) {
+        com.example.overlay.OverlayTextGenerator.resolveAuthoritativeDisplaySide(smartDirectionState, projectProfile)
+    }
+    val reliableMiniMapSide = remember(authoritativePreviewSide) {
+        authoritativePreviewSide.orEmpty()
     }
 
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
@@ -470,22 +478,20 @@ fun CameraScreen(
     var showActivityMenu by remember { mutableStateOf(false) }
     var showManualActivityDialog by remember { mutableStateOf(false) }
 
-    val currentSideOption = resolveCameraSideOption(smartDirectionState, projectProfile)
+    val currentSideDisplay = resolveCameraSideDisplayState(smartDirectionState, projectProfile)
     val animatedSideTint by animateColorAsState(
-        targetValue = cameraSideOptionTint(currentSideOption),
+        targetValue = cameraSideOptionTint(currentSideDisplay.activeOption),
         animationSpec = tween(160),
         label = "camera_side_option_tint"
     )
     val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
     fun cycleNextCameraSide() {
         hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-        when (currentSideOption.next()) {
-            CameraSideOption.RHS -> viewModel.updateSide(RoadSide.RHS)
+        when (currentSideDisplay.nextOptionOnTap()) {
             CameraSideOption.LHS -> viewModel.updateSide(RoadSide.LHS)
-            CameraSideOption.BOTH -> viewModel.updateSide(RoadSide.BOTH)
-            CameraSideOption.MEDIAN -> viewModel.updateSide(RoadSide.MEDIAN)
+            CameraSideOption.RHS -> viewModel.updateSide(RoadSide.RHS)
+            CameraSideOption.BHS -> viewModel.updateSide(RoadSide.BOTH)
             CameraSideOption.NONE -> viewModel.updateSide(RoadSide.NONE)
-            CameraSideOption.AUTO -> viewModel.resetSideToAuto()
         }
     }
     var showExposureSlider by remember { mutableStateOf(false) }
@@ -661,6 +667,7 @@ fun CameraScreen(
             zoomRatio = currentZoomRatio,
             exposureIndex = exposureCompensation,
             isVideoMode = (captureMode == CaptureMode.VIDEO),
+            isVideoRecording = isRecording,
             rotationDegrees = rotationDegrees.toInt(),
             isLandscape = isLandscape,
             photoResolution = cameraSettings.photoResolution,
@@ -678,7 +685,9 @@ fun CameraScreen(
             onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
             onAutoBrightnessChanged = { enabled -> viewModel.setCameraAutoBrightness(enabled) },
             onManualBrightnessChanged = { level -> viewModel.setCameraManualBrightness(level) },
-            onAmbientLightChanged = { lux, zone -> viewModel.updateCameraAmbientLight(lux, zone) },
+            onCaptureExposureTelemetry = { level, evStops, hwSupported ->
+                viewModel.updateCaptureExposureTelemetry(level, evStops, hwSupported)
+            },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -1182,7 +1191,7 @@ fun CameraScreen(
                 val pillWidth = if (isUltraShortHeight) 144.dp else 150.dp
 
                 val sidePillContent: @Composable () -> Unit = {
-                    // Control 2: Direct-Tap Side Selection Pill (RHS -> LHS -> BOTH -> MEDIAN -> NONE -> AUTO -> RHS)
+                    // Control 2: Direct-Tap Side Selection Pill (LHS -> RHS -> BHS -> NONE -> LHS)
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = hudPillBg,
@@ -1208,7 +1217,7 @@ fun CameraScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = currentSideOption.label,
+                                text = currentSideDisplay.displayLabel,
                                 color = animatedSideTint,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Black,
@@ -1578,7 +1587,7 @@ fun CameraScreen(
                     is24HourFormat = cameraSettings.is24HourFormat,
                     timestamp = currentTimeMillis,
                     locationName = currentLocationName.ifBlank { overlayConfig.lastDetectedLocationName },
-                    authoritativeSideOverride = smartDirectionState.confirmedSide,
+                    authoritativeSideOverride = authoritativePreviewSide,
                     useAuthoritativeSide = true,
                     weatherObservation = latestWeatherObservation
                 )
@@ -2273,13 +2282,10 @@ fun CameraScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
-                            // Highlight Line: Side + Lane + Activity + Sub-Activity in Yellow
+                            // Highlight Line: Authoritative Side + Lane + Activity + Sub-Activity in Yellow
                             val highlightTokens = mutableListOf<String>()
-                            if (projectProfile.roadSide != RoadSide.NONE &&
-                                projectProfile.roadSide.label.isNotBlank() &&
-                                !projectProfile.roadSide.label.equals("None", ignoreCase = true)
-                            ) {
-                                highlightTokens.add(projectProfile.roadSide.label)
+                            if (!authoritativePreviewSide.isNullOrBlank()) {
+                                highlightTokens.add(authoritativePreviewSide)
                             }
                             if (projectProfile.hasActiveLane()) {
                                 highlightTokens.add(projectProfile.lane)
@@ -2340,7 +2346,7 @@ fun CameraScreen(
                         horizontalArrangement = Arrangement.spacedBy(hGap, Alignment.CenterHorizontally),
                         verticalArrangement = Arrangement.spacedBy(vGap)
                     ) {
-                        // Direct-tap Side chip (RHS -> LHS -> BOTH -> MEDIAN -> NONE -> AUTO -> RHS)
+                        // Direct-tap Side chip (LHS -> RHS -> BHS -> NONE -> LHS)
                         FloatingGlassCard(
                             shape = RoundedCornerShape(14.dp),
                             backgroundColor = Color(0x1A101726),
@@ -2363,7 +2369,7 @@ fun CameraScreen(
                                         .background(animatedSideTint)
                                 )
                                 Text(
-                                    text = currentSideOption.label,
+                                    text = currentSideDisplay.displayLabel,
                                     color = animatedSideTint,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
@@ -3656,8 +3662,7 @@ fun CameraScreen(
                 cameraSettings = cameraSettings,
                 overlayConfig = overlayConfig,
                 isFlashOn = isFlashOn,
-                ambientLightZone = cameraAmbientLightZone,
-                ambientLux = cameraAmbientLux,
+                captureExposureEvStops = captureExposureEvStops,
                 onToggleFlash = { viewModel.toggleFlash() },
                 onUpdateCameraSettings = { updated -> viewModel.saveCameraSettingsSilent(updated) },
                 onUpdateOverlayConfig = { updated -> viewModel.saveOverlayConfigSilent(updated) },
@@ -4080,8 +4085,7 @@ fun CameraQuickSettingsDialog(
     cameraSettings: com.example.model.CameraSettings,
     overlayConfig: OverlayConfig,
     isFlashOn: Boolean,
-    ambientLightZone: AmbientLightZone = AmbientLightZone.NORMAL_LIGHT,
-    ambientLux: Float? = null,
+    captureExposureEvStops: Float = 0f,
     onToggleFlash: () -> Unit,
     onUpdateCameraSettings: (com.example.model.CameraSettings) -> Unit,
     onUpdateOverlayConfig: (OverlayConfig) -> Unit,
@@ -4146,13 +4150,12 @@ fun CameraQuickSettingsDialog(
                     )
                 }
 
-                // Auto Brightness (uses existing right-side brightness control when OFF)
-                val manualBrightnessPercent = CameraBrightnessEngine.brightnessToPercent(cameraSettings.manualPreviewBrightness)
+                // Auto Exposure / Capture Brightness (returns smoothly to automatic camera exposure when ON)
+                val evDisplay = CameraBrightnessEngine.formatEvStops(captureExposureEvStops)
                 val autoBrightnessSubtitle = if (cameraSettings.autoBrightnessEnabled) {
-                    val luxLabel = ambientLux?.let { " • ${it.toInt()} lux" } ?: ""
-                    "Adapts to light (${ambientLightZone.label}$luxLabel)"
+                    "Automatic camera exposure active (0.0 EV)"
                 } else {
-                    "Manual right-side brightness ($manualBrightnessPercent%)"
+                    "Right-side capture exposure ($evDisplay EV) • Tap ON for Auto"
                 }
                 Row(
                     modifier = Modifier
