@@ -1,10 +1,17 @@
 package com.example.ui.home
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -24,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Air
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Thermostat
@@ -77,10 +85,11 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Smart Home Screen Live Weather Card with compact full-day horizontal hourly forecast (12:00 AM–11:00 PM).
+ * Smart Home Screen Live Weather Card with collapsible full-day horizontal hourly forecast (12:00 AM–11:00 PM).
  *
  * Interaction contract:
- * - Single Tap: Preserves existing interaction (no dropdowns, popups, or bottom sheets).
+ * - Default State: Collapsed (compact card showing essential current weather only).
+ * - Single Tap: Smoothly expands or collapses the compact hourly forecast strip (no extra API calls).
  * - Double Tap: Opens the dedicated Weather Dashboard.
  * - Animations automatically pause when off-screen, lifecycle-paused, Screensaver/AOD active,
  *   or disabled in Weather settings.
@@ -103,6 +112,8 @@ fun HomeLiveWeatherCard(
     animationsEnabled: Boolean = true,
     showHourlyStrip: Boolean = true,
     showRainProbability: Boolean = true,
+    isHourlyExpanded: Boolean = false,
+    onToggleHourlyExpanded: () -> Unit = {},
     onOpenWeatherDashboard: () -> Unit = {}
 ) {
     val c = CtecsTheme.colors
@@ -178,11 +189,13 @@ fun HomeLiveWeatherCard(
                     )
                 )
             }
-            .pointerInput(activeObservation == null, onRefresh, onOpenWeatherDashboard) {
+            .pointerInput(activeObservation == null, showHourlyStrip, onRefresh, onToggleHourlyExpanded, onOpenWeatherDashboard) {
                 detectTapGestures(
                     onTap = {
                         if (activeObservation == null) {
                             onRefresh()
+                        } else if (showHourlyStrip) {
+                            onToggleHourlyExpanded()
                         }
                     },
                     onDoubleTap = {
@@ -302,10 +315,35 @@ fun HomeLiveWeatherCard(
                                     modifier = Modifier.testTag("weather_updated_text")
                                 )
                                 Text(
-                                    text = if (isWide) "${obs.source} • 2x tap for full" else "2x tap for forecast",
+                                    text = if (showHourlyStrip) {
+                                        if (isHourlyExpanded) "Tap to hide • 2x full" else "Tap hourly • 2x full"
+                                    } else if (isWide) {
+                                        "${obs.source} • 2x tap for full"
+                                    } else {
+                                        "2x tap for forecast"
+                                    },
                                     color = subTextColor.copy(alpha = 0.62f),
                                     fontSize = 8.sp,
                                     maxLines = 1
+                                )
+                            }
+                            if (showHourlyStrip) {
+                                val chevronRotation by animateFloatAsState(
+                                    targetValue = if (isHourlyExpanded) 180f else 0f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    label = "weather_hourly_chevron_rotation"
+                                )
+                                Icon(
+                                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                                    contentDescription = if (isHourlyExpanded) "Collapse hourly forecast" else "Expand hourly forecast",
+                                    tint = if (isHourlyExpanded) glowColor else subTextColor.copy(alpha = 0.85f),
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .graphicsLayer { rotationZ = chevronRotation }
+                                        .testTag("weather_hourly_expand_indicator")
                                 )
                             }
                             IconButton(
@@ -378,19 +416,78 @@ fun HomeLiveWeatherCard(
                         )
                     }
 
-                    // Full-Day Horizontal Hourly Forecast Strip (12:00 AM to 11:00 PM)
-                    if (showHourlyStrip && hourlyForecast.isNotEmpty()) {
-                        HomeFullDayHourlyStrip(
-                            hourlyPoints = hourlyForecast,
-                            currentLocalHour = resolvedCurrentHour,
-                            temperatureUnit = temperatureUnit,
-                            isDark = isDark,
-                            mainTextColor = mainTextColor,
-                            subTextColor = subTextColor,
-                            accentColor = glowColor,
-                            isCompact = isCompact,
-                            isAnimating = shouldAnimate
-                        )
+                    // Collapsible Full-Day Horizontal Hourly Forecast Strip (12:00 AM to 11:00 PM)
+                    AnimatedVisibility(
+                        visible = showHourlyStrip && isHourlyExpanded,
+                        enter = expandVertically(
+                            animationSpec = spring(
+                                dampingRatio = 0.88f,
+                                stiffness = Spring.StiffnessMediumLow
+                            ),
+                            expandFrom = Alignment.Top
+                        ) + fadeIn(animationSpec = tween(220)) + slideInVertically(
+                            animationSpec = tween(220),
+                            initialOffsetY = { -it / 5 }
+                        ),
+                        exit = shrinkVertically(
+                            animationSpec = spring(
+                                dampingRatio = 0.92f,
+                                stiffness = Spring.StiffnessMedium
+                            ),
+                            shrinkTowards = Alignment.Top
+                        ) + fadeOut(animationSpec = tween(160))
+                    ) {
+                        when {
+                            hourlyForecast.isNotEmpty() -> {
+                                HomeFullDayHourlyStrip(
+                                    hourlyPoints = hourlyForecast,
+                                    currentLocalHour = resolvedCurrentHour,
+                                    temperatureUnit = temperatureUnit,
+                                    isDark = isDark,
+                                    mainTextColor = mainTextColor,
+                                    subTextColor = subTextColor,
+                                    accentColor = glowColor,
+                                    isCompact = isCompact,
+                                    isAnimating = shouldAnimate
+                                )
+                            }
+                            isRefreshing -> {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .testTag("home_hourly_loading_row"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(12.dp),
+                                        strokeWidth = 1.6.dp,
+                                        color = glowColor
+                                    )
+                                    Text(
+                                        text = "Loading hourly forecast…",
+                                        color = subTextColor,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            else -> {
+                                Text(
+                                    text = "Hourly forecast unavailable • Tap refresh to update",
+                                    color = subTextColor.copy(alpha = 0.82f),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp)
+                                        .testTag("home_hourly_unavailable_text")
+                                )
+                            }
+                        }
                     }
                 }
             } else {

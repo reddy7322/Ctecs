@@ -58,6 +58,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
@@ -243,6 +244,8 @@ fun HomeScreen(
     val mapThemePreference by viewModel.mapThemePreference.collectAsStateWithLifecycle()
     val mapTypePreference by viewModel.mapTypePreference.collectAsStateWithLifecycle()
     val screensaverSettings by viewModel.homeScreensaverSettings.collectAsStateWithLifecycle()
+    val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
+    var isWeatherHourlyExpanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     // App-level & Home-level blocking modal states for safe screensaver gating
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
@@ -474,6 +477,7 @@ fun HomeScreen(
                 lastKmStoneEvent = lastKmStoneHubEvent,
                 isKmStoneMonitoringActive = isKmStoneServiceRunning || kmStoneAlertSettings.enabled,
                 mapHeadingState = mapHeadingState,
+                viewDistancePreference = miniMapViewDistance,
                 onToggleMirrorQuickMode = { enableMirror, currentlyLandscape ->
                     viewModel.toggleScreensaverMirrorQuickMode(
                         enableMirror = enableMirror,
@@ -655,15 +659,18 @@ fun HomeScreen(
                 animationsEnabled = weatherIntelligenceSettings.animationsEnabled,
                 showHourlyStrip = weatherIntelligenceSettings.showHomeHourlyStrip,
                 showRainProbability = weatherIntelligenceSettings.showRainProbabilityOnHomeCard,
+                isHourlyExpanded = isWeatherHourlyExpanded,
+                onToggleHourlyExpanded = { isWeatherHourlyExpanded = !isWeatherHourlyExpanded },
                 onOpenWeatherDashboard = onNavigateToWeather
             )
 
-            // 4. Interactive Smart KMZ Map with Smart Edge Fades (Borderless)
+            // 4. Interactive Smart KMZ Map with Smart Dynamic Sizing & Edge Fades (Borderless)
             if (screensaverSettings.miniMapVisible) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
+                        .heightIn(min = if (isUltraCompact) 104.dp else 124.dp)
                         .alpha(
                             screensaverSettings.miniMapOpacity.coerceIn(
                                 HomeScreensaverSettings.MIN_MINI_MAP_OPACITY,
@@ -723,6 +730,8 @@ fun HomeScreen(
                         onSharedRecenter = { viewModel.recenterHomeMiniMap() },
                         screensaverSettings = screensaverSettings,
                         mapHeadingState = mapHeadingState,
+                        viewDistancePreference = miniMapViewDistance,
+                        speedMps = locationState.speed,
                         isVisible = !isScreensaverVisible && !isScreensaverScreenOff && !isScreensaverAodActive,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -2486,6 +2495,8 @@ fun InteractiveSmartMap(
     onSharedRecenter: (() -> Unit)? = null,
     screensaverSettings: HomeScreensaverSettings = HomeScreensaverSettings(),
     mapHeadingState: MapHeadingState? = null,
+    viewDistancePreference: com.example.ui.map.MiniMapViewDistancePreference = com.example.ui.map.MiniMapViewDistancePreference(),
+    speedMps: Float? = null,
     isVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -2497,6 +2508,27 @@ fun InteractiveSmartMap(
     val isDark = com.example.ui.map.MapThemeConfig.resolveIsDark(mapThemePreference, isAppDark)
     val mapTheme = com.example.ui.map.rememberMapThemeColors(isDark)
 
+    var previousSmartRangeM by remember(viewDistancePreference.mode) { mutableStateOf<Double?>(null) }
+    val resolvedGroundRangeMetres = remember(
+        viewDistancePreference,
+        speedMps,
+        gpsAccuracy,
+        location?.latitude,
+        location?.longitude,
+        routeData?.id
+    ) {
+        com.example.ui.map.SmartAutoMiniMapDistanceEngine.resolveGroundRangeMetres(
+            preference = viewDistancePreference,
+            context = com.example.ui.map.SmartAutoMiniMapDistanceEngine.SmartDistanceContext(
+                speedMps = speedMps,
+                gpsAccuracyMetres = gpsAccuracy,
+                location = location,
+                routeData = routeData,
+                previousRangeMetres = previousSmartRangeM
+            )
+        ).also { previousSmartRangeM = it }
+    }
+
     var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
     var continuousZoom by remember {
         mutableFloatStateOf(
@@ -2504,7 +2536,7 @@ fun InteractiveSmartMap(
                 latitude = (location ?: routeData?.bounds?.center)?.latitude ?: 28.6139,
                 viewportWidthPx = 360f,
                 viewportHeightPx = 360f,
-                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+                groundRangeMetres = resolvedGroundRangeMetres
             )
         )
     }
@@ -2603,43 +2635,63 @@ fun InteractiveSmartMap(
         val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
         val gpsOrRouteCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-        val initial25mZoom = remember(gpsOrRouteCenter.latitude, viewportWidthPx, viewportHeightPx) {
+        // Stabilize zoom calculation across smooth vertical expand/collapse animations so the map
+        // does not jitter its zoom level frame-by-frame while the Weather Card animates.
+        val stableZoomSpanPx = remember(viewportWidthPx, viewportHeightPx) {
+            minOf(viewportWidthPx, viewportHeightPx).coerceAtLeast(1f)
+        }
+        val configuredTargetZoom = remember(gpsOrRouteCenter.latitude, viewportWidthPx, stableZoomSpanPx, resolvedGroundRangeMetres) {
             MiniMapViewportMath.computeZoomForGroundRangeMetres(
                 latitude = gpsOrRouteCenter.latitude,
                 viewportWidthPx = viewportWidthPx,
-                viewportHeightPx = viewportHeightPx,
-                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+                viewportHeightPx = stableZoomSpanPx,
+                groundRangeMetres = resolvedGroundRangeMetres
             )
         }
 
-        // Automatically initialize and adapt 25m viewing range on layout/orientation change until user manually zooms
-        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom) {
+        // Changing Mini Map Top View Distance in Settings smoothly applies and resumes auto/configured range
+        LaunchedEffect(viewDistancePreference) {
+            hasUserAdjustedZoom = false
+            continuousZoom = configuredTargetZoom
+            lastAutoFitLat = gpsOrRouteCenter.latitude
+        }
+
+        // Automatically adapt viewing range when not manually zoomed (Smart Auto & layout/orientation changes)
+        LaunchedEffect(configuredTargetZoom, hasUserAdjustedZoom) {
             if (!hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
-                continuousZoom = initial25mZoom
+                continuousZoom = configuredTargetZoom
                 lastAutoFitLat = gpsOrRouteCenter.latitude
             }
         }
-        // If first GPS fix jumps significantly in latitude (e.g. from default fallback to real region), recalibrate 25m range
+        // If first GPS fix jumps significantly in latitude (e.g. from default fallback to real region), recalibrate range
         LaunchedEffect(gpsOrRouteCenter.latitude) {
             if (!hasUserAdjustedZoom && kotlin.math.abs(gpsOrRouteCenter.latitude - lastAutoFitLat) > 0.5) {
-                continuousZoom = initial25mZoom
+                continuousZoom = configuredTargetZoom
                 lastAutoFitLat = gpsOrRouteCenter.latitude
             }
         }
-        // Restore initial 25m viewing range on shared recenter command
+        // Restore configured / Smart Auto viewing range on shared recenter command
         LaunchedEffect(sharedRecenterEpoch) {
             if (sharedRecenterEpoch > 0L) {
                 isFollowingUser = true
                 exploredCenter = null
                 hasUserAdjustedZoom = false
-                continuousZoom = initial25mZoom
+                continuousZoom = configuredTargetZoom
                 lastAutoFitLat = gpsOrRouteCenter.latitude
             }
         }
 
-        val viewRangeMetres = remember(continuousZoom, gpsOrRouteCenter.latitude, viewportWidthPx, viewportHeightPx) {
+        // Smooth animated zoom when auto/Smart Auto adjusts; immediate responsiveness during manual pinch/button zoom
+        val animatedAutoZoom by animateFloatAsState(
+            targetValue = continuousZoom,
+            animationSpec = tween(durationMillis = if (hasUserAdjustedZoom) 45 else 240, easing = FastOutSlowInEasing),
+            label = "home_minimap_smooth_zoom"
+        )
+        val effectiveRenderZoom = if (hasUserAdjustedZoom) continuousZoom else animatedAutoZoom
+
+        val viewRangeMetres = remember(effectiveRenderZoom, gpsOrRouteCenter.latitude, viewportWidthPx, viewportHeightPx) {
             MiniMapViewportMath.computeGroundRangeMetres(
-                continuousZoom = continuousZoom,
+                continuousZoom = effectiveRenderZoom,
                 latitude = gpsOrRouteCenter.latitude,
                 viewportWidthPx = viewportWidthPx,
                 viewportHeightPx = viewportHeightPx
@@ -2649,7 +2701,7 @@ fun InteractiveSmartMap(
         val cameraCenter = if (isFollowingUser) {
             MiniMapViewportMath.computeFollowCameraCenter(
                 vehicleGeo = gpsOrRouteCenter,
-                continuousZoom = continuousZoom,
+                continuousZoom = effectiveRenderZoom,
                 viewportHeightPx = viewportHeightPx,
                 mapRotationDeg = animatedMapRotation,
                 isDirectionUpActive = isDirectionUpActive
@@ -2658,11 +2710,11 @@ fun InteractiveSmartMap(
             exploredCenter ?: gpsOrRouteCenter
         }
 
-        val renderPlan = remember(viewportWidthPx, viewportHeightPx, continuousZoom) {
+        val renderPlan = remember(viewportWidthPx, viewportHeightPx, effectiveRenderZoom) {
             MiniMapViewportMath.resolveTileRenderPlan(
                 widthPx = viewportWidthPx,
                 heightPx = viewportHeightPx,
-                continuousZoom = continuousZoom
+                continuousZoom = effectiveRenderZoom
             )
         }
         val tileResult = remember(
@@ -2768,7 +2820,7 @@ fun InteractiveSmartMap(
                         center = cameraCenter,
                         viewportWidthPx = w,
                         viewportHeightPx = h,
-                        continuousZoom = continuousZoom
+                        continuousZoom = effectiveRenderZoom
                     )
                 }
 
@@ -3030,7 +3082,7 @@ fun InteractiveSmartMap(
                         isFollowingUser = true
                         exploredCenter = null
                         hasUserAdjustedZoom = false
-                        continuousZoom = initial25mZoom
+                        continuousZoom = configuredTargetZoom
                         lastAutoFitLat = gpsOrRouteCenter.latitude
                         onSharedRecenter?.invoke()
                     }
@@ -3076,7 +3128,7 @@ fun InteractiveSmartMap(
                     isFollowingUser = true
                     exploredCenter = null
                     hasUserAdjustedZoom = false
-                    continuousZoom = initial25mZoom
+                    continuousZoom = configuredTargetZoom
                     lastAutoFitLat = gpsOrRouteCenter.latitude
                     onSharedRecenter?.invoke()
                 }
@@ -3967,6 +4019,7 @@ fun ChainageScreensaverOverlay(
     lastKmStoneEvent: com.example.navigation.KmStoneAlertEvent? = null,
     isKmStoneMonitoringActive: Boolean = false,
     mapHeadingState: MapHeadingState? = null,
+    viewDistancePreference: com.example.ui.map.MiniMapViewDistancePreference = com.example.ui.map.MiniMapViewDistancePreference(),
     onToggleMirrorQuickMode: ((enableMirror: Boolean, isCurrentlyLandscape: Boolean) -> Unit)? = null,
     onToggleOrientationLock: ((isCurrentlyLandscape: Boolean) -> Unit)? = null,
     onToggleScreenOff: ((Boolean) -> Unit)? = null,
@@ -4120,6 +4173,7 @@ fun ChainageScreensaverOverlay(
             lastKmStoneEvent = lastKmStoneEvent,
             isKmStoneMonitoringActive = isKmStoneMonitoringActive,
             mapHeadingState = mapHeadingState,
+            viewDistancePreference = viewDistancePreference,
             onToggleMirrorQuickMode = handleQuickToggle,
             onToggleOrientationLock = onToggleOrientationLock,
             onToggleScreenOff = onToggleScreenOff,

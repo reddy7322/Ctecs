@@ -161,7 +161,8 @@ object MiniMapRenderer {
         routeData: RouteData?,
         chainageLabel: String?,
         sideLabel: String?,
-        dpScale: Float
+        dpScale: Float,
+        groundRangeMetres: Double = com.example.ui.map.MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
     ) {
         if (!config.enabled || config.opacity <= 0.01f) return
         if (bounds.width() <= 2f || bounds.height() <= 2f) return
@@ -232,7 +233,8 @@ object MiniMapRenderer {
                 center = centerGeo,
                 routeData = routeData,
                 viewportWidthPx = bounds.width(),
-                viewportHeightPx = bounds.height()
+                viewportHeightPx = bounds.height(),
+                groundRangeMetres = groundRangeMetres
             )
         } else {
             config.zoomLevel.coerceIn(

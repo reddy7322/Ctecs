@@ -158,6 +158,7 @@ fun CameraPreview(
     easyToggleCameras: Boolean = true,
     useStandaloneUltraWide: Boolean = false,
     standaloneUltraWideCameraId: String? = null,
+    logicalWideCameraId: String? = null,
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
@@ -182,6 +183,7 @@ fun CameraPreview(
     val latestOnDoubleTapSwitchCamera by rememberUpdatedState(onDoubleTapSwitchCamera)
     val latestOnZoomCapabilitiesChanged by rememberUpdatedState(onZoomCapabilitiesChanged)
     val latestZoomRatio by rememberUpdatedState(zoomRatio)
+    val latestUseStandaloneUltraWide by rememberUpdatedState(useStandaloneUltraWide)
     val latestTouchToCapture by rememberUpdatedState(touchToCapture)
     val latestEasyToggleCameras by rememberUpdatedState(easyToggleCameras)
     val latestIsVideoMode by rememberUpdatedState(isVideoMode)
@@ -190,14 +192,25 @@ fun CameraPreview(
     // Camera Hardware Zoom Range State
     var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
     var maxZoomRatio by remember { mutableFloatStateOf(10.0f) }
+    var liveHardwareMinZoom by remember { mutableFloatStateOf(1.0f) }
+    var liveHardwareMaxZoom by remember { mutableFloatStateOf(10.0f) }
     var zoomCapabilities by remember { mutableStateOf(com.example.camera.CameraLensZoomCapabilities()) }
+    var cameraBindEpoch by remember { mutableIntStateOf(0) }
     var lastTapTimeMs by remember { mutableStateOf(0L) }
+    val latestZoomCapabilities by rememberUpdatedState(zoomCapabilities)
+    val latestMaxZoomRatio by rememberUpdatedState(maxZoomRatio)
 
     DisposableEffect(controller, lifecycleOwner) {
         val observer = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { state ->
             if (state != null) {
-                minZoomRatio = state.minZoomRatio
-                maxZoomRatio = state.maxZoomRatio
+                liveHardwareMinZoom = state.minZoomRatio
+                liveHardwareMaxZoom = state.maxZoomRatio
+                // Never let a standalone physical ultra-wide sensor's smaller maxZoomRatio (e.g. 4x)
+                // overwrite the rear camera system's full zoom range while previewing at < 1.0x.
+                if (!latestUseStandaloneUltraWide) {
+                    minZoomRatio = state.minZoomRatio
+                    maxZoomRatio = state.maxZoomRatio
+                }
             }
         }
         controller.zoomState.observe(lifecycleOwner, observer)
@@ -404,6 +417,7 @@ fun CameraPreview(
             try {
                 controller.bindToLifecycle(lifecycleOwner)
                 lifecycleResumeVersion++
+                cameraBindEpoch++
             } catch (e: Exception) {
                 Log.e("CameraPreview", "Failed to bind camera controller to lifecycle", e)
             }
@@ -417,9 +431,12 @@ fun CameraPreview(
     }
 
     // Unified CameraX Pipeline Configuration (Camera Selector + QualitySelector + OverlayEffect + UseCases).
+    // Unified CameraX Pipeline Configuration (Camera Selector + QualitySelector + OverlayEffect + UseCases).
     // Running sequentially in a single LaunchedEffect eliminates mid-start rebinds between separate effects.
     // Never mutates CameraX use cases/effects while a recording session is preparing or active.
+    var lastAppliedFrontCamera by remember { mutableStateOf<Boolean?>(null) }
     var lastAppliedStandaloneUltraWide by remember { mutableStateOf(false) }
+    var lastAppliedLogicalWideCameraId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(
         hasCameraPermission,
@@ -428,6 +445,7 @@ fun CameraPreview(
         isFrontCamera,
         useStandaloneUltraWide,
         standaloneUltraWideCameraId,
+        logicalWideCameraId,
         videoResolution,
         photoQualityPreset,
         overlayManager,
@@ -457,46 +475,74 @@ fun CameraPreview(
             adapter.awaitCameraInitialization(4000L)
             if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
 
-            // Configure Camera Selector safely (supports seamless standalone physical ultra-wide lens when needed)
+            // Configure Camera Selector safely using strict Camera2 ID filtering so CameraX
+            // genuinely switches to the standalone physical ultra-wide lens or logical multi-camera
+            // instead of silently falling back to the 1.0x camera.
             val requestedStandalone = !isFrontCamera && useStandaloneUltraWide && !standaloneUltraWideCameraId.isNullOrBlank()
-            val candidateSelector = com.example.camera.CameraUltraWideZoomManager.buildCameraSelector(
-                isFrontCamera = isFrontCamera,
-                useStandaloneUltraWide = requestedStandalone,
-                standaloneUltraWideCameraId = standaloneUltraWideCameraId
-            )
-            val desiredFront = if (controller.hasCamera(candidateSelector)) {
-                isFrontCamera
-            } else if (controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
-                false
-            } else if (controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
-                true
-            } else {
-                isFrontCamera
-            }
-            val effectiveStandalone = !desiredFront && requestedStandalone && controller.hasCamera(candidateSelector)
-            val effectiveSelector = if (effectiveStandalone) {
-                candidateSelector
-            } else if (desiredFront) {
-                CameraSelector.DEFAULT_FRONT_CAMERA
-            } else {
-                CameraSelector.DEFAULT_BACK_CAMERA
-            }
-            val selectorAlreadyMatches = !effectiveStandalone &&
-                !lastAppliedStandaloneUltraWide &&
-                ((desiredFront && controller.cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA) ||
-                    (!desiredFront && controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA))
-            val needsLensRebind = !selectorAlreadyMatches && (
-                videoManager == null ||
-                    videoManager.appliedPipelineKey?.isFrontCamera != desiredFront ||
-                    lastAppliedStandaloneUltraWide != effectiveStandalone ||
-                    controller.cameraSelector != effectiveSelector
+            val standaloneSelector = if (requestedStandalone) {
+                com.example.camera.CameraUltraWideZoomManager.buildStrictCameraIdSelector(
+                    lensFacing = CameraSelector.LENS_FACING_BACK,
+                    cameraId = standaloneUltraWideCameraId!!
                 )
+            } else {
+                null
+            }
+            val logicalWideSelector = if (!isFrontCamera && !requestedStandalone && !logicalWideCameraId.isNullOrBlank()) {
+                com.example.camera.CameraUltraWideZoomManager.buildStrictCameraIdSelector(
+                    lensFacing = CameraSelector.LENS_FACING_BACK,
+                    cameraId = logicalWideCameraId
+                )
+            } else {
+                null
+            }
+
+            val canUseStandalone = standaloneSelector != null && try {
+                controller.hasCamera(standaloneSelector)
+            } catch (_: Throwable) {
+                false
+            }
+            val canUseLogicalWide = logicalWideSelector != null && try {
+                controller.hasCamera(logicalWideSelector)
+            } catch (_: Throwable) {
+                false
+            }
+
+            val desiredFront = if (isFrontCamera) {
+                if (controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) true
+                else !controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
+            } else {
+                if (canUseStandalone || canUseLogicalWide || controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) false
+                else controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
+            }
+
+            val effectiveStandalone = !desiredFront && canUseStandalone
+            val effectiveLogicalWideId = if (!desiredFront && !effectiveStandalone && canUseLogicalWide) {
+                logicalWideCameraId
+            } else {
+                null
+            }
+            val effectiveSelector = when {
+                desiredFront -> CameraSelector.DEFAULT_FRONT_CAMERA
+                effectiveStandalone && standaloneSelector != null -> standaloneSelector
+                effectiveLogicalWideId != null && logicalWideSelector != null -> logicalWideSelector
+                else -> CameraSelector.DEFAULT_BACK_CAMERA
+            }
+
+            val needsLensRebind = lastAppliedFrontCamera == null ||
+                lastAppliedFrontCamera != desiredFront ||
+                lastAppliedStandaloneUltraWide != effectiveStandalone ||
+                lastAppliedLogicalWideCameraId != effectiveLogicalWideId ||
+                (videoManager != null && videoManager.appliedPipelineKey?.isFrontCamera != desiredFront)
+
             if (needsLensRebind) {
                 try {
                     controller.cameraSelector = effectiveSelector
+                    lastAppliedFrontCamera = desiredFront
                     lastAppliedStandaloneUltraWide = effectiveStandalone
+                    lastAppliedLogicalWideCameraId = effectiveLogicalWideId
                     videoManager?.invalidatePipelineConfig()
                     adapter.awaitCameraInitialization(3000L)
+                    cameraBindEpoch++
                 } catch (e: Exception) {
                     Log.w("CameraPreview", "Camera selector error", e)
                 }
@@ -547,6 +593,8 @@ fun CameraPreview(
                     try { controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE) } catch (ignored: Exception) {}
                 }
             }
+            // Re-apply active zoom ratio after use-case / video pipeline configuration completes
+            cameraBindEpoch++
         } catch (e: Exception) {
             Log.w("CameraPreview", "Unified camera pipeline configuration notice: ${e.message}", e)
         }
@@ -562,15 +610,19 @@ fun CameraPreview(
         )
         captureExposureState = exposureController.updateCapabilities(caps)
 
+        val bindableIds = queryBindableCameraXIds(context)
         val initialZoomCaps = com.example.camera.CameraUltraWideZoomManager.detectCapabilities(
             context = context,
             cameraInfo = controller.cameraInfo,
             isFrontCamera = isFrontCamera,
             fallbackMinZoom = minZoomRatio,
-            fallbackMaxZoom = maxZoomRatio
+            fallbackMaxZoom = maxZoomRatio,
+            isCurrentlyBoundToStandaloneUltraWide = useStandaloneUltraWide,
+            bindableCameraIds = bindableIds
         )
         zoomCapabilities = initialZoomCaps
         latestOnZoomCapabilitiesChanged?.invoke(initialZoomCaps)
+        cameraBindEpoch++
 
         // Re-query shortly after CameraX finishes async lens bind so live ZoomState & ExposureState are picked up
         delay(450L)
@@ -581,15 +633,19 @@ fun CameraPreview(
         )
         captureExposureState = exposureController.updateCapabilities(boundCaps)
 
+        val refreshedBindableIds = queryBindableCameraXIds(context) ?: bindableIds
         val boundZoomCaps = com.example.camera.CameraUltraWideZoomManager.detectCapabilities(
             context = context,
             cameraInfo = controller.cameraInfo,
             isFrontCamera = isFrontCamera,
             fallbackMinZoom = minZoomRatio,
-            fallbackMaxZoom = maxZoomRatio
+            fallbackMaxZoom = maxZoomRatio,
+            isCurrentlyBoundToStandaloneUltraWide = useStandaloneUltraWide,
+            bindableCameraIds = refreshedBindableIds
         )
         zoomCapabilities = boundZoomCaps
         latestOnZoomCapabilitiesChanged?.invoke(boundZoomCaps)
+        cameraBindEpoch++
     }
 
     // Apply Camera2 hardware quality tuning (Continuous AF, Hardware NR, Edge, OIS/EIS Stabilization, Target FPS)
@@ -632,16 +688,57 @@ fun CameraPreview(
         } catch (ignored: Exception) {}
     }
 
-    LaunchedEffect(zoomRatio, minZoomRatio, maxZoomRatio, useStandaloneUltraWide) {
-        try {
-            // When bound to a standalone physical ultra-wide camera, its native wide field of view is at ratio 1.0x
-            val targetHardwareZoom = if (useStandaloneUltraWide && zoomRatio < 1.0f) {
-                1.0f.coerceIn(minZoomRatio, maxZoomRatio)
-            } else {
-                zoomRatio.coerceIn(minZoomRatio, maxZoomRatio)
-            }
-            controller.setZoomRatio(targetHardwareZoom)
-        } catch (ignored: Exception) {}
+    // Rebind-safe hardware zoom application: waits for active CameraControl, reads live sensor ZoomState
+    // (never clamping < 1.0x against stale defaults), applies setZoomRatio to Preview + ImageCapture +
+    // VideoCapture simultaneously, and retries once if interrupted by a concurrent lens/use-case rebind.
+    LaunchedEffect(
+        hasCameraPermission,
+        zoomRatio,
+        liveHardwareMinZoom,
+        liveHardwareMaxZoom,
+        useStandaloneUltraWide,
+        zoomCapabilities.minZoomRatio,
+        zoomCapabilities.maxZoomRatio,
+        zoomCapabilities.widePresetRatio,
+        cameraBindEpoch
+    ) {
+        if (!hasCameraPermission) return@LaunchedEffect
+        var readyAttempts = 0
+        while ((controller.cameraControl == null || controller.cameraInfo == null) && readyAttempts < 20) {
+            delay(60L)
+            readyAttempts++
+        }
+        val liveZoomState = controller.cameraInfo?.zoomState?.value
+        val effectiveHwMin = liveZoomState?.minZoomRatio ?: if (useStandaloneUltraWide) {
+            liveHardwareMinZoom.coerceAtLeast(1.0f)
+        } else {
+            minOf(liveHardwareMinZoom, zoomCapabilities.minZoomRatio)
+        }
+        val effectiveHwMax = liveZoomState?.maxZoomRatio ?: maxOf(liveHardwareMaxZoom, zoomCapabilities.maxZoomRatio)
+
+        val targetHardwareZoom = com.example.camera.CameraUltraWideZoomManager.computeTargetHardwareZoomRatio(
+            requestedZoom = zoomRatio,
+            hardwareMinZoom = effectiveHwMin,
+            hardwareMaxZoom = effectiveHwMax,
+            useStandaloneUltraWide = useStandaloneUltraWide,
+            widePresetRatio = zoomCapabilities.widePresetRatio
+        )
+
+        val applied = applyZoomRatioWithVerification(controller, context, targetHardwareZoom)
+        if (!applied) {
+            delay(180L)
+            val retryState = controller.cameraInfo?.zoomState?.value
+            val retryMin = retryState?.minZoomRatio ?: effectiveHwMin
+            val retryMax = retryState?.maxZoomRatio ?: effectiveHwMax
+            val retryTarget = com.example.camera.CameraUltraWideZoomManager.computeTargetHardwareZoomRatio(
+                requestedZoom = zoomRatio,
+                hardwareMinZoom = retryMin,
+                hardwareMaxZoom = retryMax,
+                useStandaloneUltraWide = useStandaloneUltraWide,
+                widePresetRatio = zoomCapabilities.widePresetRatio
+            )
+            applyZoomRatioWithVerification(controller, context, retryTarget)
+        }
     }
 
     // Real-time Smooth Continuous Hardware Capture Exposure Application (preview + photo + active video recording).
@@ -814,8 +911,8 @@ fun CameraPreview(
 
                                         if (previousSpan > 0f && currentSpan > 0f) {
                                             val scaleFactor = currentSpan / previousSpan
-                                            val pinchMinZoom = zoomCapabilities.effectiveMinZoomRatio
-                                            val pinchMaxZoom = maxOf(maxZoomRatio, zoomCapabilities.maxZoomRatio)
+                                            val pinchMinZoom = latestZoomCapabilities.effectiveMinZoomRatio
+                                            val pinchMaxZoom = maxOf(latestMaxZoomRatio, latestZoomCapabilities.maxZoomRatio)
                                             val targetZoom = (activeZoom * scaleFactor).coerceIn(pinchMinZoom, pinchMaxZoom)
                                             if (kotlin.math.abs(targetZoom - activeZoom) > 0.005f) {
                                                 activeZoom = targetZoom
@@ -2175,4 +2272,72 @@ fun CameraFramingGuideOverlay(
         drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, bottom), androidx.compose.ui.geometry.Offset(right, bottom - bracketLen), bracketStroke)
     }
 }
+
+/**
+ * Safely retrieves the exact Camera2 IDs that CameraX's ProcessCameraProvider can bind on this device.
+ * Returns null if CameraX provider is not ready within the short timeout, allowing graceful fallback.
+ */
+@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+private suspend fun queryBindableCameraXIds(context: Context): Set<String>? {
+    return try {
+        withTimeoutOrNull(800L) {
+            suspendCancellableCoroutine { cont ->
+                try {
+                    val future = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context)
+                    future.addListener({
+                        try {
+                            val provider = future.get()
+                            val ids = provider.availableCameraInfos.mapNotNull { info ->
+                                try {
+                                    androidx.camera.camera2.interop.Camera2CameraInfo.from(info).cameraId
+                                } catch (_: Throwable) {
+                                    null
+                                }
+                            }.toSet()
+                            if (cont.isActive) cont.resume(ids.takeIf { it.isNotEmpty() })
+                        } catch (_: Throwable) {
+                            if (cont.isActive) cont.resume(null)
+                        }
+                    }, ContextCompat.getMainExecutor(context))
+                } catch (_: Throwable) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        }
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+/**
+ * Applies hardware zoom ratio to CameraX LifecycleCameraController and awaits completion of the
+ * returned ListenableFuture so dropped/canceled calls during a lens or use-case rebind are detected
+ * and retried cleanly.
+ */
+private suspend fun applyZoomRatioWithVerification(
+    controller: LifecycleCameraController,
+    context: Context,
+    targetHardwareZoom: Float
+): Boolean {
+    return try {
+        val future = controller.setZoomRatio(targetHardwareZoom)
+        withTimeoutOrNull(750L) {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                future.addListener({
+                    try {
+                        future.get()
+                        if (cont.isActive) cont.resume(true)
+                    } catch (e: Throwable) {
+                        Log.w("CameraPreview", "setZoomRatio($targetHardwareZoom) interrupted: ${e.message}")
+                        if (cont.isActive) cont.resume(false)
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            }
+        } ?: true
+    } catch (e: Throwable) {
+        Log.w("CameraPreview", "setZoomRatio($targetHardwareZoom) exception: ${e.message}")
+        false
+    }
+}
+
 

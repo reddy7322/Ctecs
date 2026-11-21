@@ -12,12 +12,16 @@ import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.ln
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
- * Hardware zoom and ultra-wide lens capabilities for the currently active camera side
- * (rear or front). Strictly derived from real Camera2/CameraX hardware metadata; never
- * synthesizes or fakes an unsupported ultra-wide lens.
+ * Hardware zoom and multi-lens capabilities for the currently active camera side
+ * (rear or front). Strictly derived from real Camera2/CameraX hardware metadata;
+ * never hardcodes or fabricates unsupported zoom ratios (0.5x, 0.6x, 10x, 100x, etc.).
  */
 data class CameraLensZoomCapabilities(
     val minZoomRatio: Float = 1.0f,
@@ -26,18 +30,17 @@ data class CameraLensZoomCapabilities(
      * Exact supported wider-FOV preset ratio to expose in the zoom control bar, or `null`
      * if the device does not have genuine ultra-wide / wider-FOV hardware on this camera side.
      *
-     * Rules:
-     * - If logical multi-camera supports `0.6x` (`minZoomRatio <= 0.605f`), this is `0.6f`.
-     * - If logical multi-camera has a wider FOV narrower than `0.6x` (e.g. `0.7x` or `0.8x`,
-     *   within `0.61f..0.95f`), this is the nearest genuine supported wider ratio rounded to 0.1.
-     * - If logical zoom starts at `1.0x` (`>= 0.99f`) AND a separate standalone physical
-     *   ultra-wide rear camera ID exists, this is its optical equivalent ratio (clamped to
-     *   `0.5f..0.8f`, typically `0.6f`), and [usesStandalonePhysicalUltraWide] is `true`.
-     * - Otherwise `null` (no wider preset is shown).
+     * Examples derived directly from hardware:
+     * - Device reporting `minZoomRatio = 0.5f` -> `0.5f`
+     * - Device reporting `minZoomRatio = 0.6f` -> `0.6f`
+     * - Device reporting `minZoomRatio = 0.67f` -> `0.7f`
+     * - Device with logical `1.0x` + bindable standalone ultra-wide ID -> optical focal ratio (e.g. `0.5f` or `0.6f`)
+     * - Single-lens `1.0x` device -> `null`
      */
     val widePresetRatio: Float? = null,
     val usesStandalonePhysicalUltraWide: Boolean = false,
     val standaloneUltraWideCameraId: String? = null,
+    val logicalWideCameraId: String? = null,
     val mainCameraId: String? = null,
     val physicalWideFocalLengthMm: Float? = null,
     val mainFocalLengthMm: Float? = null,
@@ -55,9 +58,8 @@ data class CameraLensZoomCapabilities(
 }
 
 /**
- * Pure value representation of a physical/logical camera entry for unit-testable
- * hardware ultra-wide resolution across single-lens, logical multi-camera, and
- * separate-ID multi-camera Android devices.
+ * Pure value representation of a physical/logical camera entry for deterministic,
+ * JVM-testable hardware zoom & multi-lens resolution across all Android OEM HALs.
  */
 data class CameraHardwareLensEntry(
     val cameraId: String,
@@ -70,26 +72,27 @@ data class CameraHardwareLensEntry(
 )
 
 /**
- * Hardware-backed 0.6x Ultra-Wide Zoom & Multi-Camera Lens Manager.
+ * Dynamic Hardware Camera Zoom & Multi-Lens Manager.
  *
- * Detects:
- * 1. Logical multi-camera zoom ranges (`CONTROL_ZOOM_RATIO_RANGE` / CameraX `ZoomState.minZoomRatio`),
- *    which seamlessly transition to the physical ultra-wide sensor on modern Pixel, Samsung,
- *    OnePlus, Xiaomi, and Motorola devices via `CameraControl.setZoomRatio(0.6f)` with zero
- *    camera restarts or black frames.
- * 2. Discrete standalone physical ultra-wide cameras exposed separately in `CameraManager`
- *    (common on older/budget OEM HALs where the ultra-wide sensor is not merged into the
- *    logical rear camera's zoom range).
+ * Detects real device capabilities across:
+ * 1. Logical multi-camera zoom ranges (`CONTROL_ZOOM_RATIO_RANGE` / CameraX `ZoomState.minZoomRatio..maxZoomRatio`),
+ *    supporting any real range dynamically (e.g., `0.5x–100x`, `0.6x–10x`, `0.5x–30x`, `1x–4x`).
+ * 2. Discrete standalone physical ultra-wide camera IDs exposed in `CameraManager` when the default
+ *    logical rear camera starts at `1.0x` — strictly verified against CameraX `availableCameraInfos`
+ *    (via `buildStrictCameraIdSelector`) so we never pretend a non-bindable camera switched lenses.
  */
 object CameraUltraWideZoomManager {
     private const val TAG = "CameraUltraWideZoomMgr"
-    const val TARGET_ULTRA_WIDE_RATIO = 0.6f
     private const val MAX_WIDE_THRESHOLD = 0.95f
-    private const val WIDE_FOCAL_RATIO_THRESHOLD = 0.82f
+    private const val WIDE_FOCAL_RATIO_THRESHOLD = 0.84f
 
     /**
      * Queries real device Camera2 + CameraX zoom and ultra-wide capabilities for the
      * requested camera facing (`isFrontCamera`).
+     *
+     * When [isCurrentlyBoundToStandaloneUltraWide] is `true`, we avoid letting the standalone
+     * ultra-wide sensor's smaller `ZoomState.maxZoomRatio` collapse the rear system's full
+     * zoom range (e.g. keeping `0.6x–10x` intact while previewing on the `0.6x` sensor).
      */
     @OptIn(ExperimentalCamera2Interop::class)
     fun detectCapabilities(
@@ -97,15 +100,21 @@ object CameraUltraWideZoomManager {
         cameraInfo: CameraInfo?,
         isFrontCamera: Boolean,
         fallbackMinZoom: Float = 1.0f,
-        fallbackMaxZoom: Float = 10.0f
+        fallbackMaxZoom: Float = 10.0f,
+        isCurrentlyBoundToStandaloneUltraWide: Boolean = false,
+        bindableCameraIds: Set<String>? = null
     ): CameraLensZoomCapabilities {
-        val zoomState = cameraInfo?.zoomState?.value
+        val zoomState = if (isCurrentlyBoundToStandaloneUltraWide) null else cameraInfo?.zoomState?.value
         val activeMinZoom = (zoomState?.minZoomRatio ?: fallbackMinZoom).coerceAtLeast(0.1f)
         val activeMaxZoom = (zoomState?.maxZoomRatio ?: fallbackMaxZoom).coerceAtLeast(activeMinZoom)
-        val activeCameraId = try {
-            cameraInfo?.let { Camera2CameraInfo.from(it).cameraId }
-        } catch (_: Throwable) {
+        val activeCameraId = if (isCurrentlyBoundToStandaloneUltraWide) {
             null
+        } else {
+            try {
+                cameraInfo?.let { Camera2CameraInfo.from(it).cameraId }
+            } catch (_: Throwable) {
+                null
+            }
         }
 
         val targetFacing = if (isFrontCamera) {
@@ -120,88 +129,108 @@ object CameraUltraWideZoomManager {
             targetFacing = targetFacing,
             activeCameraId = activeCameraId,
             activeCameraMinZoom = activeMinZoom,
-            activeCameraMaxZoom = activeMaxZoom
+            activeCameraMaxZoom = activeMaxZoom,
+            bindableCameraIds = bindableCameraIds
         )
     }
 
     /**
-     * Pure deterministic resolver used both at runtime and in Robolectric/JVM unit tests.
+     * Pure deterministic hardware resolver used at runtime and in unit tests.
      */
     fun resolveCapabilities(
         entries: List<CameraHardwareLensEntry>,
         targetFacing: Int,
         activeCameraId: String? = null,
         activeCameraMinZoom: Float = 1.0f,
-        activeCameraMaxZoom: Float = 10.0f
+        activeCameraMaxZoom: Float = 10.0f,
+        bindableCameraIds: Set<String>? = null
     ): CameraLensZoomCapabilities {
-        val sameFacing = entries.filter { it.lensFacing == targetFacing }
-        val mainEntry = sameFacing.firstOrNull { it.cameraId == activeCameraId }
-            ?: sameFacing.firstOrNull { it.isLogicalMultiCamera }
-            ?: sameFacing.firstOrNull()
+        val sameFacingAll = entries.filter { it.lensFacing == targetFacing }
+        val sameFacingBindable = if (bindableCameraIds != null) {
+            sameFacingAll.filter { bindableCameraIds.contains(it.cameraId) }
+                .ifEmpty { sameFacingAll }
+        } else {
+            sameFacingAll
+        }
 
-        val logicalMinZoom = minOf(
-            activeCameraMinZoom.coerceAtLeast(0.1f),
-            mainEntry?.minZoomRatio?.coerceAtLeast(0.1f) ?: activeCameraMinZoom.coerceAtLeast(0.1f)
-        )
-        val logicalMaxZoom = maxOf(
-            activeCameraMaxZoom,
-            mainEntry?.maxZoomRatio ?: activeCameraMaxZoom
-        ).coerceAtLeast(logicalMinZoom)
+        val mainEntry = sameFacingBindable.firstOrNull { it.cameraId == activeCameraId }
+            ?: sameFacingBindable.firstOrNull { it.isLogicalMultiCamera && it.minZoomRatio <= MAX_WIDE_THRESHOLD }
+            ?: sameFacingBindable.firstOrNull { it.isLogicalMultiCamera }
+            ?: sameFacingBindable.firstOrNull()
 
-        // Case 1: Active logical multi-camera (or wide-capable camera) supports zoom < 1.0x natively.
-        // Using CameraX setZoomRatio switches lenses seamlessly without restarting the camera session.
+        // Check if ANY bindable camera on this facing natively supports zoom < 1.0x (logical multi-cam)
+        val wideLogicalEntry = sameFacingBindable
+            .filter { it.minZoomRatio <= MAX_WIDE_THRESHOLD }
+            .minByOrNull { it.minZoomRatio }
+
+        val effectiveLogicalEntry = wideLogicalEntry ?: mainEntry
+        val hasRealHardwareRange = effectiveLogicalEntry != null
+        val logicalMinZoom = if (hasRealHardwareRange) {
+            minOf(
+                activeCameraMinZoom.coerceAtLeast(0.1f),
+                effectiveLogicalEntry!!.minZoomRatio.coerceAtLeast(0.1f)
+            )
+        } else {
+            activeCameraMinZoom.coerceAtLeast(0.1f)
+        }
+        val logicalMaxZoom = if (hasRealHardwareRange) {
+            maxOf(
+                activeCameraMaxZoom,
+                effectiveLogicalEntry!!.maxZoomRatio,
+                mainEntry?.maxZoomRatio ?: 1.0f
+            ).coerceAtLeast(logicalMinZoom)
+        } else {
+            activeCameraMaxZoom.coerceAtLeast(logicalMinZoom)
+        }
+
+        // Case 1: Logical multi-camera (or active camera) natively supports zoom < 1.0x.
+        // Calling CameraControl.setZoomRatio(ratio) switches physical ultra-wide/wide/tele sensors
+        // seamlessly with zero session restart or black frames.
         if (logicalMinZoom <= MAX_WIDE_THRESHOLD) {
-            val widePreset = computeNearestWidePresetRatio(logicalMinZoom)
+            val widePreset = computeNativeWidePresetRatio(logicalMinZoom)
             return CameraLensZoomCapabilities(
                 minZoomRatio = logicalMinZoom,
                 maxZoomRatio = logicalMaxZoom,
                 widePresetRatio = widePreset,
                 usesStandalonePhysicalUltraWide = false,
                 standaloneUltraWideCameraId = null,
+                logicalWideCameraId = wideLogicalEntry?.cameraId,
                 mainCameraId = mainEntry?.cameraId ?: activeCameraId,
                 physicalWideFocalLengthMm = null,
                 mainFocalLengthMm = mainEntry?.minFocalLengthMm,
-                isLogicalMultiCamera = mainEntry?.isLogicalMultiCamera ?: (logicalMinZoom < 0.99f)
+                isLogicalMultiCamera = effectiveLogicalEntry?.isLogicalMultiCamera ?: (logicalMinZoom < 0.99f)
             )
         }
 
-        // Case 2: Logical camera starts at 1.0x — check if OEM exposed a standalone physical
-        // ultra-wide camera ID on the same side (strictly rear cameras; avoid telephoto/macro/depth).
+        // Case 2: Logical rear camera starts at 1.0x — look for a distinct bindable standalone
+        // rear physical ultra-wide camera with a genuinely shorter focal length.
         val mainFocal = mainEntry?.minFocalLengthMm
         if (targetFacing == CameraCharacteristics.LENS_FACING_BACK &&
             mainEntry != null &&
             mainFocal != null &&
             mainFocal > 0f
         ) {
-            val standaloneCandidate = sameFacing
+            val standaloneCandidate = sameFacingBindable
                 .filter { candidate ->
                     candidate.cameraId != mainEntry.cameraId &&
-                        !mainEntry.physicalCameraIds.contains(candidate.cameraId) &&
                         candidate.minFocalLengthMm != null &&
                         candidate.minFocalLengthMm > 0.5f &&
                         candidate.minFocalLengthMm < mainFocal * WIDE_FOCAL_RATIO_THRESHOLD
                 }
                 .minByOrNull { candidate ->
-                    // Prefer the lens closest to 0.6x equivalent focal length
-                    val equiv = (candidate.minFocalLengthMm ?: mainFocal) / mainFocal
-                    abs(equiv - TARGET_ULTRA_WIDE_RATIO)
+                    candidate.minFocalLengthMm ?: Float.MAX_VALUE
                 }
 
             if (standaloneCandidate != null && standaloneCandidate.minFocalLengthMm != null) {
                 val rawEquiv = (standaloneCandidate.minFocalLengthMm / mainFocal).coerceIn(0.4f, 0.9f)
                 val roundedEquiv = ((rawEquiv * 10f).roundToInt() / 10f).coerceIn(0.5f, 0.9f)
-                // If equivalent FOV is right around 0.55x..0.65x, expose clean 0.6x; otherwise exact nearest 0.1x
-                val presetRatio = if (roundedEquiv in 0.5f..0.6f && abs(rawEquiv - TARGET_ULTRA_WIDE_RATIO) <= 0.08f) {
-                    TARGET_ULTRA_WIDE_RATIO
-                } else {
-                    roundedEquiv
-                }
                 return CameraLensZoomCapabilities(
                     minZoomRatio = logicalMinZoom,
                     maxZoomRatio = logicalMaxZoom,
-                    widePresetRatio = presetRatio,
+                    widePresetRatio = roundedEquiv,
                     usesStandalonePhysicalUltraWide = true,
                     standaloneUltraWideCameraId = standaloneCandidate.cameraId,
+                    logicalWideCameraId = null,
                     mainCameraId = mainEntry.cameraId,
                     physicalWideFocalLengthMm = standaloneCandidate.minFocalLengthMm,
                     mainFocalLengthMm = mainFocal,
@@ -210,13 +239,14 @@ object CameraUltraWideZoomManager {
             }
         }
 
-        // Case 3: Hardware has no ultra-wide lens on this side — never fake 0.6x.
+        // Case 3: Hardware has no ultra-wide lens on this side — never show fake 0.5x/0.6x.
         return CameraLensZoomCapabilities(
             minZoomRatio = logicalMinZoom,
             maxZoomRatio = logicalMaxZoom,
             widePresetRatio = null,
             usesStandalonePhysicalUltraWide = false,
             standaloneUltraWideCameraId = null,
+            logicalWideCameraId = null,
             mainCameraId = mainEntry?.cameraId ?: activeCameraId,
             physicalWideFocalLengthMm = null,
             mainFocalLengthMm = mainEntry?.minFocalLengthMm,
@@ -225,25 +255,46 @@ object CameraUltraWideZoomManager {
     }
 
     /**
-     * Computes the exact wide preset ratio from a genuine hardware `minZoomRatio <= 0.95f`:
-     * - Prefers exact `0.6x` whenever hardware supports `<= 0.605f` (covers 0.5x and 0.6x sensors).
-     * - Otherwise uses the nearest genuine supported wider ratio rounded UP to 0.1 (e.g., 0.66 -> 0.7x,
-     *   0.78 -> 0.8x) so the displayed preset is always actually reachable by the lens.
+     * Computes the exact native wide preset ratio directly from real hardware `minZoomRatio <= 0.95f`.
+     * Never forces `0.5x` when hardware minimum is `0.6x`, and never hides `0.5x` when hardware
+     * genuinely supports `0.5x`.
+     *
+     * Examples:
+     * - `0.50f` -> `0.5f`
+     * - `0.51f` -> `0.5f` (within small sensor rounding tolerance; clamped to hardware min at apply time)
+     * - `0.60f` -> `0.6f`
+     * - `0.67f` -> `0.7f`
+     * - `0.78f` -> `0.8f`
      */
-    fun computeNearestWidePresetRatio(minZoomRatio: Float): Float? {
-        if (minZoomRatio > MAX_WIDE_THRESHOLD) return null
-        if (minZoomRatio <= TARGET_ULTRA_WIDE_RATIO + 0.005f) {
-            return TARGET_ULTRA_WIDE_RATIO
+    fun computeNativeWidePresetRatio(minZoomRatio: Float): Float? {
+        if (!minZoomRatio.isFinite() || minZoomRatio > MAX_WIDE_THRESHOLD) return null
+        val clampedMin = minZoomRatio.coerceAtLeast(0.2f)
+        val nearestTenth = (clampedMin * 10f).roundToInt() / 10f
+        return if (abs(nearestTenth - clampedMin) <= 0.025f) {
+            nearestTenth.coerceIn(0.2f, MAX_WIDE_THRESHOLD)
+        } else {
+            val tenthsUp = ceil((clampedMin * 10.0) - 1e-4).toInt() / 10f
+            tenthsUp.coerceIn(clampedMin, MAX_WIDE_THRESHOLD)
         }
-        val tenthsUp = kotlin.math.ceil((minZoomRatio * 10.0) - 1e-4).toInt() / 10f
-        return tenthsUp.coerceIn(minZoomRatio, MAX_WIDE_THRESHOLD)
     }
 
     /**
-     * Builds the ordered list of quick zoom preset ratios supported by the active hardware.
-     * - Includes the supported wide preset (`0.6x`, or nearest genuine wider FOV) ONLY when supported.
-     * - Always includes `1.0x` (Standard).
-     * - Preserves existing zoom levels (`2x`, `3x`, `5x`, `8x`) where supported by `maxZoomRatio`.
+     * Backwards-compatible alias for [computeNativeWidePresetRatio].
+     */
+    fun computeNearestWidePresetRatio(minZoomRatio: Float): Float? =
+        computeNativeWidePresetRatio(minZoomRatio)
+
+    /**
+     * Dynamically builds the ordered list of quick zoom preset ratios strictly from the device's
+     * real supported `[effectiveMinZoom, effectiveMaxZoom]` range.
+     *
+     * Adapts automatically to any hardware:
+     * - `0.5x–100x` -> `[0.5, 1, 2, 5, 10, 30, 100]`
+     * - `0.5x–30x`  -> `[0.5, 1, 2, 5, 10, 30]`
+     * - `0.6x–10x`  -> `[0.6, 1, 2, 5, 10]`
+     * - `1.0x–8.0x` -> `[1, 2, 5, 8]`
+     * - `1.0x–4.0x` -> `[1, 2, 4]`
+     * - `1.0x–1.0x` -> `[1]`
      */
     fun resolveZoomPresets(
         minZoomRatio: Float,
@@ -252,58 +303,147 @@ object CameraUltraWideZoomManager {
     ): List<Float> {
         val list = mutableListOf<Float>()
         val widePreset = capabilities?.widePresetRatio
-            ?: computeNearestWidePresetRatio(minZoomRatio)
+            ?: computeNativeWidePresetRatio(minZoomRatio)
 
         if (widePreset != null && widePreset < 0.99f) {
             list.add(widePreset)
         }
         list.add(1.0f)
 
-        val effectiveMax = maxOf(maxZoomRatio, capabilities?.maxZoomRatio ?: maxZoomRatio)
-        if (effectiveMax >= 2.0f) list.add(2.0f)
-        if (effectiveMax >= 3.0f) list.add(3.0f)
-        if (effectiveMax >= 5.0f) list.add(5.0f)
-        if (effectiveMax >= 8.0f) list.add(8.0f)
+        val effectiveMax = maxOf(
+            maxZoomRatio,
+            capabilities?.maxZoomRatio ?: maxZoomRatio
+        ).coerceAtLeast(1.0f)
+
+        val candidates: List<Float> = when {
+            effectiveMax >= 60.0f -> listOf(2.0f, 5.0f, 10.0f, 30.0f, floor(effectiveMax).coerceAtLeast(50.0f))
+            effectiveMax >= 25.0f -> listOf(2.0f, 5.0f, 10.0f, floor(effectiveMax))
+            effectiveMax >= 10.0f -> listOf(2.0f, 5.0f, 10.0f) + if (effectiveMax >= 19.5f) listOf(floor(effectiveMax)) else emptyList()
+            effectiveMax >= 5.0f -> listOf(2.0f, 5.0f) + if (effectiveMax >= 7.5f) listOf(floor(effectiveMax)) else emptyList()
+            effectiveMax >= 3.0f -> listOf(2.0f, floor(effectiveMax))
+            effectiveMax >= 2.0f -> listOf(2.0f)
+            effectiveMax >= 1.45f -> listOf(((effectiveMax * 10f).toInt() / 10f))
+            else -> emptyList()
+        }
+
+        for (step in candidates) {
+            if (step <= effectiveMax + 0.05f && list.none { abs(it - step) < 0.15f }) {
+                list.add(step.coerceAtMost(effectiveMax))
+            }
+        }
         return list
     }
 
     /**
-     * Builds a CameraX [CameraSelector] that seamlessly targets the standalone physical
-     * ultra-wide camera ID when required (and falls back gracefully to default rear/front
-     * camera if the ID is unavailable).
+     * Computes the exact hardware zoom ratio to send to `CameraController.setZoomRatio(...)`:
+     * - When using a standalone physical ultra-wide lens for `requestedZoom < 1.0f`, maps
+     *   `requestedZoom` linearly relative to the ultra-wide lens's native FOV (`1.0f` at `widePresetRatio`,
+     *   increasing smoothly as the user pinches toward `1.0f`).
+     * - Otherwise clamps `requestedZoom` strictly into the bound camera's real supported range
+     *   `[hardwareMinZoom, hardwareMaxZoom]`.
+     */
+    fun computeTargetHardwareZoomRatio(
+        requestedZoom: Float,
+        hardwareMinZoom: Float,
+        hardwareMaxZoom: Float,
+        useStandaloneUltraWide: Boolean,
+        widePresetRatio: Float?
+    ): Float {
+        val safeMin = hardwareMinZoom.takeIf { it.isFinite() && it > 0f } ?: 1.0f
+        val safeMax = hardwareMaxZoom.takeIf { it.isFinite() && it >= safeMin } ?: safeMin
+        val safeRequested = requestedZoom.takeIf { it.isFinite() && it > 0f } ?: 1.0f
+
+        if (useStandaloneUltraWide && safeRequested < 0.995f) {
+            val nativeWide = (widePresetRatio ?: 0.6f).coerceIn(0.3f, 0.95f)
+            val relativeOnUltraWideSensor = (safeRequested / nativeWide).coerceAtLeast(1.0f)
+            return relativeOnUltraWideSensor.coerceIn(safeMin, safeMax)
+        }
+        return safeRequested.coerceIn(safeMin, safeMax)
+    }
+
+    /**
+     * Logarithmic slider helpers so wide zoom ranges (e.g. `0.5x..100x`) give smooth,
+     * uniform tactile control across ultra-wide (`0.5x–1x`), standard (`1x–5x`), and tele (`5x–100x`).
+     */
+    fun zoomToSliderFraction(zoom: Float, minZoom: Float, maxZoom: Float): Float {
+        val safeMin = minZoom.coerceAtLeast(0.1f)
+        val safeMax = maxZoom.coerceAtLeast(safeMin + 0.01f)
+        val clamped = zoom.coerceIn(safeMin, safeMax)
+        val denom = ln(safeMax / safeMin)
+        if (!denom.isFinite() || denom <= 1e-6f) return 0f
+        return (ln(clamped / safeMin) / denom).coerceIn(0f, 1f)
+    }
+
+    fun sliderFractionToZoom(fraction: Float, minZoom: Float, maxZoom: Float): Float {
+        val safeMin = minZoom.coerceAtLeast(0.1f)
+        val safeMax = maxZoom.coerceAtLeast(safeMin + 0.01f)
+        val f = fraction.coerceIn(0f, 1f)
+        return (safeMin * (safeMax / safeMin).toDouble().pow(f.toDouble())).toFloat()
+            .coerceIn(safeMin, safeMax)
+    }
+
+    /**
+     * Builds a STRICT CameraX [CameraSelector] matching ONLY the requested Camera2 ID.
+     * Returns an empty list inside the filter if that exact ID is not exposed by CameraX,
+     * so `controller.hasCamera(selector)` accurately reports `false` instead of silently
+     * binding the standard 1.0x camera!
      */
     @OptIn(ExperimentalCamera2Interop::class)
-    fun buildCameraSelector(
-        isFrontCamera: Boolean,
-        useStandaloneUltraWide: Boolean,
-        standaloneUltraWideCameraId: String?
+    fun buildStrictCameraIdSelector(
+        lensFacing: Int,
+        cameraId: String
     ): CameraSelector {
-        if (isFrontCamera) return CameraSelector.DEFAULT_FRONT_CAMERA
-        if (!useStandaloneUltraWide || standaloneUltraWideCameraId.isNullOrBlank()) {
-            return CameraSelector.DEFAULT_BACK_CAMERA
-        }
         return CameraSelector.Builder()
-            .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+            .requireLensFacing(lensFacing)
             .addCameraFilter { cameraInfos ->
-                val exact = cameraInfos.filter { info ->
+                cameraInfos.filter { info ->
                     try {
-                        Camera2CameraInfo.from(info).cameraId == standaloneUltraWideCameraId
+                        Camera2CameraInfo.from(info).cameraId == cameraId
                     } catch (_: Throwable) {
                         false
                     }
                 }
-                exact.ifEmpty { cameraInfos.take(1) }
             }
             .build()
     }
 
     /**
-     * Formats a zoom ratio cleanly for badges (`"0.6x"`, `"1x"`, `"2x"`, `"1.5x"`).
+     * Builds a CameraX [CameraSelector] that targets:
+     * - Front camera when `isFrontCamera == true`
+     * - Strict standalone physical ultra-wide camera ID when `useStandaloneUltraWide == true`
+     * - Preferred logical multi-camera ID (when a specific back camera exposes `< 1.0x` zoom)
+     * - Otherwise `CameraSelector.DEFAULT_BACK_CAMERA`
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    fun buildCameraSelector(
+        isFrontCamera: Boolean,
+        useStandaloneUltraWide: Boolean,
+        standaloneUltraWideCameraId: String?,
+        logicalWideCameraId: String? = null
+    ): CameraSelector {
+        if (isFrontCamera) return CameraSelector.DEFAULT_FRONT_CAMERA
+        if (useStandaloneUltraWide && !standaloneUltraWideCameraId.isNullOrBlank()) {
+            return buildStrictCameraIdSelector(
+                lensFacing = CameraSelector.LENS_FACING_BACK,
+                cameraId = standaloneUltraWideCameraId
+            )
+        }
+        if (!logicalWideCameraId.isNullOrBlank()) {
+            return buildStrictCameraIdSelector(
+                lensFacing = CameraSelector.LENS_FACING_BACK,
+                cameraId = logicalWideCameraId
+            )
+        }
+        return CameraSelector.DEFAULT_BACK_CAMERA
+    }
+
+    /**
+     * Formats a zoom ratio cleanly for badges (`"0.5x"`, `"0.6x"`, `"1x"`, `"2x"`, `"10x"`, `"100x"`, `"1.5x"`).
      */
     fun formatZoomBadge(ratio: Float): String {
         return if (ratio < 1.0f) {
             String.format(Locale.US, "%.1fx", ratio)
-        } else if (abs(ratio - ratio.roundToInt().toFloat()) < 0.05f) {
+        } else if (ratio >= 10f || abs(ratio - ratio.roundToInt().toFloat()) < 0.05f) {
             "${ratio.roundToInt()}x"
         } else {
             String.format(Locale.US, "%.1fx", ratio)
@@ -311,12 +451,12 @@ object CameraUltraWideZoomManager {
     }
 
     /**
-     * Formats a compact preset chip label (`"0.6"`, `"1"`, `"2"`, `"3"`, `"5"`, `"8"`).
+     * Formats a compact preset chip label (`"0.5"`, `"0.6"`, `"1"`, `"2"`, `"5"`, `"10"`, `"30"`, `"100"`).
      */
     fun formatPresetChipLabel(preset: Float): String {
         return if (preset < 1.0f) {
             String.format(Locale.US, "%.1f", preset)
-        } else if (abs(preset - preset.roundToInt().toFloat()) < 0.05f) {
+        } else if (preset >= 10f || abs(preset - preset.roundToInt().toFloat()) < 0.05f) {
             "${preset.roundToInt()}"
         } else {
             String.format(Locale.US, "%.1f", preset)
@@ -371,12 +511,12 @@ object CameraUltraWideZoomManager {
                         )
                     )
                 } catch (e: Throwable) {
-                    Log.w(TAG, "Skipping camera ID $cameraId during ultra-wide detection: ${e.message}")
+                    Log.w(TAG, "Skipping camera ID $cameraId during zoom capability detection: ${e.message}")
                 }
             }
             results
         } catch (e: Throwable) {
-            Log.w(TAG, "Camera2 ultra-wide hardware inspection failed: ${e.message}")
+            Log.w(TAG, "Camera2 hardware zoom inspection failed: ${e.message}")
             emptyList()
         }
     }

@@ -516,6 +516,14 @@ class SmartDirectionManager {
                 abs(effectiveDeltaM) >= 3.0 -> {
                 isIncreasingForSide(activeAlign.carriagewayType.uppercase(Locale.ROOT), resolvedConvention)
             }
+            // High-speed immediate movement bearing cue on first fix / route switch (still gated by confirmation hysteresis)
+            gpsBearingCos != null &&
+                speedMps != null &&
+                speedMps >= 4.0f &&
+                sample.accuracyM <= 15f &&
+                abs(gpsBearingCos) >= 0.78 -> {
+                if (alignmentChainageIncreasesForward) gpsBearingCos > 0.0 else gpsBearingCos < 0.0
+            }
             else -> null
         }
 

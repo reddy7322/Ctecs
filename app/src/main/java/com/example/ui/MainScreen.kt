@@ -319,6 +319,42 @@ fun MainScreen(
                     val workTargetPrediction by viewModel.workTargetPrediction.collectAsStateWithLifecycle()
                     val delayRiskSummary by viewModel.weatherDelayRiskSummary.collectAsStateWithLifecycle()
                     val actionableAlerts by viewModel.actionableWeatherAlerts.collectAsStateWithLifecycle()
+                    val liveMatch by viewModel.liveMatchResult.collectAsStateWithLifecycle()
+                    val locState by viewModel.locationState.collectAsStateWithLifecycle()
+                    val projProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
+                    val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
+                    val weatherExpandedSections by viewModel.weatherExpandedSections.collectAsStateWithLifecycle()
+
+                    var lastValidHighwaySnapshot by remember {
+                        mutableStateOf<com.example.ui.weather.LiveHighwayLocationSnapshot?>(null)
+                    }
+                    val liveHighwayLocation = remember(
+                        liveMatch,
+                        locState,
+                        projProfile,
+                        activeRoute,
+                        locName,
+                        lastValidHighwaySnapshot
+                    ) {
+                        com.example.ui.weather.buildLiveHighwayLocationSnapshot(
+                            matchResult = liveMatch,
+                            locationState = locState,
+                            projectProfile = projProfile,
+                            activeRoute = activeRoute,
+                            resolvedLocationName = locName,
+                            lastKnownValid = lastValidHighwaySnapshot
+                        )
+                    }
+                    LaunchedEffect(
+                        liveHighwayLocation.currentChainageText,
+                        liveHighwayLocation.isChainageStale,
+                        liveHighwayLocation.sideOfRoad,
+                        liveHighwayLocation.roadOrProjectName
+                    ) {
+                        if (liveHighwayLocation.currentChainageText.isNotBlank() && !liveHighwayLocation.isChainageStale) {
+                            lastValidHighwaySnapshot = liveHighwayLocation
+                        }
+                    }
 
                     com.example.ui.weather.WeatherDashboardScreen(
                         weatherUiState = weatherUiState,
@@ -339,7 +375,10 @@ fun MainScreen(
                         onUpdateSiteMeasurements = { viewModel.updateActualSiteMeasurements(it) },
                         onUpdateWorkTargetInput = { viewModel.updateWorkTargetInput(it) },
                         onRefreshWeather = { viewModel.refreshWeather(force = true) },
-                        onNavigateBack = { viewModel.setTab(AppTab.HOME) }
+                        onNavigateBack = { viewModel.setTab(AppTab.HOME) },
+                        liveHighwayLocation = liveHighwayLocation,
+                        expandedSections = weatherExpandedSections,
+                        onToggleSection = { viewModel.toggleWeatherSection(it) }
                     )
                 }
                 AppTab.SETTINGS -> SettingsScreen(

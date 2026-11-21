@@ -211,6 +211,7 @@ fun SettingsScreen(
     val offlineSyncState by viewModel.offlineMapSyncState.collectAsStateWithLifecycle()
     val offlineAutoPreload by viewModel.offlineMapAutoPreload.collectAsStateWithLifecycle()
     val offlineWifiOnly by viewModel.offlineMapWifiOnly.collectAsStateWithLifecycle()
+    val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
 
     // In-App Update States
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
@@ -1937,7 +1938,7 @@ fun SettingsScreen(
             // ====================================================
             // 6. TIMESTAMP (MERGED WITH METADATA & WATERMARK)
             // ====================================================
-            if (matchesSearch("photo video stamp mini map minimap map inset overlay orientation zoom alignment lhs rhs timestamp date time format precision 24-hour placement pattern metadata watermark font size color opacity shadow background spacing", searchQuery)) {
+            if (matchesSearch("photo video stamp mini map minimap map inset overlay orientation zoom top view distance smart auto 100m 250m 500m 1km 2km 5km 10km 20km custom distance alignment lhs rhs timestamp date time format precision 24-hour placement pattern metadata watermark font size color opacity shadow background spacing", searchQuery)) {
                 var isFormatDropdownOpen by remember { mutableStateOf(false) }
                 var isPositionDropdownOpen by remember { mutableStateOf(false) }
                 var isFontDropdownOpen by remember { mutableStateOf(false) }
@@ -2034,7 +2035,9 @@ fun SettingsScreen(
                         onToggleExpand = { expandedSections["mini_map"] = !(expandedSections["mini_map"] ?: false) },
                         onSaveConfig = { updated -> viewModel.saveOverlayConfig(updated) },
                         onResetMiniMapDefaults = { viewModel.resetMiniMapDefaults() },
-                        onShowMessage = { msg -> viewModel.showToast(msg, ToastType.INFO) }
+                        onShowMessage = { msg -> viewModel.showToast(msg, ToastType.INFO) },
+                        viewDistancePreference = miniMapViewDistance,
+                        onUpdateViewDistance = { pref -> viewModel.updateMiniMapViewDistance(pref) }
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -3758,7 +3761,7 @@ fun SettingsScreen(
 
                     CompactSwitchRow(
                         title = "Auto-Preload Active KMZ Route",
-                        subtitle = "Cache corridor tiles and 25m viewing zoom when route activates",
+                        subtitle = "Cache corridor tiles and 250m viewing zoom when route activates",
                         checked = offlineAutoPreload,
                         onCheckedChange = { viewModel.setOfflineMapAutoPreload(it) },
                         tag = "switch_offline_map_auto_preload"

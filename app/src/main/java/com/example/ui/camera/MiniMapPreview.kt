@@ -103,11 +103,34 @@ fun MiniMapPreview(
     autoFitRoute: Boolean = false,
     orientationMode: MiniMapOrientationMode = MiniMapOrientationMode.DIRECTION_UP,
     fadeToColor: Color? = null,
+    viewDistancePreference: com.example.ui.map.MiniMapViewDistancePreference = com.example.ui.map.MiniMapViewDistancePreference(),
+    speedMps: Float? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val tileUpdate by OsmTileManager.tileUpdateEvent.collectAsStateWithLifecycle()
+
+    var previousSmartRangeM by remember(viewDistancePreference.mode) { mutableStateOf<Double?>(null) }
+    val resolvedGroundRangeMetres = remember(
+        viewDistancePreference,
+        speedMps,
+        gpsAccuracy,
+        location?.latitude,
+        location?.longitude,
+        routeData?.id
+    ) {
+        com.example.ui.map.SmartAutoMiniMapDistanceEngine.resolveGroundRangeMetres(
+            preference = viewDistancePreference,
+            context = com.example.ui.map.SmartAutoMiniMapDistanceEngine.SmartDistanceContext(
+                speedMps = speedMps,
+                gpsAccuracyMetres = gpsAccuracy,
+                location = location,
+                routeData = routeData,
+                previousRangeMetres = previousSmartRangeM
+            )
+        ).also { previousSmartRangeM = it }
+    }
 
     // Unified configurable path shared by Camera Preview, Photo Capture, Video Recording, and Settings
     if (miniMapConfig != null) {
@@ -147,7 +170,8 @@ fun MiniMapPreview(
                         chainageLabel = chainageLabel,
                         sideLabel = sideLabel,
                         isGpsRetained = isGpsRetained,
-                        dpScale = density.density
+                        dpScale = density.density,
+                        groundRangeMetres = resolvedGroundRangeMetres
                     )
                 }
             }
@@ -185,7 +209,14 @@ fun MiniMapPreview(
         val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
         val baseCenter = location ?: routeData?.bounds?.center ?: GeoPoint(28.6139, 77.2090)
-        val defaultFit = remember(routeData?.id, baseCenter.latitude, autoFitRoute, viewportWidthPx, viewportHeightPx) {
+        val defaultFit = remember(
+            routeData?.id,
+            baseCenter.latitude,
+            autoFitRoute,
+            viewportWidthPx,
+            viewportHeightPx,
+            resolvedGroundRangeMetres
+        ) {
             if (autoFitRoute && routeData != null && routeData.alignments.isNotEmpty()) {
                 MiniMapViewportMath.computeRouteFitCamera(
                     routeData = routeData,
@@ -194,13 +225,13 @@ fun MiniMapPreview(
                     paddingFraction = 0.14f
                 )
             } else {
-                val zoom25m = MiniMapViewportMath.computeZoomForGroundRangeMetres(
+                val configuredZoom = MiniMapViewportMath.computeZoomForGroundRangeMetres(
                     latitude = baseCenter.latitude,
                     viewportWidthPx = viewportWidthPx,
                     viewportHeightPx = viewportHeightPx,
-                    groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+                    groundRangeMetres = resolvedGroundRangeMetres
                 )
-                Pair(baseCenter, zoom25m)
+                Pair(baseCenter, configuredZoom)
             }
         }
 
@@ -210,7 +241,13 @@ fun MiniMapPreview(
         var lastAutoFitLat by remember(routeData?.id, autoFitRoute) { mutableStateOf(baseCenter.latitude) }
         var continuousZoom by remember(routeData?.id, autoFitRoute) { mutableFloatStateOf(defaultFit.second) }
 
-        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom, isFollowingDefault) {
+        // Changing distance preference in Settings resumes configured/Smart Auto distance
+        LaunchedEffect(viewDistancePreference) {
+            hasUserAdjustedZoom = false
+            continuousZoom = defaultFit.second
+            lastAutoFitLat = baseCenter.latitude
+        }
+        LaunchedEffect(viewportWidthPx, viewportHeightPx, defaultFit.second, hasUserAdjustedZoom, isFollowingDefault) {
             if (isFollowingDefault && !hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
                 continuousZoom = defaultFit.second
                 exploredCenter = null

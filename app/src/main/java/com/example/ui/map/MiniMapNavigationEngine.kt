@@ -77,11 +77,11 @@ object MiniMapViewportMath {
     const val EARTH_EQUATORIAL_CIRCUMFERENCE_METRES = 40_075_016.686
 
     /**
-     * Global standard initial ground viewing range (metres) for every Mini Map across CTECS.
+     * Global standard initial ground viewing range (metres) for every Mini Map across CTECS (250 M).
      * Always converted dynamically to continuous Web Mercator zoom using latitude, viewport
      * dimensions, and aspect ratio — never a hardcoded zoom number.
      */
-    const val DEFAULT_GROUND_VIEW_RANGE_METRES = 25.0
+    const val DEFAULT_GROUND_VIEW_RANGE_METRES = 250.0
 
     /**
      * Vertical screen fraction where the live vehicle marker is framed during Follow + Direction-Up mode.
@@ -407,7 +407,11 @@ object MiniMapViewportMath {
             renderScale *= 2f
         }
 
-        val renderSizePx = (ceil(rawDiag / renderScale).toInt() + 12).coerceIn(64, 1800)
+        val rawRequiredPx = (ceil(rawDiag / renderScale).toInt() + 12).coerceIn(64, 1800)
+        // Quantize up to 128px buckets so smooth animated viewport resizing (e.g. Home Weather Card
+        // expand/collapse) keeps identical bitmap dimensions without triggering unnecessary tile reloads.
+        val bucketedPx = (((rawRequiredPx + 127) / 128) * 128).coerceIn(128, 1800)
+        val renderSizePx = bucketedPx.coerceAtLeast(rawRequiredPx)
         return TileRenderPlan(
             renderBaseZoom = renderBase,
             renderScale = renderScale,
@@ -445,6 +449,266 @@ object MiniMapViewportMath {
         val zoomY = ln(usableH / (TILE_SIZE * normY)) / ln(2.0)
         val fittedZoom = minOf(zoomX, zoomY).toFloat().coerceIn(3.0f, 16.5f)
         return Pair(center, fittedZoom)
+    }
+}
+
+/**
+ * Global Mini Map Top View Distance options exposed in Settings -> Mini Map Settings
+ * and applied consistently across all Mini Maps (Home, Camera, Screensaver, Survey, Routes, Photos).
+ */
+enum class MiniMapViewDistanceMode(
+    val storageKey: String,
+    val label: String,
+    val fixedMetres: Double?
+) {
+    DIST_100M("100m", "100 M", 100.0),
+    DIST_250M("250m", "250 M", 250.0),
+    DIST_500M("500m", "500 M", 500.0),
+    DIST_1KM("1km", "1 KM", 1_000.0),
+    DIST_2KM("2km", "2 KM", 2_000.0),
+    DIST_5KM("5km", "5 KM", 5_000.0),
+    DIST_10KM("10km", "10 KM", 10_000.0),
+    DIST_20KM("20km", "20 KM", 20_000.0),
+    CUSTOM("custom", "Custom Distance", null),
+    SMART_AUTO("smart_auto", "Smart Auto", null);
+
+    companion object {
+        val DEFAULT: MiniMapViewDistanceMode = DIST_250M
+
+        fun fromStorageKey(key: String?): MiniMapViewDistanceMode {
+            if (key.isNullOrBlank()) return DEFAULT
+            return entries.firstOrNull { it.storageKey.equals(key.trim(), ignoreCase = true) }
+                ?: entries.firstOrNull { it.name.equals(key.trim(), ignoreCase = true) }
+                ?: DEFAULT
+        }
+    }
+}
+
+/**
+ * Persisted user preference for "Mini Map Top View Distance".
+ * Defaults to 250 M ([MiniMapViewDistanceMode.DIST_250M]).
+ */
+data class MiniMapViewDistancePreference(
+    val mode: MiniMapViewDistanceMode = MiniMapViewDistanceMode.DEFAULT,
+    val customDistanceMetres: Double = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+) {
+    val validatedCustomMetres: Double
+        get() = clampCustomDistanceMetres(customDistanceMetres)
+
+    fun fixedOrDefaultGroundRangeMetres(): Double {
+        return when (mode) {
+            MiniMapViewDistanceMode.CUSTOM -> validatedCustomMetres
+            MiniMapViewDistanceMode.SMART_AUTO -> MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+            else -> mode.fixedMetres ?: MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+        }
+    }
+
+    fun summaryLabel(): String {
+        return when (mode) {
+            MiniMapViewDistanceMode.CUSTOM -> "Custom (${formatDistanceLabel(validatedCustomMetres)})"
+            MiniMapViewDistanceMode.SMART_AUTO -> "Smart Auto"
+            else -> mode.label
+        }
+    }
+
+    companion object {
+        const val MIN_CUSTOM_DISTANCE_METRES = 50.0
+        const val MAX_CUSTOM_DISTANCE_METRES = 50_000.0
+
+        fun clampCustomDistanceMetres(metres: Double): Double {
+            if (!metres.isFinite()) return MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+            return metres.coerceIn(MIN_CUSTOM_DISTANCE_METRES, MAX_CUSTOM_DISTANCE_METRES)
+        }
+
+        /**
+         * Parses and validates user-entered Custom Distance text.
+         * Returns null when empty, non-numeric, or outside [50 M .. 50 KM].
+         */
+        fun parseAndValidateCustomDistance(rawText: String, unitIsKm: Boolean): Double? {
+            val cleaned = rawText.trim().replace(",", "")
+            if (cleaned.isEmpty()) return null
+            val numeric = cleaned.toDoubleOrNull() ?: return null
+            if (!numeric.isFinite() || numeric <= 0.0) return null
+            val metres = if (unitIsKm) numeric * 1_000.0 else numeric
+            if (metres < MIN_CUSTOM_DISTANCE_METRES || metres > MAX_CUSTOM_DISTANCE_METRES) {
+                return null
+            }
+            return metres
+        }
+
+        fun formatDistanceLabel(metres: Double): String {
+            val clamped = clampCustomDistanceMetres(metres)
+            return if (clamped >= 1_000.0) {
+                val km = clamped / 1_000.0
+                if (abs(km - kotlin.math.round(km)) < 0.05) {
+                    "${kotlin.math.round(km).toInt()} KM"
+                } else {
+                    String.format(java.util.Locale.US, "%.1f KM", km)
+                }
+            } else {
+                "${kotlin.math.round(clamped).toInt()} M"
+            }
+        }
+    }
+}
+
+/**
+ * Smart Auto dynamic Mini Map viewing distance engine.
+ *
+ * Smoothly adjusts real ground viewing range in metres based on:
+ * - Current movement speed (m/s) and moving vs stationary state
+ * - GPS accuracy / confidence
+ * - Local road alignment geometry (sharp curves, junctions/multiple alignments, straight stretches)
+ * - Route context (on-alignment vs off-alignment)
+ *
+ * Includes stationary hold, deadband hysteresis, and exponential damping so viewing distance
+ * never jumps abruptly or oscillates when stationary.
+ */
+object SmartAutoMiniMapDistanceEngine {
+    const val STATIONARY_SPEED_MPS = 0.85f
+    const val MIN_SMART_RANGE_METRES = 140.0
+    const val MAX_SMART_RANGE_METRES = 3_000.0
+
+    data class SmartDistanceContext(
+        val speedMps: Float?,
+        val gpsAccuracyMetres: Float,
+        val location: GeoPoint?,
+        val routeData: RouteData?,
+        val previousRangeMetres: Double? = null
+    )
+
+    fun resolveGroundRangeMetres(
+        preference: MiniMapViewDistancePreference,
+        context: SmartDistanceContext
+    ): Double {
+        if (preference.mode != MiniMapViewDistanceMode.SMART_AUTO) {
+            return preference.fixedOrDefaultGroundRangeMetres()
+        }
+        return computeSmartAutoRangeMetres(context)
+    }
+
+    fun computeSmartAutoRangeMetres(context: SmartDistanceContext): Double {
+        val speed = context.speedMps?.takeIf { it.isFinite() && it >= 0f } ?: 0f
+        val isStationary = speed < STATIONARY_SPEED_MPS
+
+        // 1. Speed-based baseline viewing distance (metres)
+        val speedBaseRange = when {
+            isStationary -> MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES // 250 M stable default
+            speed < 4.5f -> 180.0 + ((speed - STATIONARY_SPEED_MPS) / (4.5f - STATIONARY_SPEED_MPS)) * 70.0
+            speed < 13.9f -> 250.0 + ((speed - 4.5f) / (13.9f - 4.5f)) * 270.0 // 16–50 km/h -> 250..520 m
+            speed < 25.0f -> 520.0 + ((speed - 13.9f) / (25.0f - 13.9f)) * 680.0 // 50–90 km/h -> 520..1200 m
+            else -> (1200.0 + ((speed - 25.0f).coerceAtMost(15f) / 15f) * 1000.0) // > 90 km/h -> 1200..2200 m
+        }
+
+        // 2. Road alignment geometry & route context adjustment
+        var geometryFactor = 1.0
+        val loc = context.location
+        val route = context.routeData
+        if (loc != null && route != null && route.alignments.isNotEmpty()) {
+            val analysis = analyzeLocalRoadGeometry(loc, route)
+            when {
+                analysis.isOffRoute -> geometryFactor = 1.35 // Wider view to locate road alignment
+                analysis.hasIntersectionOrBranch -> geometryFactor = 0.74 // Tighter detail around junctions
+                analysis.maxLocalDeflectionDeg >= 28.0 -> geometryFactor = 0.76 // Tighter view on curves
+                analysis.maxLocalDeflectionDeg <= 8.0 && speed >= 11.0f -> geometryFactor = 1.15 // Straight highway overview
+            }
+        }
+
+        var target = speedBaseRange * geometryFactor
+
+        // 3. GPS accuracy / confidence safety expansion (never over-zoom into a large uncertainty circle)
+        val accuracy = context.gpsAccuracyMetres
+        if (accuracy.isFinite() && accuracy > 25f) {
+            val accuracyFloor = (accuracy.toDouble() * 7.0).coerceAtMost(1_800.0)
+            target = maxOf(target, accuracyFloor)
+        }
+
+        val clampedTarget = target.coerceIn(MIN_SMART_RANGE_METRES, MAX_SMART_RANGE_METRES)
+        return applySmoothDamping(
+            previousMetres = context.previousRangeMetres,
+            targetMetres = clampedTarget,
+            isStationary = isStationary
+        )
+    }
+
+    fun applySmoothDamping(
+        previousMetres: Double?,
+        targetMetres: Double,
+        isStationary: Boolean
+    ): Double {
+        val prev = previousMetres?.takeIf { it.isFinite() && it > 0.0 } ?: return targetMetres
+        val relativeDiff = abs(targetMetres - prev) / prev.coerceAtLeast(1.0)
+        // Stay rock-steady while stationary unless a major accuracy/context shift occurs
+        if (isStationary && relativeDiff < 0.22) {
+            return prev
+        }
+        // Small deadband prevents continuous micro-zoom breathing
+        if (relativeDiff < 0.08) {
+            return prev
+        }
+        val alpha = if (targetMetres > prev) 0.28 else 0.22
+        return (prev + (targetMetres - prev) * alpha).coerceIn(MIN_SMART_RANGE_METRES, MAX_SMART_RANGE_METRES)
+    }
+
+    private data class RoadGeometrySummary(
+        val isOffRoute: Boolean,
+        val hasIntersectionOrBranch: Boolean,
+        val maxLocalDeflectionDeg: Double
+    )
+
+    private fun analyzeLocalRoadGeometry(
+        location: GeoPoint,
+        routeData: RouteData
+    ): RoadGeometrySummary {
+        var nearestDistM = Double.MAX_VALUE
+        var nearbyAlignmentCount = 0
+        var maxDeflectionDeg = 0.0
+
+        for (alignment in routeData.alignments) {
+            val pts = alignment.points
+            if (pts.size < 2) continue
+            var minAlignDist = Double.MAX_VALUE
+            var bestIdx = -1
+            // Coarse step for very long alignments to stay O(1)-fast on UI frames
+            val stride = if (pts.size > 600) pts.size / 300 else 1
+            var i = 0
+            while (i < pts.size) {
+                val d = com.example.geo.GeoUtils.distanceMetres(location, pts[i])
+                if (d < minAlignDist) {
+                    minAlignDist = d
+                    bestIdx = i
+                }
+                i += stride
+            }
+            if (minAlignDist < nearestDistM) {
+                nearestDistM = minAlignDist
+            }
+            if (minAlignDist <= 180.0) {
+                nearbyAlignmentCount++
+                if (bestIdx >= 0) {
+                    val startIdx = (bestIdx - 3).coerceAtLeast(0)
+                    val endIdx = (bestIdx + 4).coerceAtMost(pts.size - 1)
+                    var prevBearing: Double? = null
+                    for (j in startIdx until endIdx) {
+                        val segLen = com.example.geo.GeoUtils.distanceMetres(pts[j], pts[j + 1])
+                        if (segLen < 4.0) continue
+                        val brg = com.example.geo.GeoUtils.bearingDegrees(pts[j], pts[j + 1])
+                        if (prevBearing != null) {
+                            var diff = abs(brg - prevBearing) % 360.0
+                            if (diff > 180.0) diff = 360.0 - diff
+                            if (diff > maxDeflectionDeg) maxDeflectionDeg = diff
+                        }
+                        prevBearing = brg
+                    }
+                }
+            }
+        }
+
+        return RoadGeometrySummary(
+            isOffRoute = nearestDistM > 350.0,
+            hasIntersectionOrBranch = nearbyAlignmentCount >= 2,
+            maxLocalDeflectionDeg = maxDeflectionDeg
+        )
     }
 }
 

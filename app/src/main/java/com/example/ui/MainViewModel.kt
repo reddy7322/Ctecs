@@ -409,6 +409,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val selectedWeatherWorkActivity: StateFlow<com.example.model.HighwayWorkActivity> =
         _selectedWeatherWorkActivity.asStateFlow()
 
+    val weatherExpandedSections: StateFlow<Set<String>> =
+        preferencesManager.weatherExpandedSectionsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = preferencesManager.getInitialWeatherExpandedSections()
+        )
+
     val highwayWorkAssessments: StateFlow<List<com.example.model.ActivitySuitabilityAssessment>> =
         combine(
             latestWeatherObservation,
@@ -557,6 +564,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateWorkTargetInput(input: com.example.model.WorkTargetInput) {
         preferencesManager.launchSafeEdit {
             preferencesManager.updateWorkTargetInput(input)
+        }
+    }
+
+    fun toggleWeatherSection(sectionKey: String) {
+        val current = weatherExpandedSections.value
+        val updated = if (sectionKey in current) current - sectionKey else current + sectionKey
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateWeatherExpandedSections(updated)
         }
     }
 
@@ -1114,6 +1129,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateHomeScreensaverState { current ->
             current.withRecenter()
         }
+    }
+
+    val miniMapViewDistancePreference: StateFlow<com.example.ui.map.MiniMapViewDistancePreference> =
+        preferencesManager.miniMapViewDistanceFlow.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            preferencesManager.getInitialMiniMapViewDistance()
+        )
+
+    fun updateMiniMapViewDistance(preference: com.example.ui.map.MiniMapViewDistancePreference) {
+        val sanitized = preference.copy(customDistanceMetres = preference.validatedCustomMetres)
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateMiniMapViewDistance(sanitized)
+        }
+        // Recenter Home/Screensaver Mini Map so the new distance applies smoothly right away
+        recenterHomeMiniMap()
     }
 
     fun setHomeMiniMapVisible(visible: Boolean) {
@@ -3011,7 +3042,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     videoMiniMap = com.example.model.MiniMapStyleConfig()
                 )
             }
+            preferencesManager.updateMiniMapViewDistance(
+                com.example.ui.map.MiniMapViewDistancePreference()
+            )
         }
+        recenterHomeMiniMap()
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Info("Mini Map settings reset to default"))
         }
@@ -3106,7 +3141,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setZoomRatio(ratio: Float) {
-        _currentZoomRatio.value = ratio.coerceIn(0.4f, 20.0f)
+        if (!ratio.isFinite()) return
+        _currentZoomRatio.value = ratio.coerceIn(0.25f, 200.0f)
     }
 
     fun setExposureCompensation(ev: Int) {

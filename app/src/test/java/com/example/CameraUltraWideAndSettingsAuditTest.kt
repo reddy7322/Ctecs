@@ -91,7 +91,7 @@ class CameraUltraWideAndSettingsAuditTest {
         )
 
         assertTrue(caps.supportsUltraWide)
-        assertEquals(0.6f, caps.widePresetRatio ?: -1f, 0.001f)
+        assertEquals(0.5f, caps.widePresetRatio ?: -1f, 0.001f)
         assertFalse(caps.usesStandalonePhysicalUltraWide)
         assertNull(caps.standaloneUltraWideCameraId)
 
@@ -100,7 +100,7 @@ class CameraUltraWideAndSettingsAuditTest {
             maxZoomRatio = caps.maxZoomRatio,
             capabilities = caps
         )
-        assertEquals(listOf(0.6f, 1.0f, 2.0f, 3.0f, 5.0f, 8.0f), presets)
+        assertEquals(listOf(0.5f, 1.0f, 2.0f, 5.0f, 10.0f), presets)
     }
 
     @Test
@@ -128,7 +128,7 @@ class CameraUltraWideAndSettingsAuditTest {
         // Must NOT fake 0.6x when lens only reaches 0.72x; rounds up to reachable 0.8x
         assertEquals(0.8f, caps.widePresetRatio ?: -1f, 0.001f)
         val presets = CameraUltraWideZoomManager.resolveZoomPresets(caps.minZoomRatio, caps.maxZoomRatio, caps)
-        assertEquals(listOf(0.8f, 1.0f, 2.0f, 3.0f, 5.0f), presets)
+        assertEquals(listOf(0.8f, 1.0f, 2.0f, 5.0f), presets)
     }
 
     @Test
@@ -191,7 +191,7 @@ class CameraUltraWideAndSettingsAuditTest {
         assertFalse(caps.supportsUltraWide)
         assertNull(caps.widePresetRatio)
         val presets = CameraUltraWideZoomManager.resolveZoomPresets(caps.minZoomRatio, caps.maxZoomRatio, caps)
-        assertEquals(listOf(1.0f, 2.0f, 3.0f, 5.0f), presets)
+        assertEquals(listOf(1.0f, 2.0f, 5.0f), presets)
     }
 
     // -------------------------------------------------------------------------

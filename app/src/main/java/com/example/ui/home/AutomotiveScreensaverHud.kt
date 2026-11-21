@@ -281,6 +281,72 @@ fun AutomotiveChainageScreensaverContent(
     lastKmStoneEvent: com.example.navigation.KmStoneAlertEvent? = null,
     isKmStoneMonitoringActive: Boolean = false,
     mapHeadingState: MapHeadingState? = null,
+    viewDistancePreference: com.example.ui.map.MiniMapViewDistancePreference = com.example.ui.map.MiniMapViewDistancePreference(),
+    onToggleMirrorQuickMode: ((enableMirror: Boolean, currentlyLandscape: Boolean) -> Unit)? = null,
+    onToggleOrientationLock: ((currentlyLandscape: Boolean) -> Unit)? = null,
+    onToggleScreenOff: ((Boolean) -> Unit)? = null,
+    onToggleAod: ((Boolean) -> Unit)? = null,
+    onForceBlackScreenOff: (() -> Unit)? = null
+) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalScreensaverMiniMapViewDistance provides viewDistancePreference
+    ) {
+        AutomotiveChainageScreensaverContentBody(
+            displayState = displayState,
+            location = location,
+            bearing = bearing,
+            compassHeading = compassHeading,
+            routeData = routeData,
+            mapThemePreference = mapThemePreference,
+            mapTypePreference = mapTypePreference,
+            isDarkAppTheme = isDarkAppTheme,
+            screensaverSettings = screensaverSettings,
+            isSamplePreview = isSamplePreview,
+            sensorPosture = sensorPosture,
+            temporaryLandscapeOverride = temporaryLandscapeOverride,
+            isScreenOff = isScreenOff,
+            isAodActive = isAodActive,
+            is24HourFormat = is24HourFormat,
+            nextKmLabel = nextKmLabel,
+            distanceToNextMetres = distanceToNextMetres,
+            lastKmStoneEvent = lastKmStoneEvent,
+            isKmStoneMonitoringActive = isKmStoneMonitoringActive,
+            mapHeadingState = mapHeadingState,
+            onToggleMirrorQuickMode = onToggleMirrorQuickMode,
+            onToggleOrientationLock = onToggleOrientationLock,
+            onToggleScreenOff = onToggleScreenOff,
+            onToggleAod = onToggleAod,
+            onForceBlackScreenOff = onForceBlackScreenOff
+        )
+    }
+}
+
+private val LocalScreensaverMiniMapViewDistance = androidx.compose.runtime.staticCompositionLocalOf {
+    com.example.ui.map.MiniMapViewDistancePreference()
+}
+
+@Composable
+private fun AutomotiveChainageScreensaverContentBody(
+    displayState: ScreensaverDisplayState,
+    location: GeoPoint?,
+    bearing: Float?,
+    compassHeading: Float,
+    routeData: RouteData?,
+    mapThemePreference: String,
+    mapTypePreference: String,
+    isDarkAppTheme: Boolean,
+    screensaverSettings: HomeScreensaverSettings,
+    isSamplePreview: Boolean = false,
+    sensorPosture: ScreensaverSensorPosture? = null,
+    temporaryLandscapeOverride: Boolean = false,
+    isScreenOff: Boolean = false,
+    isAodActive: Boolean = false,
+    is24HourFormat: Boolean = true,
+    nextKmLabel: String? = null,
+    distanceToNextMetres: Long? = null,
+    lastKmStoneEvent: com.example.navigation.KmStoneAlertEvent? = null,
+    isKmStoneMonitoringActive: Boolean = false,
+    mapHeadingState: MapHeadingState? = null,
     onToggleMirrorQuickMode: ((enableMirror: Boolean, currentlyLandscape: Boolean) -> Unit)? = null,
     onToggleOrientationLock: ((currentlyLandscape: Boolean) -> Unit)? = null,
     onToggleScreenOff: ((Boolean) -> Unit)? = null,
@@ -2438,31 +2504,57 @@ private fun ScreensaverLiveMiniMapPanel(
         val viewportWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
         val viewportHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
 
-        val base25mZoom = remember(vehicleGeo.latitude, viewportWidthPx, viewportHeightPx) {
+        val viewDistancePref = LocalScreensaverMiniMapViewDistance.current
+        var previousSmartRangeM by remember(viewDistancePref.mode) { mutableStateOf<Double?>(null) }
+        val resolvedGroundRangeMetres = remember(
+            viewDistancePref,
+            vehicleGeo.latitude,
+            vehicleGeo.longitude,
+            routeData?.id
+        ) {
+            com.example.ui.map.SmartAutoMiniMapDistanceEngine.resolveGroundRangeMetres(
+                preference = viewDistancePref,
+                context = com.example.ui.map.SmartAutoMiniMapDistanceEngine.SmartDistanceContext(
+                    speedMps = null,
+                    gpsAccuracyMetres = 8f,
+                    location = location,
+                    routeData = routeData,
+                    previousRangeMetres = previousSmartRangeM
+                )
+            ).also { previousSmartRangeM = it }
+        }
+
+        val configuredBaseZoom = remember(vehicleGeo.latitude, viewportWidthPx, viewportHeightPx, resolvedGroundRangeMetres) {
             MiniMapViewportMath.computeZoomForGroundRangeMetres(
                 latitude = vehicleGeo.latitude,
                 viewportWidthPx = viewportWidthPx,
                 viewportHeightPx = viewportHeightPx,
-                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+                groundRangeMetres = resolvedGroundRangeMetres
             )
         }
-        var anchoredBaseZoom by remember { mutableFloatStateOf(base25mZoom) }
+        var anchoredBaseZoom by remember { mutableFloatStateOf(configuredBaseZoom) }
         var lastAutoFitLat by remember { mutableStateOf(vehicleGeo.latitude) }
 
-        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom) {
+        LaunchedEffect(viewDistancePref) {
+            hasUserAdjustedZoom = false
+            localZoomOffset = 0f
+            anchoredBaseZoom = configuredBaseZoom
+            lastAutoFitLat = vehicleGeo.latitude
+        }
+        LaunchedEffect(viewportWidthPx, viewportHeightPx, configuredBaseZoom, hasUserAdjustedZoom) {
             if (!hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
-                anchoredBaseZoom = base25mZoom
+                anchoredBaseZoom = configuredBaseZoom
                 lastAutoFitLat = vehicleGeo.latitude
             }
         }
         LaunchedEffect(vehicleGeo.latitude) {
             if (!hasUserAdjustedZoom && kotlin.math.abs(vehicleGeo.latitude - lastAutoFitLat) > 0.5) {
-                anchoredBaseZoom = base25mZoom
+                anchoredBaseZoom = configuredBaseZoom
                 lastAutoFitLat = vehicleGeo.latitude
             }
         }
         LaunchedEffect(screensaverSettings.recenterEpoch) {
-            anchoredBaseZoom = base25mZoom
+            anchoredBaseZoom = configuredBaseZoom
             lastAutoFitLat = vehicleGeo.latitude
         }
 

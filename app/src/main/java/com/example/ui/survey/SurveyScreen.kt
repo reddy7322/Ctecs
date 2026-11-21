@@ -154,8 +154,32 @@ fun SurveyScreen(
     val showMarkers by viewModel.surveyShowMarkers.collectAsStateWithLifecycle()
     val show200mLabels by viewModel.surveyShow200mLabels.collectAsStateWithLifecycle()
     val mapType by viewModel.surveyMapType.collectAsStateWithLifecycle()
+    val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
+    val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
+    val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
 
-    // Interactive Map State (Full-Earth continuous pan & pinch zoom, Always Direction-Up, 25m initial range)
+    var previousSmartRangeM by remember(miniMapViewDistance.mode) { mutableStateOf<Double?>(null) }
+    val resolvedGroundRangeMetres = remember(
+        miniMapViewDistance,
+        locationState.speed,
+        locationState.accuracy,
+        currentGps?.latitude,
+        currentGps?.longitude,
+        activeRoute?.id
+    ) {
+        com.example.ui.map.SmartAutoMiniMapDistanceEngine.resolveGroundRangeMetres(
+            preference = miniMapViewDistance,
+            context = com.example.ui.map.SmartAutoMiniMapDistanceEngine.SmartDistanceContext(
+                speedMps = locationState.speed,
+                gpsAccuracyMetres = locationState.accuracy,
+                location = currentGps,
+                routeData = activeRoute,
+                previousRangeMetres = previousSmartRangeM
+            )
+        ).also { previousSmartRangeM = it }
+    }
+
+    // Interactive Map State (Full-Earth continuous pan & pinch zoom, Always Direction-Up, configured/Smart Auto range)
     var exploredCenter by remember { mutableStateOf<GeoPoint?>(null) }
     var continuousZoom by remember {
         mutableFloatStateOf(
@@ -163,7 +187,7 @@ fun SurveyScreen(
                 latitude = (currentGps ?: activePoints.lastOrNull()?.geoPoint)?.latitude ?: 28.6139,
                 viewportWidthPx = 360f,
                 viewportHeightPx = 360f,
-                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+                groundRangeMetres = resolvedGroundRangeMetres
             )
         )
     }
@@ -239,23 +263,28 @@ fun SurveyScreen(
             ?: activePoints.lastOrNull()?.geoPoint
             ?: GeoPoint(28.6139, 77.2090)
 
-        val initial25mZoom = remember(gpsOrRoutePoint.latitude, viewportWidthPx, viewportHeightPx) {
+        val configuredSurveyZoom = remember(gpsOrRoutePoint.latitude, viewportWidthPx, viewportHeightPx, resolvedGroundRangeMetres) {
             MiniMapViewportMath.computeZoomForGroundRangeMetres(
                 latitude = gpsOrRoutePoint.latitude,
                 viewportWidthPx = viewportWidthPx,
                 viewportHeightPx = viewportHeightPx,
-                groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+                groundRangeMetres = resolvedGroundRangeMetres
             )
         }
-        LaunchedEffect(viewportWidthPx, viewportHeightPx, hasUserAdjustedZoom) {
+        LaunchedEffect(miniMapViewDistance) {
+            hasUserAdjustedZoom = false
+            continuousZoom = configuredSurveyZoom
+            lastAutoFitLat = gpsOrRoutePoint.latitude
+        }
+        LaunchedEffect(viewportWidthPx, viewportHeightPx, configuredSurveyZoom, hasUserAdjustedZoom) {
             if (!hasUserAdjustedZoom && viewportWidthPx > 1f && viewportHeightPx > 1f) {
-                continuousZoom = initial25mZoom
+                continuousZoom = configuredSurveyZoom
                 lastAutoFitLat = gpsOrRoutePoint.latitude
             }
         }
         LaunchedEffect(gpsOrRoutePoint.latitude) {
             if (!hasUserAdjustedZoom && kotlin.math.abs(gpsOrRoutePoint.latitude - lastAutoFitLat) > 0.5) {
-                continuousZoom = initial25mZoom
+                continuousZoom = configuredSurveyZoom
                 lastAutoFitLat = gpsOrRoutePoint.latitude
             }
         }
@@ -804,7 +833,7 @@ fun SurveyScreen(
                     isFollowingLocation = true
                     exploredCenter = null
                     hasUserAdjustedZoom = false
-                    continuousZoom = initial25mZoom
+                    continuousZoom = configuredSurveyZoom
                     lastAutoFitLat = gpsOrRoutePoint.latitude
                 },
                 variant = if (isFollowingLocation) GlassButtonVariant.SKY else GlassButtonVariant.NEUTRAL,
@@ -907,7 +936,7 @@ fun SurveyScreen(
                                     color = colors.sky.copy(alpha = 0.16f)
                                 ) {
                                     Text(
-                                        text = "${activeSession?.displayRoadSide ?: "RHS"} • ${activeSession?.displayLaneName ?: "Fast Lane"}",
+                                        text = "${activeSession?.displayRoadSide ?: smartDirectionState.confirmedBinarySide ?: "---"} • ${activeSession?.displayLaneName ?: "Fast Lane"}",
                                         fontSize = 10.5.sp,
                                         color = colors.sky,
                                         fontWeight = FontWeight.Bold,

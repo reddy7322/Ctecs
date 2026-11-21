@@ -23,10 +23,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas as ComposeCanvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -129,6 +131,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.ui.Alignment
@@ -161,6 +164,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -271,6 +275,64 @@ private fun cameraSideOptionTint(option: CameraSideOption?): Color = when (optio
     null -> Color.White.copy(alpha = 0.82f)
 }
 
+/**
+ * Minimal, subtle animated glowing/pulsing red indicator bulb rendered beside the active
+ * Camera direction (`LHS`, `RHS`, `BHS`, `NONE`) ONLY when manual direction override is active.
+ * Immediately disappears when Auto direction resumes. Never shows text like "MANUAL" or "AUTO".
+ */
+@Composable
+internal fun CameraManualDirectionRedBulb(
+    modifier: Modifier = Modifier,
+    diameterDp: Dp = 7.dp
+) {
+    val transition = rememberInfiniteTransition(label = "camera_manual_direction_bulb")
+    val pulseAlpha by transition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 820, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "camera_manual_direction_bulb_alpha"
+    )
+    val haloScale by transition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.48f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 820, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "camera_manual_direction_bulb_halo"
+    )
+
+    ComposeCanvas(
+        modifier = modifier
+            .size(diameterDp + 4.dp)
+            .semantics { contentDescription = "Manual direction active" }
+            .testTag("camera_manual_direction_red_bulb")
+    ) {
+        val coreRadius = (diameterDp.toPx() / 2f).coerceAtLeast(2f)
+        // Outer soft red glow halo
+        drawCircle(
+            color = Color(0xFFEF4444).copy(alpha = 0.34f * pulseAlpha),
+            radius = (coreRadius * haloScale).coerceAtMost(size.minDimension / 2f),
+            center = center
+        )
+        // Crisp glowing red bulb core
+        drawCircle(
+            color = Color(0xFFFF3B30).copy(alpha = pulseAlpha),
+            radius = coreRadius,
+            center = center
+        )
+        // Tiny warm specular highlight for realistic LED-bulb depth
+        drawCircle(
+            color = Color(0xFFFFD6D4).copy(alpha = 0.72f * pulseAlpha),
+            radius = coreRadius * 0.34f,
+            center = Offset(center.x - coreRadius * 0.24f, center.y - coreRadius * 0.24f)
+        )
+    }
+}
+
 @Composable
 private fun RoadMarkingIcon(modifier: Modifier = Modifier, tint: Color = Color.White) {
     ComposeCanvas(modifier = modifier.size(16.dp)) {
@@ -330,7 +392,7 @@ private fun CameraApertureIcon(modifier: Modifier = Modifier, tint: Color = Colo
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun CameraScreen(
     viewModel: MainViewModel,
@@ -391,10 +453,9 @@ fun CameraScreen(
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
     val latestWeatherObservation by viewModel.latestWeatherObservation.collectAsStateWithLifecycle()
+    val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
-    var maxZoomRatio by remember { mutableFloatStateOf(10.0f) }
     var zoomCapabilities by remember {
         mutableStateOf(
             com.example.camera.CameraUltraWideZoomManager.detectCapabilities(
@@ -404,10 +465,20 @@ fun CameraScreen(
             )
         )
     }
+    var minZoomRatio by remember { mutableFloatStateOf(zoomCapabilities.minZoomRatio) }
+    var maxZoomRatio by remember { mutableFloatStateOf(zoomCapabilities.maxZoomRatio) }
     val useStandaloneUltraWide = !isFrontCamera &&
         zoomCapabilities.usesStandalonePhysicalUltraWide &&
         zoomCapabilities.widePresetRatio != null &&
         currentZoomRatio < 0.99f
+    val latestUseStandaloneUltraWide by rememberUpdatedState(useStandaloneUltraWide)
+
+    LaunchedEffect(zoomCapabilities) {
+        if (!latestUseStandaloneUltraWide) {
+            minZoomRatio = zoomCapabilities.minZoomRatio
+            maxZoomRatio = zoomCapabilities.maxZoomRatio
+        }
+    }
 
     LaunchedEffect(isFrontCamera) {
         // When flipping between rear & front cameras, reset to 1.0x so front lens never inherits an unsupported ultra-wide zoom
@@ -418,7 +489,7 @@ fun CameraScreen(
 
     DisposableEffect(controller, lifecycleOwner) {
         val observer = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { state ->
-            if (state != null) {
+            if (state != null && !latestUseStandaloneUltraWide) {
                 minZoomRatio = state.minZoomRatio
                 maxZoomRatio = state.maxZoomRatio
             }
@@ -708,6 +779,7 @@ fun CameraScreen(
             easyToggleCameras = cameraSettings.easyToggleCameras,
             useStandaloneUltraWide = useStandaloneUltraWide,
             standaloneUltraWideCameraId = zoomCapabilities.standaloneUltraWideCameraId,
+            logicalWideCameraId = zoomCapabilities.logicalWideCameraId,
             controller = controller,
             currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
             overlayManager = overlayManager,
@@ -867,6 +939,8 @@ fun CameraScreen(
                         sideLabel = reliableMiniMapSide,
                         isGpsRetained = isMiniMapGpsRetained,
                         mapHeadingState = mapHeadingState,
+                        viewDistancePreference = miniMapViewDistance,
+                        speedMps = locationState.speed,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1151,7 +1225,8 @@ fun CameraScreen(
                 val pillWidth = if (isUltraShortHeight) 144.dp else 150.dp
 
                 val sidePillContent: @Composable () -> Unit = {
-                    // Control 2: Direct-Tap Side Selection Pill (LHS -> RHS -> BHS -> NONE -> LHS)
+                    // Control 2: Direct-Tap Side Selection Pill (LHS -> RHS -> BHS -> NONE -> LHS);
+                    // Long-press resumes Auto direction. Shows tiny animated red bulb ONLY in Manual mode.
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = hudPillBg,
@@ -1159,7 +1234,15 @@ fun CameraScreen(
                             .width(pillWidth)
                             .height(pillHeight)
                             .clip(RoundedCornerShape(18.dp))
-                            .clickable { cycleNextCameraSide() }
+                            .combinedClickable(
+                                onClick = { cycleNextCameraSide() },
+                                onLongClick = {
+                                    if (smartDirectionState.isManualOverride) {
+                                        viewModel.resetSideToAuto()
+                                        viewModel.showToast("Auto direction resumed", ToastType.INFO)
+                                    }
+                                }
+                            )
                             .testTag("landscape_side_pill")
                     ) {
                         Row(
@@ -1169,12 +1252,16 @@ fun CameraScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(animatedSideTint)
-                            )
+                            if (smartDirectionState.isManualOverride) {
+                                CameraManualDirectionRedBulb(diameterDp = 7.dp)
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(animatedSideTint)
+                                )
+                            }
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = currentSideDisplay.displayLabel,
@@ -2307,12 +2394,19 @@ fun CameraScreen(
                         horizontalArrangement = Arrangement.spacedBy(hGap, Alignment.CenterHorizontally),
                         verticalArrangement = Arrangement.spacedBy(vGap)
                     ) {
-                        // Direct-tap Side chip (LHS -> RHS -> BHS -> NONE -> LHS)
+                        // Direct-tap Side chip (LHS -> RHS -> BHS -> NONE -> LHS);
+                        // Long-press resumes Auto direction. Tiny animated red bulb ONLY when Manual override is active.
                         FloatingGlassCard(
                             shape = RoundedCornerShape(14.dp),
                             backgroundColor = Color(0x1A101726),
                             borderColor = Color(0x35FFFFFF),
                             onClick = { cycleNextCameraSide() },
+                            onLongClick = {
+                                if (smartDirectionState.isManualOverride) {
+                                    viewModel.resetSideToAuto()
+                                    viewModel.showToast("Auto direction resumed", ToastType.INFO)
+                                }
+                            },
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .wrapContentHeight()
@@ -2323,12 +2417,16 @@ fun CameraScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(animatedSideTint)
-                                )
+                                if (smartDirectionState.isManualOverride) {
+                                    CameraManualDirectionRedBulb(diameterDp = 6.5.dp)
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .clip(CircleShape)
+                                            .background(animatedSideTint)
+                                    )
+                                }
                                 Text(
                                     text = currentSideDisplay.displayLabel,
                                     color = animatedSideTint,
@@ -4069,6 +4167,7 @@ fun LiveViewfinderWatermarkBlock(
  * Modern minimalist floating glass card with uniform 4dp blur and 10% opacity.
  * Provides high-contrast readability against translucent background while staying compact and dynamic in height.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FloatingGlassCard(
     modifier: Modifier = Modifier,
@@ -4077,13 +4176,22 @@ fun FloatingGlassCard(
     borderColor: Color = Color.Transparent,
     borderWidth: androidx.compose.ui.unit.Dp = 0.dp,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     val flatFill = if (backgroundColor == Color(0x1A101726)) Color(0x99080B12) else backgroundColor
+    val interactiveModifier = when {
+        onClick != null && onLongClick != null -> modifier.clip(shape).combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick
+        )
+        onClick != null -> modifier.clip(shape).clickable(onClick = onClick)
+        else -> modifier.clip(shape)
+    }
     Surface(
         shape = shape,
         color = flatFill,
-        modifier = if (onClick != null) modifier.clip(shape).clickable(onClick = onClick) else modifier.clip(shape)
+        modifier = interactiveModifier
     ) {
         content()
     }

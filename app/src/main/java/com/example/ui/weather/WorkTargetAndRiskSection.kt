@@ -24,7 +24,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.DelayRiskSummary
@@ -46,13 +46,15 @@ import com.example.model.WeatherAlertSeverity
 import com.example.model.WorkTargetInput
 import com.example.model.WorkTargetPrediction
 import com.example.ui.theme.CtecsTheme
+import com.example.ui.theme.SmartFadeDivider
 import java.util.Locale
 
 /**
- * WORK TARGET & COMPLETION PREDICTION + WEATHER DELAY & RISK ANALYSIS section.
+ * Compact Smart-Dropdown WORK TARGET PREDICTION & WEATHER DELAY ESTIMATION section.
  *
- * Clearly separates user-entered / historical / estimated inputs and explicitly labels
- * all calculated outputs as engineering estimates (never guaranteed production).
+ * Displays essential calculated figures up front with explicit ESTIMATE labeling, keeps
+ * important delay warnings visible even when collapsed, and expands to full calculation
+ * breakdown and editable project/resource inputs.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -61,7 +63,9 @@ fun WorkTargetAndRiskSection(
     workTargetPrediction: WorkTargetPrediction,
     delayRiskSummary: DelayRiskSummary,
     onUpdateWorkTargetInput: (WorkTargetInput) -> Unit,
-    onSelectActivity: (HighwayWorkActivity) -> Unit
+    onSelectActivity: (HighwayWorkActivity) -> Unit,
+    expandedSections: Set<String> = emptySet(),
+    onToggleSection: (String) -> Unit = {}
 ) {
     val c = CtecsTheme.colors
 
@@ -94,212 +98,135 @@ fun WorkTargetAndRiskSection(
     }
 
     LazyColumn(
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .fillMaxSize()
             .testTag("work_target_and_risk_section")
     ) {
-        // 1. Work Target & Completion Prediction Output Summary
-        item(key = "prediction_summary_card") {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = c.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("work_target_prediction_card")
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(Icons.Rounded.Calculate, contentDescription = null, tint = c.accent, modifier = Modifier.size(18.dp))
-                            Text(
-                                text = "WORK TARGET & COMPLETION PREDICTION",
-                                color = c.textPrimary,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = c.warning.copy(alpha = 0.16f)
-                        ) {
-                            Text(
-                                text = "ESTIMATE",
-                                color = c.warning,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
+        // 1. Target Prediction (Smart Dropdown)
+        item(key = "section_target_prediction") {
+            val hasInputs = workTargetPrediction.missingInputWarnings.isEmpty()
+            val pct = workTargetPrediction.expectedCompletionPercent.coerceIn(0.0, 100.0)
+            val summaryText = if (hasInputs) {
+                "${workTargetInput.activity.shortName}: ${String.format(Locale.US, "%.0f", workTargetPrediction.weatherAdjustedTargetQuantity)} / ${String.format(Locale.US, "%.0f", workTargetPrediction.plannedTargetQuantity)} ${workTargetPrediction.quantityUnit} • ${pct.toInt()}%"
+            } else {
+                "${workTargetInput.activity.shortName}: Inputs required — tap to enter"
+            }
 
-                    if (workTargetPrediction.missingInputWarnings.isNotEmpty()) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = c.warning.copy(alpha = 0.14f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                Text(
-                                    text = "Inputs Needed to Compute Prediction:",
-                                    color = c.warning,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                workTargetPrediction.missingInputWarnings.forEach { warn ->
-                                    Text("• $warn", color = c.textPrimary, fontSize = 10.5.sp)
-                                }
-                            }
-                        }
-                    } else {
-                        val pct = workTargetPrediction.expectedCompletionPercent.coerceIn(0.0, 100.0)
+            WeatherSmartSection(
+                sectionKey = WeatherSectionKeys.TARGET_PREDICTION,
+                title = "Target Prediction",
+                summaryText = summaryText,
+                badgeText = "ESTIMATE",
+                badgeColor = c.warning,
+                icon = Icons.Rounded.Calculate,
+                iconTint = c.accent,
+                isExpanded = WeatherSectionKeys.TARGET_PREDICTION in expandedSections,
+                onToggle = { onToggleSection(WeatherSectionKeys.TARGET_PREDICTION) },
+                modifier = Modifier.testTag("work_target_prediction_card"),
+                alwaysVisibleContent = if (hasInputs) {
+                    {
                         LinearProgressIndicator(
                             progress = { (pct / 100.0).toFloat() },
                             color = if (pct >= 80.0) c.success else if (pct >= 45.0) c.warning else c.error,
                             trackColor = c.secondarySurface,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp))
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(3.dp))
                         )
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            PredictionStat(
-                                label = "Planned Target",
-                                value = "${String.format(Locale.US, "%.1f", workTargetPrediction.plannedTargetQuantity)} ${workTargetPrediction.quantityUnit}"
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Workable: ${String.format(Locale.US, "%.1f", workTargetPrediction.netEffectiveWorkingHours)}/${String.format(Locale.US, "%.1f", workTargetPrediction.plannedWorkingHours)} hr",
+                                color = c.textSecondary,
+                                fontSize = 10.sp
                             )
-                            PredictionStat(
-                                label = "Weather-Adjusted",
-                                value = "${String.format(Locale.US, "%.1f", workTargetPrediction.weatherAdjustedTargetQuantity)} ${workTargetPrediction.quantityUnit}"
+                            Text(
+                                text = "Delay: ${String.format(Locale.US, "%.1f", workTargetPrediction.estimatedDelayHours)} hr",
+                                color = if (workTargetPrediction.estimatedDelayHours > 0.0) c.warning else c.success,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
-                            PredictionStat(
-                                label = "Est. Completion",
-                                value = "${pct.toInt()}%"
+                            Text(
+                                text = "Window: ${workTargetPrediction.alternativeWorkWindowLabel ?: "Forecast-dependent"}",
+                                color = c.textMuted,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        }
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            PredictionStat(
-                                label = "Length / Area",
-                                value = "${String.format(Locale.US, "%.0f", workTargetPrediction.totalLengthMeters)} m / ${String.format(Locale.US, "%.0f", workTargetPrediction.totalAreaSqm)} m²"
-                            )
-                            PredictionStat(
-                                label = "Compacted Vol.",
-                                value = "${String.format(Locale.US, "%.1f", workTargetPrediction.compactedVolumeM3)} m³"
-                            )
-                            PredictionStat(
-                                label = "Est. Delay",
-                                value = "${String.format(Locale.US, "%.1f", workTargetPrediction.estimatedDelayHours)} hr"
-                            )
-                        }
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            PredictionStat(
-                                label = "Net Workable",
-                                value = "${String.format(Locale.US, "%.1f", workTargetPrediction.netEffectiveWorkingHours)} / ${String.format(Locale.US, "%.1f", workTargetPrediction.plannedWorkingHours)} hr"
-                            )
-                            PredictionStat(
-                                label = "Remaining Bal.",
-                                value = "${String.format(Locale.US, "%.1f", workTargetPrediction.remainingBalanceQuantity)} ${workTargetPrediction.quantityUnit}"
-                            )
-                            PredictionStat(
-                                label = "Rem. Hours",
-                                value = workTargetPrediction.remainingHoursNeeded?.let { "${String.format(Locale.US, "%.1f", it)} hr" } ?: "—"
-                            )
-                        }
-
-                        Text(
-                            text = "Rate Source: ${workTargetPrediction.rateSourceTag.label} • ${workTargetPrediction.limitingResourceNote}",
-                            color = c.accent,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = workTargetPrediction.quantityBasisNote,
-                            color = c.textMuted,
-                            fontSize = 10.sp
-                        )
-
-                        workTargetPrediction.alternativeWorkWindowLabel?.let { altWin ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(c.success.copy(alpha = 0.13f))
-                                    .padding(8.dp)
-                            ) {
-                                Icon(Icons.Rounded.Schedule, contentDescription = null, tint = c.success, modifier = Modifier.size(15.dp))
-                                Text(
-                                    text = "Best Available Window: $altWin",
-                                    color = c.textPrimary,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-
-                        if (workTargetPrediction.targetReductionReasons.isNotEmpty()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    text = "Target Reduction Factors:",
-                                    color = c.textSecondary,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                workTargetPrediction.targetReductionReasons.forEach { reason ->
-                                    Text("• $reason", color = c.textMuted, fontSize = 10.5.sp)
-                                }
-                            }
                         }
                     }
-
-                    Text(
-                        text = workTargetPrediction.estimateDisclaimer,
-                        color = c.textMuted,
-                        fontSize = 9.5.sp
-                    )
-                }
-            }
-        }
-
-        // 2. Editable Project & Resource Target Inputs
-        item(key = "target_inputs_card") {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = c.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("work_target_inputs_card")
+                } else null
             ) {
+                if (!hasInputs) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(c.warning.copy(alpha = 0.12f))
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text("Required Inputs", color = c.warning, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        workTargetPrediction.missingInputWarnings.forEach { warn ->
+                            Text("• $warn", color = c.textPrimary, fontSize = 10.sp)
+                        }
+                    }
+                } else {
+                    CompactMetricRow(
+                        "Planned / Weather-Adjusted",
+                        "${String.format(Locale.US, "%.1f", workTargetPrediction.plannedTargetQuantity)} / ${String.format(Locale.US, "%.1f", workTargetPrediction.weatherAdjustedTargetQuantity)} ${workTargetPrediction.quantityUnit}"
+                    )
+                    CompactMetricRow(
+                        "Length / Area",
+                        "${String.format(Locale.US, "%.0f", workTargetPrediction.totalLengthMeters)} m / ${String.format(Locale.US, "%.0f", workTargetPrediction.totalAreaSqm)} m²"
+                    )
+                    CompactMetricRow(
+                        "Compacted Volume",
+                        "${String.format(Locale.US, "%.1f", workTargetPrediction.compactedVolumeM3)} m³"
+                    )
+                    CompactMetricRow(
+                        "Remaining Balance",
+                        "${String.format(Locale.US, "%.1f", workTargetPrediction.remainingBalanceQuantity)} ${workTargetPrediction.quantityUnit}" +
+                            (workTargetPrediction.remainingHoursNeeded?.let { " (${String.format(Locale.US, "%.1f", it)} hr)" } ?: "")
+                    )
+                    CompactMetricRow(
+                        "Rate Source",
+                        workTargetPrediction.rateSourceTag.label,
+                        valueColor = c.accent
+                    )
+                    CompactMetricRow("Limiting Resource", workTargetPrediction.limitingResourceNote)
+                    Text(workTargetPrediction.quantityBasisNote, color = c.textMuted, fontSize = 9.5.sp)
+
+                    if (workTargetPrediction.targetReductionReasons.isNotEmpty()) {
+                        workTargetPrediction.targetReductionReasons.forEach { reason ->
+                            Text("• $reason", color = c.textSecondary, fontSize = 10.sp)
+                        }
+                    }
+                }
+
+                SmartFadeDivider()
+
+                // Editable Calculation Inputs inside expanded Target Prediction
                 Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("work_target_inputs_card"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "PROJECT & PRODUCTION INPUTS",
-                        color = c.textPrimary,
-                        fontSize = 11.5.sp,
+                        text = "Calculation Inputs",
+                        color = c.textMuted,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Bold
                     )
 
                     FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         HighwayWorkActivity.entries.forEach { act ->
@@ -314,19 +241,19 @@ fun WorkTargetAndRiskSection(
                                         )
                                     )
                                 },
-                                label = { Text(act.shortName, fontSize = 10.sp) }
+                                label = { Text(act.shortName, fontSize = 9.5.sp) }
                             )
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
                             value = startChText,
                             onValueChange = { txt ->
                                 startChText = txt
                                 onUpdateWorkTargetInput(workTargetInput.copy(startChainageKm = txt.toDoubleOrNull()))
                             },
-                            label = { Text("Start Ch (km)", fontSize = 10.sp) },
+                            label = { Text("Start Ch (km)", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier
@@ -339,7 +266,7 @@ fun WorkTargetAndRiskSection(
                                 endChText = txt
                                 onUpdateWorkTargetInput(workTargetInput.copy(endChainageKm = txt.toDoubleOrNull()))
                             },
-                            label = { Text("End Ch (km)", fontSize = 10.sp) },
+                            label = { Text("End Ch (km)", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier
@@ -348,7 +275,7 @@ fun WorkTargetAndRiskSection(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
                             value = widthText,
                             onValueChange = { txt ->
@@ -357,7 +284,7 @@ fun WorkTargetAndRiskSection(
                                     onUpdateWorkTargetInput(workTargetInput.copy(workingWidthMeters = it))
                                 }
                             },
-                            label = { Text("Width (m)", fontSize = 10.sp) },
+                            label = { Text("Width (m)", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f)
@@ -370,7 +297,7 @@ fun WorkTargetAndRiskSection(
                                     onUpdateWorkTargetInput(workTargetInput.copy(layerThicknessMm = it))
                                 }
                             },
-                            label = { Text("Thickness (mm)", fontSize = 10.sp) },
+                            label = { Text("Thick (mm)", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f)
@@ -383,23 +310,21 @@ fun WorkTargetAndRiskSection(
                                     onUpdateWorkTargetInput(workTargetInput.copy(availableWorkingHours = it))
                                 }
                             },
-                            label = { Text("Shift (hrs)", fontSize = 10.sp) },
+                            label = { Text("Shift (h)", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(0.9f)
+                            modifier = Modifier.weight(0.85f)
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
                             value = rateText,
                             onValueChange = { txt ->
                                 rateText = txt
-                                onUpdateWorkTargetInput(
-                                    workTargetInput.copy(expectedProductionRatePerHour = txt.toDoubleOrNull())
-                                )
+                                onUpdateWorkTargetInput(workTargetInput.copy(expectedProductionRatePerHour = txt.toDoubleOrNull()))
                             },
-                            label = { Text("Prod. Rate (${workTargetInput.activity.productionUnitLabel})", fontSize = 10.sp) },
+                            label = { Text("Rate (${workTargetInput.activity.productionUnitLabel})", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier
@@ -412,21 +337,21 @@ fun WorkTargetAndRiskSection(
                                 hmpText = txt
                                 onUpdateWorkTargetInput(workTargetInput.copy(hmpCapacityTph = txt.toDoubleOrNull()))
                             },
-                            label = { Text("HMP (TPH)", fontSize = 10.sp) },
+                            label = { Text("HMP (TPH)", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(0.8f)
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
                             value = paverText,
                             onValueChange = { txt ->
                                 paverText = txt
                                 onUpdateWorkTargetInput(workTargetInput.copy(paverCapacitySqmPerHour = txt.toDoubleOrNull()))
                             },
-                            label = { Text("Paver Cap. (m²/hr)", fontSize = 10.sp) },
+                            label = { Text("Paver (m²/h)", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f)
@@ -437,115 +362,134 @@ fun WorkTargetAndRiskSection(
                                 dumpersText = txt
                                 onUpdateWorkTargetInput(workTargetInput.copy(dumpersCount = txt.toIntOrNull()))
                             },
-                            label = { Text("Dumpers Count", fontSize = 10.sp) },
+                            label = { Text("Dumpers", fontSize = 9.5.sp) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(0.9f)
                         )
                     }
 
-                    Text("Production Rate Source Tag:", color = c.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         ValueSourceTag.entries.forEach { tag ->
                             FilterChip(
                                 selected = workTargetInput.productionRateSource == tag,
                                 onClick = { onUpdateWorkTargetInput(workTargetInput.copy(productionRateSource = tag)) },
-                                label = { Text(tag.label, fontSize = 10.sp) }
+                                label = { Text(tag.label, fontSize = 9.5.sp) }
                             )
                         }
                     }
+
+                    Text(
+                        text = workTargetPrediction.estimateDisclaimer,
+                        color = c.textMuted,
+                        fontSize = 9.sp
+                    )
                 }
             }
         }
 
-        // 3. Weather-Based Delay & Risk Prediction Card
-        item(key = "delay_risk_card") {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = c.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("weather_delay_risk_card")
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "WEATHER-BASED DELAY & RISK PREDICTION",
-                        color = c.textPrimary,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+        // 2. Weather Delay Estimation (Smart Dropdown; important warnings remain visible)
+        item(key = "section_weather_delay_estimation") {
+            val nextWin = delayRiskSummary.nextSuitableWindowLabel ?: "Forecast-dependent"
+            val severeRisks = delayRiskSummary.warnings.filter {
+                it.severity == WeatherAlertSeverity.SEVERE || it.severity == WeatherAlertSeverity.WARNING
+            }
+            val topRiskColor = when (delayRiskSummary.warnings.firstOrNull()?.severity) {
+                WeatherAlertSeverity.SEVERE -> c.error
+                WeatherAlertSeverity.WARNING -> c.warning
+                WeatherAlertSeverity.ADVISORY -> c.accent
+                null -> c.success
+            }
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        PredictionStat(
-                            label = "Expected Delay",
-                            value = delayRiskSummary.expectedDelayRangeLabel
-                        )
-                        PredictionStat(
-                            label = "Confidence",
-                            value = delayRiskSummary.overallConfidence.label
-                        )
-                    }
-
-                    Text(
-                        text = delayRiskSummary.dailyTargetImpactSummary,
-                        color = c.textSecondary,
-                        fontSize = 11.5.sp
-                    )
-
-                    delayRiskSummary.nextSuitableWindowLabel?.let { win ->
-                        Text(
-                            text = "Next Suitable Window: $win",
-                            color = c.success,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    if (delayRiskSummary.warnings.isEmpty()) {
-                        Text(
-                            text = "No significant weather delay risks detected in the upcoming 24-hour forecast.",
-                            color = c.success,
-                            fontSize = 11.sp
-                        )
-                    } else {
-                        delayRiskSummary.warnings.forEach { risk ->
-                            val riskColor = when (risk.severity) {
-                                WeatherAlertSeverity.SEVERE -> c.error
-                                WeatherAlertSeverity.WARNING -> c.warning
-                                WeatherAlertSeverity.ADVISORY -> c.accent
-                            }
+            WeatherSmartSection(
+                sectionKey = WeatherSectionKeys.WEATHER_DELAY_ESTIMATION,
+                title = "Weather Delay Estimation",
+                summaryText = "Delay: ${delayRiskSummary.expectedDelayRangeLabel} • Next Window: $nextWin",
+                badgeText = delayRiskSummary.overallConfidence.label,
+                badgeColor = topRiskColor,
+                icon = Icons.Rounded.Schedule,
+                iconTint = topRiskColor,
+                isExpanded = WeatherSectionKeys.WEATHER_DELAY_ESTIMATION in expandedSections,
+                onToggle = { onToggleSection(WeatherSectionKeys.WEATHER_DELAY_ESTIMATION) },
+                modifier = Modifier.testTag("weather_delay_risk_card"),
+                alwaysVisibleContent = if (severeRisks.isNotEmpty()) {
+                    {
+                        severeRisks.take(2).forEach { risk ->
+                            val rColor = if (risk.severity == WeatherAlertSeverity.SEVERE) c.error else c.warning
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(riskColor.copy(alpha = 0.13f))
-                                    .padding(10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.Top
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(rColor.copy(alpha = if (c.isDark) 0.16f else 0.10f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
-                                Icon(Icons.Rounded.Warning, contentDescription = null, tint = riskColor, modifier = Modifier.size(16.dp))
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(
-                                        text = "${risk.title} • Prob ${risk.probabilityRangeLabel}",
-                                        color = c.textPrimary,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "${risk.impactedWindowLabel} • Conf: ${risk.confidence.label}",
-                                        color = riskColor,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = risk.impactSummary,
-                                        color = c.textSecondary,
-                                        fontSize = 10.5.sp
-                                    )
-                                }
+                                Icon(Icons.Rounded.Warning, contentDescription = null, tint = rColor, modifier = Modifier.size(12.dp))
+                                Text(
+                                    text = "${risk.title} (${risk.probabilityRangeLabel}) • ${risk.impactedWindowLabel}",
+                                    color = c.textPrimary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                } else null
+            ) {
+                CompactMetricRow("Expected Delay", delayRiskSummary.expectedDelayRangeLabel)
+                CompactMetricRow("Confidence", delayRiskSummary.overallConfidence.label)
+                CompactMetricRow("Next Suitable Window", nextWin, valueColor = c.success)
+                Text(
+                    text = delayRiskSummary.dailyTargetImpactSummary,
+                    color = c.textSecondary,
+                    fontSize = 10.5.sp
+                )
+
+                if (delayRiskSummary.warnings.isEmpty()) {
+                    Text(
+                        text = "No significant weather delay risks in next 24h.",
+                        color = c.success,
+                        fontSize = 10.5.sp
+                    )
+                } else {
+                    SmartFadeDivider()
+                    delayRiskSummary.warnings.forEach { risk ->
+                        val riskColor = when (risk.severity) {
+                            WeatherAlertSeverity.SEVERE -> c.error
+                            WeatherAlertSeverity.WARNING -> c.warning
+                            WeatherAlertSeverity.ADVISORY -> c.accent
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(riskColor.copy(alpha = if (c.isDark) 0.14f else 0.09f))
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(Icons.Rounded.Warning, contentDescription = null, tint = riskColor, modifier = Modifier.size(14.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "${risk.title} • ${risk.probabilityRangeLabel}",
+                                    color = c.textPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${risk.impactedWindowLabel} • Conf: ${risk.confidence.label}",
+                                    color = riskColor,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = risk.impactSummary,
+                                    color = c.textSecondary,
+                                    fontSize = 10.sp
+                                )
                             }
                         }
                     }
@@ -553,15 +497,6 @@ fun WorkTargetAndRiskSection(
             }
         }
 
-        item(key = "targets_bottom_pad") { Spacer(Modifier.height(16.dp)) }
-    }
-}
-
-@Composable
-private fun PredictionStat(label: String, value: String) {
-    val c = CtecsTheme.colors
-    Column {
-        Text(label, color = c.textMuted, fontSize = 10.sp)
-        Text(value, color = c.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        item(key = "targets_bottom_pad") { Spacer(Modifier.height(14.dp)) }
     }
 }

@@ -58,46 +58,46 @@ class GlobalMiniMap25mAndSmartDirectionTest {
         )
 
         for ((lat, w, h) in testCases) {
-            val zoom25m = MiniMapViewportMath.computeZoomForGroundRangeMetres(
+            val zoomDefault = MiniMapViewportMath.computeZoomForGroundRangeMetres(
                 latitude = lat,
                 viewportWidthPx = w,
                 viewportHeightPx = h,
                 groundRangeMetres = MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
             )
-            assertTrue("Zoom $zoom25m must be within bounds", zoom25m in MiniMapViewportMath.MIN_ZOOM..MiniMapViewportMath.MAX_ZOOM)
+            assertTrue("Zoom $zoomDefault must be within bounds", zoomDefault in MiniMapViewportMath.MIN_ZOOM..MiniMapViewportMath.MAX_ZOOM)
 
             val groundRange = MiniMapViewportMath.computeGroundRangeMetres(
-                continuousZoom = zoom25m,
+                continuousZoom = zoomDefault,
                 latitude = lat,
                 viewportWidthPx = w,
                 viewportHeightPx = h
             )
-            assertEquals("Ground range must equal 25.0m for lat=$lat, ${w}x${h}", 25.0, groundRange, 0.15)
+            assertEquals("Ground range must equal 250.0m for lat=$lat, ${w}x${h}", 250.0, groundRange, 0.25)
 
             // splitContinuousZoom must keep baseZoom <= 19 and smooth overscale factor > 1 when zoom > 19
-            val (baseZoom, fracScale) = MiniMapViewportMath.splitContinuousZoom(zoom25m)
+            val (baseZoom, fracScale) = MiniMapViewportMath.splitContinuousZoom(zoomDefault)
             assertTrue("Base tile zoom must not exceed 19", baseZoom <= 19)
             assertTrue("Fractional scale must be finite and positive", fracScale in 0.5f..16.0f)
         }
 
-        // Higher latitude has smaller cos(lat), so the same 25m ground span requires lower zoom than Equator
-        val zEquator = MiniMapViewportMath.computeZoomForGroundRangeMetres(0.0, 400f, 400f, 25.0)
-        val zOslo = MiniMapViewportMath.computeZoomForGroundRangeMetres(60.0, 400f, 400f, 25.0)
-        assertTrue("High-latitude zoom ($zOslo) must be lower than Equator zoom ($zEquator) for same 25m range", zOslo < zEquator)
+        // Higher latitude has smaller cos(lat), so the same 250m ground span requires lower zoom than Equator
+        val zEquator = MiniMapViewportMath.computeZoomForGroundRangeMetres(0.0, 400f, 400f, 250.0)
+        val zOslo = MiniMapViewportMath.computeZoomForGroundRangeMetres(60.0, 400f, 400f, 250.0)
+        assertTrue("High-latitude zoom ($zOslo) must be lower than Equator zoom ($zEquator) for same 250m range", zOslo < zEquator)
 
-        // Larger viewport requires higher zoom to keep the same 25m ground range
-        val zSmall = MiniMapViewportMath.computeZoomForGroundRangeMetres(28.6, 200f, 200f, 25.0)
-        val zLarge = MiniMapViewportMath.computeZoomForGroundRangeMetres(28.6, 600f, 600f, 25.0)
+        // Larger viewport requires higher zoom to keep the same 250m ground range
+        val zSmall = MiniMapViewportMath.computeZoomForGroundRangeMetres(28.6, 200f, 200f, 250.0)
+        val zLarge = MiniMapViewportMath.computeZoomForGroundRangeMetres(28.6, 600f, 600f, 250.0)
         assertTrue("Larger viewport zoom ($zLarge) must exceed smaller viewport zoom ($zSmall)", zLarge > zSmall)
 
-        // MiniMapRenderer.computeAutoZoom must match the global 25m viewport math
+        // MiniMapRenderer.computeAutoZoom must match the global 250m default viewport math
         val rendererZoom = MiniMapRenderer.computeAutoZoom(
             center = GeoPoint(28.6139, 77.2090),
             routeData = null,
             viewportWidthPx = 420f,
             viewportHeightPx = 300f
         )
-        val expectedZoom = MiniMapViewportMath.computeZoomForGroundRangeMetres(28.6139, 420f, 300f, 25.0)
+        val expectedZoom = MiniMapViewportMath.computeZoomForGroundRangeMetres(28.6139, 420f, 300f, 250.0)
         assertEquals(expectedZoom, rendererZoom, 0.001f)
     }
 

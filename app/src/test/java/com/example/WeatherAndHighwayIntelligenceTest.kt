@@ -40,10 +40,20 @@ import com.example.model.WorkSuitabilityStatus
 import com.example.model.WorkTargetInput
 import com.example.ui.home.AnimatedWeatherIcon
 import com.example.ui.home.HomeLiveWeatherCard
+import com.example.location.LocationState
+import com.example.location.LocationStatus
+import com.example.model.Chainage
+import com.example.model.ChainageMatchResult
+import com.example.model.MatchConfidence
+import com.example.model.ProjectProfile
+import com.example.model.RoadSide
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.weather.LiveHighwayLocationSnapshot
 import com.example.ui.weather.WeatherDashboardScreen
 import com.example.ui.weather.WeatherDashboardTab
 import com.example.ui.weather.WeatherIntelligenceSettingsSectionContent
+import com.example.ui.weather.WeatherSectionKeys
+import com.example.ui.weather.buildLiveHighwayLocationSnapshot
 import com.example.weather.IrcMorthWeatherRuleEngine
 import com.example.weather.OpenMeteoWeatherFetcher
 import com.example.weather.SharedWeatherRepository
@@ -626,6 +636,7 @@ class WeatherAndHighwayIntelligenceTest {
         val bundle = buildSampleBundle()
         var dashboardOpens = 0
         var refreshes = 0
+        val expandedState = androidx.compose.runtime.mutableStateOf(false)
 
         composeRule.setContent {
             MyApplicationTheme(themeMode = "dark") {
@@ -642,6 +653,8 @@ class WeatherAndHighwayIntelligenceTest {
                     hourlyForecast = bundle.todayFullDayHours(bundle.current.observedAtMs),
                     currentLocalHour = 10,
                     animationsEnabled = false,
+                    isHourlyExpanded = expandedState.value,
+                    onToggleHourlyExpanded = { expandedState.value = !expandedState.value },
                     onOpenWeatherDashboard = { dashboardOpens++ }
                 )
             }
@@ -649,13 +662,22 @@ class WeatherAndHighwayIntelligenceTest {
 
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("home_live_weather_card").assertIsDisplayed()
-        composeRule.onNodeWithTag("home_hourly_forecast_row").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_rain_prob_text", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_hourly_expand_indicator", useUnmergedTree = true).assertIsDisplayed()
+        // Default collapsed state hides hourly forecast
+        composeRule.onNodeWithTag("home_hourly_forecast_row").assertDoesNotExist()
+
+        // Single tap expands hourly forecast without opening Weather Dashboard
+        composeRule.onNodeWithTag("home_live_weather_card").performClick()
+        composeRule.waitForIdle()
+        assertEquals(0, dashboardOpens)
+        composeRule.onNodeWithTag("home_hourly_forecast_row").assertIsDisplayed()
         composeRule.onNodeWithTag("home_hourly_item_10").assertIsDisplayed()
 
-        // Single tap on available card does not open Weather Dashboard
+        // Next single tap collapses hourly forecast smoothly
         composeRule.onNodeWithTag("home_live_weather_card").performClick()
-        assertEquals(0, dashboardOpens)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("home_hourly_forecast_row").assertDoesNotExist()
 
         // Double tap opens Weather Dashboard
         composeRule.onNodeWithTag("home_live_weather_card").performTouchInput { doubleClick() }
@@ -764,5 +786,128 @@ class WeatherAndHighwayIntelligenceTest {
         composeRule.onNodeWithTag("settings_open_weather_dashboard_button").performClick()
         assertTrue(openedDashboard)
         composeRule.onNodeWithText("1. WEATHER DISPLAY").assertIsDisplayed()
+    }
+
+    @Test
+    fun `WeatherDashboardScreen displays live highway chainage with stale fallback and independent smart collapsible sections`() {
+        val nowMs = makeTimestampMs(2026, Calendar.NOVEMBER, 20, 10, 0)
+        val liveMatch = ChainageMatchResult(
+            chainage = Chainage(196, 450),
+            confidence = MatchConfidence.HIGH,
+            detectedSide = "LHS",
+            matchedAlignmentName = "NH-58 Alignment"
+        )
+        val liveGps = LocationState(
+            point = GeoPoint(29.8543, 77.8880),
+            status = LocationStatus.READY,
+            lastFixTime = nowMs
+        )
+        val profile = ProjectProfile(highwayId = "NH-58", roadSide = RoadSide.LHS)
+
+        val liveSnap = buildLiveHighwayLocationSnapshot(
+            matchResult = liveMatch,
+            locationState = liveGps,
+            projectProfile = profile,
+            activeRoute = null,
+            resolvedLocationName = "Roorkee Bypass",
+            nowMs = nowMs
+        )
+        assertEquals("NH-58 | 196+450 | LHS", liveSnap.formattedHighwayLine)
+        assertTrue(liveSnap.isGpsLive)
+        assertFalse(liveSnap.isChainageStale)
+
+        // When GPS temporarily drops, latest valid chainage remains shown with stale flag
+        val droppedGps = LocationState(point = null, status = LocationStatus.ACQUIRING, lastFixTime = 0L)
+        val staleSnap = buildLiveHighwayLocationSnapshot(
+            matchResult = ChainageMatchResult.noRoute(),
+            locationState = droppedGps,
+            projectProfile = profile,
+            activeRoute = null,
+            resolvedLocationName = "",
+            lastKnownValid = liveSnap,
+            nowMs = nowMs + 60_000L
+        )
+        assertEquals("NH-58 | 196+450 | LHS", staleSnap.formattedHighwayLine)
+        assertTrue(staleSnap.isChainageStale)
+        assertTrue(staleSnap.staleReason.contains("STALE"))
+
+        // Verify PreferencesManager persists expanded section keys
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val prefs = PreferencesManager(context)
+        runBlocking {
+            prefs.updateWeatherExpandedSections(setOf(WeatherSectionKeys.HOURLY_FORECAST, WeatherSectionKeys.BC_SUITABILITY))
+        }
+        val restoredSections = prefs.getInitialWeatherExpandedSections()
+        assertTrue(WeatherSectionKeys.HOURLY_FORECAST in restoredSections)
+        assertTrue(WeatherSectionKeys.BC_SUITABILITY in restoredSections)
+
+        // Verify WeatherDashboardScreen renders live chainage banner and independent expand/collapse
+        val bundle = buildSampleBundle(nowMs = nowMs, rainHours = setOf(13, 14), stormHours = setOf(15))
+        val settings = WeatherIntelligenceSettings(animationsEnabled = false)
+        val assessments = IrcMorthWeatherRuleEngine.evaluateAllActivities(bundle.current, settings.contractSpec, referenceTimeMs = nowMs)
+        val timeline = IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(HighwayWorkActivity.BC_LAYING, bundle.hourly, settings.contractSpec)
+        val targetInput = WorkTargetInput(
+            activity = HighwayWorkActivity.BC_LAYING,
+            startChainageKm = 196.0,
+            endChainageKm = 197.0,
+            expectedProductionRatePerHour = 800.0
+        )
+        val targetPred = WorkTargetPredictionEngine.predictWorkTarget(targetInput, timeline)
+        val delayRisks = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline, targetPred)
+
+        composeRule.setContent {
+            MyApplicationTheme(themeMode = "dark") {
+                WeatherDashboardScreen(
+                    weatherUiState = WeatherUiState.Available(bundle.current),
+                    forecastBundle = bundle,
+                    resolvedLocationName = "Roorkee Bypass",
+                    is24HourFormat = false,
+                    settings = settings,
+                    assessments = assessments,
+                    selectedActivity = HighwayWorkActivity.BC_LAYING,
+                    hourlyWorkTimeline = timeline,
+                    siteMeasurements = ActualSiteMeasurements(),
+                    workTargetInput = targetInput,
+                    workTargetPrediction = targetPred,
+                    delayRiskSummary = delayRisks,
+                    actionableAlerts = bundle.alerts,
+                    onSelectActivity = {},
+                    onUpdateContractSpec = {},
+                    onUpdateSiteMeasurements = {},
+                    onUpdateWorkTargetInput = {},
+                    onRefreshWeather = {},
+                    onNavigateBack = {},
+                    nowMs = nowMs,
+                    liveHighwayLocation = liveSnap
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        // Live Highway Location banner is visible immediately inside Hourly Forecast section
+        composeRule.onNodeWithTag("weather_live_highway_location_banner").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_live_chainage_line").assertTextContains("NH-58 | 196+450 | LHS")
+
+        // Tap Hourly Forecast header to expand independently, then collapse again
+        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.HOURLY_FORECAST}").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("weather_section_body_${WeatherSectionKeys.HOURLY_FORECAST}").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.HOURLY_FORECAST}").performClick()
+        composeRule.waitForIdle()
+
+        // Switch to Highway Work tab and expand BC Laying Suitability independently
+        composeRule.onNodeWithTag("weather_tab_suitability").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.BC_SUITABILITY}").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.BC_SUITABILITY}").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("weather_section_body_${WeatherSectionKeys.BC_SUITABILITY}").assertIsDisplayed()
+
+        // Switch to Targets & Risks tab and expand Target Prediction
+        composeRule.onNodeWithTag("weather_tab_targets").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.TARGET_PREDICTION}").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("weather_section_body_${WeatherSectionKeys.TARGET_PREDICTION}").assertIsDisplayed()
     }
 }

@@ -320,12 +320,15 @@ class PreferencesManager(context: Context) {
         // Offline Mini Map Preloading Preferences
         val KEY_OFFLINE_MAP_AUTO_PRELOAD = booleanPreferencesKey("offline_map_auto_preload")
         val KEY_OFFLINE_MAP_WIFI_ONLY = booleanPreferencesKey("offline_map_wifi_only")
+        val KEY_MINI_MAP_VIEW_DISTANCE_MODE = stringPreferencesKey("mini_map_top_view_distance_mode")
+        val KEY_MINI_MAP_CUSTOM_DISTANCE_METRES = doublePreferencesKey("mini_map_custom_distance_metres")
 
         // Advanced Weather Forecast & IRC/MoRTH Highway Work Intelligence Keys
         val KEY_LAST_WEATHER_FORECAST_BUNDLE_JSON = stringPreferencesKey("last_weather_forecast_bundle_json")
         val KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON = stringPreferencesKey("weather_intelligence_settings_json")
         val KEY_WORK_TARGET_INPUT_JSON = stringPreferencesKey("weather_work_target_input_json")
         val KEY_ACTUAL_SITE_MEASUREMENTS_JSON = stringPreferencesKey("weather_actual_site_measurements_json")
+        val KEY_WEATHER_EXPANDED_SECTIONS = stringPreferencesKey("weather_expanded_sections_csv")
     }
 
     private val observedDataFlow: Flow<Preferences> = appContext.dataStore.data.onEach { prefs ->
@@ -437,6 +440,9 @@ class PreferencesManager(context: Context) {
         com.example.model.WeatherForecastBundle.fromJsonString(
             getInitialPreferences()[KEY_LAST_WEATHER_FORECAST_BUNDLE_JSON]
         )
+
+    fun getInitialWeatherExpandedSections(): Set<String> =
+        parseCsvSet(getInitialPreferences()[KEY_WEATHER_EXPANDED_SECTIONS])
 
     fun getInitialCameraSettings(): CameraSettings =
         parseCameraSettingsFromPrefs(getInitialPreferences())
@@ -593,6 +599,34 @@ class PreferencesManager(context: Context) {
         }
     }
 
+    val miniMapViewDistanceFlow: Flow<com.example.ui.map.MiniMapViewDistancePreference> = observedDataFlow.map { prefs ->
+        parseMiniMapViewDistance(prefs)
+    }.distinctUntilChanged()
+
+    fun getInitialMiniMapViewDistance(): com.example.ui.map.MiniMapViewDistancePreference {
+        return parseMiniMapViewDistance(getInitialPreferences())
+    }
+
+    private fun parseMiniMapViewDistance(prefs: Preferences): com.example.ui.map.MiniMapViewDistancePreference {
+        val mode = com.example.ui.map.MiniMapViewDistanceMode.fromStorageKey(prefs[KEY_MINI_MAP_VIEW_DISTANCE_MODE])
+        val customM = com.example.ui.map.MiniMapViewDistancePreference.clampCustomDistanceMetres(
+            prefs[KEY_MINI_MAP_CUSTOM_DISTANCE_METRES]
+                ?: com.example.ui.map.MiniMapViewportMath.DEFAULT_GROUND_VIEW_RANGE_METRES
+        )
+        return com.example.ui.map.MiniMapViewDistancePreference(
+            mode = mode,
+            customDistanceMetres = customM
+        )
+    }
+
+    suspend fun updateMiniMapViewDistance(preference: com.example.ui.map.MiniMapViewDistancePreference) {
+        val clampedCustom = preference.validatedCustomMetres
+        safeEdit { prefs ->
+            prefs[KEY_MINI_MAP_VIEW_DISTANCE_MODE] = preference.mode.storageKey
+            prefs[KEY_MINI_MAP_CUSTOM_DISTANCE_METRES] = clampedCustom
+        }
+    }
+
     val homeScreensaverSettingsFlow: Flow<HomeScreensaverSettings> = observedDataFlow.map { prefs ->
         HomeScreensaverSettings.fromJsonString(prefs[KEY_HOME_SCREENSAVER_JSON])
     }.distinctUntilChanged()
@@ -733,6 +767,22 @@ class PreferencesManager(context: Context) {
         safeEdit { prefs ->
             prefs[KEY_ACTUAL_SITE_MEASUREMENTS_JSON] = measurements.toJsonString()
         }
+    }
+
+    val weatherExpandedSectionsFlow: Flow<Set<String>> =
+        observedDataFlow.map { prefs ->
+            parseCsvSet(prefs[KEY_WEATHER_EXPANDED_SECTIONS])
+        }.distinctUntilChanged()
+
+    suspend fun updateWeatherExpandedSections(sections: Set<String>) {
+        safeEdit { prefs ->
+            prefs[KEY_WEATHER_EXPANDED_SECTIONS] = sections.filter { it.isNotBlank() }.sorted().joinToString(",")
+        }
+    }
+
+    private fun parseCsvSet(raw: String?): Set<String> {
+        if (raw.isNullOrBlank()) return emptySet()
+        return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     }
 
     val cameraSettingsFlow: Flow<CameraSettings> = observedDataFlow.map { prefs ->

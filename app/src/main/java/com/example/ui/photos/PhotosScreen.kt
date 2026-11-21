@@ -168,6 +168,7 @@ fun PhotosScreen(
     val galleryViewMode by viewModel.galleryViewMode.collectAsStateWithLifecycle()
     val gallerySortOption by viewModel.gallerySortOption.collectAsStateWithLifecycle()
     val galleryGroupOption by viewModel.galleryGroupOption.collectAsStateWithLifecycle()
+    val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
 
     var selectedMediaTab by remember { mutableStateOf(GalleryMediaTab.PHOTOS) }
     var searchQuery by remember { mutableStateOf("") }
@@ -1055,6 +1056,7 @@ fun PhotosScreen(
     photoForDetails?.let { photo ->
         PhotoDetailsDialog(
             photo = photo,
+            miniMapViewDistance = miniMapViewDistance,
             onDismiss = { photoForDetails = null }
         )
     }
@@ -2532,6 +2534,7 @@ fun FullScreenVideoPlayer(
 @Composable
 fun PhotoDetailsDialog(
     photo: PhotoRecordEntity,
+    miniMapViewDistance: com.example.ui.map.MiniMapViewDistancePreference = com.example.ui.map.MiniMapViewDistancePreference(),
     onDismiss: () -> Unit
 ) {
     val file = remember(photo.filePath) { File(photo.filePath) }
@@ -2612,6 +2615,7 @@ fun PhotoDetailsDialog(
                         showProjectTag = true,
                         interactive = true,
                         fadeToColor = dialogColors.containerColor,
+                        viewDistancePreference = miniMapViewDistance,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(152.dp)

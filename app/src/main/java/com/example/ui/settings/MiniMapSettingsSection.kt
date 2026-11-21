@@ -77,6 +77,11 @@ import com.example.model.RouteData
 import com.example.ui.camera.MiniMapPreview
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.SmartFadeDivider
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.KeyboardType
+import com.example.ui.map.MiniMapViewDistanceMode
+import com.example.ui.map.MiniMapViewDistancePreference
 import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -94,7 +99,9 @@ fun MiniMapSettingsSection(
     onToggleExpand: () -> Unit,
     onSaveConfig: (OverlayConfig) -> Unit,
     onResetMiniMapDefaults: () -> Unit,
-    onShowMessage: (String) -> Unit
+    onShowMessage: (String) -> Unit,
+    viewDistancePreference: MiniMapViewDistancePreference = MiniMapViewDistancePreference(),
+    onUpdateViewDistance: (MiniMapViewDistancePreference) -> Unit = {}
 ) {
     var draftOverlay by remember { mutableStateOf(savedOverlay) }
     var editingVideoMode by remember { mutableStateOf(false) }
@@ -167,9 +174,9 @@ fun MiniMapSettingsSection(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         val modeLabel = if (draftOverlay.showMapInset) {
-                            "Photo: ${if (draftOverlay.photoMiniMap.enabled) draftOverlay.photoMiniMap.sizePreset.label else "OFF"} • Video: ${if (draftOverlay.videoMiniMap.enabled) draftOverlay.videoMiniMap.sizePreset.label else "OFF"}"
+                            "View: ${viewDistancePreference.summaryLabel()} • Photo: ${if (draftOverlay.photoMiniMap.enabled) draftOverlay.photoMiniMap.sizePreset.label else "OFF"}"
                         } else {
-                            "Disabled"
+                            "View: ${viewDistancePreference.summaryLabel()} • Overlay Disabled"
                         }
                         Text(
                             text = if (hasUnsavedChanges) "$modeLabel • Unsaved changes" else modeLabel,
@@ -394,6 +401,7 @@ fun MiniMapSettingsSection(
                                                 miniMapConfig = activeStyleConfig,
                                                 chainageLabel = currentChainage,
                                                 sideLabel = currentSide,
+                                                viewDistancePreference = viewDistancePreference,
                                                 fadeToColor = Color(0xFF171E2B),
                                                 modifier = Modifier.fillMaxSize()
                                             )
@@ -658,9 +666,209 @@ fun MiniMapSettingsSection(
 
                     // F. MAP ZOOM & ORIENTATION
                     MiniMapGroupTitle("F. MAP ZOOM & ORIENTATION", accentColor)
+
+                    // Global Mini Map Top View Distance (single setting across Home, Camera, Screensaver, Survey & Routes)
+                    var customUnitIsKm by remember(viewDistancePreference.customDistanceMetres) {
+                        mutableStateOf(viewDistancePreference.validatedCustomMetres >= 1_000.0)
+                    }
+                    var customDistanceInput by remember(viewDistancePreference.customDistanceMetres, customUnitIsKm) {
+                        val value = if (customUnitIsKm) {
+                            val km = viewDistancePreference.validatedCustomMetres / 1_000.0
+                            if (kotlin.math.abs(km - kotlin.math.round(km)) < 0.01) {
+                                kotlin.math.round(km).toInt().toString()
+                            } else {
+                                String.format(Locale.US, "%.2f", km).trimEnd('0').trimEnd('.')
+                            }
+                        } else {
+                            kotlin.math.round(viewDistancePreference.validatedCustomMetres).toInt().toString()
+                        }
+                        mutableStateOf(value)
+                    }
+                    var customDistanceError by remember { mutableStateOf<String?>(null) }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = CtecsTheme.colors.surface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("mini_map_top_view_distance_card")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Mini Map Top View Distance",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Viewing ground range across all Mini Maps (Default: 250 M)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = accentColor.copy(alpha = 0.14f)
+                                ) {
+                                    Text(
+                                        text = viewDistancePreference.summaryLabel(),
+                                        color = accentColor,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            .testTag("mini_map_top_view_distance_value")
+                                    )
+                                }
+                            }
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                MiniMapViewDistanceMode.entries.forEach { mode ->
+                                    val selected = viewDistancePreference.mode == mode
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = {
+                                            customDistanceError = null
+                                            onUpdateViewDistance(
+                                                viewDistancePreference.copy(mode = mode)
+                                            )
+                                            onShowMessage("Mini Map distance: ${mode.label}")
+                                        },
+                                        label = {
+                                            Text(
+                                                text = mode.label,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        },
+                                        border = null,
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            containerColor = CtecsTheme.colors.secondarySurface,
+                                            labelColor = CtecsTheme.colors.textSecondary,
+                                            selectedContainerColor = accentColor,
+                                            selectedLabelColor = accentContentColor
+                                        ),
+                                        modifier = Modifier.testTag("minimap_distance_${mode.storageKey}")
+                                    )
+                                }
+                            }
+
+                            if (viewDistancePreference.mode == MiniMapViewDistanceMode.SMART_AUTO) {
+                                Text(
+                                    text = "Smart Auto smoothly adapts top view distance based on speed, GPS accuracy, road curvature, junctions, and stationary state.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (viewDistancePreference.mode == MiniMapViewDistanceMode.CUSTOM) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = customDistanceInput,
+                                        onValueChange = { next ->
+                                            customDistanceInput = next
+                                            customDistanceError = null
+                                        },
+                                        singleLine = true,
+                                        label = { Text(if (customUnitIsKm) "Distance (KM)" else "Distance (M)", fontSize = 11.sp) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        isError = customDistanceError != null,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("minimap_custom_distance_input")
+                                    )
+                                    FilterChip(
+                                        selected = !customUnitIsKm,
+                                        onClick = { customUnitIsKm = false; customDistanceError = null },
+                                        label = { Text("M", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                        border = null,
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            containerColor = CtecsTheme.colors.secondarySurface,
+                                            labelColor = CtecsTheme.colors.textSecondary,
+                                            selectedContainerColor = accentColor,
+                                            selectedLabelColor = accentContentColor
+                                        ),
+                                        modifier = Modifier.testTag("minimap_custom_unit_m")
+                                    )
+                                    FilterChip(
+                                        selected = customUnitIsKm,
+                                        onClick = { customUnitIsKm = true; customDistanceError = null },
+                                        label = { Text("KM", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                        border = null,
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            containerColor = CtecsTheme.colors.secondarySurface,
+                                            labelColor = CtecsTheme.colors.textSecondary,
+                                            selectedContainerColor = accentColor,
+                                            selectedLabelColor = accentContentColor
+                                        ),
+                                        modifier = Modifier.testTag("minimap_custom_unit_km")
+                                    )
+                                    Button(
+                                        onClick = {
+                                            val parsed = MiniMapViewDistancePreference.parseAndValidateCustomDistance(
+                                                rawText = customDistanceInput,
+                                                unitIsKm = customUnitIsKm
+                                            )
+                                            if (parsed == null) {
+                                                customDistanceError = "Enter a value between 50 M and 50 KM"
+                                            } else {
+                                                customDistanceError = null
+                                                onUpdateViewDistance(
+                                                    MiniMapViewDistancePreference(
+                                                        mode = MiniMapViewDistanceMode.CUSTOM,
+                                                        customDistanceMetres = parsed
+                                                    )
+                                                )
+                                                onShowMessage("Custom Mini Map distance saved: ${MiniMapViewDistancePreference.formatDistanceLabel(parsed)}")
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = accentColor,
+                                            contentColor = accentContentColor
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                        modifier = Modifier
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .testTag("minimap_custom_distance_apply")
+                                    ) {
+                                        Text("Apply", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                if (customDistanceError != null) {
+                                    Text(
+                                        text = customDistanceError!!,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = CtecsTheme.colors.error,
+                                        modifier = Modifier.testTag("minimap_custom_distance_error")
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     MiniMapSwitchRow(
                         title = "Automatic Zoom",
-                        subtitle = "Fit current GPS & nearby KMZ corridor",
+                        subtitle = "Use Mini Map Top View Distance for photo/video overlay",
                         checked = activeStyleConfig.autoZoom,
                         onCheckedChange = { az -> updateActiveStyle { it.copy(autoZoom = az) } },
                         accentColor = accentColor

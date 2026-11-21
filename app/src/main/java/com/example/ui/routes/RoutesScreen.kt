@@ -88,6 +88,7 @@ fun RoutesScreen(
     val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
     val routeImportError by viewModel.routeImportError.collectAsStateWithLifecycle()
     val offlineSyncState by viewModel.offlineMapSyncState.collectAsStateWithLifecycle()
+    val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
 
     var routeToDelete by remember { mutableStateOf<RouteEntity?>(null) }
     var showMarkerInspector by remember { mutableStateOf(false) }
@@ -139,6 +140,8 @@ fun RoutesScreen(
                     liveBearing = mapHeadingState.headingDegrees ?: locationState.bearing,
                     gpsAccuracy = locationState.accuracy,
                     mapHeadingState = mapHeadingState,
+                    viewDistancePreference = miniMapViewDistance,
+                    speedMps = locationState.speed,
                     offlineSyncState = offlineSyncState,
                     onPauseOfflineSync = { viewModel.pauseOfflineMapSync() },
                     onResumeOfflineSync = { viewModel.resumeOfflineMapSync() },
@@ -280,6 +283,8 @@ fun ActiveRouteCard(
     liveBearing: Float? = null,
     gpsAccuracy: Float = 0f,
     mapHeadingState: com.example.geo.MapHeadingState? = null,
+    viewDistancePreference: com.example.ui.map.MiniMapViewDistancePreference = com.example.ui.map.MiniMapViewDistancePreference(),
+    speedMps: Float? = null,
     offlineSyncState: OfflineMapSyncState = OfflineMapSyncState(),
     onPauseOfflineSync: () -> Unit = {},
     onResumeOfflineSync: () -> Unit = {},
@@ -388,6 +393,8 @@ fun ActiveRouteCard(
                     autoFitRoute = false,
                     orientationMode = com.example.model.MiniMapOrientationMode.DIRECTION_UP,
                     fadeToColor = c.surface,
+                    viewDistancePreference = viewDistancePreference,
+                    speedMps = speedMps,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(176.dp)
