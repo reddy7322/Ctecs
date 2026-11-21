@@ -64,8 +64,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AltRoute
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChatBubbleOutline
@@ -73,7 +71,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import com.example.camera.CameraResolutionHelper
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Exposure
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -398,6 +395,26 @@ fun CameraScreen(
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
     var maxZoomRatio by remember { mutableFloatStateOf(10.0f) }
+    var zoomCapabilities by remember {
+        mutableStateOf(
+            com.example.camera.CameraUltraWideZoomManager.detectCapabilities(
+                context = context,
+                cameraInfo = null,
+                isFrontCamera = isFrontCamera
+            )
+        )
+    }
+    val useStandaloneUltraWide = !isFrontCamera &&
+        zoomCapabilities.usesStandalonePhysicalUltraWide &&
+        zoomCapabilities.widePresetRatio != null &&
+        currentZoomRatio < 0.99f
+
+    LaunchedEffect(isFrontCamera) {
+        // When flipping between rear & front cameras, reset to 1.0x so front lens never inherits an unsupported ultra-wide zoom
+        if (currentZoomRatio < 0.99f) {
+            viewModel.setZoomRatio(1.0f)
+        }
+    }
 
     DisposableEffect(controller, lifecycleOwner) {
         val observer = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { state ->
@@ -502,7 +519,6 @@ fun CameraScreen(
     var isTopToolbarExpanded by remember { mutableStateOf(true) }
     var showLaneMenu by remember { mutableStateOf(false) }
     var isHdrEnabled by remember { mutableStateOf(false) }
-    var activeOutputSettingsType by remember { mutableStateOf<String?>(null) }
 
     // Countdown Timer State
     var countdownRemaining by remember { mutableIntStateOf(0) }
@@ -604,6 +620,9 @@ fun CameraScreen(
                     deviceRotationDegrees = rotationDegrees.toInt(),
                     isLandscape = isLandscape,
                     photoAspectRatio = cameraSettings.photoAspectRatio,
+                    isFrontCamera = isFrontCamera,
+                    frontCameraMirror = cameraSettings.frontCameraMirror,
+                    playShutterSound = cameraSettings.captureSound,
                     onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                     onError = {
                         val fallback = createSimulatedCameraFrame(
@@ -624,6 +643,9 @@ fun CameraScreen(
                 deviceRotationDegrees = rotationDegrees.toInt(),
                 isLandscape = isLandscape,
                 photoAspectRatio = cameraSettings.photoAspectRatio,
+                isFrontCamera = isFrontCamera,
+                frontCameraMirror = cameraSettings.frontCameraMirror,
+                playShutterSound = cameraSettings.captureSound,
                 onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
                 onError = {
                     val fallback = createSimulatedCameraFrame(
@@ -677,6 +699,15 @@ fun CameraScreen(
             autoBrightnessEnabled = cameraSettings.autoBrightnessEnabled,
             manualPreviewBrightness = cameraSettings.manualPreviewBrightness,
             targetVideoFps = cameraSettings.videoFps,
+            photoQualityPreset = cameraSettings.photoQualityPreset,
+            videoStabilizationMode = cameraSettings.videoStabilizationMode,
+            autofocusMode = cameraSettings.autofocusMode,
+            photoEnhancementEnabled = cameraSettings.photoEnhancementEnabled,
+            videoNoiseReductionEnabled = cameraSettings.videoNoiseReductionEnabled,
+            touchToCapture = cameraSettings.touchToCapture,
+            easyToggleCameras = cameraSettings.easyToggleCameras,
+            useStandaloneUltraWide = useStandaloneUltraWide,
+            standaloneUltraWideCameraId = zoomCapabilities.standaloneUltraWideCameraId,
             controller = controller,
             currentSnapshotProvider = { viewModel.createCurrentSnapshot() },
             overlayManager = overlayManager,
@@ -688,8 +719,21 @@ fun CameraScreen(
             onCaptureExposureTelemetry = { level, evStops, hwSupported ->
                 viewModel.updateCaptureExposureTelemetry(level, evStops, hwSupported)
             },
+            onTouchToCapture = { triggerPhotoCapture() },
+            onDoubleTapSwitchCamera = { viewModel.toggleCameraFacing() },
+            onZoomCapabilitiesChanged = { caps -> zoomCapabilities = caps },
             modifier = Modifier.fillMaxSize()
         )
+
+        // Subtle power-saving viewfinder dimming scrim when Battery Save Mode is enabled (never affects capture output)
+        if (cameraSettings.batterySaveMode) {
+            val dimAlpha = ((1f - cameraSettings.batterySaveBrightness.coerceIn(0.25f, 0.85f)) * 0.42f).coerceIn(0.08f, 0.35f)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = dimAlpha))
+            )
+        }
 
         // Visual flash feedback on capture (photo capture & quick photo during video)
         if (showQuickCaptureFlash) {
@@ -965,91 +1009,7 @@ fun CameraScreen(
                                 )
                             }
 
-                            // 4. Smart Photo Output Button
-                            val photoBadgeLandscape = CameraResolutionHelper.getPhotoBadgeText(
-                                cameraSettings.photoResolution,
-                                cameraSettings.photoAspectRatio
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(19.dp),
-                                color = if (activeOutputSettingsType == "PHOTO") hudPillActiveBg else hudPillBg,
-                                modifier = Modifier
-                                    .heightIn(min = 38.dp)
-                                    .clip(RoundedCornerShape(19.dp))
-                                    .clickable {
-                                        activeOutputSettingsType = if (activeOutputSettingsType == "PHOTO") null else "PHOTO"
-                                    }
-                                    .testTag("landscape_photo_settings_button")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CameraAlt,
-                                        contentDescription = "Photo Output",
-                                        tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else PrimaryText,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Text(
-                                        text = photoBadgeLandscape,
-                                        color = if (activeOutputSettingsType == "PHOTO") HighlightYellow else PrimaryText,
-                                        fontSize = 9.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = null,
-                                        tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else SecondaryText,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                }
-                            }
-
-                            // 5. Smart Video Output Button
-                            val videoBadgeLandscape = CameraResolutionHelper.getVideoBadgeText(
-                                cameraSettings.videoResolution,
-                                cameraSettings.videoAspectRatio
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(19.dp),
-                                color = if (activeOutputSettingsType == "VIDEO") AccentRed.copy(alpha = 0.25f) else hudPillBg,
-                                modifier = Modifier
-                                    .heightIn(min = 38.dp)
-                                    .clip(RoundedCornerShape(19.dp))
-                                    .clickable {
-                                        activeOutputSettingsType = if (activeOutputSettingsType == "VIDEO") null else "VIDEO"
-                                    }
-                                    .testTag("landscape_video_settings_button")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Videocam,
-                                        contentDescription = "Video Output",
-                                        tint = if (activeOutputSettingsType == "VIDEO") AccentRed else PrimaryText,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Text(
-                                        text = videoBadgeLandscape,
-                                        color = if (activeOutputSettingsType == "VIDEO") AccentRed else PrimaryText,
-                                        fontSize = 9.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = null,
-                                        tint = if (activeOutputSettingsType == "VIDEO") AccentRed else SecondaryText,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                }
-                            }
-
-                            // 6. Timer Cycle Button
+                            // 4. Timer Cycle Button
                             IconButton(
                                 onClick = { viewModel.cycleTimer() },
                                 modifier = Modifier
@@ -1550,6 +1510,7 @@ fun CameraScreen(
                 onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
                 onResetZoom = { viewModel.setZoomRatio(1.0f) },
                 isLandscape = true,
+                zoomCapabilities = zoomCapabilities,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBars)
@@ -2583,6 +2544,7 @@ fun CameraScreen(
                     onZoomChanged = { newZoom -> viewModel.setZoomRatio(newZoom) },
                     onResetZoom = { viewModel.setZoomRatio(1.0f) },
                     isLandscape = false,
+                    zoomCapabilities = zoomCapabilities,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 1.dp)
@@ -2865,141 +2827,6 @@ fun CameraScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
-                        }
-                    }
-                }
-
-                // Tiny Sleek Bottom Output Selection Capsule: Photo & Video Output settings
-                val photoBadgePortrait = CameraResolutionHelper.getPhotoBadgeText(
-                    cameraSettings.photoResolution,
-                    cameraSettings.photoAspectRatio
-                )
-                val videoBadgePortrait = CameraResolutionHelper.getVideoBadgeText(
-                    cameraSettings.videoResolution,
-                    cameraSettings.videoAspectRatio
-                )
-
-                // Tiny Sleek Bottom Output Selection Cards: Photo & Video (8dp margin, dynamic height, compact width, 4dp blur, 10% opacity)
-                Row(
-                    modifier = Modifier
-                        .wrapContentWidth()
-                        .wrapContentHeight()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .testTag("portrait_bottom_output_bar"),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Camera / Photo Output Card: Tiny width, Dynamic height, 20dp icons, High-contrast readability
-                    FloatingGlassCard(
-                        shape = RoundedCornerShape(14.dp),
-                        backgroundColor = if (activeOutputSettingsType == "PHOTO") Color(0x25FACC15) else Color(0x1A101726),
-                        borderColor = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color(0x35FFFFFF),
-                        borderWidth = 0.5.dp,
-                        onClick = {
-                            activeOutputSettingsType = if (activeOutputSettingsType == "PHOTO") null else "PHOTO"
-                        },
-                        modifier = Modifier
-                            .wrapContentWidth()
-                            .wrapContentHeight()
-                            .testTag("portrait_photo_settings_card")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .wrapContentHeight()
-                                .padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CameraAlt,
-                                contentDescription = "Photo Output Settings",
-                                tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Column(
-                                modifier = Modifier.wrapContentSize(),
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = "Photo",
-                                    fontSize = 8.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White.copy(alpha = 0.9f),
-                                    lineHeight = 10.sp
-                                )
-                                Text(
-                                    text = photoBadgePortrait,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    lineHeight = 12.sp,
-                                    maxLines = 1
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = null,
-                                tint = if (activeOutputSettingsType == "PHOTO") HighlightYellow else Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-
-                    // Video Output Card: Tiny width, Dynamic height, 20dp icons, High-contrast readability
-                    FloatingGlassCard(
-                        shape = RoundedCornerShape(14.dp),
-                        backgroundColor = if (activeOutputSettingsType == "VIDEO") Color(0x25EF4444) else Color(0x1A101726),
-                        borderColor = if (activeOutputSettingsType == "VIDEO") AccentRed else Color(0x35FFFFFF),
-                        borderWidth = 0.5.dp,
-                        onClick = {
-                            activeOutputSettingsType = if (activeOutputSettingsType == "VIDEO") null else "VIDEO"
-                        },
-                        modifier = Modifier
-                            .wrapContentWidth()
-                            .wrapContentHeight()
-                            .testTag("portrait_video_settings_card")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .wrapContentHeight()
-                                .padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Videocam,
-                                contentDescription = "Video Output Settings",
-                                tint = if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Column(
-                                modifier = Modifier.wrapContentSize(),
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = "Video",
-                                    fontSize = 8.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White.copy(alpha = 0.9f),
-                                    lineHeight = 10.sp
-                                )
-                                Text(
-                                    text = videoBadgePortrait,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    lineHeight = 12.sp,
-                                    maxLines = 1
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = null,
-                                tint = if (activeOutputSettingsType == "VIDEO") AccentRed else Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(20.dp)
-                            )
                         }
                     }
                 }
@@ -3670,410 +3497,6 @@ fun CameraScreen(
                 onDismiss = { showQuickSettingsPopup = false }
             )
         }
-
-        // Smart Photo / Video Output Settings Popup Dialog
-        if (activeOutputSettingsType != null) {
-            CameraOutputSettingsPopup(
-                category = activeOutputSettingsType!!,
-                cameraSettings = cameraSettings,
-                isFrontCamera = isFrontCamera,
-                isLandscape = isLandscape,
-                onUpdateCameraSettings = { updated ->
-                    viewModel.saveCameraSettingsSilent(updated)
-                    if (activeOutputSettingsType == "PHOTO") {
-                        viewModel.saveOverlayConfigSilent(overlayConfig.copy(resolutionOption = updated.photoResolution))
-                    }
-                },
-                onShowToast = { msg -> viewModel.showToast(msg) },
-                onDismiss = { activeOutputSettingsType = null }
-            )
-        }
-    }
-}
-
-/**
- * Smart Photo & Video Output Settings Popup Dialog.
- * Compact Material 3 popup matching the existing Camera UI.
- * Organizes options cleanly into Aspect Ratio and Resolution sections with active selection highlights,
- * sensor vs cropped output indicators, and direct hardware support detection.
- */
-@Composable
-fun CameraOutputSettingsPopup(
-    category: String, // "PHOTO" or "VIDEO"
-    cameraSettings: com.example.model.CameraSettings,
-    isFrontCamera: Boolean,
-    isLandscape: Boolean,
-    onUpdateCameraSettings: (com.example.model.CameraSettings) -> Unit,
-    onShowToast: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val isPhoto = category.equals("PHOTO", ignoreCase = true)
-
-    val supportedResolutions = remember(isPhoto, isFrontCamera) {
-        if (isPhoto) {
-            CameraResolutionHelper.getSupportedPhotoResolutions(context, isFrontCamera)
-        } else {
-            CameraResolutionHelper.getSupportedVideoResolutions(context, isFrontCamera)
-        }
-    }
-
-    var selectedRatio by remember(isPhoto, cameraSettings.photoAspectRatio, cameraSettings.videoAspectRatio) {
-        mutableStateOf(if (isPhoto) cameraSettings.photoAspectRatio else cameraSettings.videoAspectRatio)
-    }
-
-    var selectedResolution by remember(isPhoto, cameraSettings.photoResolution, cameraSettings.videoResolution) {
-        mutableStateOf(if (isPhoto) cameraSettings.photoResolution else cameraSettings.videoResolution)
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xF50D111A),
-            shadowElevation = 0.dp,
-            modifier = Modifier
-                .widthIn(min = 280.dp, max = 330.dp)
-                .wrapContentHeight()
-                .padding(vertical = 12.dp, horizontal = 12.dp)
-                .testTag(if (isPhoto) "photo_output_settings_popup" else "video_output_settings_popup")
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .wrapContentHeight()
-                    .padding(16.dp)
-            ) {
-                // 1. Header with category icon, title, active lens badge, and close button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(if (isPhoto) HighlightYellow.copy(alpha = 0.2f) else AccentRed.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isPhoto) Icons.Default.CameraAlt else Icons.Default.Videocam,
-                                contentDescription = null,
-                                tint = if (isPhoto) HighlightYellow else AccentRed,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = if (isPhoto) "Photo Output Settings" else "Video Output Settings",
-                                color = PrimaryText,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = if (isFrontCamera) "Front Camera Lens" else "Rear Main Camera Lens",
-                                color = SecondaryText,
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.1f))
-                            .testTag("output_settings_close_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = PrimaryText,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Scrollable content area containing Aspect Ratio and Resolution sections
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                        .heightIn(max = 440.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    // SECTION A: ASPECT RATIO
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AspectRatio,
-                            contentDescription = null,
-                            tint = HighlightYellow,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = "ASPECT RATIO",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Black,
-                            color = HighlightYellow,
-                            letterSpacing = 0.8.sp
-                        )
-                    }
-
-                    // Aspect ratio chips / cards
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        CameraResolutionHelper.AVAILABLE_ASPECT_RATIOS.forEach { opt ->
-                            val isSelected = selectedRatio.equals(opt.id, ignoreCase = true) ||
-                                (opt.id == "Full" && selectedRatio.equals("Full Screen", ignoreCase = true))
-
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) HighlightYellow.copy(alpha = 0.22f) else Color(0xFF171E2B),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        selectedRatio = opt.id
-                                        val updated = if (isPhoto) {
-                                            cameraSettings.copy(photoAspectRatio = opt.id)
-                                        } else {
-                                            cameraSettings.copy(videoAspectRatio = opt.id)
-                                        }
-                                        onUpdateCameraSettings(updated)
-                                        onShowToast("${if (isPhoto) "Photo" else "Video"} aspect ratio: ${opt.title}")
-                                    }
-                                    .testTag("aspect_ratio_${opt.id.lowercase(java.util.Locale.US)}")
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = opt.shortLabel,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Black,
-                                        color = if (isSelected) HighlightYellow else PrimaryText
-                                    )
-                                    Text(
-                                        text = when (opt.id) {
-                                            "4:3" -> "Standard"
-                                            "16:9" -> "Wide"
-                                            "1:1" -> "Square"
-                                            else -> "Full"
-                                        },
-                                        fontSize = 10.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) HighlightYellow else SecondaryText
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    // SECTION B: RESOLUTION & SENSOR OUTPUT
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = null,
-                                tint = HighlightYellow,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Text(
-                                text = if (isPhoto) "HARDWARE RESOLUTION (PHOTO)" else "VIDEO RECORDING RESOLUTION",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Black,
-                                color = HighlightYellow,
-                                letterSpacing = 0.8.sp
-                            )
-                        }
-                        Text(
-                            text = "${supportedResolutions.size} detected",
-                            fontSize = 11.sp,
-                            color = SecondaryText
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    supportedResolutions.forEach { res ->
-                        val isSelected = selectedResolution.equals(res.label, ignoreCase = true) ||
-                            selectedResolution.contains(res.key)
-
-                        // Calculate aspect ratio crop details for still photos
-                        val cropDetails = if (isPhoto) {
-                            CameraResolutionHelper.calculateCropDetails(
-                                rawWidth = res.width,
-                                rawHeight = res.height,
-                                aspectRatioId = selectedRatio,
-                                isLandscape = isLandscape
-                            )
-                        } else null
-
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) Color(0x35FFB52E) else Color(0xFF171E2B),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clickable {
-                                    selectedResolution = res.label
-                                    val updated = if (isPhoto) {
-                                        cameraSettings.copy(
-                                            photoResolution = res.label,
-                                            photoAspectRatio = selectedRatio
-                                        )
-                                    } else {
-                                        cameraSettings.copy(
-                                            videoResolution = res.label,
-                                            videoAspectRatio = selectedRatio
-                                        )
-                                    }
-                                    onUpdateCameraSettings(updated)
-                                    onShowToast("${if (isPhoto) "Photo" else "Video"} resolution: ${res.label}")
-                                }
-                                .testTag("resolution_option_${res.width}x${res.height}")
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = res.label,
-                                            fontSize = 14.sp,
-                                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold,
-                                            color = if (isSelected) HighlightYellow else PrimaryText
-                                        )
-                                        if (res.megapixelsText.isNotBlank()) {
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = if (isSelected) HighlightYellow.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f)
-                                            ) {
-                                                Text(
-                                                    text = res.megapixelsText,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = if (isSelected) HighlightYellow else SecondaryText,
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                                )
-                                            }
-                                        }
-                                        if (res.isMax) {
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = Color(0x4010B981)
-                                            ) {
-                                                Text(
-                                                    text = "MAX",
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Black,
-                                                    color = Color(0xFF34D399),
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    if (cropDetails != null) {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = "${cropDetails.cropDescription} • ${cropDetails.estimatedFileSize}",
-                                            fontSize = 11.sp,
-                                            color = if (isSelected) HighlightYellow.copy(alpha = 0.85f) else SecondaryText
-                                        )
-                                    } else if (res.tag.isNotBlank()) {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = res.tag,
-                                            fontSize = 11.sp,
-                                            color = if (isSelected) HighlightYellow.copy(alpha = 0.85f) else SecondaryText
-                                        )
-                                    }
-                                }
-
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        selectedResolution = res.label
-                                        val updated = if (isPhoto) {
-                                            cameraSettings.copy(
-                                                photoResolution = res.label,
-                                                photoAspectRatio = selectedRatio
-                                            )
-                                        } else {
-                                            cameraSettings.copy(
-                                                videoResolution = res.label,
-                                                videoAspectRatio = selectedRatio
-                                            )
-                                        }
-                                        onUpdateCameraSettings(updated)
-                                        onShowToast("${if (isPhoto) "Photo" else "Video"} resolution: ${res.label}")
-                                    },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = HighlightYellow,
-                                        unselectedColor = Color.White.copy(alpha = 0.4f)
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Bottom Done Action Button
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = HighlightYellow,
-                        contentColor = PrimaryBackground
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("output_settings_done_button")
-                ) {
-                    Text(
-                        text = "Done",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -4117,7 +3540,7 @@ fun CameraQuickSettingsDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Camera Settings", color = dialogColors.titleColor, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
@@ -4237,18 +3660,24 @@ fun CameraQuickSettingsDialog(
                     )
                 }
 
-                // Keep Original Photo
+                // Keep Original Photo (synced between CameraSettings.saveOriginalAndStamped and OverlayConfig.saveOriginalImage)
+                val saveOriginalActive = overlayConfig.saveOriginalImage || cameraSettings.saveOriginalAndStamped
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable {
-                        onUpdateCameraSettings(cameraSettings.copy(saveOriginalAndStamped = !cameraSettings.saveOriginalAndStamped))
+                        val next = !saveOriginalActive
+                        onUpdateCameraSettings(cameraSettings.copy(saveOriginalAndStamped = next))
+                        onUpdateOverlayConfig(overlayConfig.copy(saveOriginalImage = next))
                     },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Save Clean Original Photo", color = dialogColors.textColor, fontSize = 13.sp)
                     Switch(
-                        checked = cameraSettings.saveOriginalAndStamped,
-                        onCheckedChange = { onUpdateCameraSettings(cameraSettings.copy(saveOriginalAndStamped = it)) },
+                        checked = saveOriginalActive,
+                        onCheckedChange = { next ->
+                            onUpdateCameraSettings(cameraSettings.copy(saveOriginalAndStamped = next))
+                            onUpdateOverlayConfig(overlayConfig.copy(saveOriginalImage = next))
+                        },
                         colors = SwitchDefaults.colors(checkedThumbColor = onAccentColor, checkedTrackColor = accentColor)
                     )
                 }

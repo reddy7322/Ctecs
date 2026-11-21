@@ -436,13 +436,15 @@ class PhotoRepository(
                 sourceBitmap
             }
 
-            // 3. Save to local file with full EXIF metadata
+            // 3. Save to local file with user-configured JPEG quality & EXIF metadata preference
             val savedOk = try {
                 OverlayRenderer.saveBitmapWithExif(
                     bitmap = bitmapToSave,
                     destinationFile = localFile,
                     snapshot = snapshot,
-                    context = context
+                    jpegQuality = snapshot.photoJpegQuality,
+                    context = context,
+                    preserveExif = snapshot.preserveExif
                 )
             } finally {
                 if (bitmapToSave !== sourceBitmap && !bitmapToSave.isRecycled) {
@@ -505,7 +507,9 @@ class PhotoRepository(
                         bitmap = sourceBitmap,
                         destinationFile = origLocal,
                         snapshot = snapshot,
-                        context = context
+                        jpegQuality = snapshot.photoJpegQuality,
+                        context = context,
+                        preserveExif = snapshot.preserveExif
                     )
                     if (origSaved) {
                         val resolver = context.contentResolver

@@ -69,7 +69,8 @@ class LandscapeVideoRecordingFixTest {
         initiallyVideoEnabled: Boolean = false,
         initiallyHasCameraInfo: Boolean = true,
         var streamingReady: Boolean = true,
-        var overlayAttachSucceeds: Boolean = true
+        var overlayAttachSucceeds: Boolean = true,
+        var supportsVideoEncoderProfiles: Boolean = true
     ) : VideoCameraAdapter {
         var videoEnabled: Boolean = initiallyVideoEnabled
         var cameraInfoAvailable: Boolean = initiallyHasCameraInfo
@@ -88,6 +89,9 @@ class LandscapeVideoRecordingFixTest {
 
         override val hasCameraInfo: Boolean
             get() = cameraInfoAvailable
+
+        override val hasSupportedVideoEncoderProfiles: Boolean
+            get() = supportsVideoEncoderProfiles
 
         override fun applyQualitySelector(videoResolution: String) {
             applyQualityCount++
@@ -545,5 +549,58 @@ class LandscapeVideoRecordingFixTest {
         )
         val savedVideos = appMoviesDir.listFiles()?.filter { it.extension.equals("mp4", ignoreCase = true) }.orEmpty()
         assertTrue("No fake/demo video should be written to Movies/HighwayCamera", savedVideos.isEmpty())
+    }
+
+    @Test
+    fun `missing hardware EncoderProfiles skips VideoCapture and OverlayEffect without errors and fails recording gracefully`() = runBlocking {
+        val manager = VideoRecordingManager(context, settleDelayFn = {})
+        val overlayManager = RealtimeVideoOverlayManager(
+            context = context,
+            snapshotProvider = { testSnapshot() },
+            rotationProvider = { 90 }
+        )
+        manager.overlayManager = overlayManager
+        val controller = LifecycleCameraController(context)
+        val adapter = FakeVideoCameraAdapter(
+            initiallyVideoEnabled = false,
+            initiallyHasCameraInfo = true,
+            streamingReady = true,
+            supportsVideoEncoderProfiles = false
+        )
+
+        val rebound = manager.ensureVideoPipelineConfigured(
+            adapter = adapter,
+            videoResolution = "1920 x 1080",
+            isFrontCamera = false,
+            enableVideo = true,
+            strictVideoMode = false,
+            overlayManager = overlayManager
+        )
+
+        assertFalse(rebound)
+        assertEquals(0, adapter.applyQualityCount)
+        assertEquals(0, adapter.applyEffectCount)
+        assertEquals(0, adapter.enableVideoCount)
+        assertFalse(manager.lastOverlayEffectAttached)
+
+        var capturedError: Throwable? = null
+        manager.prepareAndStartRecording(
+            controller = controller,
+            videoResolution = "1920 x 1080",
+            isFrontCamera = false,
+            recordAudio = false,
+            initialRotation = 90,
+            onRecordingStarted = {},
+            onEvent = { _, _, _ -> },
+            onError = { capturedError = it },
+            adapterOverride = adapter
+        )
+
+        assertNotNull(capturedError)
+        assertEquals(0, adapter.startRecordingCount)
+        assertEquals(RecordingSessionState.IDLE, manager.sessionState.value)
+
+        manager.release()
+        overlayManager.release()
     }
 }

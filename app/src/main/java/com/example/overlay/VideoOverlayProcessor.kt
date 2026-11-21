@@ -275,7 +275,13 @@ object VideoOverlayProcessor {
 
             val outputMime = MediaFormat.MIMETYPE_VIDEO_AVC
 
-            val bitRate = (videoWidth * videoHeight * 3.0f).toInt().coerceIn(1_500_000, 8_000_000)
+            val bitRate = com.example.camera.CameraQualityEngine.resolveEffectiveVideoBitrate(
+                videoWidth = videoWidth,
+                videoHeight = videoHeight,
+                fps = safeFps,
+                qualityPreset = defaultSnapshot.videoQualityPreset,
+                sizeOptimizationEnabled = defaultSnapshot.videoOutputSizeOptimization
+            )
 
             encoder = MediaCodec.createEncoderByType(outputMime)
             val colorFormat = selectSupportedColorFormat(encoder.codecInfo, outputMime)

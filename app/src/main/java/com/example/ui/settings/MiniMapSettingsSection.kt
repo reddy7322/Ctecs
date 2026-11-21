@@ -312,13 +312,13 @@ fun MiniMapSettingsSection(
                                 )
                                 IconButton(
                                     onClick = { previewLandscape = !previewLandscape },
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.RotateRight,
                                         contentDescription = "Toggle Preview Orientation",
                                         tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }

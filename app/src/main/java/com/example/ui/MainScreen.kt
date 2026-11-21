@@ -169,7 +169,7 @@ fun MainScreen(
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY) {
+            if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY && currentTab != AppTab.WEATHER) {
                 val c = com.example.ui.theme.CtecsTheme.colors
                 val selectedPillBg = c.accent.copy(alpha = if (c.isDark) 0.16f else 0.12f)
                 val selectedIconColor = c.accent
@@ -274,7 +274,8 @@ fun MainScreen(
                         viewModel.setTab(AppTab.HIGHWAY_TOOLS)
                     },
                     onNavigateToNotes = { viewModel.setTab(AppTab.SMART_NOTES) },
-                    onNavigateToSurvey = { viewModel.setTab(AppTab.SURVEY) }
+                    onNavigateToSurvey = { viewModel.setTab(AppTab.SURVEY) },
+                    onNavigateToWeather = { viewModel.setTab(AppTab.WEATHER) }
                 )
                 AppTab.CAMERA -> CameraScreen(
                     viewModel = viewModel,
@@ -304,6 +305,43 @@ fun MainScreen(
                     viewModel = viewModel,
                     onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )
+                AppTab.WEATHER -> {
+                    val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
+                    val forecastBundle by viewModel.weatherForecastBundle.collectAsStateWithLifecycle()
+                    val locName by viewModel.currentLocationName.collectAsStateWithLifecycle()
+                    val camSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
+                    val weatherIntelSettings by viewModel.weatherIntelligenceSettings.collectAsStateWithLifecycle()
+                    val assessments by viewModel.highwayWorkAssessments.collectAsStateWithLifecycle()
+                    val selectedActivity by viewModel.selectedWeatherWorkActivity.collectAsStateWithLifecycle()
+                    val hourlyTimeline by viewModel.hourlyWorkSuitabilityTimeline.collectAsStateWithLifecycle()
+                    val siteMeasurements by viewModel.actualSiteMeasurements.collectAsStateWithLifecycle()
+                    val workTargetInput by viewModel.workTargetInput.collectAsStateWithLifecycle()
+                    val workTargetPrediction by viewModel.workTargetPrediction.collectAsStateWithLifecycle()
+                    val delayRiskSummary by viewModel.weatherDelayRiskSummary.collectAsStateWithLifecycle()
+                    val actionableAlerts by viewModel.actionableWeatherAlerts.collectAsStateWithLifecycle()
+
+                    com.example.ui.weather.WeatherDashboardScreen(
+                        weatherUiState = weatherUiState,
+                        forecastBundle = forecastBundle,
+                        resolvedLocationName = locName,
+                        is24HourFormat = camSettings.is24HourFormat,
+                        settings = weatherIntelSettings,
+                        assessments = assessments,
+                        selectedActivity = selectedActivity,
+                        hourlyWorkTimeline = hourlyTimeline,
+                        siteMeasurements = siteMeasurements,
+                        workTargetInput = workTargetInput,
+                        workTargetPrediction = workTargetPrediction,
+                        delayRiskSummary = delayRiskSummary,
+                        actionableAlerts = actionableAlerts,
+                        onSelectActivity = { viewModel.selectWeatherWorkActivity(it) },
+                        onUpdateContractSpec = { viewModel.updateContractSpecificationConfig(it) },
+                        onUpdateSiteMeasurements = { viewModel.updateActualSiteMeasurements(it) },
+                        onUpdateWorkTargetInput = { viewModel.updateWorkTargetInput(it) },
+                        onRefreshWeather = { viewModel.refreshWeather(force = true) },
+                        onNavigateBack = { viewModel.setTab(AppTab.HOME) }
+                    )
+                }
                 AppTab.SETTINGS -> SettingsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { viewModel.setTab(AppTab.HOME) }

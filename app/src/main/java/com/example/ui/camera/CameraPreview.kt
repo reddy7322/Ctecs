@@ -149,6 +149,15 @@ fun CameraPreview(
     autoBrightnessEnabled: Boolean = true,
     manualPreviewBrightness: Float = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
     targetVideoFps: Int = 30,
+    photoQualityPreset: com.example.model.OutputQualityPreset = com.example.model.OutputQualityPreset.HIGH,
+    videoStabilizationMode: com.example.model.VideoStabilizationMode = com.example.model.VideoStabilizationMode.AUTO,
+    autofocusMode: com.example.model.CameraAutofocusMode = com.example.model.CameraAutofocusMode.CONTINUOUS,
+    photoEnhancementEnabled: Boolean = true,
+    videoNoiseReductionEnabled: Boolean = true,
+    touchToCapture: Boolean = false,
+    easyToggleCameras: Boolean = true,
+    useStandaloneUltraWide: Boolean = false,
+    standaloneUltraWideCameraId: String? = null,
     controller: LifecycleCameraController,
     currentSnapshotProvider: () -> CaptureSnapshot? = { null },
     overlayManager: com.example.overlay.RealtimeVideoOverlayManager? = null,
@@ -158,6 +167,9 @@ fun CameraPreview(
     onAutoBrightnessChanged: ((Boolean) -> Unit)? = null,
     onManualBrightnessChanged: ((Float) -> Unit)? = null,
     onCaptureExposureTelemetry: ((Float, Float, Boolean) -> Unit)? = null,
+    onTouchToCapture: (() -> Unit)? = null,
+    onDoubleTapSwitchCamera: (() -> Unit)? = null,
+    onZoomCapabilitiesChanged: ((com.example.camera.CameraLensZoomCapabilities) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -166,11 +178,20 @@ fun CameraPreview(
     val latestOnAutoBrightnessChanged by rememberUpdatedState(onAutoBrightnessChanged)
     val latestOnManualBrightnessChanged by rememberUpdatedState(onManualBrightnessChanged)
     val latestOnCaptureExposureTelemetry by rememberUpdatedState(onCaptureExposureTelemetry)
+    val latestOnTouchToCapture by rememberUpdatedState(onTouchToCapture)
+    val latestOnDoubleTapSwitchCamera by rememberUpdatedState(onDoubleTapSwitchCamera)
+    val latestOnZoomCapabilitiesChanged by rememberUpdatedState(onZoomCapabilitiesChanged)
     val latestZoomRatio by rememberUpdatedState(zoomRatio)
+    val latestTouchToCapture by rememberUpdatedState(touchToCapture)
+    val latestEasyToggleCameras by rememberUpdatedState(easyToggleCameras)
+    val latestIsVideoMode by rememberUpdatedState(isVideoMode)
+    val latestIsVideoRecording by rememberUpdatedState(isVideoRecording)
 
     // Camera Hardware Zoom Range State
     var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
     var maxZoomRatio by remember { mutableFloatStateOf(10.0f) }
+    var zoomCapabilities by remember { mutableStateOf(com.example.camera.CameraLensZoomCapabilities()) }
+    var lastTapTimeMs by remember { mutableStateOf(0L) }
 
     DisposableEffect(controller, lifecycleOwner) {
         val observer = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { state ->
@@ -398,12 +419,17 @@ fun CameraPreview(
     // Unified CameraX Pipeline Configuration (Camera Selector + QualitySelector + OverlayEffect + UseCases).
     // Running sequentially in a single LaunchedEffect eliminates mid-start rebinds between separate effects.
     // Never mutates CameraX use cases/effects while a recording session is preparing or active.
+    var lastAppliedStandaloneUltraWide by remember { mutableStateOf(false) }
+
     LaunchedEffect(
         hasCameraPermission,
         isVideoMode,
         isLandscape,
         isFrontCamera,
+        useStandaloneUltraWide,
+        standaloneUltraWideCameraId,
         videoResolution,
+        photoQualityPreset,
         overlayManager,
         videoManager,
         lifecycleResumeVersion
@@ -414,6 +440,12 @@ fun CameraPreview(
         try {
             controller.isPinchToZoomEnabled = false
             controller.isTapToFocusEnabled = false
+            try {
+                val desiredCaptureMode = com.example.camera.CameraQualityEngine.resolveImageCaptureMode(photoQualityPreset)
+                if (controller.imageCaptureMode != desiredCaptureMode) {
+                    controller.imageCaptureMode = desiredCaptureMode
+                }
+            } catch (ignored: Throwable) {}
 
             val adapter = LifecycleCameraControllerVideoAdapter(
                 controller = controller,
@@ -425,13 +457,14 @@ fun CameraPreview(
             adapter.awaitCameraInitialization(4000L)
             if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
 
-            // Configure Camera Selector safely if facing changed
-            val targetSelector = if (isFrontCamera) {
-                CameraSelector.DEFAULT_FRONT_CAMERA
-            } else {
-                CameraSelector.DEFAULT_BACK_CAMERA
-            }
-            val desiredFront = if (controller.hasCamera(targetSelector)) {
+            // Configure Camera Selector safely (supports seamless standalone physical ultra-wide lens when needed)
+            val requestedStandalone = !isFrontCamera && useStandaloneUltraWide && !standaloneUltraWideCameraId.isNullOrBlank()
+            val candidateSelector = com.example.camera.CameraUltraWideZoomManager.buildCameraSelector(
+                isFrontCamera = isFrontCamera,
+                useStandaloneUltraWide = requestedStandalone,
+                standaloneUltraWideCameraId = standaloneUltraWideCameraId
+            )
+            val desiredFront = if (controller.hasCamera(candidateSelector)) {
                 isFrontCamera
             } else if (controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
                 false
@@ -440,14 +473,28 @@ fun CameraPreview(
             } else {
                 isFrontCamera
             }
-            val effectiveSelector = if (desiredFront) {
+            val effectiveStandalone = !desiredFront && requestedStandalone && controller.hasCamera(candidateSelector)
+            val effectiveSelector = if (effectiveStandalone) {
+                candidateSelector
+            } else if (desiredFront) {
                 CameraSelector.DEFAULT_FRONT_CAMERA
             } else {
                 CameraSelector.DEFAULT_BACK_CAMERA
             }
-            if (videoManager == null || videoManager.appliedPipelineKey?.isFrontCamera != desiredFront) {
+            val selectorAlreadyMatches = !effectiveStandalone &&
+                !lastAppliedStandaloneUltraWide &&
+                ((desiredFront && controller.cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA) ||
+                    (!desiredFront && controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA))
+            val needsLensRebind = !selectorAlreadyMatches && (
+                videoManager == null ||
+                    videoManager.appliedPipelineKey?.isFrontCamera != desiredFront ||
+                    lastAppliedStandaloneUltraWide != effectiveStandalone ||
+                    controller.cameraSelector != effectiveSelector
+                )
+            if (needsLensRebind) {
                 try {
                     controller.cameraSelector = effectiveSelector
+                    lastAppliedStandaloneUltraWide = effectiveStandalone
                     videoManager?.invalidatePipelineConfig()
                     adapter.awaitCameraInitialization(3000L)
                 } catch (e: Exception) {
@@ -458,7 +505,7 @@ fun CameraPreview(
             if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
 
             // In Landscape mode both Photo and Video triggers are immediately accessible without a mode toggle,
-            // so pre-warm VIDEO_CAPTURE + OverlayEffect + QualitySelector right away.
+            // so pre-warm VIDEO_CAPTURE + OverlayEffect + QualitySelector right away when hardware supports video.
             // In Portrait mode keep strict Photo/Video mode separation (enable video pipeline only when isVideoMode).
             val shouldEnableVideoPipeline = isVideoMode || isLandscape
             if (videoManager != null) {
@@ -470,7 +517,7 @@ fun CameraPreview(
                     strictVideoMode = isVideoMode,
                     overlayManager = overlayManager
                 )
-            } else if (shouldEnableVideoPipeline) {
+            } else if (shouldEnableVideoPipeline && hasSupportedHardwareVideoProfiles(controller.cameraInfo)) {
                 val safeSelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
                 if (safeSelector != null) {
                     controller.videoCaptureQualitySelector = safeSelector
@@ -495,16 +542,18 @@ fun CameraPreview(
                     }
                 }
             } else {
-                try { controller.clearEffects() } catch (ignored: Exception) {}
-                try { controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE) } catch (ignored: Exception) {}
+                if (controller.isVideoCaptureEnabled || !controller.isImageCaptureEnabled) {
+                    try { controller.clearEffects() } catch (ignored: Exception) {}
+                    try { controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE) } catch (ignored: Exception) {}
+                }
             }
         } catch (e: Exception) {
             Log.w("CameraPreview", "Unified camera pipeline configuration notice: ${e.message}", e)
         }
     }
 
-    // Query real hardware exposure limits (EV range, step, ISO, shutter) whenever lens/lifecycle initializes
-    LaunchedEffect(hasCameraPermission, isFrontCamera, lifecycleResumeVersion) {
+    // Query real hardware exposure limits (EV range, step, ISO, shutter) & Ultra-Wide Zoom capabilities
+    LaunchedEffect(hasCameraPermission, isFrontCamera, useStandaloneUltraWide, lifecycleResumeVersion) {
         if (!hasCameraPermission) return@LaunchedEffect
         val caps = CameraBrightnessEngine.queryCaptureExposureCapabilities(
             context = context,
@@ -512,7 +561,18 @@ fun CameraPreview(
             isFrontCamera = isFrontCamera
         )
         captureExposureState = exposureController.updateCapabilities(caps)
-        // Re-query shortly after CameraX finishes async lens bind so live ExposureState is picked up
+
+        val initialZoomCaps = com.example.camera.CameraUltraWideZoomManager.detectCapabilities(
+            context = context,
+            cameraInfo = controller.cameraInfo,
+            isFrontCamera = isFrontCamera,
+            fallbackMinZoom = minZoomRatio,
+            fallbackMaxZoom = maxZoomRatio
+        )
+        zoomCapabilities = initialZoomCaps
+        latestOnZoomCapabilitiesChanged?.invoke(initialZoomCaps)
+
+        // Re-query shortly after CameraX finishes async lens bind so live ZoomState & ExposureState are picked up
         delay(450L)
         val boundCaps = CameraBrightnessEngine.queryCaptureExposureCapabilities(
             context = context,
@@ -520,6 +580,50 @@ fun CameraPreview(
             isFrontCamera = isFrontCamera
         )
         captureExposureState = exposureController.updateCapabilities(boundCaps)
+
+        val boundZoomCaps = com.example.camera.CameraUltraWideZoomManager.detectCapabilities(
+            context = context,
+            cameraInfo = controller.cameraInfo,
+            isFrontCamera = isFrontCamera,
+            fallbackMinZoom = minZoomRatio,
+            fallbackMaxZoom = maxZoomRatio
+        )
+        zoomCapabilities = boundZoomCaps
+        latestOnZoomCapabilitiesChanged?.invoke(boundZoomCaps)
+    }
+
+    // Apply Camera2 hardware quality tuning (Continuous AF, Hardware NR, Edge, OIS/EIS Stabilization, Target FPS)
+    // non-destructively without restarting the camera session or interrupting active overlays.
+    LaunchedEffect(
+        hasCameraPermission,
+        isFrontCamera,
+        useStandaloneUltraWide,
+        isVideoMode,
+        targetVideoFps,
+        videoStabilizationMode,
+        autofocusMode,
+        photoEnhancementEnabled,
+        videoNoiseReductionEnabled,
+        lifecycleResumeVersion
+    ) {
+        if (!hasCameraPermission) return@LaunchedEffect
+        delay(250L)
+        try {
+            val hwCaps = com.example.camera.CameraQualityEngine.queryHardwareCapabilities(
+                context = context,
+                isFrontCamera = isFrontCamera
+            )
+            com.example.camera.CameraQualityEngine.applyCamera2Tuning(
+                cameraControl = controller.cameraControl,
+                capabilities = hwCaps,
+                isVideoMode = isVideoMode,
+                targetVideoFps = targetVideoFps,
+                stabilizationMode = videoStabilizationMode,
+                autofocusMode = autofocusMode,
+                photoEnhancementEnabled = photoEnhancementEnabled,
+                videoNoiseReductionEnabled = videoNoiseReductionEnabled
+            )
+        } catch (ignored: Throwable) {}
     }
 
     LaunchedEffect(isFlashOn) {
@@ -528,9 +632,15 @@ fun CameraPreview(
         } catch (ignored: Exception) {}
     }
 
-    LaunchedEffect(zoomRatio, minZoomRatio, maxZoomRatio) {
+    LaunchedEffect(zoomRatio, minZoomRatio, maxZoomRatio, useStandaloneUltraWide) {
         try {
-            controller.setZoomRatio(zoomRatio.coerceIn(minZoomRatio, maxZoomRatio))
+            // When bound to a standalone physical ultra-wide camera, its native wide field of view is at ratio 1.0x
+            val targetHardwareZoom = if (useStandaloneUltraWide && zoomRatio < 1.0f) {
+                1.0f.coerceIn(minZoomRatio, maxZoomRatio)
+            } else {
+                zoomRatio.coerceIn(minZoomRatio, maxZoomRatio)
+            }
+            controller.setZoomRatio(targetHardwareZoom)
         } catch (ignored: Exception) {}
     }
 
@@ -619,7 +729,9 @@ fun CameraPreview(
                 } else {
                     android.util.Size(minDim, maxDim)
                 }
-                controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(targetSize)
+                if (controller.imageCaptureTargetSize?.resolution != targetSize) {
+                    controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(targetSize)
+                }
             }
         } catch (e: Exception) {
             Log.w("CameraPreview", "Setting photo resolution error", e)
@@ -651,7 +763,9 @@ fun CameraPreview(
                         }
                     },
                     update = { pv ->
-                        pv.scaleType = PreviewView.ScaleType.FILL_CENTER
+                        if (pv.scaleType != PreviewView.ScaleType.FILL_CENTER) {
+                            pv.scaleType = PreviewView.ScaleType.FILL_CENTER
+                        }
                         previewViewInstance = pv
                         videoManager?.attachPreviewView(pv)
                     },
@@ -700,7 +814,9 @@ fun CameraPreview(
 
                                         if (previousSpan > 0f && currentSpan > 0f) {
                                             val scaleFactor = currentSpan / previousSpan
-                                            val targetZoom = (activeZoom * scaleFactor).coerceIn(minZoomRatio, maxZoomRatio)
+                                            val pinchMinZoom = zoomCapabilities.effectiveMinZoomRatio
+                                            val pinchMaxZoom = maxOf(maxZoomRatio, zoomCapabilities.maxZoomRatio)
+                                            val targetZoom = (activeZoom * scaleFactor).coerceIn(pinchMinZoom, pinchMaxZoom)
                                             if (kotlin.math.abs(targetZoom - activeZoom) > 0.005f) {
                                                 activeZoom = targetZoom
                                                 onZoomChanged?.invoke(targetZoom)
@@ -738,8 +854,25 @@ fun CameraPreview(
                                     if (pressedPointers.isEmpty()) {
                                         // All fingers lifted
                                         if (!isDraggingDisplayBrightness && !hasMovedPastSlop && !isPinchActive) {
-                                            // Tap detected! Focus at exact touched position
-                                            triggerTouchToFocus(startPos, constraints.maxWidth, constraints.maxHeight)
+                                            val nowTap = android.os.SystemClock.elapsedRealtime()
+                                            val isDoubleTap = (nowTap - lastTapTimeMs) in 50L..340L
+                                            lastTapTimeMs = nowTap
+
+                                            if (!latestTouchToCapture &&
+                                                latestEasyToggleCameras &&
+                                                !latestIsVideoRecording &&
+                                                isDoubleTap &&
+                                                latestOnDoubleTapSwitchCamera != null
+                                            ) {
+                                                lastTapTimeMs = 0L
+                                                latestOnDoubleTapSwitchCamera?.invoke()
+                                            } else {
+                                                // Tap detected! Focus at exact touched position
+                                                triggerTouchToFocus(startPos, constraints.maxWidth, constraints.maxHeight)
+                                                if (!latestIsVideoMode && latestTouchToCapture) {
+                                                    latestOnTouchToCapture?.invoke()
+                                                }
+                                            }
                                         } else if (isDraggingDisplayBrightness) {
                                             isDraggingBrightness = false
                                             persistCurrentCaptureExposure()
@@ -1195,9 +1328,20 @@ fun capturePhoto(
     deviceRotationDegrees: Int = 0,
     isLandscape: Boolean = false,
     photoAspectRatio: String = "4:3",
+    isFrontCamera: Boolean = false,
+    frontCameraMirror: Boolean = false,
+    playShutterSound: Boolean = false,
     onSuccess: (Bitmap) -> Unit,
     onError: (Throwable) -> Unit
 ) {
+    if (playShutterSound) {
+        try {
+            android.media.MediaActionSound().apply {
+                play(android.media.MediaActionSound.SHUTTER_CLICK)
+            }
+        } catch (ignored: Throwable) {}
+    }
+
     val executor = ContextCompat.getMainExecutor(context)
     controller.takePicture(
         executor,
@@ -1227,8 +1371,29 @@ fun capturePhoto(
                         deviceRotationDegrees = deviceRotationDegrees
                     )
 
+                    val orientedBitmap = if (isFrontCamera && frontCameraMirror) {
+                        val mirrorMatrix = Matrix().apply {
+                            postScale(-1f, 1f, normalizedBitmap.width / 2f, normalizedBitmap.height / 2f)
+                        }
+                        val mirrored = Bitmap.createBitmap(
+                            normalizedBitmap,
+                            0,
+                            0,
+                            normalizedBitmap.width,
+                            normalizedBitmap.height,
+                            mirrorMatrix,
+                            true
+                        )
+                        if (mirrored !== normalizedBitmap && !normalizedBitmap.isRecycled) {
+                            normalizedBitmap.recycle()
+                        }
+                        mirrored
+                    } else {
+                        normalizedBitmap
+                    }
+
                     val finalBitmap = applyPhotoAspectRatio(
-                        bitmap = normalizedBitmap,
+                        bitmap = orientedBitmap,
                         aspectRatioStr = photoAspectRatio,
                         isLandscape = isLandscape
                     )
@@ -1249,6 +1414,61 @@ fun capturePhoto(
 }
 
 /**
+ * Silently checks whether the bound camera sensor exposes at least one hardware
+ * CamcorderProfile / EncoderProfiles entry before querying CameraX [QualitySelector]
+ * or binding [LifecycleCameraController.VIDEO_CAPTURE].
+ *
+ * Prevents CameraX's internal `CapabilitiesByQuality` from logging repeated
+ * `No supported EncoderProfiles` errors on emulators or virtual camera HALs.
+ */
+@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+fun hasSupportedHardwareVideoProfiles(cameraInfo: androidx.camera.core.CameraInfo?): Boolean {
+    if (cameraInfo == null) return false
+    val cameraId = try {
+        androidx.camera.camera2.interop.Camera2CameraInfo.from(cameraInfo).cameraId
+    } catch (_: Throwable) {
+        return true
+    }
+
+    val qualities = intArrayOf(
+        CamcorderProfile.QUALITY_HIGH,
+        CamcorderProfile.QUALITY_1080P,
+        CamcorderProfile.QUALITY_720P,
+        CamcorderProfile.QUALITY_480P,
+        CamcorderProfile.QUALITY_2160P,
+        CamcorderProfile.QUALITY_LOW
+    )
+
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        for (q in qualities) {
+            try {
+                val profiles = CamcorderProfile.getAll(cameraId, q)
+                if (profiles != null && profiles.videoProfiles.isNotEmpty()) {
+                    return true
+                }
+            } catch (_: Throwable) {
+                // Probe remaining profiles silently
+            }
+        }
+    }
+
+    val numericId = cameraId.toIntOrNull()
+    if (numericId != null) {
+        for (q in qualities) {
+            try {
+                if (CamcorderProfile.hasProfile(numericId, q)) {
+                    return true
+                }
+            } catch (_: Throwable) {
+                // Probe remaining profiles silently
+            }
+        }
+    }
+
+    return false
+}
+
+/**
  * Safely constructs a QualitySelector with ordered fallback to prevent
  * "No supported EncoderProfiles" errors on emulators and unsupported devices.
  */
@@ -1256,6 +1476,10 @@ fun buildSafeQualitySelector(
     videoResolution: String = "1920 x 1080",
     cameraInfo: androidx.camera.core.CameraInfo? = null
 ): androidx.camera.video.QualitySelector? {
+    if (!hasSupportedHardwareVideoProfiles(cameraInfo)) {
+        return null
+    }
+
     val supported = if (cameraInfo != null) {
         try {
             androidx.camera.video.QualitySelector.getSupportedQualities(cameraInfo)
@@ -1380,6 +1604,8 @@ fun isFinalizedRecordingValid(
 interface VideoCameraAdapter {
     val isVideoCaptureEnabled: Boolean
     val hasCameraInfo: Boolean
+    val hasSupportedVideoEncoderProfiles: Boolean
+        get() = true
     fun applyQualitySelector(videoResolution: String)
     fun applyOverlayEffect(effect: androidx.camera.core.CameraEffect?): Boolean
     fun clearEffects()
@@ -1405,6 +1631,11 @@ class LifecycleCameraControllerVideoAdapter(
 
     override val hasCameraInfo: Boolean
         get() = try { controller.cameraInfo != null } catch (ignored: Exception) { false }
+
+    override val hasSupportedVideoEncoderProfiles: Boolean
+        get() = hasSupportedHardwareVideoProfiles(
+            try { controller.cameraInfo } catch (ignored: Exception) { null }
+        )
 
     override fun applyQualitySelector(videoResolution: String) {
         try {
@@ -1451,7 +1682,9 @@ class LifecycleCameraControllerVideoAdapter(
 
     override fun enablePhotoOnlyUseCase() {
         try {
-            controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+            if (controller.isVideoCaptureEnabled || !controller.isImageCaptureEnabled) {
+                controller.setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+            }
         } catch (ignored: Exception) {}
     }
 
@@ -1596,6 +1829,23 @@ class VideoRecordingManager(
     ): Boolean {
         adapter.awaitCameraInitialization(4000L)
 
+        // Do not bind VIDEO_CAPTURE or create an OpenGL OverlayEffect when the active camera HAL
+        // exposes no hardware EncoderProfiles (avoids CapabilitiesByQuality & EGL_emulation errors).
+        if (enableVideo && !adapter.hasSupportedVideoEncoderProfiles) {
+            if (adapter.isVideoCaptureEnabled) {
+                adapter.clearEffects()
+                adapter.enablePhotoOnlyUseCase()
+            }
+            lastOverlayEffectAttached = false
+            appliedPipelineKey = VideoPipelineConfigKey(
+                videoEnabled = false,
+                videoResolution = "",
+                isFrontCamera = isFrontCamera,
+                overlayEffectIdentity = 0
+            )
+            return false
+        }
+
         val effect = if (enableVideo) overlayManager?.getOrCreateEffect() else null
         val targetKey = VideoPipelineConfigKey(
             videoEnabled = enableVideo,
@@ -1685,6 +1935,13 @@ class VideoRecordingManager(
 
             if (cancelPrepareRequested) {
                 _sessionState.value = RecordingSessionState.IDLE
+                return
+            }
+
+            if (!adapter.hasSupportedVideoEncoderProfiles) {
+                Log.w("VideoRecordingManager", "Camera reports no supported video EncoderProfiles")
+                _sessionState.value = RecordingSessionState.IDLE
+                onError(IllegalStateException("Video recording is not supported on this camera (no supported encoder profiles)."))
                 return
             }
 

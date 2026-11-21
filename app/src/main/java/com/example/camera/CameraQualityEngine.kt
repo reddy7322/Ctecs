@@ -280,7 +280,9 @@ object CameraQualityEngine {
         isVideoMode: Boolean,
         targetVideoFps: Int,
         stabilizationMode: VideoStabilizationMode,
-        autofocusMode: CameraAutofocusMode
+        autofocusMode: CameraAutofocusMode,
+        photoEnhancementEnabled: Boolean = true,
+        videoNoiseReductionEnabled: Boolean = true
     ) {
         if (cameraControl == null) return
         try {
@@ -302,22 +304,24 @@ object CameraQualityEngine {
                 builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
             }
 
-            // 2. Hardware Noise Reduction (high quality for photos & 30fps; fast for 60fps to prevent frame drops)
+            // 2. Hardware Noise Reduction (respects user Photo Enhancement / Video Noise Reduction toggles)
             if (capabilities.supportsHighQualityNoiseReduction) {
-                val nrMode = if (isVideoMode && targetVideoFps >= 60) {
-                    CameraMetadata.NOISE_REDUCTION_MODE_FAST
-                } else {
-                    CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                val nrEnabled = if (isVideoMode) videoNoiseReductionEnabled else photoEnhancementEnabled
+                val nrMode = when {
+                    !nrEnabled -> CameraMetadata.NOISE_REDUCTION_MODE_OFF
+                    isVideoMode && targetVideoFps >= 60 -> CameraMetadata.NOISE_REDUCTION_MODE_FAST
+                    else -> CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
                 }
                 builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, nrMode)
             }
 
             // 3. Hardware Edge Preservation (natural clarity without oversharpening)
             if (capabilities.supportsHighQualityEdge) {
-                val edgeMode = if (isVideoMode && targetVideoFps >= 60) {
-                    CameraMetadata.EDGE_MODE_FAST
-                } else {
-                    CameraMetadata.EDGE_MODE_HIGH_QUALITY
+                val edgeEnabled = if (isVideoMode) videoNoiseReductionEnabled else photoEnhancementEnabled
+                val edgeMode = when {
+                    !edgeEnabled -> CameraMetadata.EDGE_MODE_OFF
+                    isVideoMode && targetVideoFps >= 60 -> CameraMetadata.EDGE_MODE_FAST
+                    else -> CameraMetadata.EDGE_MODE_HIGH_QUALITY
                 }
                 builder.setCaptureRequestOption(CaptureRequest.EDGE_MODE, edgeMode)
             }
@@ -470,14 +474,63 @@ object CameraQualityEngine {
      *
      * Always safe under low memory: returns the original bitmap cleanly if allocation fails.
      */
+    /**
+     * Resolves the effective JPEG compression quality (70..98) from the user's selected
+     * [OutputQualityPreset] and [CameraSettings.photoOutputSizeOptimization] toggle.
+     * - When Output Size Optimization is ON: uses the preset's balanced compression level
+     *   (and caps resolution cleanly per preset) to keep files compact while visually crisp.
+     * - When Output Size Optimization is OFF: raises JPEG fidelity by +4 (up to 98) and
+     *   preserves full native resolution without downscaling.
+     */
+    fun resolveEffectivePhotoJpegQuality(cameraSettings: com.example.model.CameraSettings): Int {
+        val baseQuality = cameraSettings.photoQualityPreset.photoJpegQuality
+        val adjusted = if (cameraSettings.photoOutputSizeOptimization) {
+            baseQuality
+        } else {
+            (baseQuality + 4).coerceAtMost(98)
+        }
+        return adjusted.coerceIn(70, 98)
+    }
+
+    /**
+     * Resolves the effective AVC/H.264 target video bitrate (bps) for post-processed stamped
+     * video output using resolution, FPS, [OutputQualityPreset], and [sizeOptimizationEnabled].
+     */
+    fun resolveEffectiveVideoBitrate(
+        videoWidth: Int,
+        videoHeight: Int,
+        fps: Int,
+        qualityPreset: OutputQualityPreset,
+        sizeOptimizationEnabled: Boolean
+    ): Int {
+        val pixels = (videoWidth.coerceAtLeast(320).toLong() * videoHeight.coerceAtLeast(240).toLong())
+        val baseBitsPerPixel = if (fps >= 60) 4.2 else 3.0
+        val presetFactor = qualityPreset.videoBitrateMultiplier.toDouble()
+        val optFactor = if (sizeOptimizationEnabled) 0.78 else 1.0
+        val raw = (pixels * baseBitsPerPixel * presetFactor * optFactor).toLong()
+        return raw.coerceIn(1_200_000L, 18_000_000L).toInt()
+    }
+
     fun enhanceCapturedPhoto(
         source: Bitmap,
-        qualityPreset: OutputQualityPreset
+        qualityPreset: OutputQualityPreset,
+        enhancementEnabled: Boolean = true,
+        sizeOptimizationEnabled: Boolean = true
     ): Bitmap {
         if (source.isRecycled || source.width <= 4 || source.height <= 4) return source
         return try {
-            // 1. Apply quality preset resolution cap (preserve 100% native resolution on MAXIMUM)
-            val working = scaleBitmapForQualityPreset(source, qualityPreset)
+            // 1. Apply quality preset resolution cap only when output size optimization is enabled
+            // (MAXIMUM always keeps 100% native resolution).
+            val working = if (sizeOptimizationEnabled) {
+                scaleBitmapForQualityPreset(source, qualityPreset)
+            } else {
+                source
+            }
+
+            // If user turned off Photo Enhancement / Noise Reduction, return resolution-matched bitmap directly
+            if (!enhancementEnabled) {
+                return working
+            }
 
             // 2. Fast photometric & noise analysis
             val metrics = analyzeScene(working)

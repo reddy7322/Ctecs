@@ -676,7 +676,8 @@ object OverlayRenderer {
         destinationFile: File,
         snapshot: CaptureSnapshot,
         jpegQuality: Int = 95,
-        context: Context? = null
+        context: Context? = null,
+        preserveExif: Boolean = true
     ): Boolean {
         destinationFile.parentFile?.mkdirs()
         val tempFile = try {
@@ -695,78 +696,81 @@ object OverlayRenderer {
 
         try {
             FileOutputStream(tempFile).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, out)
+                bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(50, 100), out)
                 out.flush()
             }
 
-            // Write EXIF tags
+            // Write EXIF tags (or only upright orientation when user disabled EXIF metadata)
             try {
                 val exif = ExifInterface(tempFile.absolutePath)
-                val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
-                val dateStr = sdf.format(Date(snapshot.timestamp))
-                exif.setAttribute(ExifInterface.TAG_DATETIME, dateStr)
-                exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateStr)
-                exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, dateStr)
-
-                val loc = snapshot.location
-                if (loc != null) {
-                    setGpsExif(exif, loc)
-                }
-
                 // Orientation metadata: since the bitmap itself is already upright, tag as NORMAL
                 exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-                exif.setAttribute(ExifInterface.TAG_MAKE, android.os.Build.MANUFACTURER)
-                exif.setAttribute(ExifInterface.TAG_MODEL, android.os.Build.MODEL)
-                exif.setAttribute(ExifInterface.TAG_SOFTWARE, "Highway Timestamp Camera Pro")
 
-                if (snapshot.compassAzimuth > 0f) {
-                    exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, "${snapshot.compassAzimuth.toInt()}/1")
-                    exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "M")
-                }
+                if (preserveExif) {
+                    val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
+                    val dateStr = sdf.format(Date(snapshot.timestamp))
+                    exif.setAttribute(ExifInterface.TAG_DATETIME, dateStr)
+                    exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateStr)
+                    exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, dateStr)
 
-                val (exifSide, useExifSide) = OverlayTextGenerator.resolveAuthoritativeCaptureSide(snapshot)
-                val resolvedExifSide = if (useExifSide) exifSide else snapshot.projectProfile.roadSide.label
-
-                val locName = snapshot.locationName
-                    .ifBlank { snapshot.weatherObservation?.locationName.orEmpty() }
-                    .ifBlank { snapshot.overlayConfig.lastDetectedLocationName }
-                    .trim()
-                val weather = snapshot.weatherObservation
-                val weatherSummary = weather?.let { w ->
-                    val obsTimeStr = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date(w.observedAtMs))
-                    "Weather: ${w.formatTemperature()} ${w.conditionLabel}, Humidity: ${w.formatHumidity()}, Wind: ${w.formatWindSpeed()} ${w.windDirectionCompass} (${w.source} @ $obsTimeStr)"
-                }
-
-                if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true) || weatherSummary != null) {
-                    val descParts = mutableListOf<String>()
-                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
-                        descParts.add(locName)
+                    val loc = snapshot.location
+                    if (loc != null) {
+                        setGpsExif(exif, loc)
                     }
-                    descParts.add("Chainage: ${snapshot.displayChainage}")
-                    resolvedExifSide
-                        ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
-                        ?.let { descParts.add("Side: $it") }
-                    if (snapshot.projectProfile.highwayId.isNotBlank()) {
-                        descParts.add("Project: ${snapshot.projectProfile.highwayId}")
-                    }
-                    if (weatherSummary != null) {
-                        descParts.add(weatherSummary)
-                    }
-                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, descParts.joinToString(" | "))
-                }
 
-                val userComment = listOfNotNull(
-                    snapshot.projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
-                    snapshot.projectProfile.packageSection.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
-                    snapshot.displayChainage.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
-                    resolvedExifSide?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
-                    snapshot.projectProfile.lane.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
-                    snapshot.projectProfile.activity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
-                    snapshot.projectProfile.subActivity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { "($it)" },
-                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) locName else null,
-                    weatherSummary
-                ).joinToString(" | ")
-                exif.setAttribute(ExifInterface.TAG_USER_COMMENT, userComment)
+                    exif.setAttribute(ExifInterface.TAG_MAKE, android.os.Build.MANUFACTURER)
+                    exif.setAttribute(ExifInterface.TAG_MODEL, android.os.Build.MODEL)
+                    exif.setAttribute(ExifInterface.TAG_SOFTWARE, "Highway Timestamp Camera Pro")
+
+                    if (snapshot.compassAzimuth > 0f) {
+                        exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, "${snapshot.compassAzimuth.toInt()}/1")
+                        exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "M")
+                    }
+
+                    val (exifSide, useExifSide) = OverlayTextGenerator.resolveAuthoritativeCaptureSide(snapshot)
+                    val resolvedExifSide = if (useExifSide) exifSide else snapshot.projectProfile.roadSide.label
+
+                    val locName = snapshot.locationName
+                        .ifBlank { snapshot.weatherObservation?.locationName.orEmpty() }
+                        .ifBlank { snapshot.overlayConfig.lastDetectedLocationName }
+                        .trim()
+                    val weather = snapshot.weatherObservation
+                    val weatherSummary = weather?.let { w ->
+                        val obsTimeStr = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date(w.observedAtMs))
+                        "Weather: ${w.formatTemperature()} ${w.conditionLabel}, Humidity: ${w.formatHumidity()}, Wind: ${w.formatWindSpeed()} ${w.windDirectionCompass} (${w.source} @ $obsTimeStr)"
+                    }
+
+                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true) || weatherSummary != null) {
+                        val descParts = mutableListOf<String>()
+                        if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
+                            descParts.add(locName)
+                        }
+                        descParts.add("Chainage: ${snapshot.displayChainage}")
+                        resolvedExifSide
+                            ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
+                            ?.let { descParts.add("Side: $it") }
+                        if (snapshot.projectProfile.highwayId.isNotBlank()) {
+                            descParts.add("Project: ${snapshot.projectProfile.highwayId}")
+                        }
+                        if (weatherSummary != null) {
+                            descParts.add(weatherSummary)
+                        }
+                        exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, descParts.joinToString(" | "))
+                    }
+
+                    val userComment = listOfNotNull(
+                        snapshot.projectProfile.highwayId.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                        snapshot.projectProfile.packageSection.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                        snapshot.displayChainage.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                        resolvedExifSide?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                        snapshot.projectProfile.lane.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                        snapshot.projectProfile.activity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                        snapshot.projectProfile.subActivity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { "($it)" },
+                        if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) locName else null,
+                        weatherSummary
+                    ).joinToString(" | ")
+                    exif.setAttribute(ExifInterface.TAG_USER_COMMENT, userComment)
+                }
 
                 exif.saveAttributes()
             } catch (ignored: Exception) {}

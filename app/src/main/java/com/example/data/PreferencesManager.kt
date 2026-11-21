@@ -15,8 +15,10 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.backup.PrefValueType
 import com.example.backup.TypedPrefEntry
+import com.example.model.CameraAutofocusMode
 import com.example.model.CameraGridMode
 import com.example.model.CameraMode
+import com.example.model.CameraOutputFormat
 import com.example.model.CameraSettings
 import com.example.model.CaptureMode
 import com.example.model.CaptureTimer
@@ -33,6 +35,7 @@ import com.example.model.LogoPosition
 import com.example.model.LogoShape
 import com.example.model.MiniMapStyleConfig
 import com.example.model.NavigationNotificationSettings
+import com.example.model.OutputQualityPreset
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
 import com.example.model.PermanentCalibrationProfile
@@ -42,6 +45,7 @@ import com.example.model.RoadSide
 import com.example.model.SmartDirectionPreferences
 import com.example.model.SpeedUnit
 import com.example.model.VideoQualityOption
+import com.example.model.VideoStabilizationMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -273,6 +277,16 @@ class PreferencesManager(context: Context) {
         val KEY_VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
         val KEY_PHOTO_ASPECT_RATIO = stringPreferencesKey("photo_aspect_ratio")
         val KEY_VIDEO_ASPECT_RATIO = stringPreferencesKey("video_aspect_ratio")
+        val KEY_PHOTO_OUTPUT_FORMAT = stringPreferencesKey("camera_photo_output_format")
+        val KEY_VIDEO_OUTPUT_FORMAT = stringPreferencesKey("camera_video_output_format")
+        val KEY_PHOTO_QUALITY_PRESET = stringPreferencesKey("camera_photo_quality_preset")
+        val KEY_VIDEO_QUALITY_PRESET = stringPreferencesKey("camera_video_quality_preset")
+        val KEY_VIDEO_STABILIZATION_MODE = stringPreferencesKey("camera_video_stabilization_mode")
+        val KEY_AUTOFOCUS_MODE = stringPreferencesKey("camera_autofocus_mode")
+        val KEY_PHOTO_OUTPUT_SIZE_OPTIMIZATION = booleanPreferencesKey("camera_photo_output_size_optimization")
+        val KEY_PHOTO_ENHANCEMENT_ENABLED = booleanPreferencesKey("camera_photo_enhancement_enabled")
+        val KEY_VIDEO_OUTPUT_SIZE_OPTIMIZATION = booleanPreferencesKey("camera_video_output_size_optimization")
+        val KEY_VIDEO_NOISE_REDUCTION_ENABLED = booleanPreferencesKey("camera_video_noise_reduction_enabled")
         val KEY_CAMERA_AUTO_BRIGHTNESS = booleanPreferencesKey("camera_auto_brightness_enabled")
         val KEY_CAMERA_MANUAL_BRIGHTNESS = floatPreferencesKey("camera_manual_preview_brightness")
         val KEY_GALLERY_VIEW_MODE = stringPreferencesKey("gallery_view_mode")
@@ -306,6 +320,12 @@ class PreferencesManager(context: Context) {
         // Offline Mini Map Preloading Preferences
         val KEY_OFFLINE_MAP_AUTO_PRELOAD = booleanPreferencesKey("offline_map_auto_preload")
         val KEY_OFFLINE_MAP_WIFI_ONLY = booleanPreferencesKey("offline_map_wifi_only")
+
+        // Advanced Weather Forecast & IRC/MoRTH Highway Work Intelligence Keys
+        val KEY_LAST_WEATHER_FORECAST_BUNDLE_JSON = stringPreferencesKey("last_weather_forecast_bundle_json")
+        val KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON = stringPreferencesKey("weather_intelligence_settings_json")
+        val KEY_WORK_TARGET_INPUT_JSON = stringPreferencesKey("weather_work_target_input_json")
+        val KEY_ACTUAL_SITE_MEASUREMENTS_JSON = stringPreferencesKey("weather_actual_site_measurements_json")
     }
 
     private val observedDataFlow: Flow<Preferences> = appContext.dataStore.data.onEach { prefs ->
@@ -397,6 +417,26 @@ class PreferencesManager(context: Context) {
 
     fun getInitialSmartDirectionPreferences(): SmartDirectionPreferences =
         SmartDirectionPreferences.fromJsonString(getInitialPreferences()[KEY_SMART_DIRECTION_PREFS_JSON])
+
+    fun getInitialWeatherIntelligenceSettings(): com.example.model.WeatherIntelligenceSettings =
+        com.example.model.WeatherIntelligenceSettings.fromJsonString(
+            getInitialPreferences()[KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON]
+        )
+
+    fun getInitialWorkTargetInput(): com.example.model.WorkTargetInput =
+        com.example.model.WorkTargetInput.fromJsonString(
+            getInitialPreferences()[KEY_WORK_TARGET_INPUT_JSON]
+        )
+
+    fun getInitialActualSiteMeasurements(): com.example.model.ActualSiteMeasurements =
+        com.example.model.ActualSiteMeasurements.fromJsonString(
+            getInitialPreferences()[KEY_ACTUAL_SITE_MEASUREMENTS_JSON]
+        )
+
+    fun getInitialCachedWeatherForecastBundle(): com.example.model.WeatherForecastBundle? =
+        com.example.model.WeatherForecastBundle.fromJsonString(
+            getInitialPreferences()[KEY_LAST_WEATHER_FORECAST_BUNDLE_JSON]
+        )
 
     fun getInitialCameraSettings(): CameraSettings =
         parseCameraSettingsFromPrefs(getInitialPreferences())
@@ -660,12 +700,47 @@ class PreferencesManager(context: Context) {
         }
     }
 
+    val weatherIntelligenceSettingsFlow: Flow<com.example.model.WeatherIntelligenceSettings> =
+        observedDataFlow.map { prefs ->
+            com.example.model.WeatherIntelligenceSettings.fromJsonString(
+                prefs[KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON]
+            )
+        }.distinctUntilChanged()
+
+    suspend fun updateWeatherIntelligenceSettings(settings: com.example.model.WeatherIntelligenceSettings) {
+        safeEdit { prefs ->
+            prefs[KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON] = settings.toJsonString()
+        }
+    }
+
+    val workTargetInputFlow: Flow<com.example.model.WorkTargetInput> =
+        observedDataFlow.map { prefs ->
+            com.example.model.WorkTargetInput.fromJsonString(prefs[KEY_WORK_TARGET_INPUT_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateWorkTargetInput(input: com.example.model.WorkTargetInput) {
+        safeEdit { prefs ->
+            prefs[KEY_WORK_TARGET_INPUT_JSON] = input.toJsonString()
+        }
+    }
+
+    val actualSiteMeasurementsFlow: Flow<com.example.model.ActualSiteMeasurements> =
+        observedDataFlow.map { prefs ->
+            com.example.model.ActualSiteMeasurements.fromJsonString(prefs[KEY_ACTUAL_SITE_MEASUREMENTS_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateActualSiteMeasurements(measurements: com.example.model.ActualSiteMeasurements) {
+        safeEdit { prefs ->
+            prefs[KEY_ACTUAL_SITE_MEASUREMENTS_JSON] = measurements.toJsonString()
+        }
+    }
+
     val cameraSettingsFlow: Flow<CameraSettings> = observedDataFlow.map { prefs ->
         parseCameraSettingsFromPrefs(prefs)
     }.distinctUntilChanged()
 
     private fun parseCameraSettingsFromPrefs(prefs: Preferences): CameraSettings {
-        val saveOriginalDual = prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] ?: false
+        val saveOriginalDual = prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] ?: prefs[KEY_SAVE_ORIGINAL_IMAGE] ?: false
         return CameraSettings(
             captureTimer = CaptureTimer.fromSeconds(prefs[KEY_CAPTURE_TIMER] ?: 0),
             gridMode = CameraGridMode.fromString(prefs[KEY_GRID_MODE]),
@@ -704,6 +779,28 @@ class PreferencesManager(context: Context) {
             videoResolution = prefs[KEY_VIDEO_RESOLUTION] ?: "1920 x 1080",
             photoAspectRatio = prefs[KEY_PHOTO_ASPECT_RATIO] ?: "4:3",
             videoAspectRatio = prefs[KEY_VIDEO_ASPECT_RATIO] ?: "16:9",
+            photoOutputFormat = CameraOutputFormat.fromString(
+                prefs[KEY_PHOTO_OUTPUT_FORMAT],
+                fallback = CameraOutputFormat.PORTRAIT_FULL
+            ),
+            videoOutputFormat = CameraOutputFormat.fromString(
+                prefs[KEY_VIDEO_OUTPUT_FORMAT],
+                fallback = CameraOutputFormat.LANDSCAPE_FULL
+            ),
+            photoQualityPreset = OutputQualityPreset.fromString(
+                prefs[KEY_PHOTO_QUALITY_PRESET],
+                fallback = OutputQualityPreset.HIGH
+            ),
+            videoQualityPreset = OutputQualityPreset.fromString(
+                prefs[KEY_VIDEO_QUALITY_PRESET],
+                fallback = OutputQualityPreset.HIGH
+            ),
+            videoStabilizationMode = VideoStabilizationMode.fromString(prefs[KEY_VIDEO_STABILIZATION_MODE]),
+            autofocusMode = CameraAutofocusMode.fromString(prefs[KEY_AUTOFOCUS_MODE]),
+            photoOutputSizeOptimization = prefs[KEY_PHOTO_OUTPUT_SIZE_OPTIMIZATION] ?: true,
+            photoEnhancementEnabled = prefs[KEY_PHOTO_ENHANCEMENT_ENABLED] ?: true,
+            videoOutputSizeOptimization = prefs[KEY_VIDEO_OUTPUT_SIZE_OPTIMIZATION] ?: false,
+            videoNoiseReductionEnabled = prefs[KEY_VIDEO_NOISE_REDUCTION_ENABLED] ?: true,
             autoBrightnessEnabled = prefs[KEY_CAMERA_AUTO_BRIGHTNESS] ?: true,
             manualPreviewBrightness = (prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] ?: 0.5f).coerceIn(0.0f, 1.0f)
         )
@@ -746,7 +843,7 @@ class PreferencesManager(context: Context) {
     private fun parseOverlayConfigFromPrefs(prefs: Preferences): OverlayConfig {
         val templateName = prefs[KEY_TEMPLATE] ?: OverlayTemplate.HIGHWAY_CONSTRUCTION.name
         val template = try { OverlayTemplate.valueOf(templateName) } catch (_: Exception) { OverlayTemplate.HIGHWAY_CONSTRUCTION }
-        val saveOriginalDual = prefs[KEY_SAVE_ORIGINAL_IMAGE] ?: false
+        val saveOriginalDual = prefs[KEY_SAVE_ORIGINAL_IMAGE] ?: prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] ?: false
         return OverlayConfig(
             template = template,
             timestampFormat = prefs[KEY_TIMESTAMP_FORMAT] ?: "dd MMMM yyyy h:mm a",
@@ -961,6 +1058,13 @@ class PreferencesManager(context: Context) {
         }
     }
 
+    suspend fun saveCachedWeatherForecastBundle(bundle: com.example.model.WeatherForecastBundle) {
+        safeEdit { prefs ->
+            prefs[KEY_LAST_WEATHER_FORECAST_BUNDLE_JSON] = bundle.toJsonString()
+            prefs[KEY_LAST_WEATHER_OBSERVATION_JSON] = bundle.current.toJsonString()
+        }
+    }
+
     private fun writeOverlayConfigToPrefs(
         prefs: MutablePreferences,
         config: OverlayConfig
@@ -1021,6 +1125,7 @@ class PreferencesManager(context: Context) {
         prefs[KEY_CUSTOM_TAG] = config.customTag
         prefs[KEY_GPS_ACCURACY_MARGIN_PRESET] = config.gpsAccuracyMarginPreset
         prefs[KEY_SAVE_ORIGINAL_IMAGE] = config.saveOriginalImage
+        prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] = config.saveOriginalImage
         prefs[KEY_TIMESTAMP_MARGIN_MODE] = config.timestampMarginMode
         prefs[KEY_SHOW_INDEX_NUMBER] = config.showIndexNumber
         if (config.customFontPath != null) {
@@ -1103,6 +1208,7 @@ class PreferencesManager(context: Context) {
         prefs[KEY_FRONT_MIRROR] = settings.frontCameraMirror
         prefs[KEY_JPEG_QUALITY] = settings.jpegQuality
         prefs[KEY_SAVE_ORIGINAL_AND_STAMPED] = settings.saveOriginalAndStamped
+        prefs[KEY_SAVE_ORIGINAL_IMAGE] = settings.saveOriginalAndStamped
         prefs[KEY_PRESERVE_EXIF] = settings.preserveExif
         prefs[KEY_VIDEO_QUALITY] = settings.videoQuality.name
         prefs[KEY_VIDEO_FPS] = settings.videoFps
@@ -1132,6 +1238,16 @@ class PreferencesManager(context: Context) {
         prefs[KEY_VIDEO_RESOLUTION] = settings.videoResolution
         prefs[KEY_PHOTO_ASPECT_RATIO] = settings.photoAspectRatio
         prefs[KEY_VIDEO_ASPECT_RATIO] = settings.videoAspectRatio
+        prefs[KEY_PHOTO_OUTPUT_FORMAT] = settings.photoOutputFormat.name
+        prefs[KEY_VIDEO_OUTPUT_FORMAT] = settings.videoOutputFormat.name
+        prefs[KEY_PHOTO_QUALITY_PRESET] = settings.photoQualityPreset.name
+        prefs[KEY_VIDEO_QUALITY_PRESET] = settings.videoQualityPreset.name
+        prefs[KEY_VIDEO_STABILIZATION_MODE] = settings.videoStabilizationMode.name
+        prefs[KEY_AUTOFOCUS_MODE] = settings.autofocusMode.name
+        prefs[KEY_PHOTO_OUTPUT_SIZE_OPTIMIZATION] = settings.photoOutputSizeOptimization
+        prefs[KEY_PHOTO_ENHANCEMENT_ENABLED] = settings.photoEnhancementEnabled
+        prefs[KEY_VIDEO_OUTPUT_SIZE_OPTIMIZATION] = settings.videoOutputSizeOptimization
+        prefs[KEY_VIDEO_NOISE_REDUCTION_ENABLED] = settings.videoNoiseReductionEnabled
         prefs[KEY_CAMERA_AUTO_BRIGHTNESS] = settings.autoBrightnessEnabled
         prefs[KEY_CAMERA_MANUAL_BRIGHTNESS] = settings.manualPreviewBrightness.coerceIn(0.0f, 1.0f)
     }

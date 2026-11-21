@@ -226,6 +226,7 @@ fun HomeScreen(
     onNavigateToTools: () -> Unit = {},
     onNavigateToNotes: () -> Unit = {},
     onNavigateToSurvey: () -> Unit = {},
+    onNavigateToWeather: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Normal Home Page obeys the device's system display sleep timeout;
@@ -269,6 +270,8 @@ fun HomeScreen(
     val cameraSettings by viewModel.cameraSettings.collectAsStateWithLifecycle()
     val kmStoneAlertSettings by viewModel.kmStoneAlertSettings.collectAsStateWithLifecycle()
     val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
+    val weatherForecastBundle by viewModel.weatherForecastBundle.collectAsStateWithLifecycle()
+    val weatherIntelligenceSettings by viewModel.weatherIntelligenceSettings.collectAsStateWithLifecycle()
     LaunchedEffect(isScreensaverVisible) {
         viewModel.setScreensaverActive(isScreensaverVisible)
     }
@@ -627,7 +630,13 @@ fun HomeScreen(
                 )
             }
 
-            // 3. Premium Minimalist Borderless Live Weather Card (pauses animations when hidden/screensaver active)
+            // 3. Smart Home Weather Card with Full-Day Hourly Forecast (Double-Tap -> Weather Dashboard)
+            val todayHourlyForecast = remember(weatherForecastBundle) {
+                weatherForecastBundle?.todayFullDayHours().orEmpty()
+            }
+            val currentWeatherLocalHour = remember(weatherForecastBundle) {
+                weatherForecastBundle?.currentLocalHour() ?: -1
+            }
             HomeLiveWeatherCard(
                 weatherUiState = weatherUiState,
                 resolvedLocationName = vmLocationName,
@@ -639,7 +648,14 @@ fun HomeScreen(
                 isVisible = !isScreensaverVisible && !isScreensaverScreenOff && !isScreensaverAodActive,
                 onRefresh = {
                     viewModel.refreshWeather(force = true)
-                }
+                },
+                hourlyForecast = todayHourlyForecast,
+                currentLocalHour = currentWeatherLocalHour,
+                temperatureUnit = weatherIntelligenceSettings.temperatureUnit,
+                animationsEnabled = weatherIntelligenceSettings.animationsEnabled,
+                showHourlyStrip = weatherIntelligenceSettings.showHomeHourlyStrip,
+                showRainProbability = weatherIntelligenceSettings.showRainProbabilityOnHomeCard,
+                onOpenWeatherDashboard = onNavigateToWeather
             )
 
             // 4. Interactive Smart KMZ Map with Smart Edge Fades (Borderless)

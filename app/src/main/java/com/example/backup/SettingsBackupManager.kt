@@ -187,6 +187,9 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_EASY_TOGGLE_CAMERAS.name,
                 PreferencesManager.KEY_WHITE_BALANCE.name,
                 PreferencesManager.KEY_AUTO_ROTATE_UI.name,
+                PreferencesManager.KEY_AUTOFOCUS_MODE.name,
+                PreferencesManager.KEY_CAMERA_AUTO_BRIGHTNESS.name,
+                PreferencesManager.KEY_CAMERA_MANUAL_BRIGHTNESS.name,
                 // Photo & Video
                 PreferencesManager.KEY_JPEG_QUALITY.name,
                 PreferencesManager.KEY_SAVE_ORIGINAL_AND_STAMPED.name,
@@ -202,6 +205,15 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_VIDEO_RESOLUTION.name,
                 PreferencesManager.KEY_PHOTO_ASPECT_RATIO.name,
                 PreferencesManager.KEY_VIDEO_ASPECT_RATIO.name,
+                PreferencesManager.KEY_PHOTO_OUTPUT_FORMAT.name,
+                PreferencesManager.KEY_VIDEO_OUTPUT_FORMAT.name,
+                PreferencesManager.KEY_PHOTO_QUALITY_PRESET.name,
+                PreferencesManager.KEY_VIDEO_QUALITY_PRESET.name,
+                PreferencesManager.KEY_VIDEO_STABILIZATION_MODE.name,
+                PreferencesManager.KEY_PHOTO_OUTPUT_SIZE_OPTIMIZATION.name,
+                PreferencesManager.KEY_PHOTO_ENHANCEMENT_ENABLED.name,
+                PreferencesManager.KEY_VIDEO_OUTPUT_SIZE_OPTIMIZATION.name,
+                PreferencesManager.KEY_VIDEO_NOISE_REDUCTION_ENABLED.name,
                 // General & GPS
                 PreferencesManager.KEY_THEME_MODE.name,
                 PreferencesManager.KEY_GPS_INTERVAL.name,
@@ -235,7 +247,11 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_SURVEY_SHOW_GPS_TRACK.name,
                 PreferencesManager.KEY_SURVEY_SHOW_LANE_TRACK.name,
                 PreferencesManager.KEY_SURVEY_SHOW_MARKERS.name,
-                PreferencesManager.KEY_SURVEY_MAP_TYPE.name
+                PreferencesManager.KEY_SURVEY_MAP_TYPE.name,
+                PreferencesManager.KEY_OFFLINE_MAP_AUTO_PRELOAD.name,
+                PreferencesManager.KEY_OFFLINE_MAP_WIFI_ONLY.name,
+                PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name,
+                PreferencesManager.KEY_WORK_TARGET_INPUT_JSON.name
             )
         }
     }
@@ -282,12 +298,24 @@ class SettingsBackupManager(
         PreferencesManager.KEY_IS_FLASH_ON.name,
         PreferencesManager.KEY_IS_FRONT_CAMERA.name,
         PreferencesManager.KEY_CAPTURE_MODE.name,
-        PreferencesManager.KEY_AUTO_ROTATE_UI.name -> BackupCategory.CAMERA
+        PreferencesManager.KEY_AUTO_ROTATE_UI.name,
+        PreferencesManager.KEY_AUTOFOCUS_MODE.name,
+        PreferencesManager.KEY_CAMERA_AUTO_BRIGHTNESS.name,
+        PreferencesManager.KEY_CAMERA_MANUAL_BRIGHTNESS.name -> BackupCategory.CAMERA
 
         PreferencesManager.KEY_PHOTO_RESOLUTION.name,
         PreferencesManager.KEY_VIDEO_RESOLUTION.name,
         PreferencesManager.KEY_PHOTO_ASPECT_RATIO.name,
         PreferencesManager.KEY_VIDEO_ASPECT_RATIO.name,
+        PreferencesManager.KEY_PHOTO_OUTPUT_FORMAT.name,
+        PreferencesManager.KEY_VIDEO_OUTPUT_FORMAT.name,
+        PreferencesManager.KEY_PHOTO_QUALITY_PRESET.name,
+        PreferencesManager.KEY_VIDEO_QUALITY_PRESET.name,
+        PreferencesManager.KEY_VIDEO_STABILIZATION_MODE.name,
+        PreferencesManager.KEY_PHOTO_OUTPUT_SIZE_OPTIMIZATION.name,
+        PreferencesManager.KEY_PHOTO_ENHANCEMENT_ENABLED.name,
+        PreferencesManager.KEY_VIDEO_OUTPUT_SIZE_OPTIMIZATION.name,
+        PreferencesManager.KEY_VIDEO_NOISE_REDUCTION_ENABLED.name,
         PreferencesManager.KEY_RESOLUTION_OPTION.name,
         PreferencesManager.KEY_JPEG_QUALITY.name,
         PreferencesManager.KEY_SAVE_ORIGINAL_AND_STAMPED.name,
@@ -388,6 +416,8 @@ class SettingsBackupManager(
         PreferencesManager.KEY_VIDEO_MINI_MAP_JSON.name,
         PreferencesManager.KEY_MAP_THEME.name,
         PreferencesManager.KEY_MAP_TYPE.name,
+        PreferencesManager.KEY_OFFLINE_MAP_AUTO_PRELOAD.name,
+        PreferencesManager.KEY_OFFLINE_MAP_WIFI_ONLY.name,
         PreferencesManager.KEY_SURVEY_SHOW_200M_LABELS.name,
         PreferencesManager.KEY_SURVEY_SHOW_CENTRELINE.name,
         PreferencesManager.KEY_SURVEY_SHOW_GPS_TRACK.name,
@@ -411,7 +441,9 @@ class SettingsBackupManager(
         PreferencesManager.KEY_KM_STONE_ALERT_JSON.name,
         PreferencesManager.KEY_CHAINAGE_VOICE_ASSISTANT_JSON.name,
         PreferencesManager.KEY_SMART_DIRECTION_PREFS_JSON.name,
-        PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name -> BackupCategory.GENERAL
+        PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name,
+        PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name,
+        PreferencesManager.KEY_WORK_TARGET_INPUT_JSON.name -> BackupCategory.GENERAL
 
         else -> BackupCategory.OTHER
     }
@@ -591,12 +623,26 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_VIDEO_RESOLUTION.name, PrefValueType.STRING, camera.videoResolution)
         putEntry(PreferencesManager.KEY_PHOTO_ASPECT_RATIO.name, PrefValueType.STRING, camera.photoAspectRatio)
         putEntry(PreferencesManager.KEY_VIDEO_ASPECT_RATIO.name, PrefValueType.STRING, camera.videoAspectRatio)
+        putEntry(PreferencesManager.KEY_PHOTO_OUTPUT_FORMAT.name, PrefValueType.STRING, camera.photoOutputFormat.name)
+        putEntry(PreferencesManager.KEY_VIDEO_OUTPUT_FORMAT.name, PrefValueType.STRING, camera.videoOutputFormat.name)
+        putEntry(PreferencesManager.KEY_PHOTO_QUALITY_PRESET.name, PrefValueType.STRING, camera.photoQualityPreset.name)
+        putEntry(PreferencesManager.KEY_VIDEO_QUALITY_PRESET.name, PrefValueType.STRING, camera.videoQualityPreset.name)
+        putEntry(PreferencesManager.KEY_VIDEO_STABILIZATION_MODE.name, PrefValueType.STRING, camera.videoStabilizationMode.name)
+        putEntry(PreferencesManager.KEY_AUTOFOCUS_MODE.name, PrefValueType.STRING, camera.autofocusMode.name)
+        putEntry(PreferencesManager.KEY_PHOTO_OUTPUT_SIZE_OPTIMIZATION.name, PrefValueType.BOOLEAN, camera.photoOutputSizeOptimization)
+        putEntry(PreferencesManager.KEY_PHOTO_ENHANCEMENT_ENABLED.name, PrefValueType.BOOLEAN, camera.photoEnhancementEnabled)
+        putEntry(PreferencesManager.KEY_VIDEO_OUTPUT_SIZE_OPTIMIZATION.name, PrefValueType.BOOLEAN, camera.videoOutputSizeOptimization)
+        putEntry(PreferencesManager.KEY_VIDEO_NOISE_REDUCTION_ENABLED.name, PrefValueType.BOOLEAN, camera.videoNoiseReductionEnabled)
+        putEntry(PreferencesManager.KEY_CAMERA_AUTO_BRIGHTNESS.name, PrefValueType.BOOLEAN, camera.autoBrightnessEnabled)
+        putEntry(PreferencesManager.KEY_CAMERA_MANUAL_BRIGHTNESS.name, PrefValueType.FLOAT, camera.manualPreviewBrightness)
 
         // Theme, Map Theme/Type & Gallery & Screensaver
         val screensaverSettings = preferencesManager.homeScreensaverSettingsFlow.first()
         putEntry(PreferencesManager.KEY_THEME_MODE.name, PrefValueType.STRING, themeMode)
         putEntry(PreferencesManager.KEY_MAP_THEME.name, PrefValueType.STRING, mapTheme)
         putEntry(PreferencesManager.KEY_MAP_TYPE.name, PrefValueType.STRING, mapType)
+        putEntry(PreferencesManager.KEY_OFFLINE_MAP_AUTO_PRELOAD.name, PrefValueType.BOOLEAN, preferencesManager.getInitialOfflineMapAutoPreload())
+        putEntry(PreferencesManager.KEY_OFFLINE_MAP_WIFI_ONLY.name, PrefValueType.BOOLEAN, preferencesManager.getInitialOfflineMapWifiOnly())
         putEntry(PreferencesManager.KEY_GALLERY_VIEW_MODE.name, PrefValueType.STRING, galleryView)
         putEntry(PreferencesManager.KEY_GALLERY_SORT_OPTION.name, PrefValueType.STRING, gallerySort)
         putEntry(PreferencesManager.KEY_GALLERY_GROUP_OPTION.name, PrefValueType.STRING, galleryGroup)
@@ -605,12 +651,16 @@ class SettingsBackupManager(
         val kmStoneAlertSettings = preferencesManager.kmStoneAlertSettingsFlow.first()
         val voiceAssistantSettings = preferencesManager.chainageVoiceAssistantSettingsFlow.first()
         val smartDirectionPrefs = preferencesManager.smartDirectionPreferencesFlow.first()
+        val weatherIntelSettings = preferencesManager.weatherIntelligenceSettingsFlow.first()
+        val workTargetInput = preferencesManager.workTargetInputFlow.first()
         putEntry(PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name, PrefValueType.STRING, screensaverSettings.toJsonString())
         putEntry(PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name, PrefValueType.STRING, navNotifSettings.toJsonString())
         putEntry(PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name, PrefValueType.STRING, widgetSettings.toJsonString())
         putEntry(PreferencesManager.KEY_KM_STONE_ALERT_JSON.name, PrefValueType.STRING, kmStoneAlertSettings.toJsonString())
         putEntry(PreferencesManager.KEY_CHAINAGE_VOICE_ASSISTANT_JSON.name, PrefValueType.STRING, voiceAssistantSettings.toJsonString())
         putEntry(PreferencesManager.KEY_SMART_DIRECTION_PREFS_JSON.name, PrefValueType.STRING, smartDirectionPrefs.toJsonString())
+        putEntry(PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name, PrefValueType.STRING, weatherIntelSettings.toJsonString())
+        putEntry(PreferencesManager.KEY_WORK_TARGET_INPUT_JSON.name, PrefValueType.STRING, workTargetInput.toJsonString())
         preferencesManager.getInitialPreferredExternalNavAppId()?.let {
             putEntry(PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name, PrefValueType.STRING, it)
         }

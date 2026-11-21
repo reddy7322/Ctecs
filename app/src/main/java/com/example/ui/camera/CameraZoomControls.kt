@@ -37,11 +37,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.camera.CameraLensZoomCapabilities
+import com.example.camera.CameraUltraWideZoomManager
 import com.example.ui.theme.CtecsTheme
-import java.util.Locale
 import kotlin.math.abs
 
 /**
@@ -49,7 +52,8 @@ import kotlin.math.abs
  * Provides:
  * - Zoom-out (−) and Zoom-in (+) buttons
  * - Current zoom ratio badge with 1.0x reset
- * - Dynamic quick zoom presets (e.g. 0.5x, 1x, 2x, 3x, 5x, 8x) based on hardware capabilities
+ * - Hardware-detected quick zoom presets (e.g. 0.6x Ultra-Wide if supported, 1x, 2x, 3x, 5x, 8x)
+ *   Strictly omits unsupported zoom presets so 0.6x is never displayed on devices without a wider FOV.
  * - Interactive expandable fine-scrubbing zoom slider
  */
 @Composable
@@ -60,6 +64,7 @@ fun CameraZoomControlBar(
     onZoomChanged: (Float) -> Unit,
     onResetZoom: () -> Unit = { onZoomChanged(1.0f) },
     isLandscape: Boolean = false,
+    zoomCapabilities: CameraLensZoomCapabilities? = null,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
@@ -69,28 +74,23 @@ fun CameraZoomControlBar(
     val pillBg = if (isLandscape) Color(0x88080B12) else Color(0xCC0D111A)
     val chipBg = Color(0x55171E2B)
 
-    // Dynamically calculate supported presets based on device camera hardware
-    val presets = remember(minZoomRatio, maxZoomRatio) {
-        val list = mutableListOf<Float>()
-        if (minZoomRatio <= 0.65f) {
-            list.add(0.5f)
-        }
-        list.add(1.0f)
-        if (maxZoomRatio >= 2.0f) list.add(2.0f)
-        if (maxZoomRatio >= 3.0f) list.add(3.0f)
-        if (maxZoomRatio >= 5.0f) list.add(5.0f)
-        if (maxZoomRatio >= 8.0f) list.add(8.0f)
-        list
+    val effectiveMinZoom = remember(minZoomRatio, zoomCapabilities) {
+        zoomCapabilities?.effectiveMinZoomRatio ?: minZoomRatio
+    }
+    val effectiveMaxZoom = remember(maxZoomRatio, zoomCapabilities) {
+        maxOf(maxZoomRatio, zoomCapabilities?.maxZoomRatio ?: maxZoomRatio).coerceAtLeast(effectiveMinZoom)
     }
 
-    val formattedZoom = if (currentZoomRatio < 1.0f) {
-        String.format(Locale.US, "%.1fx", currentZoomRatio)
-    } else if (abs(currentZoomRatio - currentZoomRatio.toInt().toFloat()) < 0.05f) {
-        "${currentZoomRatio.toInt()}x"
-    } else {
-        String.format(Locale.US, "%.1fx", currentZoomRatio)
+    // Dynamically calculate strictly hardware-supported presets (0.6x or nearest genuine wide FOV, 1x, 2x, 3x, 5x, 8x)
+    val presets = remember(effectiveMinZoom, effectiveMaxZoom, zoomCapabilities) {
+        CameraUltraWideZoomManager.resolveZoomPresets(
+            minZoomRatio = effectiveMinZoom,
+            maxZoomRatio = effectiveMaxZoom,
+            capabilities = zoomCapabilities
+        )
     }
 
+    val formattedZoom = CameraUltraWideZoomManager.formatZoomBadge(currentZoomRatio)
     val isNonDefaultZoom = abs(currentZoomRatio - 1.0f) > 0.08f
 
     Column(
@@ -124,11 +124,11 @@ fun CameraZoomControlBar(
                         modifier = Modifier.width(42.dp)
                     )
                     Slider(
-                        value = currentZoomRatio.coerceIn(minZoomRatio, maxZoomRatio),
+                        value = currentZoomRatio.coerceIn(effectiveMinZoom, effectiveMaxZoom),
                         onValueChange = { newZoom ->
                             onZoomChanged(newZoom)
                         },
-                        valueRange = minZoomRatio..maxZoomRatio,
+                        valueRange = effectiveMinZoom..effectiveMaxZoom,
                         colors = SliderDefaults.colors(
                             thumbColor = activeAccent,
                             activeTrackColor = activeAccent,
@@ -144,7 +144,7 @@ fun CameraZoomControlBar(
                             onResetZoom()
                         },
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
                             .background(activeAccent.copy(alpha = 0.16f))
                     ) {
@@ -174,14 +174,15 @@ fun CameraZoomControlBar(
                 // Zoom-Out Button (−)
                 Box(
                     modifier = Modifier
-                        .size(26.dp)
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(chipBg)
                         .clickable {
                             try {
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                             } catch (ignored: Exception) {}
-                            val nextZoom = (currentZoomRatio - 0.2f).coerceAtLeast(minZoomRatio)
+                            val step = if (currentZoomRatio <= 1.05f) 0.1f else 0.2f
+                            val nextZoom = (currentZoomRatio - step).coerceAtLeast(effectiveMinZoom)
                             onZoomChanged(nextZoom)
                         }
                         .testTag("zoom_out_button"),
@@ -190,25 +191,27 @@ fun CameraZoomControlBar(
                     Icon(
                         imageVector = Icons.Default.Remove,
                         contentDescription = "Zoom Out",
-                        tint = if (currentZoomRatio > minZoomRatio) Color.White else Color.White.copy(alpha = 0.35f),
+                        tint = if (currentZoomRatio > effectiveMinZoom + 0.01f) Color.White else Color.White.copy(alpha = 0.35f),
                         modifier = Modifier.size(13.dp)
                     )
                 }
 
-                // Quick Zoom Preset Buttons (e.g. 0.5, 1, 2, 3, 5, 8)
+                // Quick Zoom Preset Buttons (e.g. 0.6, 1, 2, 3, 5, 8)
                 presets.forEach { preset ->
-                    val isSelected = abs(currentZoomRatio - preset) < 0.12f
-                    val label = if (preset < 1.0f) {
-                        String.format(Locale.US, "%.1f", preset)
-                    } else if (preset % 1.0f == 0.0f) {
-                        "${preset.toInt()}"
+                    val tolerance = if (preset < 1.0f) 0.08f else 0.12f
+                    val isSelected = abs(currentZoomRatio - preset) < tolerance
+                    val label = CameraUltraWideZoomManager.formatPresetChipLabel(preset)
+                    val presetDescription = if (preset < 1.0f) {
+                        "${label}x Ultra-Wide zoom"
+                    } else if (abs(preset - 1.0f) < 0.05f) {
+                        "1.0x Standard zoom"
                     } else {
-                        String.format(Locale.US, "%.1f", preset)
+                        "${label}x zoom"
                     }
 
                     Box(
                         modifier = Modifier
-                            .size(26.dp)
+                            .size(28.dp)
                             .clip(CircleShape)
                             .background(if (isSelected) activeAccent else chipBg)
                             .clickable {
@@ -217,14 +220,16 @@ fun CameraZoomControlBar(
                                 } catch (ignored: Exception) {}
                                 onZoomChanged(preset)
                             }
+                            .semantics { contentDescription = presetDescription }
                             .testTag("zoom_preset_$label"),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = label,
                             color = Color.White,
-                            fontSize = 9.5.sp,
-                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
+                            fontSize = if (preset < 1.0f) 9.sp else 9.5.sp,
+                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                            maxLines = 1
                         )
                     }
                 }
@@ -232,12 +237,13 @@ fun CameraZoomControlBar(
                 // Current Zoom Ratio Display & Slider Toggle Badge
                 Box(
                     modifier = Modifier
-                        .size(26.dp)
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(if (isNonDefaultZoom || showFineSlider) activeAccent.copy(alpha = 0.24f) else chipBg)
                         .clickable {
                             showFineSlider = !showFineSlider
                         }
+                        .semantics { contentDescription = "Current zoom $formattedZoom, tap for fine slider" }
                         .testTag("zoom_ratio_display"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -245,21 +251,23 @@ fun CameraZoomControlBar(
                         text = formattedZoom,
                         color = if (isNonDefaultZoom || showFineSlider) activeAccent else Color.White,
                         fontSize = 8.5.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1
                     )
                 }
 
                 // Zoom-In Button (+)
                 Box(
                     modifier = Modifier
-                        .size(26.dp)
+                        .size(28.dp)
                         .clip(CircleShape)
                         .background(chipBg)
                         .clickable {
                             try {
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                             } catch (ignored: Exception) {}
-                            val nextZoom = (currentZoomRatio + 0.2f).coerceAtMost(maxZoomRatio)
+                            val step = if (currentZoomRatio < 1.0f) 0.1f else 0.2f
+                            val nextZoom = (currentZoomRatio + step).coerceAtMost(effectiveMaxZoom)
                             onZoomChanged(nextZoom)
                         }
                         .testTag("zoom_in_button"),
@@ -268,7 +276,7 @@ fun CameraZoomControlBar(
                     Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Zoom In",
-                        tint = if (currentZoomRatio < maxZoomRatio) Color.White else Color.White.copy(alpha = 0.35f),
+                        tint = if (currentZoomRatio < effectiveMaxZoom - 0.01f) Color.White else Color.White.copy(alpha = 0.35f),
                         modifier = Modifier.size(13.dp)
                     )
                 }

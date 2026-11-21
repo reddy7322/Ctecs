@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -36,11 +37,14 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Smooth, battery-efficient animated weather illustrations inspired by Google Weather.
+ * Smooth, battery-efficient original animated weather illustrations.
  *
- * When [isAnimating] is false (for example when the Home Screen is not visible, Screensaver
- * or AOD is active, or the app is backgrounded), no infinite animation clock runs, saving
- * CPU/GPU frames while keeping a crisp static weather illustration.
+ * Covers Sunny, Partly Cloudy, Cloudy/Overcast, Light & Heavy Rain, Thunderstorm,
+ * Fog/Mist, Snow, Clear Night, Cloudy Night, and Windy conditions.
+ *
+ * When [isAnimating] is false (off-screen, lifecycle paused, Screensaver/AOD active,
+ * or user disabled animations in settings), no infinite animation clock runs — cleanly
+ * falling back to crisp static weather illustrations.
  */
 @Composable
 fun AnimatedWeatherIcon(
@@ -48,17 +52,18 @@ fun AnimatedWeatherIcon(
     isDark: Boolean,
     isAnimating: Boolean = true,
     size: Dp = 52.dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isHeavyRain: Boolean = false
 ) {
     AnimatedContent(
-        targetState = condition,
+        targetState = condition to isHeavyRain,
         transitionSpec = {
-            (fadeIn(tween(320)) + scaleIn(initialScale = 0.92f, animationSpec = tween(320))) togetherWith
-                fadeOut(tween(220))
+            (fadeIn(tween(300)) + scaleIn(initialScale = 0.92f, animationSpec = tween(300))) togetherWith
+                fadeOut(tween(200))
         },
         label = "weather_condition_icon_transition",
         modifier = modifier
-    ) { targetCondition ->
+    ) { (targetCondition, heavyRain) ->
         val slowPhase: Float
         val fastPhase: Float
         val pulsePhase: Float
@@ -78,7 +83,7 @@ fun AnimatedWeatherIcon(
                 initialValue = 0f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(durationMillis = 1_800, easing = LinearEasing),
+                    animation = tween(durationMillis = if (heavyRain) 1_100 else 1_800, easing = LinearEasing),
                     repeatMode = RepeatMode.Restart
                 ),
                 label = "weather_fast_phase"
@@ -101,20 +106,28 @@ fun AnimatedWeatherIcon(
             pulsePhase = 0.5f
         }
 
+        val semanticsLabel = if (targetCondition == WeatherConditionType.RAINY && heavyRain) {
+            "Heavy Rain"
+        } else {
+            targetCondition.defaultLabel
+        }
+
         Canvas(
             modifier = Modifier
                 .size(size)
-                .semantics { contentDescription = targetCondition.defaultLabel }
+                .semantics { contentDescription = semanticsLabel }
         ) {
             when (targetCondition) {
                 WeatherConditionType.SUNNY -> drawSunny(slowPhase, pulsePhase)
                 WeatherConditionType.PARTLY_CLOUDY -> drawPartlyCloudy(slowPhase, pulsePhase, isDark)
                 WeatherConditionType.CLOUDY -> drawCloudy(pulsePhase, isDark)
-                WeatherConditionType.RAINY -> drawRainy(fastPhase, pulsePhase, isDark)
+                WeatherConditionType.RAINY -> drawRainy(fastPhase, pulsePhase, isDark, heavyRain)
                 WeatherConditionType.THUNDERSTORM -> drawThunderstorm(fastPhase, pulsePhase, isDark)
                 WeatherConditionType.FOGGY -> drawFoggy(pulsePhase, isDark)
                 WeatherConditionType.NIGHT -> drawNight(pulsePhase, slowPhase)
                 WeatherConditionType.SNOWY -> drawSnowy(fastPhase, pulsePhase, isDark)
+                WeatherConditionType.CLOUDY_NIGHT -> drawCloudyNight(pulsePhase, slowPhase, isDark)
+                WeatherConditionType.WINDY -> drawWindy(fastPhase, pulsePhase, isDark)
             }
         }
     }
@@ -125,7 +138,6 @@ private fun DrawScope.drawSunny(slowPhase: Float, pulsePhase: Float) {
     val cy = size.height * 0.5f
     val r = size.minDimension * 0.24f
 
-    // Soft outer corona glow
     drawCircle(
         brush = Brush.radialGradient(
             colors = listOf(
@@ -140,7 +152,6 @@ private fun DrawScope.drawSunny(slowPhase: Float, pulsePhase: Float) {
         center = Offset(cx, cy)
     )
 
-    // Smoothly rotating rays
     rotate(degrees = slowPhase * 360f, pivot = Offset(cx, cy)) {
         val rayCount = 8
         val innerR = r * 1.30f
@@ -165,7 +176,6 @@ private fun DrawScope.drawSunny(slowPhase: Float, pulsePhase: Float) {
         }
     }
 
-    // Glowing solar disc
     drawCircle(
         brush = Brush.linearGradient(
             colors = listOf(Color(0xFFFFE082), Color(0xFFFFA000)),
@@ -182,7 +192,6 @@ private fun DrawScope.drawPartlyCloudy(slowPhase: Float, pulsePhase: Float, isDa
     val sunCy = size.height * 0.36f
     val sunR = size.minDimension * 0.20f
 
-    // Warm sun glow peeking behind cloud
     drawCircle(
         brush = Brush.radialGradient(
             colors = listOf(
@@ -217,7 +226,6 @@ private fun DrawScope.drawPartlyCloudy(slowPhase: Float, pulsePhase: Float, isDa
         center = Offset(sunCx, sunCy)
     )
 
-    // Gently drifting soft cloud foreground
     val driftX = (pulsePhase - 0.5f) * size.width * 0.08f
     val cloudTop = if (isDark) Color(0xFFF1F5F9) else Color(0xFFFFFFFF)
     val cloudBot = if (isDark) Color(0xFFCBD5E1) else Color(0xFFDCE6F2)
@@ -234,7 +242,6 @@ private fun DrawScope.drawCloudy(pulsePhase: Float, isDark: Boolean) {
     val driftBack = (0.5f - pulsePhase) * size.width * 0.07f
     val driftFront = (pulsePhase - 0.5f) * size.width * 0.09f
 
-    // Back cloud
     drawSoftCloud(
         centerX = size.width * 0.58f + driftBack,
         baseY = size.height * 0.54f,
@@ -242,7 +249,6 @@ private fun DrawScope.drawCloudy(pulsePhase: Float, isDark: Boolean) {
         topColor = if (isDark) Color(0xFF94A3B8) else Color(0xFFCBD5E1),
         bottomColor = if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
     )
-    // Front cloud
     drawSoftCloud(
         centerX = size.width * 0.45f + driftFront,
         baseY = size.height * 0.72f,
@@ -252,24 +258,27 @@ private fun DrawScope.drawCloudy(pulsePhase: Float, isDark: Boolean) {
     )
 }
 
-private fun DrawScope.drawRainy(fastPhase: Float, pulsePhase: Float, isDark: Boolean) {
+private fun DrawScope.drawRainy(fastPhase: Float, pulsePhase: Float, isDark: Boolean, isHeavy: Boolean) {
     val drift = (pulsePhase - 0.5f) * size.width * 0.04f
-    val dropColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+    val dropColor = if (isHeavy) {
+        if (isDark) Color(0xFF0EA5E9) else Color(0xFF0369A1)
+    } else {
+        if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+    }
 
-    // 4 staggered diagonal falling raindrops
-    val xs = listOf(0.30f, 0.44f, 0.58f, 0.70f)
-    val offsets = listOf(0.0f, 0.45f, 0.20f, 0.72f)
+    val xs = if (isHeavy) listOf(0.24f, 0.36f, 0.48f, 0.60f, 0.72f) else listOf(0.30f, 0.44f, 0.58f, 0.70f)
+    val offsets = if (isHeavy) listOf(0.0f, 0.35f, 0.15f, 0.65f, 0.45f) else listOf(0.0f, 0.45f, 0.20f, 0.72f)
     for (i in xs.indices) {
         val progress = (fastPhase + offsets[i]) % 1f
-        val startX = size.width * xs[i] - progress * size.width * 0.06f
-        val startY = size.height * (0.58f + progress * 0.30f)
-        val dropLen = size.height * 0.13f
-        val alpha = (1f - kotlin.math.abs(progress - 0.5f) * 1.7f).coerceIn(0.15f, 0.95f)
+        val startX = size.width * xs[i] - progress * size.width * (if (isHeavy) 0.08f else 0.06f)
+        val startY = size.height * (0.56f + progress * 0.31f)
+        val dropLen = size.height * (if (isHeavy) 0.17f else 0.13f)
+        val alpha = (1f - kotlin.math.abs(progress - 0.5f) * 1.6f).coerceIn(0.20f, 0.96f)
         drawLine(
             color = dropColor.copy(alpha = alpha),
             start = Offset(startX, startY),
-            end = Offset(startX - dropLen * 0.22f, startY + dropLen),
-            strokeWidth = size.minDimension * 0.05f,
+            end = Offset(startX - dropLen * 0.24f, startY + dropLen),
+            strokeWidth = size.minDimension * (if (isHeavy) 0.058f else 0.05f),
             cap = StrokeCap.Round
         )
     }
@@ -278,8 +287,8 @@ private fun DrawScope.drawRainy(fastPhase: Float, pulsePhase: Float, isDark: Boo
         centerX = size.width * 0.50f + drift,
         baseY = size.height * 0.56f,
         width = size.width * 0.70f,
-        topColor = if (isDark) Color(0xFFCBD5E1) else Color(0xFFE2E8F0),
-        bottomColor = if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
+        topColor = if (isHeavy) Color(0xFF94A3B8) else (if (isDark) Color(0xFFCBD5E1) else Color(0xFFE2E8F0)),
+        bottomColor = if (isHeavy) Color(0xFF475569) else (if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8))
     )
 }
 
@@ -287,7 +296,6 @@ private fun DrawScope.drawThunderstorm(fastPhase: Float, pulsePhase: Float, isDa
     val drift = (pulsePhase - 0.5f) * size.width * 0.03f
     val dropColor = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
 
-    // Rain streaks flanking lightning bolt
     for ((idx, xFrac) in listOf(0.28f, 0.72f).withIndex()) {
         val p = (fastPhase + idx * 0.5f) % 1f
         val x = size.width * xFrac - p * size.width * 0.05f
@@ -301,7 +309,6 @@ private fun DrawScope.drawThunderstorm(fastPhase: Float, pulsePhase: Float, isDa
         )
     }
 
-    // Subtle periodic lightning flash
     val flashAlpha = when {
         pulsePhase > 0.78f -> ((pulsePhase - 0.78f) / 0.22f).coerceIn(0.45f, 1.0f)
         else -> 0.42f
@@ -324,7 +331,7 @@ private fun DrawScope.drawThunderstorm(fastPhase: Float, pulsePhase: Float, isDa
         centerX = size.width * 0.50f + drift,
         baseY = size.height * 0.54f,
         width = size.width * 0.72f,
-        topColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF94A3B8),
+        topColor = Color(0xFF94A3B8),
         bottomColor = if (isDark) Color(0xFF475569) else Color(0xFF64748B)
     )
 }
@@ -339,7 +346,6 @@ private fun DrawScope.drawFoggy(pulsePhase: Float, isDark: Boolean) {
         bottomColor = if (isDark) Color(0xFF94A3B8) else Color(0xFFCBD5E1)
     )
 
-    // Smoothly drifting mist bars
     val ys = listOf(0.58f, 0.70f, 0.82f)
     val widths = listOf(0.68f, 0.56f, 0.46f)
     for (i in ys.indices) {
@@ -371,7 +377,6 @@ private fun DrawScope.drawNight(pulsePhase: Float, slowPhase: Float) {
     val cy = size.height * 0.52f
     val r = size.minDimension * 0.26f
 
-    // Soft moonlight aura
     drawCircle(
         brush = Brush.radialGradient(
             colors = listOf(
@@ -385,27 +390,6 @@ private fun DrawScope.drawNight(pulsePhase: Float, slowPhase: Float) {
         center = Offset(cx, cy)
     )
 
-    // Crescent moon drawn via smooth two-arc Path
-    val moonPath = Path().apply {
-        val steps = 36
-        for (i in 0..steps) {
-            val angle = (-40.0 + i * (260.0 / steps)) * PI / 180.0
-            val x = cx + (cos(angle) * r).toFloat()
-            val y = cy + (sin(angle) * r).toFloat()
-            if (i == 0) moveTo(x, y) else lineTo(x, y)
-        }
-        val innerCx = cx + r * 0.45f
-        val innerCy = cy - r * 0.25f
-        val innerR = r * 0.85f
-        for (i in steps downTo 0) {
-            val angle = (-40.0 + i * (260.0 / steps)) * PI / 180.0
-            val x = innerCx + (cos(angle) * innerR).toFloat()
-            val y = innerCy + (sin(angle) * innerR).toFloat()
-            lineTo(x, y)
-        }
-        close()
-    }
-    // Crisp glowing moon disc + crescent shading
     drawCircle(
         brush = Brush.linearGradient(
             colors = listOf(Color(0xFFFEF08A), Color(0xFFEAB308)),
@@ -421,7 +405,6 @@ private fun DrawScope.drawNight(pulsePhase: Float, slowPhase: Float) {
         center = Offset(cx + r * 0.46f, cy - r * 0.28f)
     )
 
-    // Twinkling stars
     val stars = listOf(
         Triple(0.76f, 0.26f, pulsePhase),
         Triple(0.84f, 0.48f, 1f - pulsePhase),
@@ -446,6 +429,95 @@ private fun DrawScope.drawNight(pulsePhase: Float, slowPhase: Float) {
             cap = StrokeCap.Round
         )
     }
+}
+
+private fun DrawScope.drawCloudyNight(pulsePhase: Float, slowPhase: Float, isDark: Boolean) {
+    val cx = size.width * 0.64f
+    val cy = size.height * 0.36f
+    val r = size.minDimension * 0.19f
+
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                Color(0xFF818CF8).copy(alpha = 0.28f + 0.10f * pulsePhase),
+                Color.Transparent
+            ),
+            center = Offset(cx, cy),
+            radius = r * 1.9f
+        ),
+        radius = r * 1.9f,
+        center = Offset(cx, cy)
+    )
+    drawCircle(
+        brush = Brush.linearGradient(
+            colors = listOf(Color(0xFFFEF08A), Color(0xFFEAB308)),
+            start = Offset(cx - r, cy - r),
+            end = Offset(cx + r, cy + r)
+        ),
+        radius = r,
+        center = Offset(cx, cy)
+    )
+    drawCircle(
+        color = if (isDark) Color(0xFF0F172A).copy(alpha = 0.90f) else Color(0xFF334155).copy(alpha = 0.86f),
+        radius = r * 0.78f,
+        center = Offset(cx + r * 0.44f, cy - r * 0.24f)
+    )
+
+    // Subtle twinkling star
+    val starR = size.minDimension * (0.028f + 0.018f * ((slowPhase * 2f) % 1f))
+    val starCenter = Offset(size.width * 0.26f, size.height * 0.26f)
+    val starColor = Color(0xFFFEF9C3).copy(alpha = 0.45f + 0.50f * pulsePhase)
+    drawLine(starColor, Offset(starCenter.x - starR, starCenter.y), Offset(starCenter.x + starR, starCenter.y), size.minDimension * 0.022f, StrokeCap.Round)
+    drawLine(starColor, Offset(starCenter.x, starCenter.y - starR), Offset(starCenter.x, starCenter.y + starR), size.minDimension * 0.022f, StrokeCap.Round)
+
+    val driftX = (pulsePhase - 0.5f) * size.width * 0.08f
+    drawSoftCloud(
+        centerX = size.width * 0.45f + driftX,
+        baseY = size.height * 0.74f,
+        width = size.width * 0.68f,
+        topColor = if (isDark) Color(0xFFCBD5E1) else Color(0xFFE2E8F0),
+        bottomColor = if (isDark) Color(0xFF475569) else Color(0xFF94A3B8)
+    )
+}
+
+private fun DrawScope.drawWindy(fastPhase: Float, pulsePhase: Float, isDark: Boolean) {
+    val lineColor = if (isDark) Color(0xFF34D399) else Color(0xFF059669)
+    val secondaryColor = if (isDark) Color(0xFF7DD3FC) else Color(0xFF0284C7)
+
+    drawSoftCloud(
+        centerX = size.width * 0.44f + (pulsePhase - 0.5f) * size.width * 0.06f,
+        baseY = size.height * 0.46f,
+        width = size.width * 0.56f,
+        topColor = if (isDark) Color(0xFFE2E8F0) else Color(0xFFF1F5F9),
+        bottomColor = if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8)
+    )
+
+    val strokeW = size.minDimension * 0.055f
+    val shift = (fastPhase - 0.5f) * size.width * 0.10f
+
+    // Flowing upper wind ribbon with curl
+    val p1 = Path().apply {
+        moveTo(size.width * 0.16f + shift, size.height * 0.60f)
+        lineTo(size.width * 0.72f + shift * 0.4f, size.height * 0.60f)
+        cubicTo(
+            size.width * 0.84f, size.height * 0.60f,
+            size.width * 0.84f, size.height * 0.46f,
+            size.width * 0.72f, size.height * 0.48f
+        )
+    }
+    drawPath(p1, color = lineColor.copy(alpha = 0.90f), style = Stroke(width = strokeW, cap = StrokeCap.Round))
+
+    // Lower wind gust ribbon
+    val p2 = Path().apply {
+        moveTo(size.width * 0.24f - shift * 0.6f, size.height * 0.76f)
+        lineTo(size.width * 0.66f - shift * 0.3f, size.height * 0.76f)
+        cubicTo(
+            size.width * 0.78f, size.height * 0.76f,
+            size.width * 0.78f, size.height * 0.88f,
+            size.width * 0.66f, size.height * 0.86f
+        )
+    }
+    drawPath(p2, color = secondaryColor.copy(alpha = 0.85f), style = Stroke(width = strokeW * 0.88f, cap = StrokeCap.Round))
 }
 
 private fun DrawScope.drawSnowy(fastPhase: Float, pulsePhase: Float, isDark: Boolean) {
@@ -489,25 +561,21 @@ private fun DrawScope.drawSoftCloud(
         startY = baseY - h * 1.35f,
         endY = baseY
     )
-    // Left puff
     drawCircle(
         brush = brush,
         radius = h * 0.52f,
         center = Offset(centerX - width * 0.24f, baseY - h * 0.48f)
     )
-    // Center tall puff
     drawCircle(
         brush = brush,
         radius = h * 0.70f,
         center = Offset(centerX - width * 0.02f, baseY - h * 0.68f)
     )
-    // Right puff
     drawCircle(
         brush = brush,
         radius = h * 0.55f,
         center = Offset(centerX + width * 0.24f, baseY - h * 0.50f)
     )
-    // Rounded cloud base connecting puffs smoothly
     drawRoundRect(
         brush = brush,
         topLeft = Offset(centerX - width * 0.46f, baseY - h * 0.60f),

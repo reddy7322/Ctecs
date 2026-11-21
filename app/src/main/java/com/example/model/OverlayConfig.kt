@@ -208,7 +208,12 @@ data class CaptureSnapshot(
     val weatherObservation: WeatherObservation? = null,
     val weatherIsFreshAtCapture: Boolean = false,
     val is24HourFormat: Boolean = false,
-    val coordinateFormat: CoordinateFormat = CoordinateFormat.DECIMAL
+    val coordinateFormat: CoordinateFormat = CoordinateFormat.DECIMAL,
+    val photoJpegQuality: Int = 92,
+    val preserveExif: Boolean = true,
+    val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
+    val videoOutputSizeOptimization: Boolean = false,
+    val targetVideoFps: Int = 30
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage

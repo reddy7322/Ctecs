@@ -91,6 +91,7 @@ enum class AppTab(val label: String) {
     SURVEY("Survey"),
     HIGHWAY_TOOLS("Tools"),
     SMART_NOTES("Notes"),
+    WEATHER("Weather"),
     SETTINGS("Settings")
 }
 
@@ -371,23 +372,216 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val currentLocationName: StateFlow<String> = _currentLocationName.asStateFlow()
 
-    // Single Shared Live Weather Repository (reused across Home, Camera, Video, Settings)
+    // Single Shared Live Weather Repository (reused across Home, Weather Dashboard, Camera, Video, Settings)
     private val weatherRepository: com.example.weather.SharedWeatherRepository =
         com.example.weather.SharedWeatherRepository.instance
+    private val weatherAlertNotifier = com.example.weather.WeatherAlertNotifier()
     val weatherUiState: StateFlow<com.example.model.WeatherUiState> = weatherRepository.weatherUiState
     val latestWeatherObservation: StateFlow<com.example.model.WeatherObservation?> =
         weatherRepository.latestObservation
+    val weatherForecastBundle: StateFlow<com.example.model.WeatherForecastBundle?> =
+        weatherRepository.forecastBundle
+
+    val weatherIntelligenceSettings: StateFlow<com.example.model.WeatherIntelligenceSettings> =
+        preferencesManager.weatherIntelligenceSettingsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = preferencesManager.getInitialWeatherIntelligenceSettings()
+        )
+
+    val actualSiteMeasurements: StateFlow<com.example.model.ActualSiteMeasurements> =
+        preferencesManager.actualSiteMeasurementsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = preferencesManager.getInitialActualSiteMeasurements()
+        )
+
+    val workTargetInput: StateFlow<com.example.model.WorkTargetInput> =
+        preferencesManager.workTargetInputFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = preferencesManager.getInitialWorkTargetInput()
+        )
+
+    private val _selectedWeatherWorkActivity = MutableStateFlow(
+        preferencesManager.getInitialWeatherIntelligenceSettings().primaryActivity
+    )
+    val selectedWeatherWorkActivity: StateFlow<com.example.model.HighwayWorkActivity> =
+        _selectedWeatherWorkActivity.asStateFlow()
+
+    val highwayWorkAssessments: StateFlow<List<com.example.model.ActivitySuitabilityAssessment>> =
+        combine(
+            latestWeatherObservation,
+            weatherIntelligenceSettings,
+            actualSiteMeasurements
+        ) { obs, settings, site ->
+            com.example.weather.IrcMorthWeatherRuleEngine.evaluateAllActivities(
+                observation = obs,
+                contractSpec = settings.contractSpec,
+                siteMeasurements = site,
+                staleThresholdMs = settings.staleDataThresholdMinutes.toLong() * 60_000L
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = com.example.weather.IrcMorthWeatherRuleEngine.evaluateAllActivities(
+                observation = weatherRepository.latestObservation.value,
+                contractSpec = preferencesManager.getInitialWeatherIntelligenceSettings().contractSpec,
+                siteMeasurements = preferencesManager.getInitialActualSiteMeasurements()
+            )
+        )
+
+    val hourlyWorkSuitabilityTimeline: StateFlow<List<com.example.model.HourlyWorkWindow>> =
+        combine(
+            weatherForecastBundle,
+            selectedWeatherWorkActivity,
+            weatherIntelligenceSettings,
+            actualSiteMeasurements
+        ) { bundle, activity, settings, site ->
+            val hours = bundle?.next24Hours().orEmpty()
+            com.example.weather.IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(
+                activity = activity,
+                hourlyPoints = hours,
+                contractSpec = settings.contractSpec,
+                siteMeasurements = site
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
+
+    val workTargetPrediction: StateFlow<com.example.model.WorkTargetPrediction> =
+        combine(
+            workTargetInput,
+            hourlyWorkSuitabilityTimeline,
+            weatherForecastBundle,
+            weatherIntelligenceSettings,
+            actualSiteMeasurements
+        ) { input, selectedTimeline, bundle, settings, site ->
+            val timelineForTarget = if (selectedTimeline.firstOrNull()?.activity == input.activity) {
+                selectedTimeline
+            } else {
+                com.example.weather.IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(
+                    activity = input.activity,
+                    hourlyPoints = bundle?.next24Hours().orEmpty(),
+                    contractSpec = settings.contractSpec,
+                    siteMeasurements = site
+                )
+            }
+            com.example.weather.WorkTargetPredictionEngine.predictWorkTarget(
+                input = input,
+                hourlyTimeline = timelineForTarget
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = com.example.weather.WorkTargetPredictionEngine.predictWorkTarget(
+                input = preferencesManager.getInitialWorkTargetInput(),
+                hourlyTimeline = emptyList()
+            )
+        )
+
+    val weatherDelayRiskSummary: StateFlow<com.example.model.DelayRiskSummary> =
+        combine(
+            selectedWeatherWorkActivity,
+            hourlyWorkSuitabilityTimeline,
+            workTargetPrediction
+        ) { activity, timeline, prediction ->
+            com.example.weather.WorkTargetPredictionEngine.analyzeDelayRisks(
+                activity = activity,
+                hourlyTimeline = timeline,
+                targetPrediction = prediction.takeIf { it.activity == activity }
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = com.example.weather.WorkTargetPredictionEngine.analyzeDelayRisks(
+                activity = preferencesManager.getInitialWeatherIntelligenceSettings().primaryActivity,
+                hourlyTimeline = emptyList()
+            )
+        )
+
+    val actionableWeatherAlerts: StateFlow<List<com.example.model.WeatherAlertItem>> =
+        combine(
+            weatherForecastBundle,
+            weatherIntelligenceSettings,
+            highwayWorkAssessments,
+            workTargetPrediction
+        ) { bundle, settings, assessments, prediction ->
+            weatherAlertNotifier.evaluateActionableAlerts(
+                bundle = bundle,
+                settings = settings,
+                assessments = assessments,
+                targetPrediction = prediction
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
+
+    fun selectWeatherWorkActivity(activity: com.example.model.HighwayWorkActivity) {
+        _selectedWeatherWorkActivity.value = activity
+    }
+
+    fun updateWeatherIntelligenceSettings(
+        transform: (com.example.model.WeatherIntelligenceSettings) -> com.example.model.WeatherIntelligenceSettings
+    ) {
+        val updated = transform(weatherIntelligenceSettings.value)
+        _selectedWeatherWorkActivity.value = updated.primaryActivity
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateWeatherIntelligenceSettings(updated)
+        }
+    }
+
+    fun resetWeatherIntelligenceSettings() {
+        val defaults = com.example.model.WeatherIntelligenceSettings()
+        _selectedWeatherWorkActivity.value = defaults.primaryActivity
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateWeatherIntelligenceSettings(defaults)
+        }
+        showToast("Weather & Highway Intelligence defaults restored", ToastType.SETTINGS_SAVED)
+    }
+
+    fun updateContractSpecificationConfig(spec: com.example.model.ContractSpecificationConfig) {
+        updateWeatherIntelligenceSettings { it.copy(contractSpec = spec) }
+    }
+
+    fun updateActualSiteMeasurements(measurements: com.example.model.ActualSiteMeasurements) {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateActualSiteMeasurements(measurements)
+        }
+    }
+
+    fun updateWorkTargetInput(input: com.example.model.WorkTargetInput) {
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateWorkTargetInput(input)
+        }
+    }
 
     fun refreshWeather(force: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
             val pt = locationTracker.locationState.value.point ?: _lastValidLocation.value
             val locName = _currentLocationName.value.ifBlank { overlayConfig.value.lastDetectedLocationName }
+            val ttlMs = weatherIntelligenceSettings.value.autoRefreshIntervalMinutes.toLong() * 60_000L
             val updated = weatherRepository.refreshForLocation(
                 point = pt,
                 resolvedLocationName = locName,
-                forceRefresh = force
+                forceRefresh = force,
+                cacheTtlMs = ttlMs
             )
-            if (updated != null) {
+            val bundle = weatherRepository.forecastBundle.value
+            if (bundle != null) {
+                preferencesManager.saveCachedWeatherForecastBundle(bundle)
+                val alerts = weatherAlertNotifier.evaluateActionableAlerts(
+                    bundle = bundle,
+                    settings = weatherIntelligenceSettings.value,
+                    assessments = highwayWorkAssessments.value,
+                    targetPrediction = workTargetPrediction.value
+                )
+                weatherAlertNotifier.dispatchSystemNotifications(getApplication(), alerts)
+            } else if (updated != null) {
                 preferencesManager.saveCachedWeatherObservation(updated)
             }
         }
@@ -1849,7 +2043,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Hydrate cached weather observation on startup (preserving original observation timestamp)
+        // Hydrate cached weather forecast & observation on startup (preserving original observation timestamp)
+        weatherRepository.seedFromPersistedForecast(preferencesManager.getInitialCachedWeatherForecastBundle())
         weatherRepository.seedFromPersistedCache(preferencesManager.getInitialCachedWeatherObservation())
 
         // Isolated, throttled reverse-geocoding & shared live weather collector on Dispatchers.IO
@@ -1878,13 +2073,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (resolvedName.isNotBlank()) {
                     weatherRepository.attachResolvedLocationName(resolvedName)
                 }
+                val ttlMs = weatherIntelligenceSettings.value.autoRefreshIntervalMinutes.toLong() * 60_000L
                 val fetchedWeather = weatherRepository.refreshForLocation(
                     point = pt,
                     resolvedLocationName = resolvedName,
-                    forceRefresh = false
+                    forceRefresh = false,
+                    cacheTtlMs = ttlMs
                 )
                 if (fetchedWeather != null && fetchedWeather.fetchedAtMs >= now - 2_000L) {
-                    preferencesManager.saveCachedWeatherObservation(fetchedWeather)
+                    val bundle = weatherRepository.forecastBundle.value
+                    if (bundle != null) {
+                        preferencesManager.saveCachedWeatherForecastBundle(bundle)
+                        val alerts = weatherAlertNotifier.evaluateActionableAlerts(
+                            bundle = bundle,
+                            settings = weatherIntelligenceSettings.value,
+                            assessments = highwayWorkAssessments.value,
+                            targetPrediction = workTargetPrediction.value
+                        )
+                        weatherAlertNotifier.dispatchSystemNotifications(getApplication(), alerts)
+                    } else {
+                        preferencesManager.saveCachedWeatherObservation(fetchedWeather)
+                    }
                 }
             }
         }
@@ -2897,7 +3106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setZoomRatio(ratio: Float) {
-        _currentZoomRatio.value = ratio.coerceIn(0.5f, 10.0f)
+        _currentZoomRatio.value = ratio.coerceIn(0.4f, 20.0f)
     }
 
     fun setExposureCompensation(ev: Int) {
@@ -3031,7 +3240,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             weatherObservation = weatherObs,
             weatherIsFreshAtCapture = isWeatherFresh,
             is24HourFormat = currentCamCfg.is24HourFormat,
-            coordinateFormat = currentCamCfg.coordinateFormat
+            coordinateFormat = currentCamCfg.coordinateFormat,
+            photoJpegQuality = com.example.camera.CameraQualityEngine.resolveEffectivePhotoJpegQuality(currentCamCfg),
+            preserveExif = currentCamCfg.preserveExif,
+            videoQualityPreset = currentCamCfg.videoQualityPreset,
+            videoOutputSizeOptimization = currentCamCfg.videoOutputSizeOptimization,
+            targetVideoFps = currentCamCfg.videoFps
         )
     }
 
@@ -3585,7 +3799,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun processCapture(bitmap: Bitmap) {
         viewModelScope.launch {
             _isCapturing.value = true
-            var optimizedBitmap: Bitmap? = null
+            val intermediateBitmaps = mutableListOf<Bitmap>()
             try {
                 val snapshot = createCurrentSnapshot()
                 val settingsNow = cameraSettings.value
@@ -3593,19 +3807,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val activeEvStops = _captureExposureEvStops.value
                 val hwEvApplied = _captureExposureHardwareSupported.value
 
-                // Retain the user's selected capture exposure with low-light noise reduction BEFORE overlays
-                // so all timestamp/GPS/project/chainage/LHS-RHS/weather/logo/watermark/EXIF overlays stay untouched.
+                // 1. Exposure retention + 2. Photo Output Format framing + 3. Quality Enhancement & Size Optimization
+                // All applied strictly BEFORE overlay rendering so timestamp/GPS/project/chainage/LHS-RHS/weather/logo/EXIF stay intact.
                 val captureBitmap = withContext(Dispatchers.Default) {
-                    CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+                    val exposureProcessed = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
                         source = bitmap,
                         normalizedLevel = activeLevel,
                         evStops = activeEvStops,
                         isAutoExposure = settingsNow.autoBrightnessEnabled,
                         hardwareEvApplied = hwEvApplied
                     )
-                }
-                if (captureBitmap !== bitmap) {
-                    optimizedBitmap = captureBitmap
+                    if (exposureProcessed !== bitmap) intermediateBitmaps.add(exposureProcessed)
+
+                    val isLandscapeShot = snapshot.deviceRotationDegrees == 90 || snapshot.deviceRotationDegrees == 270
+                    val formatted = com.example.camera.CameraOutputFormatEngine.applyOutputFormatToBitmap(
+                        source = exposureProcessed,
+                        format = settingsNow.photoOutputFormat,
+                        isDeviceLandscape = isLandscapeShot
+                    )
+                    if (formatted !== exposureProcessed && formatted !== bitmap) intermediateBitmaps.add(formatted)
+
+                    val enhanced = com.example.camera.CameraQualityEngine.enhanceCapturedPhoto(
+                        source = formatted,
+                        qualityPreset = settingsNow.photoQualityPreset,
+                        enhancementEnabled = settingsNow.photoEnhancementEnabled,
+                        sizeOptimizationEnabled = settingsNow.photoOutputSizeOptimization
+                    )
+                    if (enhanced !== formatted && enhanced !== exposureProcessed && enhanced !== bitmap) {
+                        intermediateBitmaps.add(enhanced)
+                    }
+                    enhanced
                 }
 
                 val result = photoRepository.saveCapturedPhoto(captureBitmap, snapshot)
@@ -3620,9 +3851,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 _uiMessages.emit(UiMessage.Error("Capture failed: ${e.message}"))
             } finally {
-                optimizedBitmap?.let {
-                    if (!it.isRecycled) {
-                        try { it.recycle() } catch (ignored: Throwable) {}
+                intermediateBitmaps.forEach { bmp ->
+                    if (bmp !== bitmap && !bmp.isRecycled) {
+                        try { bmp.recycle() } catch (ignored: Throwable) {}
                     }
                 }
                 _isCapturing.value = false
