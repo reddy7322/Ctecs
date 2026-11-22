@@ -76,6 +76,8 @@ class RealtimeVideoOverlayManager(
     private var lastRenderedRetained: Boolean = false
     @Volatile
     private var lastRenderedWeatherSig: String = ""
+    @Volatile
+    private var lastRenderedCropMode: com.example.model.CameraCropMode? = null
 
     @Volatile
     private var sessionLastValidLocation: com.example.model.GeoPoint? = null
@@ -211,7 +213,8 @@ class RealtimeVideoOverlayManager(
                     (currentRouteKey != lastRenderedRouteKey) ||
                     (currentMiniMapSig != lastRenderedMiniMapSig) ||
                     (isRetained != lastRenderedRetained) ||
-                    (currentWeatherSig != lastRenderedWeatherSig)
+                    (currentWeatherSig != lastRenderedWeatherSig) ||
+                    (baseSnapshot.cropMode != lastRenderedCropMode)
 
             if (isDirty) {
                 val canvas = frame.overlayCanvas
@@ -257,6 +260,7 @@ class RealtimeVideoOverlayManager(
                 lastRenderedMiniMapSig = currentMiniMapSig
                 lastRenderedRetained = isRetained
                 lastRenderedWeatherSig = currentWeatherSig
+                lastRenderedCropMode = baseSnapshot.cropMode
             }
             return true
         } catch (e: Throwable) {
@@ -286,66 +290,73 @@ class RealtimeVideoOverlayManager(
         }
         when (effectiveCanvasRotation) {
             0 -> {
-                OverlayRenderer.drawOverlayOnCanvas(
-                    context = context,
-                    canvas = canvas,
-                    width = width,
-                    height = height,
-                    snapshot = snapshot,
-                    isVideoFrame = true
-                )
+                drawOverlayWithinCropBounds(canvas, width, height, snapshot)
             }
             90 -> {
                 // 90° clockwise: output display width is height, output display height is width
                 canvas.translate(width.toFloat(), 0f)
                 canvas.rotate(90f)
-                OverlayRenderer.drawOverlayOnCanvas(
-                    context = context,
-                    canvas = canvas,
-                    width = height,
-                    height = width,
-                    snapshot = snapshot,
-                    isVideoFrame = true
-                )
+                drawOverlayWithinCropBounds(canvas, height, width, snapshot)
             }
             180 -> {
                 // 180° reverse
                 canvas.translate(width.toFloat(), height.toFloat())
                 canvas.rotate(180f)
-                OverlayRenderer.drawOverlayOnCanvas(
-                    context = context,
-                    canvas = canvas,
-                    width = width,
-                    height = height,
-                    snapshot = snapshot,
-                    isVideoFrame = true
-                )
+                drawOverlayWithinCropBounds(canvas, width, height, snapshot)
             }
             270 -> {
                 // 270° clockwise (-90°): output display width is height, output display height is width
                 canvas.translate(0f, height.toFloat())
                 canvas.rotate(270f)
-                OverlayRenderer.drawOverlayOnCanvas(
-                    context = context,
-                    canvas = canvas,
-                    width = height,
-                    height = width,
-                    snapshot = snapshot,
-                    isVideoFrame = true
-                )
+                drawOverlayWithinCropBounds(canvas, height, width, snapshot)
             }
             else -> {
-                OverlayRenderer.drawOverlayOnCanvas(
-                    context = context,
-                    canvas = canvas,
-                    width = width,
-                    height = height,
-                    snapshot = snapshot,
-                    isVideoFrame = true
-                )
+                drawOverlayWithinCropBounds(canvas, width, height, snapshot)
             }
         }
         canvas.restore()
+    }
+
+    /**
+     * Positions existing [OverlayRenderer] strictly within the active [com.example.model.CameraCropMode]
+     * bounds so timestamps, GPS, chainage, LHS/RHS, weather, watermark, logo, and mini-map are 100% visible
+     * and never clipped in both FULL and cropped video outputs.
+     */
+    private fun drawOverlayWithinCropBounds(
+        canvas: android.graphics.Canvas,
+        displayWidth: Int,
+        displayHeight: Int,
+        snapshot: CaptureSnapshot
+    ) {
+        val isLandscape = displayWidth >= displayHeight
+        val cropRect = com.example.camera.CameraOutputFormatEngine.computeCropRectForMode(
+            sourceWidth = displayWidth,
+            sourceHeight = displayHeight,
+            cropMode = snapshot.cropMode,
+            isLandscape = isLandscape
+        )
+        if (cropRect.isCropped) {
+            canvas.save()
+            canvas.translate(cropRect.left.toFloat(), cropRect.top.toFloat())
+            OverlayRenderer.drawOverlayOnCanvas(
+                context = context,
+                canvas = canvas,
+                width = cropRect.width,
+                height = cropRect.height,
+                snapshot = snapshot,
+                isVideoFrame = true
+            )
+            canvas.restore()
+        } else {
+            OverlayRenderer.drawOverlayOnCanvas(
+                context = context,
+                canvas = canvas,
+                width = displayWidth,
+                height = displayHeight,
+                snapshot = snapshot,
+                isVideoFrame = true
+            )
+        }
     }
 
     @Synchronized

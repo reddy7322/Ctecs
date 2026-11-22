@@ -205,6 +205,7 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_VIDEO_RESOLUTION.name,
                 PreferencesManager.KEY_PHOTO_ASPECT_RATIO.name,
                 PreferencesManager.KEY_VIDEO_ASPECT_RATIO.name,
+                PreferencesManager.KEY_CAMERA_CROP_MODE.name,
                 PreferencesManager.KEY_PHOTO_OUTPUT_FORMAT.name,
                 PreferencesManager.KEY_VIDEO_OUTPUT_FORMAT.name,
                 PreferencesManager.KEY_PHOTO_QUALITY_PRESET.name,
@@ -300,6 +301,7 @@ class SettingsBackupManager(
         PreferencesManager.KEY_CAPTURE_MODE.name,
         PreferencesManager.KEY_AUTO_ROTATE_UI.name,
         PreferencesManager.KEY_AUTOFOCUS_MODE.name,
+        PreferencesManager.KEY_CAMERA_CROP_MODE.name,
         PreferencesManager.KEY_CAMERA_AUTO_BRIGHTNESS.name,
         PreferencesManager.KEY_CAMERA_MANUAL_BRIGHTNESS.name -> BackupCategory.CAMERA
 
@@ -623,6 +625,7 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_VIDEO_RESOLUTION.name, PrefValueType.STRING, camera.videoResolution)
         putEntry(PreferencesManager.KEY_PHOTO_ASPECT_RATIO.name, PrefValueType.STRING, camera.photoAspectRatio)
         putEntry(PreferencesManager.KEY_VIDEO_ASPECT_RATIO.name, PrefValueType.STRING, camera.videoAspectRatio)
+        putEntry(PreferencesManager.KEY_CAMERA_CROP_MODE.name, PrefValueType.STRING, camera.cropMode.name)
         putEntry(PreferencesManager.KEY_PHOTO_OUTPUT_FORMAT.name, PrefValueType.STRING, camera.photoOutputFormat.name)
         putEntry(PreferencesManager.KEY_VIDEO_OUTPUT_FORMAT.name, PrefValueType.STRING, camera.videoOutputFormat.name)
         putEntry(PreferencesManager.KEY_PHOTO_QUALITY_PRESET.name, PrefValueType.STRING, camera.photoQualityPreset.name)

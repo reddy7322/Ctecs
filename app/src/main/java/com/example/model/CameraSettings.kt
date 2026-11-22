@@ -247,6 +247,67 @@ enum class CameraAutofocusMode(val label: String, val subtitle: String) {
     }
 }
 
+/**
+ * Dynamic tap-to-switch camera crop modes applied consistently to Live Preview, Photos, and Videos.
+ * - [FULL]: Complete native camera sensor frame corner-to-corner with ZERO cropping.
+ * - [SEMI_CROP]: Moderate intentional center crop preserving natural proportions.
+ * - [RECTANGULAR_CROP]: Clean orientation-adaptive rectangular crop (landscape / portrait).
+ * - [SQUARE_CROP]: Centered 1:1 square framing.
+ */
+enum class CameraCropMode(
+    val label: String,
+    val shortLabel: String,
+    val description: String
+) {
+    FULL(
+        label = "Full",
+        shortLabel = "Full",
+        description = "Complete camera frame with zero crop"
+    ),
+    SEMI_CROP(
+        label = "Semi Crop",
+        shortLabel = "Semi",
+        description = "Moderate intentional framing crop"
+    ),
+    RECTANGULAR_CROP(
+        label = "Rectangular Crop",
+        shortLabel = "Rect",
+        description = "Orientation-adaptive rectangular framing"
+    ),
+    SQUARE_CROP(
+        label = "Square Crop",
+        shortLabel = "1:1",
+        description = "Centered 1:1 square framing"
+    );
+
+    fun next(): CameraCropMode = when (this) {
+        FULL -> SEMI_CROP
+        SEMI_CROP -> RECTANGULAR_CROP
+        RECTANGULAR_CROP -> SQUARE_CROP
+        SQUARE_CROP -> FULL
+    }
+
+    companion object {
+        fun fromString(raw: String?, fallback: CameraCropMode = FULL): CameraCropMode {
+            if (raw.isNullOrBlank()) return fallback
+            val normalized = raw.trim()
+            entries.firstOrNull {
+                it.name.equals(normalized, ignoreCase = true) ||
+                    it.label.equals(normalized, ignoreCase = true) ||
+                    it.shortLabel.equals(normalized, ignoreCase = true)
+            }?.let { return it }
+
+            return when (normalized.lowercase()) {
+                "full", "none", "no_crop", "original" -> FULL
+                "semi", "semi crop", "semi_crop", "moderate" -> SEMI_CROP
+                "rect", "rectangular", "rectangular crop", "rectangular_crop", "4:3", "16:9" -> RECTANGULAR_CROP
+                "square", "square crop", "square_crop", "1:1" -> SQUARE_CROP
+                else -> fallback
+            }
+        }
+    }
+}
+
 data class CameraSettings(
     val captureTimer: CaptureTimer = CaptureTimer.OFF,
     val gridMode: CameraGridMode = CameraGridMode.OFF,
@@ -257,7 +318,7 @@ data class CameraSettings(
     val frontCameraMirror: Boolean = false,
 
     // Image quality & storage
-    val jpegQuality: Int = 92,
+    val jpegQuality: Int = 95,
     val saveOriginalAndStamped: Boolean = false,
     val preserveExif: Boolean = true,
 
@@ -298,7 +359,10 @@ data class CameraSettings(
     val photoAspectRatio: String = "4:3",
     val videoAspectRatio: String = "16:9",
 
-    // Simple Output Formats, Quality Presets, Stabilization & Autofocus
+    // Dynamic Camera Crop Mode (default FULL = absolutely zero crop)
+    val cropMode: CameraCropMode = CameraCropMode.FULL,
+
+    // Legacy output format/quality fields retained for settings backup compatibility
     val photoOutputFormat: CameraOutputFormat = CameraOutputFormat.PORTRAIT_FULL,
     val videoOutputFormat: CameraOutputFormat = CameraOutputFormat.LANDSCAPE_FULL,
     val photoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,

@@ -146,10 +146,11 @@ fun CameraPreview(
     videoResolution: String = "1920 x 1080",
     photoAspectRatio: String = "4:3",
     videoAspectRatio: String = "16:9",
+    cropMode: com.example.model.CameraCropMode = com.example.model.CameraCropMode.FULL,
     autoBrightnessEnabled: Boolean = true,
     manualPreviewBrightness: Float = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
     targetVideoFps: Int = 30,
-    photoQualityPreset: com.example.model.OutputQualityPreset = com.example.model.OutputQualityPreset.HIGH,
+    photoQualityPreset: com.example.model.OutputQualityPreset = com.example.model.OutputQualityPreset.MAXIMUM,
     videoStabilizationMode: com.example.model.VideoStabilizationMode = com.example.model.VideoStabilizationMode.AUTO,
     autofocusMode: com.example.model.CameraAutofocusMode = com.example.model.CameraAutofocusMode.CONTINUOUS,
     photoEnhancementEnabled: Boolean = true,
@@ -459,11 +460,25 @@ fun CameraPreview(
             controller.isPinchToZoomEnabled = false
             controller.isTapToFocusEnabled = false
             try {
-                val desiredCaptureMode = com.example.camera.CameraQualityEngine.resolveImageCaptureMode(photoQualityPreset)
+                // Ultra-fast shutter capture mode: prefer Zero Shutter Lag on supported Android 13+ HALs
+                // when torch/flash is off, otherwise MINIMIZE_LATENCY while preserving full native resolution.
+                val zslSupported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+                    !isFlashOn &&
+                    try { controller.cameraInfo?.isZslSupported == true } catch (_: Throwable) { false }
+                val desiredCaptureMode = if (zslSupported) {
+                    ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
+                } else {
+                    ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                }
                 if (controller.imageCaptureMode != desiredCaptureMode) {
                     controller.imageCaptureMode = desiredCaptureMode
                 }
             } catch (ignored: Throwable) {}
+
+            val autoVideoResolution = com.example.camera.CameraResolutionHelper.resolveBestAutomaticVideoResolution(
+                context = context,
+                isFrontCamera = isFrontCamera
+            )
 
             val adapter = LifecycleCameraControllerVideoAdapter(
                 controller = controller,
@@ -557,14 +572,14 @@ fun CameraPreview(
             if (videoManager != null) {
                 videoManager.ensureVideoPipelineConfigured(
                     adapter = adapter,
-                    videoResolution = videoResolution,
+                    videoResolution = autoVideoResolution,
                     isFrontCamera = desiredFront,
                     enableVideo = shouldEnableVideoPipeline,
                     strictVideoMode = isVideoMode,
                     overlayManager = overlayManager
                 )
             } else if (shouldEnableVideoPipeline && hasSupportedHardwareVideoProfiles(controller.cameraInfo)) {
-                val safeSelector = buildSafeQualitySelector(videoResolution, controller.cameraInfo)
+                val safeSelector = buildSafeQualitySelector(autoVideoResolution, controller.cameraInfo)
                 if (safeSelector != null) {
                     controller.videoCaptureQualitySelector = safeSelector
                 }
@@ -812,26 +827,29 @@ fun CameraPreview(
         }
     }
 
-    LaunchedEffect(photoResolution, isLandscape, hasCameraPermission) {
+    // Automatically configure the highest suitable full-native-sensor photo size adapting to Portrait & Landscape
+    // without cropping the sensor down to 16:9.
+    val nativeSensorAspectRatio = remember(isFrontCamera, isVideoMode) {
+        com.example.camera.CameraResolutionHelper.resolveNativeSensorAspectRatio(
+            context = context,
+            isFrontCamera = isFrontCamera,
+            isVideoMode = isVideoMode
+        )
+    }
+
+    LaunchedEffect(isFrontCamera, isLandscape, hasCameraPermission) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
-            val photoParts = photoResolution.split("x", "×").mapNotNull { it.trim().toIntOrNull() }
-            if (photoParts.size == 2) {
-                val maxDim = maxOf(photoParts[0], photoParts[1])
-                val minDim = minOf(photoParts[0], photoParts[1])
-                // In landscape mode: width > height (e.g. 1920x1080)
-                // In portrait mode: height > width (e.g. 1080x1920)
-                val targetSize = if (isLandscape) {
-                    android.util.Size(maxDim, minDim)
-                } else {
-                    android.util.Size(minDim, maxDim)
-                }
-                if (controller.imageCaptureTargetSize?.resolution != targetSize) {
-                    controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(targetSize)
-                }
+            val bestNativeSize = com.example.camera.CameraResolutionHelper.resolveBestAutomaticPhotoSize(
+                context = context,
+                isFrontCamera = isFrontCamera,
+                isLandscape = isLandscape
+            )
+            if (controller.imageCaptureTargetSize?.resolution != bestNativeSize) {
+                controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(bestNativeSize)
             }
         } catch (e: Exception) {
-            Log.w("CameraPreview", "Setting photo resolution error", e)
+            Log.w("CameraPreview", "Setting automatic native photo resolution notice: ${e.message}", e)
         }
     }
 
@@ -846,12 +864,13 @@ fun CameraPreview(
                 val rightZoneStart = (totalWidth - rightZoneMargin - rightZoneWidth).coerceAtLeast(0f)
                 val rightZoneEnd = totalWidth - rightZoneMargin
 
-                // 1. CameraX PreviewView Rendering
+                // 1. CameraX PreviewView Rendering — FIT_CENTER guarantees 100% corner-to-corner native sensor FOV
+                // with ZERO hidden edge cropping so live preview matches saved photos and videos identically.
                 AndroidView(
                     factory = { ctx ->
                         PreviewView(ctx).apply {
                             this.controller = controller
-                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            scaleType = PreviewView.ScaleType.FIT_CENTER
                             // COMPATIBLE uses TextureView which eliminates SurfaceView EGL_BAD_ATTRIBUTE emulation errors
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                         }.also {
@@ -860,8 +879,8 @@ fun CameraPreview(
                         }
                     },
                     update = { pv ->
-                        if (pv.scaleType != PreviewView.ScaleType.FILL_CENTER) {
-                            pv.scaleType = PreviewView.ScaleType.FILL_CENTER
+                        if (pv.scaleType != PreviewView.ScaleType.FIT_CENTER) {
+                            pv.scaleType = PreviewView.ScaleType.FIT_CENTER
                         }
                         previewViewInstance = pv
                         videoManager?.attachPreviewView(pv)
@@ -1000,11 +1019,12 @@ fun CameraPreview(
                         .padding(end = if (isLandscape) 104.dp else 16.dp)
                 )
 
-                // 5. Active Aspect Ratio Viewfinder Framing Overlay
-                val activeRatioStr = if (isVideoMode) videoAspectRatio else photoAspectRatio
-                if (!activeRatioStr.equals("Full", ignoreCase = true) && constraints.maxWidth > 0 && constraints.maxHeight > 0) {
-                    CameraFramingGuideOverlay(
-                        aspectRatioStr = activeRatioStr,
+                // 5. Dynamic Crop Mode Framing Overlay — synchronized 1:1 with the FIT_CENTER sensor viewport
+                //    In FULL mode: absolutely ZERO crop mask (complete corner-to-corner sensor frame visible).
+                if (cropMode != com.example.model.CameraCropMode.FULL && constraints.maxWidth > 0 && constraints.maxHeight > 0) {
+                    CameraCropModeGuideOverlay(
+                        cropMode = cropMode,
+                        sensorLongShortRatio = nativeSensorAspectRatio,
                         isLandscape = isLandscape,
                         containerWidth = constraints.maxWidth.toFloat(),
                         containerHeight = constraints.maxHeight.toFloat()
@@ -1415,16 +1435,25 @@ fun applyPhotoAspectRatio(
     }
 }
 
+private val captureDecodeExecutor: java.util.concurrent.ExecutorService =
+    java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "CtecsFastPhotoDecode").apply { priority = Thread.MAX_PRIORITY - 1 }
+    }
+
 /**
- * Captures image from LifecycleCameraController and returns a correctly rotated Bitmap
- * that strictly adheres to the physical device orientation and selected aspect ratio.
+ * Captures an image from [LifecycleCameraController] at native full sensor resolution with minimal shutter latency.
+ *
+ * - Runs JPEG/ImageProxy decoding, orientation normalization, and optional front-camera mirroring strictly off
+ *   the Main Thread via [captureDecodeExecutor] so the viewfinder never freezes or drops frames.
+ * - Preserves 100% of the complete native sensor frame (ZERO hidden aspect-ratio crop here); any selected
+ *   [com.example.model.CameraCropMode] is applied once in the unified capture pipeline before overlays.
  */
 fun capturePhoto(
     controller: LifecycleCameraController,
     context: Context,
     deviceRotationDegrees: Int = 0,
     isLandscape: Boolean = false,
-    photoAspectRatio: String = "4:3",
+    photoAspectRatio: String = "Full",
     isFrontCamera: Boolean = false,
     frontCameraMirror: Boolean = false,
     playShutterSound: Boolean = false,
@@ -1439,9 +1468,9 @@ fun capturePhoto(
         } catch (ignored: Throwable) {}
     }
 
-    val executor = ContextCompat.getMainExecutor(context)
+    val mainExecutor = ContextCompat.getMainExecutor(context)
     controller.takePicture(
-        executor,
+        captureDecodeExecutor,
         object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 try {
@@ -1454,10 +1483,11 @@ fun capturePhoto(
                         buffer.get(bytes)
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     }
+                    // Release ImageProxy immediately after decoding bytes so camera HAL buffer queue stays free
+                    image.close()
 
                     if (rawBitmap == null) {
-                        image.close()
-                        onError(Exception("Decoded bitmap is null"))
+                        mainExecutor.execute { onError(Exception("Decoded bitmap is null")) }
                         return
                     }
 
@@ -1467,8 +1497,11 @@ fun capturePhoto(
                         isLandscapeMode = isLandscape,
                         deviceRotationDegrees = deviceRotationDegrees
                     )
+                    if (normalizedBitmap !== rawBitmap && !rawBitmap.isRecycled) {
+                        try { rawBitmap.recycle() } catch (ignored: Throwable) {}
+                    }
 
-                    val orientedBitmap = if (isFrontCamera && frontCameraMirror) {
+                    val finalBitmap = if (isFrontCamera && frontCameraMirror) {
                         val mirrorMatrix = Matrix().apply {
                             postScale(-1f, 1f, normalizedBitmap.width / 2f, normalizedBitmap.height / 2f)
                         }
@@ -1482,29 +1515,22 @@ fun capturePhoto(
                             true
                         )
                         if (mirrored !== normalizedBitmap && !normalizedBitmap.isRecycled) {
-                            normalizedBitmap.recycle()
+                            try { normalizedBitmap.recycle() } catch (ignored: Throwable) {}
                         }
                         mirrored
                     } else {
                         normalizedBitmap
                     }
 
-                    val finalBitmap = applyPhotoAspectRatio(
-                        bitmap = orientedBitmap,
-                        aspectRatioStr = photoAspectRatio,
-                        isLandscape = isLandscape
-                    )
-
-                    image.close()
                     onSuccess(finalBitmap)
                 } catch (e: Exception) {
-                    image.close()
-                    onError(e)
+                    try { image.close() } catch (ignored: Throwable) {}
+                    mainExecutor.execute { onError(e) }
                 }
             }
 
             override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                onError(exception)
+                mainExecutor.execute { onError(exception) }
             }
         }
     )
@@ -2061,8 +2087,8 @@ class VideoRecordingManager(
             }
 
             if (rebound) {
-                // Allow SurfaceProcessor + VideoCapture surface 150ms to receive live frames before MediaCodec starts
-                settleDelayFn(150L)
+                // Fast settle window for SurfaceProcessor + VideoCapture surface on cold rebind
+                settleDelayFn(70L)
                 if (cancelPrepareRequested) {
                     _sessionState.value = RecordingSessionState.IDLE
                     return
@@ -2192,8 +2218,127 @@ class VideoRecordingManager(
 }
 
 /**
- * Subtle framing guide overlay displaying corner brackets and gentle cropping mask
- * matching the selected aspect ratio (1:1, 4:3, 16:9).
+ * Dynamic viewfinder crop guide overlay mapped 1:1 to the `FIT_CENTER` live sensor viewport via
+ * [com.example.camera.CameraOutputFormatEngine.computeCropGuideOverlayRect].
+ *
+ * Guarantees that the preview region inside the brackets matches the final cropped photo/video
+ * identically across Portrait and Landscape orientations. In [com.example.model.CameraCropMode.FULL],
+ * nothing is drawn so the full sensor frame remains 100% unobstructed corner to corner.
+ */
+@Composable
+fun CameraCropModeGuideOverlay(
+    cropMode: com.example.model.CameraCropMode,
+    sensorLongShortRatio: Float,
+    isLandscape: Boolean,
+    containerWidth: Float,
+    containerHeight: Float,
+    modifier: Modifier = Modifier
+) {
+    if (cropMode == com.example.model.CameraCropMode.FULL) return
+    val guide = com.example.camera.CameraOutputFormatEngine.computeCropGuideOverlayRect(
+        containerWidth = containerWidth,
+        containerHeight = containerHeight,
+        sensorLongShortRatio = sensorLongShortRatio,
+        cropMode = cropMode,
+        isLandscape = isLandscape
+    )
+    if (!guide.isCropped) return
+
+    val animLeft by animateFloatAsState(
+        targetValue = guide.leftPx,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "crop_left"
+    )
+    val animTop by animateFloatAsState(
+        targetValue = guide.topPx,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "crop_top"
+    )
+    val animRight by animateFloatAsState(
+        targetValue = guide.leftPx + guide.widthPx,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "crop_right"
+    )
+    val animBottom by animateFloatAsState(
+        targetValue = guide.topPx + guide.heightPx,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "crop_bottom"
+    )
+
+    ComposeCanvas(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("camera_crop_guide_overlay")
+    ) {
+        val left = animLeft.coerceIn(0f, size.width)
+        val top = animTop.coerceIn(0f, size.height)
+        val right = animRight.coerceIn(left, size.width)
+        val bottom = animBottom.coerceIn(top, size.height)
+        val maskColor = Color.Black.copy(alpha = 0.48f)
+
+        // Top mask
+        if (top > 0.5f) {
+            drawRect(
+                color = maskColor,
+                topLeft = Offset(0f, 0f),
+                size = androidx.compose.ui.geometry.Size(size.width, top)
+            )
+        }
+        // Bottom mask
+        if (size.height - bottom > 0.5f) {
+            drawRect(
+                color = maskColor,
+                topLeft = Offset(0f, bottom),
+                size = androidx.compose.ui.geometry.Size(size.width, size.height - bottom)
+            )
+        }
+        // Left mask (between top and bottom to prevent corner double-alpha)
+        if (left > 0.5f) {
+            drawRect(
+                color = maskColor,
+                topLeft = Offset(0f, top),
+                size = androidx.compose.ui.geometry.Size(left, (bottom - top).coerceAtLeast(0f))
+            )
+        }
+        // Right mask (between top and bottom to prevent corner double-alpha)
+        if (size.width - right > 0.5f) {
+            drawRect(
+                color = maskColor,
+                topLeft = Offset(right, top),
+                size = androidx.compose.ui.geometry.Size(size.width - right, (bottom - top).coerceAtLeast(0f))
+            )
+        }
+
+        // Subtle thin frame outline + crisp corner brackets matching exact saved boundaries
+        val outlineStroke = 0.8.dp.toPx()
+        drawRect(
+            color = Color.White.copy(alpha = 0.35f),
+            topLeft = Offset(left, top),
+            size = androidx.compose.ui.geometry.Size((right - left).coerceAtLeast(0f), (bottom - top).coerceAtLeast(0f)),
+            style = Stroke(width = outlineStroke)
+        )
+
+        val bracketLen = 20.dp.toPx()
+        val bracketStroke = 2.dp.toPx()
+        val bracketColor = HighlightYellow.copy(alpha = 0.90f)
+
+        // Top-left
+        drawLine(bracketColor, Offset(left, top), Offset((left + bracketLen).coerceAtMost(right), top), bracketStroke)
+        drawLine(bracketColor, Offset(left, top), Offset(left, (top + bracketLen).coerceAtMost(bottom)), bracketStroke)
+        // Top-right
+        drawLine(bracketColor, Offset(right, top), Offset((right - bracketLen).coerceAtLeast(left), top), bracketStroke)
+        drawLine(bracketColor, Offset(right, top), Offset(right, (top + bracketLen).coerceAtMost(bottom)), bracketStroke)
+        // Bottom-left
+        drawLine(bracketColor, Offset(left, bottom), Offset((left + bracketLen).coerceAtMost(right), bottom), bracketStroke)
+        drawLine(bracketColor, Offset(left, bottom), Offset(left, (bottom - bracketLen).coerceAtLeast(top)), bracketStroke)
+        // Bottom-right
+        drawLine(bracketColor, Offset(right, bottom), Offset((right - bracketLen).coerceAtLeast(left), bottom), bracketStroke)
+        drawLine(bracketColor, Offset(right, bottom), Offset(right, (bottom - bracketLen).coerceAtLeast(top)), bracketStroke)
+    }
+}
+
+/**
+ * Legacy helper retained for backward compatibility with any callers referencing aspect-ratio strings.
  */
 @Composable
 fun CameraFramingGuideOverlay(
@@ -2203,74 +2348,19 @@ fun CameraFramingGuideOverlay(
     containerHeight: Float,
     modifier: Modifier = Modifier
 ) {
-    val targetRatio = when (aspectRatioStr.lowercase(java.util.Locale.US)) {
-        "1:1", "square", "square 1:1", "1:1 square" -> 1.0f
-        "4:3", "standard", "standard 4:3", "4:3 standard" -> if (isLandscape) 4f / 3f else 3f / 4f
-        "16:9", "widescreen", "widescreen 16:9", "16:9 widescreen" -> if (isLandscape) 16f / 9f else 9f / 16f
-        else -> return
+    val mappedMode = when (aspectRatioStr.lowercase(java.util.Locale.US)) {
+        "1:1", "square", "square 1:1", "1:1 square" -> com.example.model.CameraCropMode.SQUARE_CROP
+        "4:3", "standard", "16:9", "widescreen" -> com.example.model.CameraCropMode.RECTANGULAR_CROP
+        else -> com.example.model.CameraCropMode.FULL
     }
-
-    val currentRatio = containerWidth / containerHeight
-    val frameW: Float
-    val frameH: Float
-    if (currentRatio > targetRatio) {
-        frameH = containerHeight
-        frameW = (containerHeight * targetRatio).coerceAtMost(containerWidth)
-    } else {
-        frameW = containerWidth
-        frameH = (containerWidth / targetRatio).coerceAtMost(containerHeight)
-    }
-
-    val left = (containerWidth - frameW) / 2f
-    val top = (containerHeight - frameH) / 2f
-    val right = left + frameW
-    val bottom = top + frameH
-
-    ComposeCanvas(modifier = modifier.fillMaxSize()) {
-        val maskColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.28f)
-        if (left > 0.5f) {
-            drawRect(
-                color = maskColor,
-                topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
-                size = androidx.compose.ui.geometry.Size(left, containerHeight)
-            )
-            drawRect(
-                color = maskColor,
-                topLeft = androidx.compose.ui.geometry.Offset(right, 0f),
-                size = androidx.compose.ui.geometry.Size(containerWidth - right, containerHeight)
-            )
-        }
-        if (top > 0.5f) {
-            drawRect(
-                color = maskColor,
-                topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
-                size = androidx.compose.ui.geometry.Size(containerWidth, top)
-            )
-            drawRect(
-                color = maskColor,
-                topLeft = androidx.compose.ui.geometry.Offset(0f, bottom),
-                size = androidx.compose.ui.geometry.Size(containerWidth, containerHeight - bottom)
-            )
-        }
-
-        // Crisp corner brackets around the framed active region
-        val bracketLen = 22.dp.toPx()
-        val bracketStroke = 1.8.dp.toPx()
-        val bracketColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.70f)
-
-        // Top-left
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Offset(left + bracketLen, top), bracketStroke)
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Offset(left, top + bracketLen), bracketStroke)
-        // Top-right
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, top), androidx.compose.ui.geometry.Offset(right - bracketLen, top), bracketStroke)
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, top), androidx.compose.ui.geometry.Offset(right, top + bracketLen), bracketStroke)
-        // Bottom-left
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, bottom), androidx.compose.ui.geometry.Offset(left + bracketLen, bottom), bracketStroke)
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(left, bottom), androidx.compose.ui.geometry.Offset(left, bottom + bracketLen), bracketStroke)
-        // Bottom-right
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, bottom), androidx.compose.ui.geometry.Offset(right - bracketLen, bottom), bracketStroke)
-        drawLine(bracketColor, androidx.compose.ui.geometry.Offset(right, bottom), androidx.compose.ui.geometry.Offset(right, bottom - bracketLen), bracketStroke)
-    }
+    CameraCropModeGuideOverlay(
+        cropMode = mappedMode,
+        sensorLongShortRatio = 4f / 3f,
+        isLandscape = isLandscape,
+        containerWidth = containerWidth,
+        containerHeight = containerHeight,
+        modifier = modifier
+    )
 }
 
 /**

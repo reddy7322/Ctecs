@@ -16,6 +16,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import com.example.backup.BackupCategory
 import com.example.backup.BackupExportResult
@@ -3223,6 +3224,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun cycleCameraCropMode() {
+        viewModelScope.launch {
+            val updated = preferencesManager.editCameraSettings { current ->
+                current.copy(cropMode = current.cropMode.next())
+            }
+            showToast("Frame: ${updated.cropMode.label}", ToastType.INFO)
+        }
+    }
+
+    fun setCameraCropMode(mode: com.example.model.CameraCropMode) {
+        viewModelScope.launch {
+            val updated = preferencesManager.editCameraSettings { current ->
+                current.copy(cropMode = mode)
+            }
+            showToast("Frame: ${updated.cropMode.label}", ToastType.INFO)
+        }
+    }
+
     private val videoSnapshotsTimeline = mutableListOf<CaptureSnapshot>()
     private var videoTickerJob: kotlinx.coroutines.Job? = null
 
@@ -3277,11 +3296,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             weatherIsFreshAtCapture = isWeatherFresh,
             is24HourFormat = currentCamCfg.is24HourFormat,
             coordinateFormat = currentCamCfg.coordinateFormat,
-            photoJpegQuality = com.example.camera.CameraQualityEngine.resolveEffectivePhotoJpegQuality(currentCamCfg),
+            photoJpegQuality = 95,
             preserveExif = currentCamCfg.preserveExif,
-            videoQualityPreset = currentCamCfg.videoQualityPreset,
-            videoOutputSizeOptimization = currentCamCfg.videoOutputSizeOptimization,
-            targetVideoFps = currentCamCfg.videoFps
+            videoQualityPreset = com.example.model.OutputQualityPreset.MAXIMUM,
+            videoOutputSizeOptimization = false,
+            targetVideoFps = currentCamCfg.videoFps,
+            cropMode = currentCamCfg.cropMode
         )
     }
 
@@ -3828,54 +3848,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val photoSaveMutex = kotlinx.coroutines.sync.Mutex()
+
     /**
-     * Called when user presses shutter button.
-     * Takes an immutable capture snapshot at this exact millisecond.
+     * Ultra-fast non-blocking photo processing pipeline.
+     *
+     * - Uses the immutable [capturedSnapshot] taken at the exact shutter millisecond (or captures one immediately).
+     * - Applies ONLY the active [com.example.model.CameraCropMode] (in FULL mode: ZERO pixels cropped and ZERO
+     *   extra bitmap copies) strictly BEFORE existing [OverlayRenderer] timestamp/GPS/chainage/weather/EXIF burn-in.
+     * - Releases shutter state rapidly while serializing background disk + MediaStore writes via [photoSaveMutex]
+     *   so rapid back-to-back shots never freeze the preview or drop/corrupt photos.
      */
-    fun processCapture(bitmap: Bitmap) {
-        viewModelScope.launch {
-            _isCapturing.value = true
+    fun processCapture(bitmap: Bitmap, capturedSnapshot: CaptureSnapshot? = null) {
+        val snapshot = capturedSnapshot ?: createCurrentSnapshot()
+        val settingsNow = cameraSettings.value
+        val activeLevel = _captureExposureNormalized.value
+        val activeEvStops = _captureExposureEvStops.value
+        val hwEvApplied = _captureExposureHardwareSupported.value
+
+        // Keep shutter responsive for rapid consecutive shots while background encoding/saving finishes asynchronously
+        _isCapturing.value = false
+
+        viewModelScope.launch(Dispatchers.Default) {
             val intermediateBitmaps = mutableListOf<Bitmap>()
             try {
-                val snapshot = createCurrentSnapshot()
-                val settingsNow = cameraSettings.value
-                val activeLevel = _captureExposureNormalized.value
-                val activeEvStops = _captureExposureEvStops.value
-                val hwEvApplied = _captureExposureHardwareSupported.value
+                // 1. Hardware-fallback exposure compensation (no-op when Auto or hardware EV already applied)
+                val exposureProcessed = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+                    source = bitmap,
+                    normalizedLevel = activeLevel,
+                    evStops = activeEvStops,
+                    isAutoExposure = settingsNow.autoBrightnessEnabled,
+                    hardwareEvApplied = hwEvApplied
+                )
+                if (exposureProcessed !== bitmap) intermediateBitmaps.add(exposureProcessed)
 
-                // 1. Exposure retention + 2. Photo Output Format framing + 3. Quality Enhancement & Size Optimization
-                // All applied strictly BEFORE overlay rendering so timestamp/GPS/project/chainage/LHS-RHS/weather/logo/EXIF stay intact.
-                val captureBitmap = withContext(Dispatchers.Default) {
-                    val exposureProcessed = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
-                        source = bitmap,
-                        normalizedLevel = activeLevel,
-                        evStops = activeEvStops,
-                        isAutoExposure = settingsNow.autoBrightnessEnabled,
-                        hardwareEvApplied = hwEvApplied
-                    )
-                    if (exposureProcessed !== bitmap) intermediateBitmaps.add(exposureProcessed)
-
-                    val isLandscapeShot = snapshot.deviceRotationDegrees == 90 || snapshot.deviceRotationDegrees == 270
-                    val formatted = com.example.camera.CameraOutputFormatEngine.applyOutputFormatToBitmap(
-                        source = exposureProcessed,
-                        format = settingsNow.photoOutputFormat,
-                        isDeviceLandscape = isLandscapeShot
-                    )
-                    if (formatted !== exposureProcessed && formatted !== bitmap) intermediateBitmaps.add(formatted)
-
-                    val enhanced = com.example.camera.CameraQualityEngine.enhanceCapturedPhoto(
-                        source = formatted,
-                        qualityPreset = settingsNow.photoQualityPreset,
-                        enhancementEnabled = settingsNow.photoEnhancementEnabled,
-                        sizeOptimizationEnabled = settingsNow.photoOutputSizeOptimization
-                    )
-                    if (enhanced !== formatted && enhanced !== exposureProcessed && enhanced !== bitmap) {
-                        intermediateBitmaps.add(enhanced)
-                    }
-                    enhanced
+                // 2. Unified dynamic crop mode strictly BEFORE overlay rendering so stamps/EXIF stay 100% intact.
+                //    In FULL mode this returns exposureProcessed directly with ZERO cropping and ZERO downscaling.
+                val isLandscapeShot = if (exposureProcessed.width != exposureProcessed.height) {
+                    exposureProcessed.width > exposureProcessed.height
+                } else {
+                    snapshot.deviceRotationDegrees == 90 || snapshot.deviceRotationDegrees == 270
+                }
+                val captureBitmap = com.example.camera.CameraOutputFormatEngine.applyCropModeToBitmap(
+                    source = exposureProcessed,
+                    cropMode = snapshot.cropMode,
+                    isLandscape = isLandscapeShot
+                )
+                if (captureBitmap !== exposureProcessed && captureBitmap !== bitmap) {
+                    intermediateBitmaps.add(captureBitmap)
                 }
 
-                val result = photoRepository.saveCapturedPhoto(captureBitmap, snapshot)
+                // 3. Serialize disk + MediaStore persistence off the UI thread while preserving 100% of
+                //    existing timestamp, GPS, chainage, LHS/RHS, weather, watermark, logo, minimap & EXIF logic.
+                val result = photoSaveMutex.withLock {
+                    photoRepository.saveCapturedPhoto(captureBitmap, snapshot)
+                }
                 if (result.isSuccess) {
                     val record = result.getOrNull()
                     _lastCapturedPhoto.value = record
@@ -3892,7 +3919,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         try { bmp.recycle() } catch (ignored: Throwable) {}
                     }
                 }
-                _isCapturing.value = false
+                if (!bitmap.isRecycled) {
+                    try { bitmap.recycle() } catch (ignored: Throwable) {}
+                }
             }
         }
     }

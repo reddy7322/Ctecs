@@ -35,7 +35,9 @@ import com.example.model.DirectionControlMode
 import com.example.model.DirectionDetectionState
 import com.example.model.GeoBounds
 import com.example.model.GeoPoint
-import com.example.model.HourlyWeatherForecast
+import com.example.model.HourlyWeatherPoint
+import com.example.location.LocationState
+import com.example.location.LocationStatus
 import com.example.model.MatchConfidence
 import com.example.model.OverlayConfig
 import com.example.model.ProjectProfile
@@ -44,7 +46,7 @@ import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.RouteMarker
 import com.example.model.SmartDirectionState
-import com.example.model.WeatherConditionCategory
+import com.example.model.WeatherConditionType
 import com.example.model.WeatherObservation
 import com.example.model.WeatherUiState
 import com.example.navigation.SmartDirectionManager
@@ -59,7 +61,7 @@ import com.example.ui.map.MiniMapViewportMath
 import com.example.ui.map.SmartAutoMiniMapDistanceEngine
 import com.example.ui.settings.MiniMapSettingsSection
 import com.example.ui.theme.MyApplicationTheme
-import com.example.ui.weather.LiveHighwayLocationSnapshot
+import com.example.ui.weather.buildLiveHighwayLocationSnapshot
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -88,47 +90,46 @@ class EnhancementsAndBugFixesTest {
 
     private fun sampleWeatherObservation(): WeatherObservation {
         return WeatherObservation(
-            temperatureCelsius = 31.4,
-            feelsLikeCelsius = 33.0,
+            temperatureC = 31.4,
+            feelsLikeC = 33.0,
             humidityPercent = 52,
             windSpeedKmh = 12.5,
             windDirectionDegrees = 225,
-            precipitationMm = 0.0,
-            rainProbabilityPercent = 20,
-            weatherCode = 2,
+            condition = WeatherConditionType.PARTLY_CLOUDY,
             conditionLabel = "Partly Cloudy",
-            category = WeatherConditionCategory.PARTLY_CLOUDY,
-            isDaytime = true,
+            wmoCode = 2,
+            isDay = true,
             latitude = 29.8543,
             longitude = 77.8880,
             observedAtMs = System.currentTimeMillis(),
-            sourceLabel = "Open-Meteo",
-            isStale = false
+            source = "Open-Meteo",
+            rainProbabilityPercent = 20,
+            precipitationMm = 0.0
         )
     }
 
-    private fun sampleFullDayHourly(): List<HourlyWeatherForecast> {
+    private fun sampleFullDayHourly(): List<HourlyWeatherPoint> {
         val cal = Calendar.getInstance()
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
         return (0..23).map { hour ->
             cal.set(Calendar.HOUR_OF_DAY, hour)
-            HourlyWeatherForecast(
+            HourlyWeatherPoint(
                 epochMs = cal.timeInMillis,
-                localHour = hour,
-                temperatureCelsius = 22.0 + (hour % 12),
-                feelsLikeCelsius = 23.0 + (hour % 12),
+                localHourOfDay = hour,
+                temperatureC = 22.0 + (hour % 12),
+                feelsLikeC = 23.0 + (hour % 12),
                 rainProbabilityPercent = if (hour in 14..16) 65 else 15,
                 precipitationMm = if (hour in 14..16) 2.4 else 0.0,
                 windSpeedKmh = 10.0,
                 windDirectionDegrees = 180,
                 humidityPercent = 55,
-                uvIndex = if (hour in 10..15) 7.0 else 1.0,
-                weatherCode = if (hour in 14..16) 61 else 2,
+                condition = if (hour in 14..16) WeatherConditionType.RAINY else WeatherConditionType.PARTLY_CLOUDY,
                 conditionLabel = if (hour in 14..16) "Light Rain" else "Partly Cloudy",
-                category = if (hour in 14..16) WeatherConditionCategory.RAIN else WeatherConditionCategory.PARTLY_CLOUDY,
-                isDaytime = hour in 6..18
+                wmoCode = if (hour in 14..16) 61 else 2,
+                isDay = hour in 6..18,
+                uvIndex = if (hour in 10..15) 7.0 else 1.0
             )
         }
     }
@@ -226,19 +227,19 @@ class EnhancementsAndBugFixesTest {
     fun miniMapTileRenderPlan_quantizesRenderSize_preventingTileReloadsDuringResizeAnimation() {
         // Simulate Home Mini Map height animating smoothly from 340px to 290px as Weather Card expands
         val planStart = MiniMapViewportMath.resolveTileRenderPlan(
-            viewportWidthPx = 420f,
-            viewportHeightPx = 340f,
-            rotationDegrees = 18f
+            widthPx = 420f,
+            heightPx = 340f,
+            continuousZoom = 16.5f
         )
         val planMid = MiniMapViewportMath.resolveTileRenderPlan(
-            viewportWidthPx = 420f,
-            viewportHeightPx = 315f,
-            rotationDegrees = 18f
+            widthPx = 420f,
+            heightPx = 315f,
+            continuousZoom = 16.5f
         )
         val planEnd = MiniMapViewportMath.resolveTileRenderPlan(
-            viewportWidthPx = 420f,
-            viewportHeightPx = 290f,
-            rotationDegrees = 18f
+            widthPx = 420f,
+            heightPx = 290f,
+            continuousZoom = 16.5f
         )
 
         assertEquals(0, planStart.renderSizePx % 128)
@@ -458,14 +459,12 @@ class EnhancementsAndBugFixesTest {
     fun cameraManualDirectionIndicator_redBulbShownOnlyInManualMode_andNoManualAutoText() {
         val profile = ProjectProfile(roadSide = RoadSide.LHS)
         val autoState = SmartDirectionState(
-            controlMode = DirectionControlMode.AUTO,
-            detectionState = DirectionDetectionState.CONFIRMED_LHS,
+            detectionState = DirectionDetectionState.LHS_CONFIRMED,
             confirmedSide = "LHS",
             isManualOverride = false
         )
         val manualState = SmartDirectionState(
-            controlMode = DirectionControlMode.MANUAL_LHS,
-            detectionState = DirectionDetectionState.MANUAL_OVERRIDE,
+            detectionState = DirectionDetectionState.LHS_CONFIRMED,
             confirmedSide = "LHS",
             isManualOverride = true
         )
@@ -509,27 +508,28 @@ class EnhancementsAndBugFixesTest {
     fun weatherLiveHighwayLocationSnapshot_syncsAuthoritativeSmartDirectionSide() {
         val match = ChainageMatchResult(
             chainage = Chainage(196_450L),
-            displayChainage = "196+450",
             confidence = MatchConfidence.HIGH,
-            side = "RHS", // stale fallback
+            detectedSide = "RHS", // stale fallback
             smartDirectionState = SmartDirectionState(
-                controlMode = DirectionControlMode.AUTO,
-                detectionState = DirectionDetectionState.CONFIRMED_LHS,
+                detectionState = DirectionDetectionState.LHS_CONFIRMED,
                 confirmedSide = "LHS",
                 isManualOverride = false
             )
         )
-        val snapshot = LiveHighwayLocationSnapshot.from(
+        val snapshot = buildLiveHighwayLocationSnapshot(
             matchResult = match,
+            locationState = LocationState(
+                point = GeoPoint(29.8543, 77.8880),
+                accuracy = 5f,
+                status = LocationStatus.READY,
+                lastFixTime = System.currentTimeMillis()
+            ),
             projectProfile = ProjectProfile(highwayId = "NH-58", roadSide = RoadSide.RHS),
-            activeRouteName = "NH-58",
-            locationPoint = GeoPoint(29.8543, 77.8880),
-            resolvedLocationName = "Roorkee",
-            gpsAccuracy = 5f,
-            isGpsRetained = false
+            activeRoute = null,
+            resolvedLocationName = "Roorkee"
         )
-        assertEquals("LHS", snapshot.side)
-        assertTrue(snapshot.headlineSummary.contains("NH-58 | 196+450 | LHS"))
+        assertEquals("LHS", snapshot.sideOfRoad)
+        assertTrue(snapshot.formattedHighwayLine.contains("NH-58 | 196+450 | LHS"))
     }
 
     // =========================================================================

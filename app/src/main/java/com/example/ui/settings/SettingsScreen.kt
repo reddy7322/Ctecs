@@ -284,19 +284,11 @@ fun SettingsScreen(
         }
     }
 
-    // Dialog states for Photo & Video Resolution selection and File Name Format
-    var showPhotoResolutionDialog by remember { mutableStateOf(false) }
-    var showVideoResolutionDialog by remember { mutableStateOf(false) }
+    // Dialog states for File Name Format and Signature
     var showFileNameFormatDialog by remember { mutableStateOf(false) }
     var showSignatureDrawDialog by remember { mutableStateOf(false) }
 
-    // Query real camera capability lists & hardware features
-    val photoResolutions = remember(isFrontCamera) {
-        CameraResolutionHelper.getSupportedPhotoResolutions(context, isFrontCamera)
-    }
-    val videoResolutions = remember(isFrontCamera) {
-        CameraResolutionHelper.getSupportedVideoResolutions(context, isFrontCamera)
-    }
+    // Query real camera hardware capabilities
     val cameraHardwareCapabilities = remember(isFrontCamera) {
         com.example.camera.CameraQualityEngine.queryHardwareCapabilities(
             context = context,
@@ -1300,53 +1292,26 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 2. CAMERA, PHOTO & VIDEO SETTINGS (SIMPLIFIED & SEPARATED)
+            // 2. CAMERA, PHOTO & VIDEO SETTINGS (AUTOMATIC, MINIMALIST & BORDERLESS)
             // ====================================================
-            if (matchesSearch("camera lens zoom ultra-wide 0.6x shutter sound grid horizon level autofocus touch mirror battery save photo settings output format original picture ratio quality size optimization enhancement noise reduction exif video recording settings fps frame rate stabilization ois eis audio sound mic resolution dimensions megapixels 4k 1080p 720p compression bitrate", searchQuery)) {
-                val photoSummary = remember(
-                    currentCameraSettings.photoResolution,
-                    currentCameraSettings.photoOutputFormat,
-                    currentCameraSettings.photoQualityPreset
-                ) {
-                    com.example.camera.CameraOutputFormatEngine.estimatePhotoOutputSummary(
-                        sensorResolutionStr = currentCameraSettings.photoResolution,
-                        format = currentCameraSettings.photoOutputFormat,
-                        qualityPreset = currentCameraSettings.photoQualityPreset,
-                        isDeviceLandscape = false
-                    )
-                }
-                val videoSummary = remember(
-                    currentCameraSettings.videoResolution,
-                    currentCameraSettings.videoOutputFormat,
-                    currentCameraSettings.videoQualityPreset,
-                    currentCameraSettings.videoFps
-                ) {
-                    com.example.camera.CameraOutputFormatEngine.estimateVideoOutputSummary(
-                        videoResolutionStr = currentCameraSettings.videoResolution,
-                        videoFps = currentCameraSettings.videoFps,
-                        format = currentCameraSettings.videoOutputFormat,
-                        qualityPreset = currentCameraSettings.videoQualityPreset,
-                        isDeviceLandscape = true
-                    )
-                }
-
+            if (matchesSearch("camera lens zoom ultra-wide 0.6x shutter sound grid horizon level autofocus touch mirror battery save photo settings original exif video recording stabilization ois eis audio sound mic crop full semi rectangular square auto quality", searchQuery)) {
                 SmartDropdownSection(
                     title = "Camera, Photo & Video Settings",
-                    subtitle = "Photo: ${currentCameraSettings.photoOutputFormat.shortLabel} • ${currentCameraSettings.photoQualityPreset.shortLabel} • Video: ${currentCameraSettings.videoQualityPreset.shortLabel} (${currentCameraSettings.videoFps} FPS)",
+                    subtitle = "Auto Max Quality • Frame: ${currentCameraSettings.cropMode.label} • Grid: ${currentCameraSettings.gridMode.label}",
                     icon = Icons.Default.CameraAlt,
                     accentColor = primaryAccent,
                     isExpanded = expandedSections["camera"] ?: false,
                     onToggleExpand = { expandedSections["camera"] = !(expandedSections["camera"] ?: false) }
                 ) {
-                    // ----------------------------------------------------
-                    // GROUP 1: CAMERA CONTROLS
-                    // ----------------------------------------------------
+                    // Borderless minimalist automatic quality notice (zero manual output/resolution/quality selectors)
                     Text(
-                        text = "CAMERA CONTROLS",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = primaryAccent,
-                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                        text = "Automatic maximum native photo & video quality • Adapts to Portrait & Landscape",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp,
+                        color = c.textSecondary,
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .testTag("settings_auto_output_status")
                     )
 
                     CompactSwitchRow(
@@ -1447,203 +1412,8 @@ fun SettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Preview Aspect Ratio",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        com.example.model.PreviewRatio.entries.forEach { ratio ->
-                            FilterChip(
-                                selected = currentCameraSettings.previewRatio == ratio,
-                                onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(previewRatio = ratio)) },
-                                label = { Text(ratio.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                                modifier = Modifier.testTag("preview_ratio_${ratio.name.lowercase()}"),
-                                border = null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = primaryAccent,
-                                    selectedLabelColor = primaryAccentContent,
-                                    containerColor = c.secondarySurface,
-                                    labelColor = c.textSecondary
-                                )
-                            )
-                        }
-                    }
+                    SmartFadeDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                    SmartFadeDivider(modifier = Modifier.padding(vertical = 10.dp))
-
-                    // ----------------------------------------------------
-                    // GROUP 2: PHOTO SETTINGS
-                    // ----------------------------------------------------
-                    Text(
-                        text = "PHOTO SETTINGS",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = secondaryAccent,
-                        modifier = Modifier
-                            .padding(bottom = 6.dp)
-                            .testTag("settings_photo_group_header")
-                    )
-
-                    // 1. Photo Output Format
-                    Text(
-                        text = "Photo Output Format",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = currentCameraSettings.photoOutputFormat.subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = c.textSecondary
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        com.example.model.CameraOutputFormat.entries.forEach { fmt ->
-                            FilterChip(
-                                selected = currentCameraSettings.photoOutputFormat == fmt,
-                                onClick = {
-                                    viewModel.saveCameraSettingsSilent(
-                                        currentCameraSettings.copy(
-                                            photoOutputFormat = fmt,
-                                            photoAspectRatio = fmt.legacyAspectRatioId
-                                        )
-                                    )
-                                },
-                                label = { Text(fmt.title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                                modifier = Modifier.testTag("photo_output_format_${fmt.name.lowercase()}"),
-                                border = null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = secondaryAccent,
-                                    selectedLabelColor = secondaryAccentContent,
-                                    containerColor = c.secondarySurface,
-                                    labelColor = c.textSecondary
-                                )
-                            )
-                        }
-                    }
-
-                    // 2. Photo Resolution (compact consistent selector row)
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = c.secondarySurface,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .heightIn(min = 48.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { showPhotoResolutionDialog = true }
-                            .testTag("choose_photo_resolution_button")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Photo Resolution",
-                                    fontWeight = FontWeight.Medium,
-                                    color = c.textPrimary,
-                                    fontSize = 13.sp
-                                )
-                                Text(
-                                    text = "${currentCameraSettings.photoResolution} • ${photoResolutions.size} supported",
-                                    color = c.textSecondary,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            Text(
-                                text = "Change",
-                                color = secondaryAccent,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-
-                    // 3. Photo Quality
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Photo Quality",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "${currentCameraSettings.photoQualityPreset.subtitle} • ${photoSummary.estimatedFileSize}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = c.textSecondary
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        com.example.model.OutputQualityPreset.entries.forEach { preset ->
-                            FilterChip(
-                                selected = currentCameraSettings.photoQualityPreset == preset,
-                                onClick = {
-                                    viewModel.saveCameraSettingsSilent(
-                                        currentCameraSettings.copy(
-                                            photoQualityPreset = preset,
-                                            jpegQuality = preset.photoJpegQuality
-                                        )
-                                    )
-                                },
-                                label = { Text(preset.shortLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                                modifier = Modifier.testTag("photo_quality_preset_${preset.name.lowercase()}"),
-                                border = null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = secondaryAccent,
-                                    selectedLabelColor = secondaryAccentContent,
-                                    containerColor = c.secondarySurface,
-                                    labelColor = c.textSecondary
-                                )
-                            )
-                        }
-                    }
-
-                    // 4. Photo Output Size Optimization
-                    CompactSwitchRow(
-                        title = "Output Size Optimization",
-                        subtitle = "Balance JPEG compression and resolution for smaller files",
-                        checked = currentCameraSettings.photoOutputSizeOptimization,
-                        onCheckedChange = {
-                            viewModel.saveCameraSettingsSilent(
-                                currentCameraSettings.copy(photoOutputSizeOptimization = it)
-                            )
-                        },
-                        tag = "switch_photo_size_optimization"
-                    )
-
-                    // 5. Photo Enhancement / Noise Reduction
-                    CompactSwitchRow(
-                        title = "Photo Enhancement & Noise Reduction",
-                        subtitle = "Low-light denoising and natural clarity before overlays",
-                        checked = currentCameraSettings.photoEnhancementEnabled,
-                        onCheckedChange = {
-                            viewModel.saveCameraSettingsSilent(
-                                currentCameraSettings.copy(photoEnhancementEnabled = it)
-                            )
-                        },
-                        tag = "switch_photo_enhancement"
-                    )
-
-                    // 6. Save Original Photo (synced between OverlayConfig and CameraSettings)
                     val saveOriginalActive = currentOverlay.saveOriginalImage || currentCameraSettings.saveOriginalAndStamped
                     CompactSwitchRow(
                         title = "Save original photo",
@@ -1656,7 +1426,6 @@ fun SettingsScreen(
                         tag = "switch_keep_original"
                     )
 
-                    // 7. Preserve EXIF Metadata
                     CompactSwitchRow(
                         title = "Preserve EXIF metadata",
                         subtitle = "Embed GPS, timestamp, and project metadata in JPEG EXIF",
@@ -1665,7 +1434,6 @@ fun SettingsScreen(
                         tag = "switch_preserve_exif"
                     )
 
-                    // 8. Front Camera Mirror
                     CompactSwitchRow(
                         title = "Front camera mirror",
                         subtitle = "Flip captured front-camera photos horizontally",
@@ -1674,198 +1442,12 @@ fun SettingsScreen(
                         tag = "switch_front_mirror"
                     )
 
-                    SmartFadeDivider(modifier = Modifier.padding(vertical = 10.dp))
-
-                    // ----------------------------------------------------
-                    // GROUP 3: VIDEO SETTINGS
-                    // ----------------------------------------------------
-                    Text(
-                        text = "VIDEO SETTINGS",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = videoAccent,
-                        modifier = Modifier
-                            .padding(bottom = 6.dp)
-                            .testTag("settings_video_group_header")
-                    )
-
-                    // 1. Video Output Format
-                    Text(
-                        text = "Video Output Format",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = currentCameraSettings.videoOutputFormat.subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = c.textSecondary
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        com.example.model.CameraOutputFormat.entries.forEach { fmt ->
-                            FilterChip(
-                                selected = currentCameraSettings.videoOutputFormat == fmt,
-                                onClick = {
-                                    viewModel.saveCameraSettingsSilent(
-                                        currentCameraSettings.copy(
-                                            videoOutputFormat = fmt,
-                                            videoAspectRatio = fmt.legacyAspectRatioId
-                                        )
-                                    )
-                                },
-                                label = { Text(fmt.title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                                modifier = Modifier.testTag("video_output_format_${fmt.name.lowercase()}"),
-                                border = null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = videoAccent,
-                                    selectedLabelColor = Color.White,
-                                    containerColor = c.secondarySurface,
-                                    labelColor = c.textSecondary
-                                )
-                            )
-                        }
-                    }
-
-                    // 2. Video Resolution (compact consistent selector row)
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = c.secondarySurface,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .heightIn(min = 48.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { showVideoResolutionDialog = true }
-                            .testTag("choose_video_resolution_button")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Video Resolution",
-                                    fontWeight = FontWeight.Medium,
-                                    color = c.textPrimary,
-                                    fontSize = 13.sp
-                                )
-                                Text(
-                                    text = "${currentCameraSettings.videoResolution} • ${videoResolutions.size} supported",
-                                    color = c.textSecondary,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            Text(
-                                text = "Change",
-                                color = videoAccent,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-
-                    // 3. Video Quality
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Video Quality",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "${currentCameraSettings.videoQualityPreset.subtitle} • ${videoSummary.estimatedFileSize}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = c.textSecondary
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        com.example.model.OutputQualityPreset.entries.forEach { preset ->
-                            FilterChip(
-                                selected = currentCameraSettings.videoQualityPreset == preset,
-                                onClick = {
-                                    viewModel.saveCameraSettingsSilent(
-                                        currentCameraSettings.copy(videoQualityPreset = preset)
-                                    )
-                                },
-                                label = { Text(preset.shortLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                                modifier = Modifier.testTag("video_quality_preset_${preset.name.lowercase()}"),
-                                border = null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = videoAccent,
-                                    selectedLabelColor = Color.White,
-                                    containerColor = c.secondarySurface,
-                                    labelColor = c.textSecondary
-                                )
-                            )
-                        }
-                    }
-
-                    // 4. Frame Rate (FPS) — Hardware capability-gated
-                    val supportedFps = cameraHardwareCapabilities.supportedFpsOptions.ifEmpty { listOf(30) }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Frame Rate (FPS)",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = if (supportedFps.contains(60)) "Hardware supports 30 FPS and 60 FPS" else "Device camera supports 30 FPS max",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = c.textSecondary
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        supportedFps.forEach { fps ->
-                            FilterChip(
-                                selected = currentCameraSettings.videoFps == fps,
-                                onClick = { viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(videoFps = fps)) },
-                                label = { Text("$fps FPS", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
-                                modifier = Modifier.testTag("video_fps_$fps"),
-                                border = null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = videoAccent,
-                                    selectedLabelColor = Color.White,
-                                    containerColor = c.secondarySurface,
-                                    labelColor = c.textSecondary
-                                )
-                            )
-                        }
-                    }
-
-                    // 5. Video Stabilization — Hardware capability-gated
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Video Stabilization",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = if (cameraHardwareCapabilities.supportsAnyStabilization) {
-                            "${currentCameraSettings.videoStabilizationMode.subtitle} • ${cameraHardwareCapabilities.stabilizationHardwareSummary}"
-                        } else {
-                            "Hardware OIS/EIS unavailable on active camera lens"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = c.textSecondary
                     )
                     FlowRow(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1894,35 +1476,6 @@ fun SettingsScreen(
                         }
                     }
 
-                    // 6. Video Output Size Optimization
-                    CompactSwitchRow(
-                        title = "Output Size Optimization",
-                        subtitle = "Reduce video bitrate efficiently for compact recordings",
-                        checked = currentCameraSettings.videoOutputSizeOptimization,
-                        onCheckedChange = {
-                            viewModel.saveCameraSettingsSilent(
-                                currentCameraSettings.copy(videoOutputSizeOptimization = it)
-                            )
-                        },
-                        tag = "switch_video_size_optimization"
-                    )
-
-                    // 7. Video Noise Reduction (shown when hardware supports it)
-                    if (cameraHardwareCapabilities.supportsHighQualityNoiseReduction) {
-                        CompactSwitchRow(
-                            title = "Video Noise Reduction",
-                            subtitle = "Apply hardware Camera2 denoising during video capture",
-                            checked = currentCameraSettings.videoNoiseReductionEnabled,
-                            onCheckedChange = {
-                                viewModel.saveCameraSettingsSilent(
-                                    currentCameraSettings.copy(videoNoiseReductionEnabled = it)
-                                )
-                            },
-                            tag = "switch_video_noise_reduction"
-                        )
-                    }
-
-                    // 8. Record Audio
                     CompactSwitchRow(
                         title = "Record Audio",
                         subtitle = "Include microphone audio track in recorded videos",
@@ -4986,37 +4539,6 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(72.dp))
         }
         }
-    }
-
-    // Modal Photo Resolution Selection Dialog
-    if (showPhotoResolutionDialog) {
-        ResolutionSelectionDialog(
-            title = "Select Photo Resolution",
-            resolutions = photoResolutions,
-            currentSelection = currentCameraSettings.photoResolution,
-            onSelect = { res ->
-                viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(photoResolution = res.label))
-                viewModel.saveOverlayConfigSilent(currentOverlay.copy(resolutionOption = res.label))
-                viewModel.showToast("Photo Resolution: ${res.label}")
-                showPhotoResolutionDialog = false
-            },
-            onDismiss = { showPhotoResolutionDialog = false }
-        )
-    }
-
-    // Modal Video Resolution Selection Dialog
-    if (showVideoResolutionDialog) {
-        ResolutionSelectionDialog(
-            title = "Select Video Recording Resolution",
-            resolutions = videoResolutions,
-            currentSelection = currentCameraSettings.videoResolution,
-            onSelect = { res ->
-                viewModel.saveCameraSettingsSilent(currentCameraSettings.copy(videoResolution = res.label))
-                viewModel.showToast("Video Resolution: ${res.label}")
-                showVideoResolutionDialog = false
-            },
-            onDismiss = { showVideoResolutionDialog = false }
-        )
     }
 
     // Restore Defaults Dialog

@@ -8,6 +8,7 @@ import android.graphics.Paint as AndroidPaint
 import android.content.res.Configuration
 import androidx.camera.view.LifecycleCameraController
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -21,6 +22,7 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -72,6 +74,11 @@ import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.CropLandscape
+import androidx.compose.material.icons.filled.CropPortrait
+import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Exposure
@@ -606,10 +613,11 @@ fun CameraScreen(
 
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     var showQuickCaptureFlash by remember { mutableStateOf(false) }
+    var lastShutterTapMs by remember { mutableStateOf(0L) }
 
     LaunchedEffect(showQuickCaptureFlash) {
         if (showQuickCaptureFlash) {
-            delay(120L)
+            delay(95L)
             showQuickCaptureFlash = false
         }
     }
@@ -617,10 +625,14 @@ fun CameraScreen(
     fun startVideoRecording(audioEnabled: Boolean) {
         if (videoManager.isPreparingOrRecording()) return
         val effectiveRotation = if (isLandscape && (rotationDegrees == 0f || rotationDegrees == 180f)) 90 else rotationDegrees.toInt()
+        val autoVideoRes = com.example.camera.CameraResolutionHelper.resolveBestAutomaticVideoResolution(
+            context = context,
+            isFrontCamera = isFrontCamera
+        )
         coroutineScope.launch {
             videoManager.prepareAndStartRecording(
                 controller = controller,
-                videoResolution = cameraSettings.videoResolution,
+                videoResolution = autoVideoRes,
                 isFrontCamera = isFrontCamera,
                 recordAudio = audioEnabled,
                 initialRotation = effectiveRotation,
@@ -672,9 +684,45 @@ fun CameraScreen(
         startVideoRecording(isGranted && cameraSettings.recordAudio)
     }
 
-    // Trigger Photo Capture (with or without countdown)
+    // Execute immediate ultra-fast shutter capture using an immutable snapshot captured at press time
+    fun executeImmediatePhotoCapture() {
+        val shutterSnapshot = viewModel.createCurrentSnapshot()
+        showQuickCaptureFlash = true
+        capturePhoto(
+            controller = controller,
+            context = context,
+            deviceRotationDegrees = rotationDegrees.toInt(),
+            isLandscape = isLandscape,
+            photoAspectRatio = "Full",
+            isFrontCamera = isFrontCamera,
+            frontCameraMirror = cameraSettings.frontCameraMirror,
+            playShutterSound = cameraSettings.captureSound,
+            onSuccess = { bitmap -> viewModel.processCapture(bitmap, shutterSnapshot) },
+            onError = {
+                val bestSize = com.example.camera.CameraResolutionHelper.resolveBestAutomaticPhotoSize(
+                    context = context,
+                    isFrontCamera = isFrontCamera,
+                    isLandscape = isLandscape
+                )
+                val fallback = createSimulatedCameraFrame(
+                    context = context,
+                    rotationDegrees = rotationDegrees.toInt(),
+                    isLandscapeMode = isLandscape,
+                    resolutionStr = "${bestSize.width} x ${bestSize.height}",
+                    aspectRatioStr = "Full"
+                )
+                viewModel.processCapture(fallback, shutterSnapshot)
+            }
+        )
+    }
+
+    // Trigger Photo Capture (with safe rapid-tap debounce and optional countdown)
     fun triggerPhotoCapture() {
-        if (isCapturing || isCountingDown) return
+        if (isCountingDown) return
+        val nowMs = android.os.SystemClock.elapsedRealtime()
+        if (nowMs - lastShutterTapMs < 180L) return
+        lastShutterTapMs = nowMs
+
         val timerSec = cameraSettings.captureTimer.seconds
         if (timerSec > 0) {
             isCountingDown = true
@@ -685,50 +733,10 @@ fun CameraScreen(
                     countdownRemaining--
                 }
                 isCountingDown = false
-                capturePhoto(
-                    controller = controller,
-                    context = context,
-                    deviceRotationDegrees = rotationDegrees.toInt(),
-                    isLandscape = isLandscape,
-                    photoAspectRatio = cameraSettings.photoAspectRatio,
-                    isFrontCamera = isFrontCamera,
-                    frontCameraMirror = cameraSettings.frontCameraMirror,
-                    playShutterSound = cameraSettings.captureSound,
-                    onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
-                    onError = {
-                        val fallback = createSimulatedCameraFrame(
-                            context = context,
-                            rotationDegrees = rotationDegrees.toInt(),
-                            isLandscapeMode = isLandscape,
-                            resolutionStr = cameraSettings.photoResolution,
-                            aspectRatioStr = cameraSettings.photoAspectRatio
-                        )
-                        viewModel.processCapture(fallback)
-                    }
-                )
+                executeImmediatePhotoCapture()
             }
         } else {
-            capturePhoto(
-                controller = controller,
-                context = context,
-                deviceRotationDegrees = rotationDegrees.toInt(),
-                isLandscape = isLandscape,
-                photoAspectRatio = cameraSettings.photoAspectRatio,
-                isFrontCamera = isFrontCamera,
-                frontCameraMirror = cameraSettings.frontCameraMirror,
-                playShutterSound = cameraSettings.captureSound,
-                onSuccess = { bitmap -> viewModel.processCapture(bitmap) },
-                onError = {
-                    val fallback = createSimulatedCameraFrame(
-                        context = context,
-                        rotationDegrees = rotationDegrees.toInt(),
-                        isLandscapeMode = isLandscape,
-                        resolutionStr = cameraSettings.photoResolution,
-                        aspectRatioStr = cameraSettings.photoAspectRatio
-                    )
-                    viewModel.processCapture(fallback)
-                }
-            )
+            executeImmediatePhotoCapture()
         }
     }
 
@@ -767,6 +775,7 @@ fun CameraScreen(
             videoResolution = cameraSettings.videoResolution,
             photoAspectRatio = cameraSettings.photoAspectRatio,
             videoAspectRatio = cameraSettings.videoAspectRatio,
+            cropMode = cameraSettings.cropMode,
             autoBrightnessEnabled = cameraSettings.autoBrightnessEnabled,
             manualPreviewBrightness = cameraSettings.manualPreviewBrightness,
             targetVideoFps = cameraSettings.videoFps,
@@ -1121,7 +1130,28 @@ fun CameraScreen(
                                 )
                             }
 
-                            // 8. Settings Gear Button
+                            // 8. Tap-to-Switch Crop Mode Control (Full -> Semi -> Rect -> 1:1)
+                            CameraCropModeSwitchPill(
+                                cropMode = cameraSettings.cropMode,
+                                isLandscape = true,
+                                onTapCycle = {
+                                    try {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                    } catch (ignored: Exception) {}
+                                    viewModel.cycleCameraCropMode()
+                                },
+                                onLongPressResetFull = {
+                                    if (cameraSettings.cropMode != com.example.model.CameraCropMode.FULL) {
+                                        try {
+                                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        } catch (ignored: Exception) {}
+                                        viewModel.setCameraCropMode(com.example.model.CameraCropMode.FULL)
+                                    }
+                                },
+                                modifier = Modifier.testTag("camera_crop_mode_button")
+                            )
+
+                            // 9. Settings Gear Button
                             IconButton(
                                 onClick = { showQuickSettingsPopup = true },
                                 modifier = Modifier
@@ -1722,25 +1752,34 @@ fun CameraScreen(
                                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     } catch (ignored: Exception) {}
                                     showQuickCaptureFlash = true
+                                    val quickSnapshot = viewModel.createCurrentSnapshot()
                                     capturePhoto(
                                         controller = controller,
                                         context = context,
                                         deviceRotationDegrees = rotationDegrees.toInt(),
                                         isLandscape = isLandscape,
-                                        photoAspectRatio = cameraSettings.photoAspectRatio,
+                                        photoAspectRatio = "Full",
+                                        isFrontCamera = isFrontCamera,
+                                        frontCameraMirror = cameraSettings.frontCameraMirror,
+                                        playShutterSound = cameraSettings.captureSound,
                                         onSuccess = { bitmap ->
-                                            viewModel.processCapture(bitmap)
+                                            viewModel.processCapture(bitmap, quickSnapshot)
                                             viewModel.showSuccess("Quick photo saved to Gallery!")
                                         },
                                         onError = {
+                                            val bestSize = com.example.camera.CameraResolutionHelper.resolveBestAutomaticPhotoSize(
+                                                context = context,
+                                                isFrontCamera = isFrontCamera,
+                                                isLandscape = isLandscape
+                                            )
                                             val fallback = createSimulatedCameraFrame(
                                                 context = context,
                                                 rotationDegrees = rotationDegrees.toInt(),
                                                 isLandscapeMode = isLandscape,
-                                                resolutionStr = cameraSettings.photoResolution,
-                                                aspectRatioStr = cameraSettings.photoAspectRatio
+                                                resolutionStr = "${bestSize.width} x ${bestSize.height}",
+                                                aspectRatioStr = "Full"
                                             )
-                                            viewModel.processCapture(fallback)
+                                            viewModel.processCapture(fallback, quickSnapshot)
                                             viewModel.showSuccess("Quick photo saved to Gallery!")
                                         }
                                     )
@@ -2066,13 +2105,12 @@ fun CameraScreen(
                     }
                 }
 
-                // Status Row: Minimal Tiny GPS Status Capsule (Left) — "CUBET CH" colored text totally removed
-                // Status Row: Minimal Tiny GPS Status Capsule (Left) — 8dp consistent margin, 4dp blur, 10% opacity
+                // Status Row: Minimal Tiny GPS Status Capsule (Left) & Tap-to-Switch Crop Mode Pill (Right)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp, start = 8.dp, end = 8.dp),
-                    horizontalArrangement = Arrangement.Start,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val isAcquiring = locationState.status == LocationStatus.ACQUIRING || locationState.point == null
@@ -2121,6 +2159,28 @@ fun CameraScreen(
                             )
                         }
                     }
+
+                    // Tap-to-Switch Crop Mode Pill (Full -> Semi Crop -> Rectangular Crop -> Square Crop)
+                    CameraCropModeSwitchPill(
+                        cropMode = cameraSettings.cropMode,
+                        isLandscape = false,
+                        animatedRotation = animatedRotation,
+                        onTapCycle = {
+                            try {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            } catch (ignored: Exception) {}
+                            viewModel.cycleCameraCropMode()
+                        },
+                        onLongPressResetFull = {
+                            if (cameraSettings.cropMode != com.example.model.CameraCropMode.FULL) {
+                                try {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                } catch (ignored: Exception) {}
+                                viewModel.setCameraCropMode(com.example.model.CameraCropMode.FULL)
+                            }
+                        },
+                        modifier = Modifier.testTag("camera_crop_mode_button")
+                    )
                 }
 
                 // Expandable Exposure EV Slider
@@ -3594,6 +3654,87 @@ fun CameraScreen(
                 onNavigateToFullSettings = { onNavigateToSettings() },
                 onDismiss = { showQuickSettingsPopup = false }
             )
+        }
+    }
+}
+
+/**
+ * Compact, borderless tap-to-switch Camera Crop Mode pill displayed directly on the Camera Screen.
+ *
+ * - Single tap cycles: `Full` -> `Semi Crop` -> `Rectangular Crop` -> `Square Crop` -> `Full`.
+ * - Long press resets directly to `Full` (zero crop).
+ * - Never opens a dropdown or popup; updates preview framing immediately with subtle icon/label animation.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun CameraCropModeSwitchPill(
+    cropMode: com.example.model.CameraCropMode,
+    isLandscape: Boolean,
+    animatedRotation: Float = 0f,
+    onTapCycle: () -> Unit,
+    onLongPressResetFull: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val isCropped = cropMode != com.example.model.CameraCropMode.FULL
+    val containerColor by animateColorAsState(
+        targetValue = if (isCropped) Color(0xCC1E2636) else Color(0x99080B12),
+        animationSpec = tween(160),
+        label = "crop_pill_bg"
+    )
+    val contentTint by animateColorAsState(
+        targetValue = if (isCropped) HighlightYellow else Color.White,
+        animationSpec = tween(160),
+        label = "crop_pill_tint"
+    )
+    val modeIcon = when (cropMode) {
+        com.example.model.CameraCropMode.FULL -> Icons.Default.CropFree
+        com.example.model.CameraCropMode.SEMI_CROP -> Icons.Default.Crop
+        com.example.model.CameraCropMode.RECTANGULAR_CROP -> if (isLandscape) Icons.Default.CropLandscape else Icons.Default.CropPortrait
+        com.example.model.CameraCropMode.SQUARE_CROP -> Icons.Default.CropSquare
+    }
+
+    Box(
+        modifier = modifier
+            .heightIn(min = 34.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(containerColor)
+            .combinedClickable(
+                onClick = onTapCycle,
+                onLongClick = onLongPressResetFull,
+                onClickLabel = "Switch camera crop mode: ${cropMode.label}"
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        AnimatedContent(
+            targetState = cropMode,
+            transitionSpec = {
+                fadeIn(tween(130)) togetherWith fadeOut(tween(110))
+            },
+            label = "crop_mode_pill_content"
+        ) { activeMode ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.graphicsLayer {
+                    if (!isLandscape) rotationZ = -animatedRotation
+                }
+            ) {
+                Icon(
+                    imageVector = modeIcon,
+                    contentDescription = "Crop mode ${activeMode.label}",
+                    tint = contentTint,
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = activeMode.shortLabel,
+                    color = contentTint,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
         }
     }
 }

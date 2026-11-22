@@ -157,10 +157,20 @@ object VideoOverlayProcessor {
         try {
             outputFile.parentFile?.mkdirs()
 
-            if (hasRealtimeOverlay) {
+            val displayW = (validation.displayWidth and 1.inv()).coerceAtLeast(16)
+            val displayH = (validation.displayHeight and 1.inv()).coerceAtLeast(16)
+            val isLandscapeVideo = displayW >= displayH
+            val cropRect = com.example.camera.CameraOutputFormatEngine.computeCropRectForMode(
+                sourceWidth = displayW,
+                sourceHeight = displayH,
+                cropMode = defaultSnapshot.cropMode,
+                isLandscape = isLandscapeVideo
+            )
+
+            if (hasRealtimeOverlay && !cropRect.isCropped) {
                 Log.i(
                     TAG,
-                    "Input MP4 has live camera footage with real-time burnt overlays (${validation.durationMs}ms, ${validation.displayWidth}x${validation.displayHeight}). Finalizing directly."
+                    "Input MP4 has live camera footage with real-time burnt overlays in FULL mode (${validation.durationMs}ms, ${displayW}x${displayH}). Finalizing directly."
                 )
                 if (inputFile.absolutePath == outputFile.absolutePath) {
                     return@withContext outputFile.exists() && outputFile.length() > 0L
@@ -173,13 +183,14 @@ object VideoOverlayProcessor {
                 return@withContext outputFile.exists() && outputFile.length() > 0L
             }
 
-            // Real camera footage recorded without GPU OverlayEffect: burn overlays onto actual camera frames
-            val targetWidth = (validation.displayWidth and 1.inv()).coerceAtLeast(16)
-            val targetHeight = (validation.displayHeight and 1.inv()).coerceAtLeast(16)
+            // Either a non-FULL crop mode was selected OR GPU OverlayEffect was unavailable:
+            // encode exact cropped output dimensions while avoiding overlay duplication when already burnt in real time.
+            val targetWidth = (cropRect.width and 1.inv()).coerceAtLeast(16)
+            val targetHeight = (cropRect.height and 1.inv()).coerceAtLeast(16)
             val targetFps = validation.frameRate.roundToInt().coerceIn(15, 60)
             Log.i(
                 TAG,
-                "Post-processing real camera MP4 without GPU overlay (${validation.durationMs}ms, ${targetWidth}x${targetHeight} @ ${targetFps}fps)"
+                "Post-processing real camera MP4 (crop=${defaultSnapshot.cropMode.name}, hasRealtimeOverlay=$hasRealtimeOverlay, ${validation.durationMs}ms, ${targetWidth}x${targetHeight} @ ${targetFps}fps)"
             )
             val processed = processVideoFrames(
                 context = context,
@@ -191,6 +202,7 @@ object VideoOverlayProcessor {
                 videoWidth = targetWidth,
                 videoHeight = targetHeight,
                 targetFps = targetFps,
+                shouldDrawOverlay = !hasRealtimeOverlay,
                 onProgress = onProgress
             )
             if (!processed) {
@@ -224,6 +236,7 @@ object VideoOverlayProcessor {
         videoWidth: Int,
         videoHeight: Int,
         targetFps: Int = 30,
+        shouldDrawOverlay: Boolean = true,
         onProgress: ((Float) -> Unit)?
     ): Boolean {
         var extractor: MediaExtractor? = null
@@ -321,7 +334,7 @@ object VideoOverlayProcessor {
             while (currentMs < durationMs) {
                 val frameUs = currentMs * 1000L
                 val retrieved = try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    if (defaultSnapshot.cropMode == com.example.model.CameraCropMode.FULL && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                         retriever.getScaledFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST, videoWidth, videoHeight)
                             ?: retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST)
                     } else {
@@ -346,22 +359,29 @@ object VideoOverlayProcessor {
                     continue
                 }
 
-                // 1. Draw real decoded camera frame
-                val srcRect = Rect(0, 0, frameBitmap.width, frameBitmap.height)
+                // 1. Draw real decoded camera frame cropped cleanly to exact CameraCropMode without distortion
+                val frameIsLandscape = frameBitmap.width >= frameBitmap.height
+                val frameCrop = com.example.camera.CameraOutputFormatEngine.computeCropRectForMode(
+                    sourceWidth = frameBitmap.width,
+                    sourceHeight = frameBitmap.height,
+                    cropMode = defaultSnapshot.cropMode,
+                    isLandscape = frameIsLandscape
+                )
+                val srcRect = Rect(frameCrop.left, frameCrop.top, frameCrop.right, frameCrop.bottom)
                 reusableCanvas.drawBitmap(frameBitmap, srcRect, dstRect, paint)
 
-                // 2. Fetch snapshot for this exact second/millisecond
-                val snapshotForFrame = getSnapshotAtTime(snapshotsTimeline, defaultSnapshot, currentMs)
-
-                // 3. Render dynamic overlay (timestamp, GPS, chainage, project details, logo, map inset)
-                OverlayRenderer.drawOverlayOnCanvas(
-                    context = context,
-                    canvas = reusableCanvas,
-                    width = videoWidth,
-                    height = videoHeight,
-                    snapshot = snapshotForFrame,
-                    isVideoFrame = true
-                )
+                // 2. Render dynamic overlay strictly when not already burnt in real time
+                if (shouldDrawOverlay) {
+                    val snapshotForFrame = getSnapshotAtTime(snapshotsTimeline, defaultSnapshot, currentMs)
+                    OverlayRenderer.drawOverlayOnCanvas(
+                        context = context,
+                        canvas = reusableCanvas,
+                        width = videoWidth,
+                        height = videoHeight,
+                        snapshot = snapshotForFrame,
+                        isVideoFrame = true
+                    )
+                }
 
                 // 4. Convert ARGB to YUV buffer and feed encoder
                 reusableBitmap.getPixels(argbBuffer, 0, videoWidth, 0, 0, videoWidth, videoHeight)

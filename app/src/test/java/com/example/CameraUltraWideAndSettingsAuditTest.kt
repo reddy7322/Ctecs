@@ -413,19 +413,19 @@ class CameraUltraWideAndSettingsAuditTest {
         composeTestRule.onNodeWithText("Camera, Photo & Video Settings").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
-        // Verify separated groups & essential controls exist, and duplicate JPEG slider is removed
-        composeTestRule.onNodeWithTag("settings_photo_group_header").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("photo_output_format_square").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("photo_quality_preset_maximum").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("switch_photo_size_optimization").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("switch_photo_enhancement").performScrollTo().assertIsDisplayed()
+        // Verify simplified automatic borderless camera settings exist and manual output/resolution/quality controls are removed
+        composeTestRule.onNodeWithTag("settings_auto_output_status").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("switch_horizon_level").performScrollTo().assertIsDisplayed()
-
-        composeTestRule.onNodeWithTag("settings_video_group_header").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("video_output_format_landscape_full").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("video_quality_preset_balanced").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("switch_keep_original").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("switch_preserve_exif").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("video_stabilization_auto").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("switch_video_size_optimization").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("switch_record_audio").performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodesWithTag("photo_output_format_square").assertCountEquals(0)
+        composeTestRule.onAllNodesWithTag("photo_quality_preset_maximum").assertCountEquals(0)
+        composeTestRule.onAllNodesWithTag("choose_photo_resolution_button").assertCountEquals(0)
+        composeTestRule.onAllNodesWithTag("choose_video_resolution_button").assertCountEquals(0)
+        composeTestRule.onAllNodesWithTag("video_output_format_landscape_full").assertCountEquals(0)
+        composeTestRule.onAllNodesWithTag("video_quality_preset_balanced").assertCountEquals(0)
         composeTestRule.onAllNodesWithText("JPEG Compression Quality").assertCountEquals(0)
 
         // Collapse Camera section and expand Display and Appearance — Horizon level indicator must NOT be duplicated there

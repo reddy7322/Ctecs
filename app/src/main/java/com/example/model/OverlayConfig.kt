@@ -213,7 +213,8 @@ data class CaptureSnapshot(
     val preserveExif: Boolean = true,
     val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
     val videoOutputSizeOptimization: Boolean = false,
-    val targetVideoFps: Int = 30
+    val targetVideoFps: Int = 30,
+    val cropMode: CameraCropMode = CameraCropMode.FULL
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage

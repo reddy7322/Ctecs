@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.util.Log
 import android.util.Rational
+import com.example.model.CameraCropMode
 import com.example.model.CameraOutputFormat
 import com.example.model.OutputQualityPreset
 import java.util.Locale
@@ -36,6 +37,23 @@ data class OutputEstimateSummary(
 )
 
 /**
+ * Pixel-exact crop region inside a source frame `(sourceWidth x sourceHeight)`.
+ * Shared identically by Live Preview, Photo Capture, Video Overlay, and Video Export so
+ * the preview frame matches the saved output with zero hidden cropping.
+ */
+data class CropFrameRect(
+    val left: Int,
+    val top: Int,
+    val width: Int,
+    val height: Int,
+    val isCropped: Boolean
+) {
+    val right: Int get() = left + width
+    val bottom: Int get() = top + height
+    val aspectRatio: Float get() = if (height > 0) width.toFloat() / height.toFloat() else 1f
+}
+
+/**
  * Authoritative Output Format Engine for CTECS Camera Photo & Video modes.
  *
  * Implements the 4 simple output formats without stretching, distortion, or overlay clipping:
@@ -47,6 +65,244 @@ data class OutputEstimateSummary(
 object CameraOutputFormatEngine {
 
     private const val TAG = "CameraOutputFormat"
+
+    /**
+     * Linear retention factor for [CameraCropMode.SEMI_CROP] (moderate 14% gentle framing crop).
+     */
+    const val SEMI_CROP_RETENTION_FACTOR: Float = 0.86f
+
+    /**
+     * Authoritative unified crop rectangle calculation for [CameraCropMode].
+     *
+     * Used identically by Live Preview guide rendering, Photo capture cropping, Video real-time overlay
+     * safe-area calculation, and Video post-crop export:
+     * - [CameraCropMode.FULL]: **ZERO crop** — preserves 100% of `(sourceWidth x sourceHeight)` corner to corner.
+     * - [CameraCropMode.SEMI_CROP]: Moderate intentional centered crop (~86% width & height), preserving natural
+     *   orientation proportions with zero stretching or distortion.
+     * - [CameraCropMode.RECTANGULAR_CROP]: Orientation-adaptive crisp rectangular framing (`16:9` landscape /
+     *   `9:16` portrait for standard 4:3 sensors; `4:3` landscape / `3:4` portrait when source is already 16:9).
+     * - [CameraCropMode.SQUARE_CROP]: Exact centered `1:1` square crop.
+     */
+    fun computeCropRectForMode(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        cropMode: CameraCropMode,
+        isLandscape: Boolean
+    ): CropFrameRect {
+        if (sourceWidth <= 0 || sourceHeight <= 0) {
+            return CropFrameRect(0, 0, sourceWidth.coerceAtLeast(0), sourceHeight.coerceAtLeast(0), false)
+        }
+
+        if (cropMode == CameraCropMode.FULL) {
+            return CropFrameRect(
+                left = 0,
+                top = 0,
+                width = sourceWidth,
+                height = sourceHeight,
+                isCropped = false
+            )
+        }
+
+        val currentRatio = sourceWidth.toFloat() / sourceHeight.toFloat()
+        val effectiveLandscape = if (sourceWidth != sourceHeight) sourceWidth > sourceHeight else isLandscape
+
+        when (cropMode) {
+            CameraCropMode.SEMI_CROP -> {
+                val rawW = (sourceWidth * SEMI_CROP_RETENTION_FACTOR).roundToInt().coerceIn(2, sourceWidth)
+                val rawH = (sourceHeight * SEMI_CROP_RETENTION_FACTOR).roundToInt().coerceIn(2, sourceHeight)
+                val evenW = (rawW and 1.inv()).coerceAtLeast(2).coerceAtMost(sourceWidth)
+                val evenH = (rawH and 1.inv()).coerceAtLeast(2).coerceAtMost(sourceHeight)
+                val left = ((sourceWidth - evenW) / 2).coerceIn(0, sourceWidth - evenW)
+                val top = ((sourceHeight - evenH) / 2).coerceIn(0, sourceHeight - evenH)
+                return CropFrameRect(
+                    left = left,
+                    top = top,
+                    width = evenW,
+                    height = evenH,
+                    isCropped = evenW < sourceWidth || evenH < sourceHeight
+                )
+            }
+
+            CameraCropMode.RECTANGULAR_CROP -> {
+                val longShortRatio = max(sourceWidth, sourceHeight).toFloat() / min(sourceWidth, sourceHeight).toFloat()
+                // On 4:3 native sensors (~1.33), Rectangular Crop delivers crisp 16:9 / 9:16 framing.
+                // On 16:9 native streams (~1.78), Rectangular Crop delivers crisp 4:3 / 3:4 framing so
+                // switching modes is always distinct, centered, and orientation-adaptive without distortion.
+                val targetRatio = if (longShortRatio < 1.55f) {
+                    if (effectiveLandscape) 16f / 9f else 9f / 16f
+                } else {
+                    if (effectiveLandscape) 4f / 3f else 3f / 4f
+                }
+                return computeCenteredRatioCropRect(sourceWidth, sourceHeight, currentRatio, targetRatio)
+            }
+
+            CameraCropMode.SQUARE_CROP -> {
+                val side = (min(sourceWidth, sourceHeight) and 1.inv()).coerceAtLeast(2).coerceAtMost(min(sourceWidth, sourceHeight))
+                val left = ((sourceWidth - side) / 2).coerceIn(0, sourceWidth - side)
+                val top = ((sourceHeight - side) / 2).coerceIn(0, sourceHeight - side)
+                return CropFrameRect(
+                    left = left,
+                    top = top,
+                    width = side,
+                    height = side,
+                    isCropped = side < sourceWidth || side < sourceHeight
+                )
+            }
+
+            CameraCropMode.FULL -> {
+                return CropFrameRect(0, 0, sourceWidth, sourceHeight, false)
+            }
+        }
+    }
+
+    private fun computeCenteredRatioCropRect(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        currentRatio: Float,
+        targetRatio: Float
+    ): CropFrameRect {
+        if (abs(currentRatio - targetRatio) < 0.01f) {
+            return CropFrameRect(0, 0, sourceWidth, sourceHeight, false)
+        }
+        val targetW: Int
+        val targetH: Int
+        if (currentRatio > targetRatio) {
+            targetH = sourceHeight
+            targetW = (sourceHeight * targetRatio).roundToInt().coerceIn(2, sourceWidth)
+        } else {
+            targetW = sourceWidth
+            targetH = (sourceWidth / targetRatio).roundToInt().coerceIn(2, sourceHeight)
+        }
+        val evenW = (targetW and 1.inv()).coerceAtLeast(2).coerceAtMost(sourceWidth)
+        val evenH = (targetH and 1.inv()).coerceAtLeast(2).coerceAtMost(sourceHeight)
+        val left = ((sourceWidth - evenW) / 2).coerceIn(0, sourceWidth - evenW)
+        val top = ((sourceHeight - evenH) / 2).coerceIn(0, sourceHeight - evenH)
+        return CropFrameRect(
+            left = left,
+            top = top,
+            width = evenW,
+            height = evenH,
+            isCropped = evenW < sourceWidth || evenH < sourceHeight
+        )
+    }
+
+    /**
+     * Applies [CameraCropMode] to a captured [Bitmap] with zero distortion and zero unnecessary copies.
+     *
+     * In [CameraCropMode.FULL], returns [source] immediately without removing a single pixel.
+     * Always runs strictly BEFORE overlay/timestamp rendering so metadata & stamps are never clipped.
+     */
+    fun applyCropModeToBitmap(
+        source: Bitmap,
+        cropMode: CameraCropMode,
+        isLandscape: Boolean
+    ): Bitmap {
+        if (cropMode == CameraCropMode.FULL) return source
+        val w = source.width
+        val h = source.height
+        if (w <= 0 || h <= 0) return source
+        val rect = computeCropRectForMode(w, h, cropMode, isLandscape)
+        if (!rect.isCropped) return source
+        return try {
+            Bitmap.createBitmap(source, rect.left, rect.top, rect.width, rect.height)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Crop mode $cropMode failed (${rect.width}x${rect.height}): ${e.message}", e)
+            source
+        }
+    }
+
+    /**
+     * Computes the exact pixel rectangle occupied by a `FIT_CENTER` camera preview stream inside
+     * `[containerWidth x containerHeight]` for the active camera sensor's native [sensorLongShortRatio]
+     * (e.g. `4f / 3f` for still photos or `16f / 9f` for video).
+     */
+    fun computePreviewViewportRect(
+        containerWidth: Float,
+        containerHeight: Float,
+        sensorLongShortRatio: Float = 4f / 3f,
+        isLandscape: Boolean
+    ): FramingPreviewRect {
+        if (containerWidth <= 1f || containerHeight <= 1f) {
+            return FramingPreviewRect(0f, 0f, containerWidth.coerceAtLeast(0f), containerHeight.coerceAtLeast(0f), false, 1f)
+        }
+        val safeRatio = sensorLongShortRatio.coerceIn(1.0f, 2.4f)
+        val displayedRatio = if (isLandscape) safeRatio else 1f / safeRatio
+        val containerRatio = containerWidth / containerHeight
+
+        val viewW: Float
+        val viewH: Float
+        if (containerRatio > displayedRatio) {
+            viewH = containerHeight
+            viewW = (containerHeight * displayedRatio).coerceAtMost(containerWidth)
+        } else {
+            viewW = containerWidth
+            viewH = (containerWidth / displayedRatio).coerceAtMost(containerHeight)
+        }
+        val left = ((containerWidth - viewW) / 2f).coerceAtLeast(0f)
+        val top = ((containerHeight - viewH) / 2f).coerceAtLeast(0f)
+        return FramingPreviewRect(
+            leftPx = left,
+            topPx = top,
+            widthPx = viewW,
+            heightPx = viewH,
+            isCropped = false,
+            targetAspectRatio = displayedRatio
+        )
+    }
+
+    /**
+     * Computes the exact live viewfinder crop guide rectangle matching [computeCropRectForMode] inside
+     * the `FIT_CENTER` displayed sensor viewport so what the user sees matches the saved file 1:1.
+     */
+    fun computeCropGuideOverlayRect(
+        containerWidth: Float,
+        containerHeight: Float,
+        sensorLongShortRatio: Float = 4f / 3f,
+        cropMode: CameraCropMode,
+        isLandscape: Boolean
+    ): FramingPreviewRect {
+        val sensorViewport = computePreviewViewportRect(
+            containerWidth = containerWidth,
+            containerHeight = containerHeight,
+            sensorLongShortRatio = sensorLongShortRatio,
+            isLandscape = isLandscape
+        )
+        if (cropMode == CameraCropMode.FULL || sensorViewport.widthPx <= 1f || sensorViewport.heightPx <= 1f) {
+            return sensorViewport.copy(isCropped = false)
+        }
+
+        // Compute crop rect in high-precision virtual sensor coordinates matching the exact displayed ratio
+        val virtualShort = 1000
+        val virtualLong = (virtualShort * sensorLongShortRatio.coerceIn(1.0f, 2.4f)).roundToInt().coerceAtLeast(virtualShort)
+        val virtualW = if (isLandscape) virtualLong else virtualShort
+        val virtualH = if (isLandscape) virtualShort else virtualLong
+
+        val cropRect = computeCropRectForMode(
+            sourceWidth = virtualW,
+            sourceHeight = virtualH,
+            cropMode = cropMode,
+            isLandscape = isLandscape
+        )
+        if (!cropRect.isCropped) {
+            return sensorViewport.copy(isCropped = false)
+        }
+
+        val scaleX = sensorViewport.widthPx / virtualW.toFloat()
+        val scaleY = sensorViewport.heightPx / virtualH.toFloat()
+        val outLeft = sensorViewport.leftPx + cropRect.left * scaleX
+        val outTop = sensorViewport.topPx + cropRect.top * scaleY
+        val outW = cropRect.width * scaleX
+        val outH = cropRect.height * scaleY
+
+        return FramingPreviewRect(
+            leftPx = outLeft,
+            topPx = outTop,
+            widthPx = outW,
+            heightPx = outH,
+            isCropped = true,
+            targetAspectRatio = if (outH > 0f) outW / outH else 1f
+        )
+    }
 
     /**
      * Resolves the desired target width/height aspect ratio for viewfinder preview and cropping.

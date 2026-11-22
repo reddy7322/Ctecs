@@ -16,6 +16,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.backup.PrefValueType
 import com.example.backup.TypedPrefEntry
 import com.example.model.CameraAutofocusMode
+import com.example.model.CameraCropMode
 import com.example.model.CameraGridMode
 import com.example.model.CameraMode
 import com.example.model.CameraOutputFormat
@@ -277,6 +278,7 @@ class PreferencesManager(context: Context) {
         val KEY_VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
         val KEY_PHOTO_ASPECT_RATIO = stringPreferencesKey("photo_aspect_ratio")
         val KEY_VIDEO_ASPECT_RATIO = stringPreferencesKey("video_aspect_ratio")
+        val KEY_CAMERA_CROP_MODE = stringPreferencesKey("camera_crop_mode")
         val KEY_PHOTO_OUTPUT_FORMAT = stringPreferencesKey("camera_photo_output_format")
         val KEY_VIDEO_OUTPUT_FORMAT = stringPreferencesKey("camera_video_output_format")
         val KEY_PHOTO_QUALITY_PRESET = stringPreferencesKey("camera_photo_quality_preset")
@@ -829,6 +831,10 @@ class PreferencesManager(context: Context) {
             videoResolution = prefs[KEY_VIDEO_RESOLUTION] ?: "1920 x 1080",
             photoAspectRatio = prefs[KEY_PHOTO_ASPECT_RATIO] ?: "4:3",
             videoAspectRatio = prefs[KEY_VIDEO_ASPECT_RATIO] ?: "16:9",
+            cropMode = CameraCropMode.fromString(
+                prefs[KEY_CAMERA_CROP_MODE],
+                fallback = CameraCropMode.FULL
+            ),
             photoOutputFormat = CameraOutputFormat.fromString(
                 prefs[KEY_PHOTO_OUTPUT_FORMAT],
                 fallback = CameraOutputFormat.PORTRAIT_FULL
@@ -1288,6 +1294,7 @@ class PreferencesManager(context: Context) {
         prefs[KEY_VIDEO_RESOLUTION] = settings.videoResolution
         prefs[KEY_PHOTO_ASPECT_RATIO] = settings.photoAspectRatio
         prefs[KEY_VIDEO_ASPECT_RATIO] = settings.videoAspectRatio
+        prefs[KEY_CAMERA_CROP_MODE] = settings.cropMode.name
         prefs[KEY_PHOTO_OUTPUT_FORMAT] = settings.photoOutputFormat.name
         prefs[KEY_VIDEO_OUTPUT_FORMAT] = settings.videoOutputFormat.name
         prefs[KEY_PHOTO_QUALITY_PRESET] = settings.photoQualityPreset.name

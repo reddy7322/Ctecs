@@ -792,7 +792,7 @@ class WeatherAndHighwayIntelligenceTest {
     fun `WeatherDashboardScreen displays live highway chainage with stale fallback and independent smart collapsible sections`() {
         val nowMs = makeTimestampMs(2026, Calendar.NOVEMBER, 20, 10, 0)
         val liveMatch = ChainageMatchResult(
-            chainage = Chainage(196, 450),
+            chainage = Chainage(196_450L),
             confidence = MatchConfidence.HIGH,
             detectedSide = "LHS",
             matchedAlignmentName = "NH-58 Alignment"
