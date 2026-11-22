@@ -209,12 +209,13 @@ data class CaptureSnapshot(
     val weatherIsFreshAtCapture: Boolean = false,
     val is24HourFormat: Boolean = false,
     val coordinateFormat: CoordinateFormat = CoordinateFormat.DECIMAL,
-    val photoJpegQuality: Int = 92,
+    val photoJpegQuality: Int = 98,
     val preserveExif: Boolean = true,
-    val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
+    val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.MAXIMUM,
     val videoOutputSizeOptimization: Boolean = false,
     val targetVideoFps: Int = 30,
-    val cropMode: CameraCropMode = CameraCropMode.FULL
+    val cropMode: CameraCropMode = CameraCropMode.FULL,
+    val cameraExifMetadata: Map<String, String> = emptyMap()
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage

@@ -155,6 +155,7 @@ fun CameraPreview(
     autofocusMode: com.example.model.CameraAutofocusMode = com.example.model.CameraAutofocusMode.CONTINUOUS,
     photoEnhancementEnabled: Boolean = true,
     videoNoiseReductionEnabled: Boolean = true,
+    isHdrEnabled: Boolean = true,
     touchToCapture: Boolean = false,
     easyToggleCameras: Boolean = true,
     useStandaloneUltraWide: Boolean = false,
@@ -317,7 +318,7 @@ fun CameraPreview(
             val focusAction = FocusMeteringAction.Builder(
                 meteringPoint,
                 meteringFlags
-            ).setAutoCancelDuration(3, TimeUnit.SECONDS)
+            ).setAutoCancelDuration(6, TimeUnit.SECONDS)
                 .build()
 
             val future = controller.cameraControl?.startFocusAndMetering(focusAction)
@@ -454,6 +455,7 @@ fun CameraPreview(
     LaunchedEffect(
         hasCameraPermission,
         isVideoMode,
+        isVideoRecording,
         isLandscape,
         isFlashOn,
         isFrontCamera,
@@ -474,10 +476,12 @@ fun CameraPreview(
             controller.isPinchToZoomEnabled = false
             controller.isTapToFocusEnabled = false
 
-            val shouldEnableVideoPipeline = isVideoMode || isLandscape
+            // Bind VIDEO_CAPTURE + OverlayEffect ONLY during Video mode or active recording.
+            // Keeping Landscape still photography on a pure Preview + ImageCapture session preserves
+            // full native sensor resolution (e.g. 12MP 4000x3000) and OEM multi-frame HDR/MFNR quality
+            // instead of downgrading ImageCapture to video-bound 1920x1440 / MINIMIZE_LATENCY.
+            val shouldEnableVideoPipeline = isVideoMode || isVideoRecording
             try {
-                // Zero-Shutter Lag is strictly incompatible with VideoCapture & CameraEffect on CameraX HALs.
-                // Enable ZSL only for pure still-photo pipeline when flash is off; use MINIMIZE_LATENCY otherwise.
                 val zslSupported = !shouldEnableVideoPipeline &&
                     !isFlashOn &&
                     android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
@@ -485,7 +489,8 @@ fun CameraPreview(
                 val desiredCaptureMode = resolveDesiredImageCaptureMode(
                     shouldEnableVideoPipeline = shouldEnableVideoPipeline,
                     isFlashOn = isFlashOn,
-                    zslSupported = zslSupported
+                    zslSupported = zslSupported,
+                    preferMaxQuality = true
                 )
                 if (controller.imageCaptureMode != desiredCaptureMode) {
                     controller.imageCaptureMode = desiredCaptureMode
@@ -494,7 +499,8 @@ fun CameraPreview(
 
             val autoVideoResolution = com.example.camera.CameraResolutionHelper.resolveBestAutomaticVideoResolution(
                 context = context,
-                isFrontCamera = isFrontCamera
+                isFrontCamera = isFrontCamera,
+                cameraInfo = controller.cameraInfo
             )
 
             val adapter = LifecycleCameraControllerVideoAdapter(
@@ -700,36 +706,43 @@ fun CameraPreview(
         cameraBindEpoch++
     }
 
-    // Apply Camera2 hardware quality tuning (Continuous AF, Hardware NR, Edge, OIS/EIS Stabilization, Target FPS)
-    // non-destructively without restarting the camera session or interrupting active overlays.
+    // Apply Camera2 hardware quality tuning (Hardware HDR, Auto Antibanding, Continuous AF, Hardware NR/Edge,
+    // OIS/EIS Stabilization, Video Target FPS) non-destructively without restarting the camera session.
     LaunchedEffect(
         hasCameraPermission,
         isFrontCamera,
         useStandaloneUltraWide,
         isVideoMode,
+        isVideoRecording,
+        isHdrEnabled,
+        isFlashOn,
         targetVideoFps,
         videoStabilizationMode,
         autofocusMode,
         photoEnhancementEnabled,
         videoNoiseReductionEnabled,
-        lifecycleResumeVersion
+        lifecycleResumeVersion,
+        cameraBindEpoch
     ) {
         if (!hasCameraPermission) return@LaunchedEffect
-        delay(250L)
+        delay(200L)
         try {
             val hwCaps = com.example.camera.CameraQualityEngine.queryHardwareCapabilities(
                 context = context,
-                isFrontCamera = isFrontCamera
+                isFrontCamera = isFrontCamera,
+                cameraInfo = controller.cameraInfo
             )
             com.example.camera.CameraQualityEngine.applyCamera2Tuning(
                 cameraControl = controller.cameraControl,
                 capabilities = hwCaps,
-                isVideoMode = isVideoMode,
+                isVideoMode = isVideoMode || isVideoRecording,
                 targetVideoFps = targetVideoFps,
                 stabilizationMode = videoStabilizationMode,
                 autofocusMode = autofocusMode,
                 photoEnhancementEnabled = photoEnhancementEnabled,
-                videoNoiseReductionEnabled = videoNoiseReductionEnabled
+                videoNoiseReductionEnabled = videoNoiseReductionEnabled,
+                isHdrEnabled = isHdrEnabled,
+                isFlashOn = isFlashOn
             )
         } catch (ignored: Throwable) {}
     }
@@ -738,6 +751,11 @@ fun CameraPreview(
         if (!hasCameraPermission) return@LaunchedEffect
         try {
             val hasFlash = try { controller.cameraInfo?.hasFlashUnit() == true } catch (_: Throwable) { false }
+            controller.imageCaptureFlashMode = if (isFlashOn && hasFlash) {
+                ImageCapture.FLASH_MODE_ON
+            } else {
+                ImageCapture.FLASH_MODE_OFF
+            }
             controller.enableTorch(isFlashOn && hasFlash)
         } catch (ignored: Exception) {}
     }
@@ -866,13 +884,16 @@ fun CameraPreview(
         }
     }
 
-    // Automatically configure the highest suitable full-native-sensor photo size adapting to Portrait & Landscape
-    // without cropping the sensor down to 16:9.
-    val nativeSensorAspectRatio = remember(isFrontCamera, isVideoMode) {
+    // Automatically configure the highest suitable full-native-sensor photo & preview resolution selectors.
+    // Using orientation-agnostic CameraX ResolutionSelector (instead of deprecated OutputSize(Size)) guarantees
+    // Portrait and Landscape both capture full native sensor framing (e.g. 4000x3000 12MP) and NEVER fall back
+    // to a rotated 1:1 square size (like 1088x1088) on OEM HALs.
+    val nativeSensorAspectRatio = remember(isFrontCamera, isVideoMode, useStandaloneUltraWide, cameraBindEpoch) {
         com.example.camera.CameraResolutionHelper.resolveNativeSensorAspectRatio(
             context = context,
             isFrontCamera = isFrontCamera,
-            isVideoMode = isVideoMode
+            isVideoMode = isVideoMode,
+            cameraInfo = controller.cameraInfo
         )
     }
 
@@ -881,22 +902,35 @@ fun CameraPreview(
         useStandaloneUltraWide,
         standaloneUltraWideCameraId,
         logicalWideCameraId,
+        isVideoMode,
         hasCameraPermission
     ) {
         if (!hasCameraPermission) return@LaunchedEffect
+        if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
         try {
-            // Use sensor-native dimensions (longEdge x shortEdge) so rotating Portrait <-> Landscape
-            // never mutates OutputSize or forces a disruptive CameraX session rebind; targetRotation handles orientation.
-            val bestNativeSize = com.example.camera.CameraResolutionHelper.resolveBestAutomaticPhotoSize(
+            val photoSensorRatio = com.example.camera.CameraResolutionHelper.resolveNativeSensorAspectRatio(
                 context = context,
                 isFrontCamera = isFrontCamera,
-                isLandscape = true
+                isVideoMode = false,
+                cameraInfo = controller.cameraInfo
             )
-            if (controller.imageCaptureTargetSize?.resolution != bestNativeSize) {
-                controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(bestNativeSize)
-            }
+            val previewSensorRatio = com.example.camera.CameraResolutionHelper.resolveNativeSensorAspectRatio(
+                context = context,
+                isFrontCamera = isFrontCamera,
+                isVideoMode = isVideoMode,
+                cameraInfo = controller.cameraInfo
+            )
+            controller.imageCaptureResolutionSelector =
+                com.example.camera.CameraResolutionHelper.buildNativePhotoResolutionSelector(
+                    sensorLongShortRatio = photoSensorRatio
+                )
+            controller.previewResolutionSelector =
+                com.example.camera.CameraResolutionHelper.buildNativePreviewResolutionSelector(
+                    sensorLongShortRatio = previewSensorRatio,
+                    isVideoMode = isVideoMode
+                )
         } catch (e: Exception) {
-            Log.w("CameraPreview", "Setting automatic native photo resolution notice: ${e.message}", e)
+            Log.w("CameraPreview", "Setting automatic native photo/preview resolution selector notice: ${e.message}", e)
         }
     }
 
@@ -1401,18 +1435,25 @@ fun CameraBrightnessIndicator(
 }
 
 /**
- * Resolves the safe [ImageCapture] capture mode: ZSL is supported ONLY for pure still-photo sessions
- * with flash disabled; whenever [shouldEnableVideoPipeline] is true, CameraX requires MINIMIZE_LATENCY.
+ * Resolves the safe, highest-quality [ImageCapture] capture mode:
+ * - Whenever [shouldEnableVideoPipeline] is true, CameraX requires [ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY]
+ *   so quick snapshots during video recording never stall or conflict with VideoCapture/OverlayEffect.
+ * - For pure still photography with [preferMaxQuality] enabled (default), uses
+ *   [ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY] so OEM HALs engage full-resolution multi-frame
+ *   HDR/MFNR highlight recovery and natural noise reduction.
+ * - When [preferMaxQuality] is false, falls back to ZSL (if supported & flash off) or MINIMIZE_LATENCY.
  */
 fun resolveDesiredImageCaptureMode(
     shouldEnableVideoPipeline: Boolean,
     isFlashOn: Boolean,
-    zslSupported: Boolean
+    zslSupported: Boolean,
+    preferMaxQuality: Boolean = true
 ): Int {
-    return if (!shouldEnableVideoPipeline && !isFlashOn && zslSupported) {
-        ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
-    } else {
-        ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+    return when {
+        shouldEnableVideoPipeline -> ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+        preferMaxQuality -> ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+        !isFlashOn && zslSupported -> ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
+        else -> ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
     }
 }
 
@@ -1527,10 +1568,48 @@ private val captureDecodeExecutor: java.util.concurrent.ExecutorService =
     }
 
 /**
- * Captures an image from [LifecycleCameraController] at native full sensor resolution with minimal shutter latency.
+ * Extracts optical and exposure camera EXIF tags from the raw hardware JPEG buffer before bitmap decode
+ * so the final saved CTECS photograph retains authentic sensor metadata (aperture, shutter speed, ISO,
+ * focal length, white balance, metering mode) alongside GPS, chainage, and project metadata.
+ */
+internal fun extractCameraExifMetadata(jpegBytes: ByteArray): Map<String, String> {
+    if (jpegBytes.isEmpty()) return emptyMap()
+    val tags = listOf(
+        android.media.ExifInterface.TAG_EXPOSURE_TIME,
+        android.media.ExifInterface.TAG_F_NUMBER,
+        android.media.ExifInterface.TAG_ISO_SPEED_RATINGS,
+        android.media.ExifInterface.TAG_FOCAL_LENGTH,
+        android.media.ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
+        android.media.ExifInterface.TAG_EXPOSURE_BIAS_VALUE,
+        android.media.ExifInterface.TAG_WHITE_BALANCE,
+        android.media.ExifInterface.TAG_FLASH,
+        android.media.ExifInterface.TAG_METERING_MODE,
+        android.media.ExifInterface.TAG_EXPOSURE_PROGRAM,
+        android.media.ExifInterface.TAG_SCENE_CAPTURE_TYPE,
+        android.media.ExifInterface.TAG_DIGITAL_ZOOM_RATIO,
+        android.media.ExifInterface.TAG_LIGHT_SOURCE
+    )
+    return try {
+        val exif = android.media.ExifInterface(java.io.ByteArrayInputStream(jpegBytes))
+        buildMap {
+            for (tag in tags) {
+                val value = exif.getAttribute(tag)
+                if (!value.isNullOrBlank()) {
+                    put(tag, value)
+                }
+            }
+        }
+    } catch (_: Throwable) {
+        emptyMap()
+    }
+}
+
+/**
+ * Captures an image from [LifecycleCameraController] at native full sensor resolution while preserving
+ * original hardware JPEG detail and optical/exposure EXIF metadata.
  *
- * - Runs JPEG/ImageProxy decoding, orientation normalization, and optional front-camera mirroring strictly off
- *   the Main Thread via [captureDecodeExecutor] so the viewfinder never freezes or drops frames.
+ * - Runs JPEG/ImageProxy decoding, EXIF extraction, orientation normalization, and optional front-camera
+ *   mirroring strictly off the Main Thread via [captureDecodeExecutor] so the viewfinder never stalls.
  * - Preserves 100% of the complete native sensor frame (ZERO hidden aspect-ratio crop here); any selected
  *   [com.example.model.CameraCropMode] is applied once in the unified capture pipeline before overlays.
  */
@@ -1543,7 +1622,8 @@ fun capturePhoto(
     isFrontCamera: Boolean = false,
     frontCameraMirror: Boolean = false,
     playShutterSound: Boolean = false,
-    onSuccess: (Bitmap) -> Unit,
+    onSuccess: (Bitmap) -> Unit = {},
+    onSuccessWithExif: ((Bitmap, Map<String, String>) -> Unit)? = null,
     onError: (Throwable) -> Unit
 ) {
     val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -1575,7 +1655,7 @@ fun capturePhoto(
         } catch (ignored: Throwable) {}
     }
 
-    fun executeTakePicture(allowZslFallbackRetry: Boolean) {
+    fun executeTakePicture(allowFallbackRetry: Boolean) {
         try {
             controller.takePicture(
                 captureDecodeExecutor,
@@ -1583,17 +1663,35 @@ fun capturePhoto(
                     override fun onCaptureSuccess(image: ImageProxy) {
                         var rawBitmap: Bitmap? = null
                         var rotationDegrees = 0
+                        var extractedExif: Map<String, String> = emptyMap()
                         try {
                             rotationDegrees = image.imageInfo.rotationDegrees
-                            rawBitmap = try {
-                                image.toBitmap()
-                            } catch (t: Throwable) {
+                            if (image.format == android.graphics.ImageFormat.JPEG && image.planes.isNotEmpty()) {
                                 val buffer = image.planes[0].buffer
                                 val bytes = ByteArray(buffer.remaining())
                                 buffer.get(bytes)
-                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: try {
-                                    val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
-                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                                extractedExif = extractCameraExifMetadata(bytes)
+                                rawBitmap = try {
+                                    val fullOpts = BitmapFactory.Options().apply {
+                                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                                        inScaled = false
+                                    }
+                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, fullOpts)
+                                } catch (_: OutOfMemoryError) {
+                                    try {
+                                        val safeOpts = BitmapFactory.Options().apply {
+                                            inPreferredConfig = Bitmap.Config.ARGB_8888
+                                            inSampleSize = 2
+                                        }
+                                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, safeOpts)
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
+                                }
+                            }
+                            if (rawBitmap == null) {
+                                rawBitmap = try {
+                                    image.toBitmap()
                                 } catch (_: Throwable) {
                                     null
                                 }
@@ -1643,7 +1741,11 @@ fun capturePhoto(
                                 normalizedBitmap
                             }
 
-                            onSuccess(finalBitmap)
+                            if (onSuccessWithExif != null) {
+                                onSuccessWithExif(finalBitmap, extractedExif)
+                            } else {
+                                onSuccess(finalBitmap)
+                            }
                         } catch (t: Throwable) {
                             if (!rawBitmap.isRecycled) {
                                 try { rawBitmap.recycle() } catch (ignored: Throwable) {}
@@ -1653,14 +1755,17 @@ fun capturePhoto(
                     }
 
                     override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                        if (allowZslFallbackRetry &&
-                            controller.imageCaptureMode == ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
+                        if (allowFallbackRetry &&
+                            controller.imageCaptureMode != ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
                         ) {
-                            Log.w("CameraPreview", "ZSL takePicture failed (${exception.imageCaptureError}), retrying with MINIMIZE_LATENCY")
+                            Log.w(
+                                "CameraPreview",
+                                "takePicture failed in mode=${controller.imageCaptureMode} (${exception.imageCaptureError}), retrying with MINIMIZE_LATENCY"
+                            )
                             mainExecutor.execute {
                                 try {
                                     controller.imageCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
-                                    executeTakePicture(allowZslFallbackRetry = false)
+                                    executeTakePicture(allowFallbackRetry = false)
                                 } catch (retryErr: Throwable) {
                                     onError(retryErr)
                                 }
@@ -1676,7 +1781,7 @@ fun capturePhoto(
         }
     }
 
-    executeTakePicture(allowZslFallbackRetry = true)
+    executeTakePicture(allowFallbackRetry = true)
 }
 
 /**
@@ -2208,6 +2313,14 @@ class VideoRecordingManager(
         )
 
         try {
+            // Switch ImageCapture to MINIMIZE_LATENCY before binding VideoCapture so quick snapshots
+            // during Landscape/Portrait video recording never stall or conflict with the video encoder.
+            try {
+                if (controller.imageCaptureMode != ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY) {
+                    controller.imageCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                }
+            } catch (_: Throwable) {}
+
             val rebound = ensureVideoPipelineConfigured(
                 adapter = adapter,
                 videoResolution = videoResolution,
@@ -2317,8 +2430,8 @@ class VideoRecordingManager(
                                 "Video recording finalized with error: ${event.error}, cause: ${event.cause}"
                             )
                         }
-                        onEvent(event, recFile, sessionHasOverlay)
                         _sessionState.value = RecordingSessionState.IDLE
+                        onEvent(event, recFile, sessionHasOverlay)
                     }
                     else -> Unit
                 }

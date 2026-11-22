@@ -14,6 +14,7 @@ import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraControl
+import androidx.camera.core.CameraInfo
 import androidx.camera.core.ImageCapture
 import com.example.model.CameraAutofocusMode
 import com.example.model.OutputQualityPreset
@@ -37,6 +38,9 @@ data class CameraHardwareCapabilities(
     val supportsContinuousAfVideo: Boolean = true,
     val supportsHighQualityNoiseReduction: Boolean = false,
     val supportsHighQualityEdge: Boolean = false,
+    val supportsHardwareHdrSceneMode: Boolean = false,
+    val supportsAutoAntibanding: Boolean = false,
+    val supportedFpsRanges: List<Range<Int>> = emptyList(),
     val supportedFpsOptions: List<Int> = listOf(30),
     val maxFps: Int = 30
 ) {
@@ -98,27 +102,14 @@ object CameraQualityEngine {
      */
     fun queryHardwareCapabilities(
         context: Context,
-        isFrontCamera: Boolean
+        isFrontCamera: Boolean,
+        cameraInfo: CameraInfo? = null
     ): CameraHardwareCapabilities {
         try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
                 ?: return CameraHardwareCapabilities()
-            val targetFacing = if (isFrontCamera) {
-                CameraCharacteristics.LENS_FACING_FRONT
-            } else {
-                CameraCharacteristics.LENS_FACING_BACK
-            }
-            var cameraId: String? = null
-            for (id in cameraManager.cameraIdList) {
-                val chars = cameraManager.getCameraCharacteristics(id)
-                if (chars.get(CameraCharacteristics.LENS_FACING) == targetFacing) {
-                    cameraId = id
-                    break
-                }
-            }
-            if (cameraId == null) {
-                cameraId = cameraManager.cameraIdList.firstOrNull() ?: return CameraHardwareCapabilities()
-            }
+            val cameraId = CameraResolutionHelper.resolveActiveCameraId(context, isFrontCamera, cameraInfo)
+                ?: return CameraHardwareCapabilities()
             val chars = cameraManager.getCameraCharacteristics(cameraId)
 
             val oisModes = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
@@ -144,11 +135,17 @@ object CameraQualityEngine {
             val edgeModes = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)
             val supportsHqEdge = edgeModes?.contains(CameraMetadata.EDGE_MODE_HIGH_QUALITY) == true
 
-            val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-            val maxFps = fpsRanges?.maxOfOrNull { it.upper } ?: 30
+            val sceneModes = chars.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+            val supportsHdrScene = sceneModes?.contains(CameraMetadata.CONTROL_SCENE_MODE_HDR) == true
+
+            val antibandingModes = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_ANTIBANDING_MODES)
+            val supportsAutoAntibanding = antibandingModes?.contains(CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_AUTO) == true
+
+            val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty()
+            val maxFps = fpsRanges.maxOfOrNull { it.upper } ?: 30
             val fpsOptions = buildList {
                 add(30)
-                if (fpsRanges?.any { it.upper >= 60 } == true) {
+                if (fpsRanges.any { it.upper >= 60 }) {
                     add(60)
                 }
             }
@@ -162,6 +159,9 @@ object CameraQualityEngine {
                 supportsContinuousAfVideo = supportsContinuousVid,
                 supportsHighQualityNoiseReduction = supportsHqNr,
                 supportsHighQualityEdge = supportsHqEdge,
+                supportsHardwareHdrSceneMode = supportsHdrScene,
+                supportsAutoAntibanding = supportsAutoAntibanding,
+                supportedFpsRanges = fpsRanges,
                 supportedFpsOptions = fpsOptions,
                 maxFps = maxFps
             )
@@ -169,6 +169,29 @@ object CameraQualityEngine {
             Log.w(TAG, "Hardware capability query fell back to safe defaults: ${e.message}")
             return CameraHardwareCapabilities()
         }
+    }
+
+    /**
+     * Selects an actually hardware-supported FPS range for smooth, stable video recording.
+     */
+    fun resolveOptimalVideoFpsRange(
+        targetVideoFps: Int,
+        supportedRanges: List<Range<Int>>
+    ): Range<Int>? {
+        val desiredMax = if (targetVideoFps >= 60) 60 else 30
+        if (supportedRanges.isEmpty()) {
+            return Range(if (desiredMax >= 60) 30 else 24, desiredMax)
+        }
+        val exactFixed = supportedRanges.firstOrNull { it.lower == desiredMax && it.upper == desiredMax }
+        if (exactFixed != null) return exactFixed
+        val matchingUpper = supportedRanges
+            .filter { it.upper == desiredMax }
+            .maxByOrNull { it.lower }
+        if (matchingUpper != null) return matchingUpper
+        return supportedRanges
+            .filter { it.upper <= desiredMax }
+            .maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenBy { it.lower })
+            ?: supportedRanges.minByOrNull { abs(it.upper - desiredMax) }
     }
 
     /**
@@ -282,14 +305,46 @@ object CameraQualityEngine {
         stabilizationMode: VideoStabilizationMode,
         autofocusMode: CameraAutofocusMode,
         photoEnhancementEnabled: Boolean = true,
-        videoNoiseReductionEnabled: Boolean = true
+        videoNoiseReductionEnabled: Boolean = true,
+        isHdrEnabled: Boolean = true,
+        isFlashOn: Boolean = false
     ) {
         if (cameraControl == null) return
         try {
             val c2Control = Camera2CameraControl.from(cameraControl)
             val builder = CaptureRequestOptions.Builder()
 
-            // 1. Smart Autofocus Mode (smooth continuous tracking vs tap-lock)
+            // 1. Hardware HDR Scene Mode for highlight protection (e.g. bright night construction/paver lights)
+            //    Only applied in still-photo mode when flash is off and the active sensor supports SCENE_MODE_HDR.
+            if (!isVideoMode && isHdrEnabled && !isFlashOn && capabilities.supportsHardwareHdrSceneMode) {
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_MODE,
+                    CameraMetadata.CONTROL_MODE_USE_SCENE_MODE
+                )
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_SCENE_MODE,
+                    CameraMetadata.CONTROL_SCENE_MODE_HDR
+                )
+            } else {
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_MODE,
+                    CameraMetadata.CONTROL_MODE_AUTO
+                )
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_SCENE_MODE,
+                    CameraMetadata.CONTROL_SCENE_MODE_DISABLED
+                )
+            }
+
+            // 2. Auto Antibanding (prevents 50Hz/60Hz LED & site floodlight glare/banding at night)
+            if (capabilities.supportsAutoAntibanding) {
+                builder.setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+                    CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_AUTO
+                )
+            }
+
+            // 3. Smart Autofocus Mode (smooth continuous tracking vs tap-lock)
             if (capabilities.supportsAutoFocus) {
                 val afMode = when (autofocusMode) {
                     CameraAutofocusMode.CONTINUOUS -> when {
@@ -304,7 +359,7 @@ object CameraQualityEngine {
                 builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
             }
 
-            // 2. Hardware Noise Reduction (respects user Photo Enhancement / Video Noise Reduction toggles)
+            // 4. Hardware ISP Noise Reduction (leaves OEM ISP pipeline natural; never stacks software blur)
             if (capabilities.supportsHighQualityNoiseReduction) {
                 val nrEnabled = if (isVideoMode) videoNoiseReductionEnabled else photoEnhancementEnabled
                 val nrMode = when {
@@ -315,7 +370,7 @@ object CameraQualityEngine {
                 builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, nrMode)
             }
 
-            // 3. Hardware Edge Preservation (natural clarity without oversharpening)
+            // 5. Hardware ISP Edge Preservation (natural detail without artificial oversharpening)
             if (capabilities.supportsHighQualityEdge) {
                 val edgeEnabled = if (isVideoMode) videoNoiseReductionEnabled else photoEnhancementEnabled
                 val edgeMode = when {
@@ -326,7 +381,7 @@ object CameraQualityEngine {
                 builder.setCaptureRequestOption(CaptureRequest.EDGE_MODE, edgeMode)
             }
 
-            // 4. Video & Optical Stabilization (OIS / EIS)
+            // 6. Video & Optical Stabilization (OIS / EIS)
             val stab = resolveActiveStabilization(
                 mode = stabilizationMode,
                 capabilities = capabilities,
@@ -349,27 +404,24 @@ object CameraQualityEngine {
                 )
             }
 
-            // 5. Target FPS Range (stable 30/60 FPS in video; flexible low-light range in photo mode)
+            // 7. Target FPS Range ONLY in Video mode (never pin AE FPS range in Photo mode so OEM HAL
+            //    retains full dynamic exposure, fast shutter, and night highlight metering!)
             if (isVideoMode) {
                 val effectiveFps = if (targetVideoFps >= 60 && capabilities.supportedFpsOptions.contains(60)) {
                     60
                 } else {
                     30
                 }
-                val minFps = if (effectiveFps >= 60) 30 else 24
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                    Range(minFps, effectiveFps)
-                )
-            } else {
-                // Allow camera AE to drop to 15fps in low light for brighter, cleaner low-noise stills
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                    Range(15, 30)
-                )
+                resolveOptimalVideoFpsRange(effectiveFps, capabilities.supportedFpsRanges)?.let { fpsRange ->
+                    builder.setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                        fpsRange
+                    )
+                }
             }
 
-            c2Control.addCaptureRequestOptions(builder.build())
+            // Replace options cleanly (rather than accumulating stale video FPS / mode keys across mode switches)
+            c2Control.setCaptureRequestOptions(builder.build())
         } catch (e: Throwable) {
             Log.w(TAG, "Camera2 tuning skipped gracefully: ${e.message}")
         }
@@ -508,7 +560,7 @@ object CameraQualityEngine {
         val presetFactor = qualityPreset.videoBitrateMultiplier.toDouble()
         val optFactor = if (sizeOptimizationEnabled) 0.78 else 1.0
         val raw = (pixels * baseBitsPerPixel * presetFactor * optFactor).toLong()
-        return raw.coerceIn(1_200_000L, 18_000_000L).toInt()
+        return raw.coerceIn(1_200_000L, 36_000_000L).toInt()
     }
 
     fun enhanceCapturedPhoto(

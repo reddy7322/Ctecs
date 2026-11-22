@@ -618,7 +618,7 @@ fun CameraScreen(
     var commentInput by remember { mutableStateOf("") }
     var isTopToolbarExpanded by remember { mutableStateOf(true) }
     var showLaneMenu by remember { mutableStateOf(false) }
-    var isHdrEnabled by remember { mutableStateOf(false) }
+    var isHdrEnabled by remember { mutableStateOf(true) }
 
     // Countdown Timer State
     var countdownRemaining by remember { mutableIntStateOf(0) }
@@ -672,6 +672,9 @@ fun CameraScreen(
                         }
                         is androidx.camera.video.VideoRecordEvent.Finalize -> {
                             viewModel.onVideoRecordingStopped()
+                            if (isLandscape && captureMode != CaptureMode.PHOTO) {
+                                viewModel.setCaptureMode(CaptureMode.PHOTO)
+                            }
                             if (!isFinalizedRecordingValid(event.hasError(), event.error, recFile)) {
                                 android.util.Log.e(
                                     "CameraScreen",
@@ -720,7 +723,9 @@ fun CameraScreen(
             isFrontCamera = isFrontCamera,
             frontCameraMirror = cameraSettings.frontCameraMirror,
             playShutterSound = cameraSettings.captureSound,
-            onSuccess = { bitmap -> viewModel.processCapture(bitmap, shutterSnapshot) },
+            onSuccessWithExif = { bitmap, cameraExif ->
+                viewModel.processCapture(bitmap, shutterSnapshot.copy(cameraExifMetadata = cameraExif))
+            },
             onError = { error ->
                 viewModel.setCapturing(false)
                 viewModel.showError(
@@ -799,6 +804,7 @@ fun CameraScreen(
             autofocusMode = cameraSettings.autofocusMode,
             photoEnhancementEnabled = cameraSettings.photoEnhancementEnabled,
             videoNoiseReductionEnabled = cameraSettings.videoNoiseReductionEnabled,
+            isHdrEnabled = isHdrEnabled,
             touchToCapture = cameraSettings.touchToCapture,
             easyToggleCameras = cameraSettings.easyToggleCameras,
             useStandaloneUltraWide = useStandaloneUltraWide,
@@ -1787,8 +1793,11 @@ fun CameraScreen(
                                         isFrontCamera = isFrontCamera,
                                         frontCameraMirror = cameraSettings.frontCameraMirror,
                                         playShutterSound = cameraSettings.captureSound,
-                                        onSuccess = { bitmap ->
-                                            viewModel.processCapture(bitmap, quickSnapshot)
+                                        onSuccessWithExif = { bitmap, cameraExif ->
+                                            viewModel.processCapture(
+                                                bitmap,
+                                                quickSnapshot.copy(cameraExifMetadata = cameraExif)
+                                            )
                                         },
                                         onError = { error ->
                                             viewModel.setCapturing(false)
@@ -2824,8 +2833,11 @@ fun CameraScreen(
                                         isFrontCamera = isFrontCamera,
                                         frontCameraMirror = cameraSettings.frontCameraMirror,
                                         playShutterSound = cameraSettings.captureSound,
-                                        onSuccess = { bitmap ->
-                                            viewModel.processCapture(bitmap, quickSnapshot)
+                                        onSuccessWithExif = { bitmap, cameraExif ->
+                                            viewModel.processCapture(
+                                                bitmap,
+                                                quickSnapshot.copy(cameraExifMetadata = cameraExif)
+                                            )
                                         },
                                         onError = { error ->
                                             viewModel.setCapturing(false)

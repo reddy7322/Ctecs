@@ -11,11 +11,20 @@ import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.video.AudioConfig
 import androidx.core.util.Consumer
 import androidx.test.core.app.ApplicationProvider
+import android.media.ExifInterface
+import android.util.Range
+import android.util.Size
+import com.example.camera.CameraBrightnessEngine
+import com.example.camera.CameraQualityEngine
+import com.example.camera.CameraResolutionHelper
+import com.example.camera.CaptureExposureState
 import com.example.model.CaptureSnapshot
 import com.example.model.ChainageMatchResult
+import com.example.model.GeoPoint
 import com.example.model.MatchConfidence
 import com.example.model.OverlayConfig
 import com.example.model.ProjectProfile
+import com.example.overlay.OverlayRenderer
 import com.example.overlay.RealtimeVideoOverlayManager
 import com.example.ui.MainViewModel
 import com.example.ui.camera.ActiveRecordingHandle
@@ -146,23 +155,150 @@ class CameraFailureFixRegressionTest {
     }
 
     @Test
-    fun `resolveDesiredImageCaptureMode disables ZSL when video pipeline or flash is active`() {
+    fun `resolveDesiredImageCaptureMode prioritizes MAXIMIZE_QUALITY for still photos and MINIMIZE_LATENCY for video pipeline`() {
+        // Pure still-photo pipeline defaults to MAXIMIZE_QUALITY (engages OEM multi-frame HDR/MFNR)
         assertEquals(
-            ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG,
+            ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY,
             resolveDesiredImageCaptureMode(shouldEnableVideoPipeline = false, isFlashOn = false, zslSupported = true)
         )
+        assertEquals(
+            ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY,
+            resolveDesiredImageCaptureMode(shouldEnableVideoPipeline = false, isFlashOn = true, zslSupported = true)
+        )
+        // Video pipeline ALWAYS uses MINIMIZE_LATENCY to avoid VideoCapture/OverlayEffect HAL conflicts
         assertEquals(
             ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY,
             resolveDesiredImageCaptureMode(shouldEnableVideoPipeline = true, isFlashOn = false, zslSupported = true)
         )
+        // Explicit low-latency fallback preserves ZSL only when flash off & ZSL supported
         assertEquals(
-            ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY,
-            resolveDesiredImageCaptureMode(shouldEnableVideoPipeline = false, isFlashOn = true, zslSupported = true)
+            ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG,
+            resolveDesiredImageCaptureMode(
+                shouldEnableVideoPipeline = false,
+                isFlashOn = false,
+                zslSupported = true,
+                preferMaxQuality = false
+            )
         )
         assertEquals(
             ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY,
-            resolveDesiredImageCaptureMode(shouldEnableVideoPipeline = false, isFlashOn = false, zslSupported = false)
+            resolveDesiredImageCaptureMode(
+                shouldEnableVideoPipeline = false,
+                isFlashOn = false,
+                zslSupported = false,
+                preferMaxQuality = false
+            )
         )
+    }
+
+    @Test
+    fun `selectOptimalNativePhotoSizes selects 12MP native sensor and excludes square 1088x1088 fallback`() {
+        // Real Samsung Galaxy S21 Ultra (SM-G998B) rear JPEG output sizes
+        val s21UltraSizes = listOf(
+            Size(12000, 9000), // 108MP (above 24MP safe cap)
+            Size(4000, 3000),  // 12MP native 4:3 (optimal!)
+            Size(4000, 2252),  // 9MP 16:9
+            Size(4000, 1800),  // 7.2MP 20:9
+            Size(1920, 1440),  // 2.76MP 4:3
+            Size(1088, 1088),  // 1.18MP 1:1 square (must NEVER be picked over non-square!)
+            Size(1280, 720)
+        )
+        val ordered = CameraResolutionHelper.selectOptimalNativePhotoSizes(
+            supportedSizes = s21UltraSizes,
+            sensorLongShortRatio = 4f / 3f
+        )
+        assertEquals(Size(4000, 3000), ordered.first())
+        assertFalse(
+            "Square 1088x1088 must be excluded when native non-square sizes exist",
+            ordered.contains(Size(1088, 1088))
+        )
+
+        // Orientation-agnostic selectors build cleanly for both Photo and Video modes
+        assertNotNull(CameraResolutionHelper.buildNativePhotoResolutionSelector(4f / 3f))
+        assertNotNull(CameraResolutionHelper.buildNativePreviewResolutionSelector(4f / 3f, isVideoMode = false))
+        assertNotNull(CameraResolutionHelper.buildNativePreviewResolutionSelector(16f / 9f, isVideoMode = true))
+    }
+
+    @Test
+    fun `processCapturedPhotoForCaptureExposure preserves untouched hardware night texture in Auto Exposure`() {
+        // Create a dark, textured asphalt-like night frame (low luminance + fine texture variance)
+        val nightSource = Bitmap.createBitmap(120, 90, Bitmap.Config.ARGB_8888)
+        for (y in 0 until 90) {
+            for (x in 0 until 120) {
+                val grain = if ((x + y) % 2 == 0) 34 else 22
+                nightSource.setPixel(x, y, Color.rgb(grain, grain, grain))
+            }
+        }
+        val processed = CameraBrightnessEngine.processCapturedPhotoForCaptureExposure(
+            source = nightSource,
+            normalizedLevel = CameraBrightnessEngine.NEUTRAL_EXPOSURE_LEVEL,
+            evStops = 0f,
+            isAutoExposure = true,
+            hardwareEvApplied = true
+        )
+        assertTrue(
+            "Auto-Exposure hardware photo must return untouched source bitmap with zero software blur",
+            processed === nightSource
+        )
+    }
+
+    @Test
+    fun `resolveOptimalVideoFpsRange selects hardware-supported FPS range cleanly`() {
+        val supported = listOf(Range(15, 30), Range(24, 30), Range(30, 30), Range(30, 60), Range(60, 60))
+        assertEquals(Range(30, 30), CameraQualityEngine.resolveOptimalVideoFpsRange(30, supported))
+        assertEquals(Range(60, 60), CameraQualityEngine.resolveOptimalVideoFpsRange(60, supported))
+        val variableOnly = listOf(Range(15, 30), Range(24, 30))
+        assertEquals(Range(24, 30), CameraQualityEngine.resolveOptimalVideoFpsRange(30, variableOnly))
+    }
+
+    @Test
+    fun `saveBitmapWithExif preserves both hardware camera optical EXIF and CTECS GPS chainage tags`() {
+        val bmp = Bitmap.createBitmap(160, 120, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(Color.DKGRAY)
+        }
+        val outFile = File(context.cacheDir, "test_exif_preserve_${System.currentTimeMillis()}.jpg")
+        try {
+            val snapshot = testSnapshot(rotationDegrees = 0).copy(
+                location = GeoPoint(29.8908, 77.9569),
+                photoJpegQuality = 98,
+                preserveExif = true,
+                cameraExifMetadata = mapOf(
+                    ExifInterface.TAG_F_NUMBER to "1.8",
+                    ExifInterface.TAG_EXPOSURE_TIME to "0.04",
+                    ExifInterface.TAG_ISO_SPEED_RATINGS to "500",
+                    ExifInterface.TAG_FOCAL_LENGTH to "670/100",
+                    ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM to "24"
+                )
+            )
+            OverlayRenderer.saveBitmapWithExif(
+                bitmap = bmp,
+                destinationFile = outFile,
+                snapshot = snapshot,
+                jpegQuality = snapshot.photoJpegQuality
+            )
+            assertTrue(outFile.exists() && outFile.length() > 0L)
+
+            val exif = ExifInterface(outFile.absolutePath)
+            // Original hardware optical/exposure EXIF preserved
+            assertEquals("1.8", exif.getAttribute(ExifInterface.TAG_F_NUMBER))
+            assertEquals("0.04", exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME))
+            assertEquals("500", exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS))
+            assertEquals("670/100", exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH))
+            assertEquals("24", exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM))
+
+            // CTECS metadata preserved intact
+            assertEquals(
+                ExifInterface.ORIENTATION_NORMAL.toString(),
+                exif.getAttribute(ExifInterface.TAG_ORIENTATION)
+            )
+            assertEquals("Highway Timestamp Camera Pro", exif.getAttribute(ExifInterface.TAG_SOFTWARE))
+            assertTrue(exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)?.contains("196+450") == true)
+            assertNotNull(exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE))
+            assertNotNull(exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE))
+        } finally {
+            outFile.delete()
+            bmp.recycle()
+        }
     }
 
     @Test

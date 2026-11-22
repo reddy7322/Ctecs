@@ -7,7 +7,17 @@ import android.hardware.camera2.CameraManager
 import android.media.MediaRecorder
 import android.util.Log
 import android.util.Size
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.CameraInfo
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 data class CameraResolution(
     val width: Int,
@@ -54,12 +64,155 @@ object CameraResolutionHelper {
     private const val TAG = "CameraResolutionHelper"
 
     /**
+     * Resolves the exact Camera2 camera ID for the currently bound CameraX [cameraInfo],
+     * falling back cleanly to the first camera matching [isFrontCamera] when unbound.
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    fun resolveActiveCameraId(
+        context: Context,
+        isFrontCamera: Boolean,
+        cameraInfo: CameraInfo? = null
+    ): String? {
+        if (cameraInfo != null) {
+            try {
+                val boundId = Camera2CameraInfo.from(cameraInfo).cameraId
+                if (boundId.isNotBlank()) return boundId
+            } catch (_: Throwable) {}
+        }
+        return try {
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+                ?: return null
+            val targetFacing = if (isFrontCamera) {
+                CameraCharacteristics.LENS_FACING_FRONT
+            } else {
+                CameraCharacteristics.LENS_FACING_BACK
+            }
+            cameraManager.cameraIdList.firstOrNull { id ->
+                cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == targetFacing
+            } ?: cameraManager.cameraIdList.firstOrNull()
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Pure, deterministic resolution filter for CameraX [ResolutionSelector] that selects the
+     * highest suitable full-native-sensor photo size while explicitly preventing silent fallback
+     * to low-resolution square (e.g. 1088x1088) output on OEM HALs.
+     *
+     * Priority order:
+     * 1. Native full-sensor aspect ratio sizes (within ±0.10 of [sensorLongShortRatio]) up to [maxSafePixels],
+     *    sorted descending by pixel count (e.g. 4000x3000 12MP, 4608x3456 16MP, 5120x3840 20MP).
+     * 2. Native full-sensor aspect ratio sizes above [maxSafePixels] sorted ascending (smallest safe ultra-high-MP
+     *    rather than collapsing to low-res).
+     * 3. Any remaining non-square sizes sorted descending by pixel count.
+     * 4. Square sizes ONLY if the camera literally exposes nothing else.
+     */
+    fun selectOptimalNativePhotoSizes(
+        supportedSizes: List<Size>,
+        sensorLongShortRatio: Float = 4f / 3f,
+        maxSafePixels: Long = 24_000_000L
+    ): List<Size> {
+        if (supportedSizes.isEmpty()) return emptyList()
+
+        val safeTargetRatio = sensorLongShortRatio.coerceIn(1.20f, 2.20f)
+        fun Size.longShortRatio(): Float {
+            val l = max(width, height).toFloat()
+            val s = min(width, height).coerceAtLeast(1).toFloat()
+            return l / s
+        }
+        fun Size.pixels(): Long = width.toLong() * height.toLong()
+        fun Size.isNearlySquare(): Boolean = abs(longShortRatio() - 1.0f) <= 0.06f
+
+        val nonSquare = supportedSizes.filterNot { it.isNearlySquare() }
+        val squareOnly = supportedSizes.filter { it.isNearlySquare() }
+
+        val nativeRatio = nonSquare.filter { abs(it.longShortRatio() - safeTargetRatio) <= 0.10f }
+        val otherNonSquare = nonSquare.filter { abs(it.longShortRatio() - safeTargetRatio) > 0.10f }
+
+        val nativeWithinCap = nativeRatio
+            .filter { it.pixels() <= maxSafePixels }
+            .sortedByDescending { it.pixels() }
+        val nativeAboveCap = nativeRatio
+            .filter { it.pixels() > maxSafePixels }
+            .sortedBy { it.pixels() }
+
+        val otherWithinCap = otherNonSquare
+            .filter { it.pixels() <= maxSafePixels }
+            .sortedByDescending { it.pixels() }
+        val otherAboveCap = otherNonSquare
+            .filter { it.pixels() > maxSafePixels }
+            .sortedBy { it.pixels() }
+
+        val ordered = buildList {
+            addAll(nativeWithinCap)
+            addAll(nativeAboveCap)
+            addAll(otherWithinCap)
+            addAll(otherAboveCap)
+            if (isEmpty()) {
+                addAll(squareOnly.sortedByDescending { it.pixels() })
+            }
+        }
+        return ordered.ifEmpty { supportedSizes }
+    }
+
+    /**
+     * Builds an orientation-agnostic CameraX [ResolutionSelector] for still photography that
+     * preserves full native sensor framing and maximum suitable resolution in both Portrait and Landscape.
+     */
+    fun buildNativePhotoResolutionSelector(
+        sensorLongShortRatio: Float = 4f / 3f,
+        maxSafePixels: Long = 24_000_000L
+    ): ResolutionSelector {
+        val aspectStrategy = if (sensorLongShortRatio >= 1.55f) {
+            AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+        } else {
+            AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+        }
+        return ResolutionSelector.Builder()
+            .setAspectRatioStrategy(aspectStrategy)
+            .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+            .setResolutionFilter { supportedSizes, _ ->
+                selectOptimalNativePhotoSizes(
+                    supportedSizes = supportedSizes,
+                    sensorLongShortRatio = sensorLongShortRatio,
+                    maxSafePixels = maxSafePixels
+                )
+            }
+            .build()
+    }
+
+    /**
+     * Builds a CameraX [ResolutionSelector] for live Preview matching the active capture sensor
+     * aspect ratio (native 4:3 for Photo mode, 16:9 for Video mode) so viewfinder framing matches
+     * final saved output 1:1 with zero hidden FOV discrepancy.
+     */
+    fun buildNativePreviewResolutionSelector(
+        sensorLongShortRatio: Float = 4f / 3f,
+        isVideoMode: Boolean = false
+    ): ResolutionSelector {
+        val aspectStrategy = if (isVideoMode || sensorLongShortRatio >= 1.55f) {
+            AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+        } else {
+            AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+        }
+        return ResolutionSelector.Builder()
+            .setAspectRatioStrategy(aspectStrategy)
+            .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+            .build()
+    }
+
+    /**
      * Retrieves all genuinely supported still-photo output resolutions from the active camera.
      * Deduplicates orientation variants, calculates megapixels, sorts descending by pixel count,
      * and tags the max available resolution.
      */
-    fun getSupportedPhotoResolutions(context: Context, isFrontCamera: Boolean): List<CameraResolution> {
-        val rawSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = false)
+    fun getSupportedPhotoResolutions(
+        context: Context,
+        isFrontCamera: Boolean,
+        cameraInfo: CameraInfo? = null
+    ): List<CameraResolution> {
+        val rawSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = false, cameraInfo = cameraInfo)
         if (rawSizes.isEmpty()) {
             return getDefaultPhotoFallbackList()
         }
@@ -97,8 +250,12 @@ object CameraResolutionHelper {
      * Retrieves all genuinely supported video recording resolutions from the active camera & encoder capabilities.
      * Deduplicates orientation variants, sorts descending by pixel count, and assigns standard tags (4K, FHD, HD, SD).
      */
-    fun getSupportedVideoResolutions(context: Context, isFrontCamera: Boolean): List<CameraResolution> {
-        val rawSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = true)
+    fun getSupportedVideoResolutions(
+        context: Context,
+        isFrontCamera: Boolean,
+        cameraInfo: CameraInfo? = null
+    ): List<CameraResolution> {
+        val rawSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = true, cameraInfo = cameraInfo)
         if (rawSizes.isEmpty()) {
             return getDefaultVideoFallbackList()
         }
@@ -146,21 +303,19 @@ object CameraResolutionHelper {
     fun resolveBestAutomaticPhotoSize(
         context: Context,
         isFrontCamera: Boolean,
-        isLandscape: Boolean
+        isLandscape: Boolean,
+        cameraInfo: CameraInfo? = null
     ): Size {
-        val supported = getSupportedPhotoResolutions(context, isFrontCamera)
-        val sensorRatio = resolveNativeSensorAspectRatio(context, isFrontCamera, isVideoMode = false)
-        val maxSafePixels = 20_000_000L // Up to ~20MP native capture for crisp detail + instant shutter
+        val supported = getSupportedPhotoResolutions(context, isFrontCamera, cameraInfo)
+        val sensorRatio = resolveNativeSensorAspectRatio(context, isFrontCamera, isVideoMode = false, cameraInfo = cameraInfo)
+        val maxSafePixels = 24_000_000L // Up to 24MP native capture for crisp detail + safe memory
 
-        // Prefer sizes matching the native full-sensor aspect ratio (zero hidden FOV crop)
-        val nativeRatioCandidates = supported.filter { res ->
-            val ratio = res.width.toFloat() / res.height.coerceAtLeast(1).toFloat()
-            kotlin.math.abs(ratio - sensorRatio) <= 0.08f
-        }
-        val pool = if (nativeRatioCandidates.isNotEmpty()) nativeRatioCandidates else supported
-        val best = pool.firstOrNull { it.width.toLong() * it.height.toLong() <= maxSafePixels }
-            ?: pool.lastOrNull()
-            ?: CameraResolution(4000, 3000, "4000 × 3000", "12.0 MP", isMax = true)
+        val orderedSizes = selectOptimalNativePhotoSizes(
+            supportedSizes = supported.map { Size(it.width, it.height) },
+            sensorLongShortRatio = sensorRatio,
+            maxSafePixels = maxSafePixels
+        )
+        val best = orderedSizes.firstOrNull() ?: Size(4000, 3000)
 
         val longEdge = Math.max(best.width, best.height)
         val shortEdge = Math.min(best.width, best.height)
@@ -171,8 +326,12 @@ object CameraResolutionHelper {
      * Automatically selects the highest suitable native video resolution supported by the active lens
      * (4K UHD -> 2K QHD -> 1080p FHD -> 720p HD -> SD).
      */
-    fun resolveBestAutomaticVideoResolution(context: Context, isFrontCamera: Boolean): String {
-        val supported = getSupportedVideoResolutions(context, isFrontCamera)
+    fun resolveBestAutomaticVideoResolution(
+        context: Context,
+        isFrontCamera: Boolean,
+        cameraInfo: CameraInfo? = null
+    ): String {
+        val supported = getSupportedVideoResolutions(context, isFrontCamera, cameraInfo)
         // Prefer standard high-definition 16:9 / native video sizes up to 4K UHD (3840x2160)
         val best = supported.firstOrNull { it.width <= 4096 && it.height <= 2160 }
             ?: supported.firstOrNull()
@@ -187,10 +346,11 @@ object CameraResolutionHelper {
     fun resolveNativeSensorAspectRatio(
         context: Context,
         isFrontCamera: Boolean,
-        isVideoMode: Boolean
+        isVideoMode: Boolean,
+        cameraInfo: CameraInfo? = null
     ): Float {
         if (isVideoMode) {
-            val videoSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = true)
+            val videoSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = true, cameraInfo = cameraInfo)
             val bestVideo = videoSizes
                 .map { Size(Math.max(it.width, it.height), Math.min(it.width, it.height)) }
                 .filter { it.width <= 4096 && it.height <= 2160 && it.height > 0 }
@@ -203,27 +363,22 @@ object CameraResolutionHelper {
 
         try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
-            if (cameraManager != null) {
-                val targetFacing = if (isFrontCamera) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
-                val camId = cameraManager.cameraIdList.firstOrNull { id ->
-                    cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == targetFacing
-                } ?: cameraManager.cameraIdList.firstOrNull()
-                if (camId != null) {
-                    val chars = cameraManager.getCameraCharacteristics(camId)
-                    val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-                    if (activeArray != null && activeArray.width() > 0 && activeArray.height() > 0) {
-                        val longDim = Math.max(activeArray.width(), activeArray.height()).toFloat()
-                        val shortDim = Math.min(activeArray.width(), activeArray.height()).toFloat()
-                        return (longDim / shortDim).coerceIn(1.2f, 2.2f)
-                    }
+            val camId = resolveActiveCameraId(context, isFrontCamera, cameraInfo)
+            if (cameraManager != null && camId != null) {
+                val chars = cameraManager.getCameraCharacteristics(camId)
+                val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                if (activeArray != null && activeArray.width() > 0 && activeArray.height() > 0) {
+                    val longDim = Math.max(activeArray.width(), activeArray.height()).toFloat()
+                    val shortDim = Math.min(activeArray.width(), activeArray.height()).toFloat()
+                    return (longDim / shortDim).coerceIn(1.2f, 2.2f)
                 }
             }
         } catch (ignored: Throwable) {}
 
-        val photoSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = false)
+        val photoSizes = queryCamera2Sizes(context, isFrontCamera, isVideo = false, cameraInfo = cameraInfo)
         val bestPhoto = photoSizes
             .map { Size(Math.max(it.width, it.height), Math.min(it.width, it.height)) }
-            .filter { it.height > 0 }
+            .filter { it.height > 0 && abs(it.width.toFloat() / it.height.toFloat() - 1.0f) > 0.06f }
             .maxByOrNull { it.width.toLong() * it.height.toLong() }
         if (bestPhoto != null && bestPhoto.height > 0) {
             return (bestPhoto.width.toFloat() / bestPhoto.height.toFloat()).coerceIn(1.2f, 2.2f)
@@ -231,24 +386,15 @@ object CameraResolutionHelper {
         return 4f / 3f
     }
 
-    private fun queryCamera2Sizes(context: Context, isFrontCamera: Boolean, isVideo: Boolean): List<Size> {
+    private fun queryCamera2Sizes(
+        context: Context,
+        isFrontCamera: Boolean,
+        isVideo: Boolean,
+        cameraInfo: CameraInfo? = null
+    ): List<Size> {
         try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return emptyList()
-            val targetFacing = if (isFrontCamera) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
-
-            var matchedCameraId: String? = null
-            for (id in cameraManager.cameraIdList) {
-                val characteristics = cameraManager.getCameraCharacteristics(id)
-                val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-                if (facing == targetFacing) {
-                    matchedCameraId = id
-                    break
-                }
-            }
-
-            if (matchedCameraId == null) {
-                matchedCameraId = cameraManager.cameraIdList.firstOrNull()
-            }
+            val matchedCameraId = resolveActiveCameraId(context, isFrontCamera, cameraInfo)
 
             if (matchedCameraId != null) {
                 val characteristics = cameraManager.getCameraCharacteristics(matchedCameraId)

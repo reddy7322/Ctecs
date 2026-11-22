@@ -713,6 +713,15 @@ object OverlayRenderer {
                 exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
 
                 if (preserveExif) {
+                    // Preserve original camera optical/exposure EXIF tags (FNumber, ExposureTime, ISO, FocalLength, etc.)
+                    for ((tag, value) in snapshot.cameraExifMetadata) {
+                        if (value.isNotBlank()) {
+                            try {
+                                exif.setAttribute(tag, value)
+                            } catch (ignored: Exception) {}
+                        }
+                    }
+
                     val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
                     val dateStr = sdf.format(Date(snapshot.timestamp))
                     exif.setAttribute(ExifInterface.TAG_DATETIME, dateStr)

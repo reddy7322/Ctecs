@@ -3296,7 +3296,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             weatherIsFreshAtCapture = isWeatherFresh,
             is24HourFormat = currentCamCfg.is24HourFormat,
             coordinateFormat = currentCamCfg.coordinateFormat,
-            photoJpegQuality = 95,
+            photoJpegQuality = 98,
             preserveExif = currentCamCfg.preserveExif,
             videoQualityPreset = com.example.model.OutputQualityPreset.MAXIMUM,
             videoOutputSizeOptimization = false,

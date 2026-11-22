@@ -337,7 +337,11 @@ object CameraBrightnessEngine {
         controller: LifecycleCameraController?,
         isFrontCamera: Boolean
     ): CaptureExposureCapabilities {
-        val hwCaps = CameraQualityEngine.queryHardwareCapabilities(context, isFrontCamera)
+        val hwCaps = CameraQualityEngine.queryHardwareCapabilities(
+            context = context,
+            isFrontCamera = isFrontCamera,
+            cameraInfo = controller?.cameraInfo
+        )
 
         var evSupported = false
         var minEv = 0
@@ -366,14 +370,11 @@ object CameraBrightnessEngine {
 
         try {
             val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
-            val desiredFacing = if (isFrontCamera) {
-                CameraCharacteristics.LENS_FACING_FRONT
-            } else {
-                CameraCharacteristics.LENS_FACING_BACK
-            }
-            val cameraId = manager?.cameraIdList?.firstOrNull { id ->
-                manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == desiredFacing
-            } ?: manager?.cameraIdList?.firstOrNull()
+            val cameraId = CameraResolutionHelper.resolveActiveCameraId(
+                context = context,
+                isFrontCamera = isFrontCamera,
+                cameraInfo = controller?.cameraInfo
+            )
 
             if (manager != null && cameraId != null) {
                 val chars = manager.getCameraCharacteristics(cameraId)
@@ -439,69 +440,14 @@ object CameraBrightnessEngine {
         val caps = state.capabilities
 
         // 1. Primary smooth hardware exposure path (works across preview, photo & active video recording!)
+        //    Delegates exclusively to CameraX CameraControl.setExposureCompensationIndex so Camera2
+        //    HDR scene mode, flash AE, and imageCaptureMode stay completely synchronized with ZERO rebinds.
         if (caps.hasUsableEvRange) {
             val clampedEv = appliedEvIndex.coerceIn(caps.minEvIndex, caps.maxEvIndex)
             try {
                 control.setExposureCompensationIndex(clampedEv)
             } catch (e: Throwable) {
                 Log.w(TAG, "CameraX EV update skipped safely: ${e.message}")
-            }
-
-            try {
-                val c2Control = Camera2CameraControl.from(control)
-                val builder = CaptureRequestOptions.Builder()
-
-                // Keep continuous AE ON + apply hardware EV bias so exposure stays smooth, never hunts,
-                // never snaps back to 0, and never interrupts active video recording.
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AE_MODE,
-                    CameraMetadata.CONTROL_AE_MODE_ON
-                )
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,
-                    clampedEv
-                )
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AE_LOCK,
-                    false
-                )
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_AWB_MODE,
-                    CameraMetadata.CONTROL_AWB_MODE_AUTO
-                )
-
-                // Apply hardware noise reduction when boosting exposure in low-light (respecting 60fps video)
-                if (caps.supportsHighQualityNoiseReduction) {
-                    val nrMode = when {
-                        isVideoMode && targetVideoFps >= 60 -> CameraMetadata.NOISE_REDUCTION_MODE_FAST
-                        clampedEv > 0 -> CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
-                        else -> CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
-                    }
-                    builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, nrMode)
-                }
-
-                // Respect selected FPS strictly during video mode so brightness adjustments never cause FPS drops
-                if (isVideoMode) {
-                    val maxFps = if (targetVideoFps >= 60 && caps.supportedFpsOptions.contains(60)) 60 else 30
-                    val minFps = if (maxFps >= 60) 30 else 24
-                    builder.setCaptureRequestOption(
-                        CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                        Range(minFps, maxFps)
-                    )
-                }
-
-                c2Control.addCaptureRequestOptions(builder.build())
-            } catch (e: Throwable) {
-                Log.w(TAG, "Camera2 exposure request option skipped safely: ${e.message}")
-            }
-
-            // Engage multi-frame quality capture for brighter low-light still photos when idle (never mid-recording!)
-            if (!isVideoMode && !isVideoRecording) {
-                try {
-                    if (controller.imageCaptureMode != ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY) {
-                        controller.imageCaptureMode = ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
-                    }
-                } catch (ignored: Throwable) {}
             }
             return
         }
@@ -560,19 +506,16 @@ object CameraBrightnessEngine {
 
             // Case 1: Hardware EV already captured the user's selected exposure directly on the sensor!
             if (hardwareEvApplied) {
-                if (!isAutoExposure) {
-                    // NEVER fight or undo the user's intentional darker/brighter capture exposure!
-                    // Only apply edge-preserving noise reduction when the user boosted exposure in noisy low-light.
-                    val userBoostedExposure = normalizedLevel > 0.62f || evStops > 0.6f
-                    if (userBoostedExposure && (metrics.estimatedNoiseLevel > 6.5f || metrics.isLowLight)) {
-                        return applyEdgePreservingDenoiseOnly(source, strong = metrics.isVeryLowLight || metrics.estimatedNoiseLevel > 11f)
-                    }
+                if (isAutoExposure) {
+                    // Auto Exposure mode: preserve original hardware-processed sensor detail, asphalt grain,
+                    // and equipment edges 100% untouched — NEVER apply software blurring over night scenes!
                     return source
                 }
-
-                // Auto Exposure mode: preserve clean natural shots untouched; apply gentle low-light denoise if needed
-                if (metrics.isLowLight && metrics.estimatedNoiseLevel > 6.0f) {
-                    return applyEdgePreservingDenoiseOnly(source, strong = metrics.isVeryLowLight)
+                // Manual Exposure mode: NEVER undo darker/brighter manual exposure; only apply edge-preserving
+                // noise reduction when the user explicitly boosted manual brightness strongly in noisy low-light.
+                val userBoostedExposure = normalizedLevel > 0.62f || evStops > 0.6f
+                if (userBoostedExposure && metrics.estimatedNoiseLevel > 6.5f) {
+                    return applyEdgePreservingDenoiseOnly(source, strong = metrics.isVeryLowLight || metrics.estimatedNoiseLevel > 11f)
                 }
                 return source
             }

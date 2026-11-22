@@ -318,7 +318,7 @@ data class CameraSettings(
     val frontCameraMirror: Boolean = false,
 
     // Image quality & storage
-    val jpegQuality: Int = 95,
+    val jpegQuality: Int = 98,
     val saveOriginalAndStamped: Boolean = false,
     val preserveExif: Boolean = true,
 
@@ -365,13 +365,13 @@ data class CameraSettings(
     // Legacy output format/quality fields retained for settings backup compatibility
     val photoOutputFormat: CameraOutputFormat = CameraOutputFormat.PORTRAIT_FULL,
     val videoOutputFormat: CameraOutputFormat = CameraOutputFormat.LANDSCAPE_FULL,
-    val photoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
-    val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.HIGH,
+    val photoQualityPreset: OutputQualityPreset = OutputQualityPreset.MAXIMUM,
+    val videoQualityPreset: OutputQualityPreset = OutputQualityPreset.MAXIMUM,
     val videoStabilizationMode: VideoStabilizationMode = VideoStabilizationMode.AUTO,
     val autofocusMode: CameraAutofocusMode = CameraAutofocusMode.CONTINUOUS,
 
     // Photo & Video Output Size Optimization and Noise Reduction / Enhancement
-    val photoOutputSizeOptimization: Boolean = true,
+    val photoOutputSizeOptimization: Boolean = false,
     val photoEnhancementEnabled: Boolean = true,
     val videoOutputSizeOptimization: Boolean = false,
     val videoNoiseReductionEnabled: Boolean = true,
