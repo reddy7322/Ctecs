@@ -89,9 +89,16 @@ class RealtimeVideoOverlayManager(
     @Volatile
     private var startRecordingRotation: Int = 0
 
+    @Volatile
+    private var effectInvalidated: Boolean = false
+
     @Synchronized
     fun getOrCreateEffect(): OverlayEffect? {
-        if (currentEffect != null) return currentEffect
+        if (currentEffect != null && !effectInvalidated) return currentEffect
+        if (effectInvalidated) {
+            release()
+            effectInvalidated = false
+        }
 
         try {
             val thread = HandlerThread("RealtimeVideoOverlayGLThread").apply { start() }
@@ -101,6 +108,7 @@ class RealtimeVideoOverlayManager(
 
             val errorListener = Consumer<Throwable> { error ->
                 Log.e(TAG, "CameraX OverlayEffect error: ${error.message}", error)
+                effectInvalidated = true
             }
 
             val effect = OverlayEffect(

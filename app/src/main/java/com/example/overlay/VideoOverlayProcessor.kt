@@ -184,9 +184,15 @@ object VideoOverlayProcessor {
             }
 
             // Either a non-FULL crop mode was selected OR GPU OverlayEffect was unavailable:
-            // encode exact cropped output dimensions while avoiding overlay duplication when already burnt in real time.
-            val targetWidth = (cropRect.width and 1.inv()).coerceAtLeast(16)
-            val targetHeight = (cropRect.height and 1.inv()).coerceAtLeast(16)
+            // encode exact cropped output dimensions while capping >1920 long edge for reliable MediaCodec AVC support
+            // and avoiding overlay duplication when already burnt in real time.
+            val rawTargetW = cropRect.width.coerceAtLeast(16)
+            val rawTargetH = cropRect.height.coerceAtLeast(16)
+            val maxLongEdge = 1920
+            val longEdge = max(rawTargetW, rawTargetH)
+            val scale = if (longEdge > maxLongEdge) maxLongEdge.toDouble() / longEdge.toDouble() else 1.0
+            val targetWidth = ((rawTargetW * scale).roundToInt() and 1.inv()).coerceAtLeast(16)
+            val targetHeight = ((rawTargetH * scale).roundToInt() and 1.inv()).coerceAtLeast(16)
             val targetFps = validation.frameRate.roundToInt().coerceIn(15, 60)
             Log.i(
                 TAG,
@@ -242,6 +248,10 @@ object VideoOverlayProcessor {
         var extractor: MediaExtractor? = null
         var muxer: MediaMuxer? = null
         var encoder: MediaCodec? = null
+
+        // trackState[0] = muxerVideoTrack, trackState[1] = muxerStarted (0=false, 1=true)
+        val trackState = IntArray(2) { -1 }
+        trackState[1] = 0
 
         try {
             extractor = MediaExtractor()
@@ -308,10 +318,6 @@ object VideoOverlayProcessor {
 
             encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             encoder.start()
-
-            // trackState[0] = muxerVideoTrack, trackState[1] = muxerStarted (0=false, 1=true)
-            val trackState = IntArray(2) { -1 }
-            trackState[1] = 0
 
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(inputFile.absolutePath)
@@ -419,7 +425,7 @@ object VideoOverlayProcessor {
                 copyAudioTrack(extractor, audioTrackIndex, muxer, muxerAudioTrack)
             }
 
-            return true
+            return trackState[1] == 1
         } catch (e: Exception) {
             Log.e(TAG, "Frame processing error: ${e.message}", e)
             return false
@@ -427,7 +433,7 @@ object VideoOverlayProcessor {
             try { encoder?.stop() } catch (ignored: Exception) {}
             try { encoder?.release() } catch (ignored: Exception) {}
             try { extractor?.release() } catch (ignored: Exception) {}
-            try { muxer?.stop() } catch (ignored: Exception) {}
+            try { if (trackState[1] == 1) muxer?.stop() } catch (ignored: Exception) {}
             try { muxer?.release() } catch (ignored: Exception) {}
         }
     }
@@ -663,12 +669,11 @@ object VideoOverlayProcessor {
             } catch (ignored: Exception) {}
         }
 
+        var eosDrainRetries = 0
         while (true) {
             val encoderStatus = encoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
             if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                if (!endOfStream) break
-                // If endOfStream, try a few times then break
-                break
+                if (!endOfStream || ++eosDrainRetries > 25) break
             } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 if (trackState[1] == 0) {
                     val newFormat = encoder.outputFormat

@@ -388,8 +388,10 @@ fun CameraPreview(
     }
 
     var lifecycleResumeVersion by remember { mutableIntStateOf(0) }
+    var retryBindTrigger by remember { mutableIntStateOf(0) }
+    var cameraInitError by remember { mutableStateOf<String?>(null) }
 
-    // Refresh permission status and invalidate stale bindings on stop/resume
+    // Refresh permission status, safely finalize active recording on ON_STOP before CameraX unbinds, and auto-recover on ON_RESUME
     DisposableEffect(lifecycleOwner, videoManager) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -399,8 +401,14 @@ fun CameraPreview(
                         Manifest.permission.CAMERA
                     ) == PackageManager.PERMISSION_GRANTED
                     lifecycleResumeVersion++
+                    if (cameraInitError != null) {
+                        retryBindTrigger++
+                    }
                 }
                 Lifecycle.Event.ON_STOP -> {
+                    if (videoManager?.isPreparingOrRecording() == true) {
+                        videoManager.stop()
+                    }
                     videoManager?.invalidatePipelineConfig()
                 }
                 else -> Unit
@@ -413,17 +421,22 @@ fun CameraPreview(
     }
 
     // Bind to Lifecycle ONLY when camera permission is granted
-    DisposableEffect(lifecycleOwner, hasCameraPermission, videoManager) {
+    DisposableEffect(lifecycleOwner, hasCameraPermission, videoManager, retryBindTrigger) {
         if (hasCameraPermission) {
             try {
                 controller.bindToLifecycle(lifecycleOwner)
+                cameraInitError = null
                 lifecycleResumeVersion++
                 cameraBindEpoch++
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e("CameraPreview", "Failed to bind camera controller to lifecycle", e)
+                cameraInitError = "Unable to start camera (${e.localizedMessage ?: "hardware busy"})."
             }
         }
         onDispose {
+            if (videoManager?.isPreparingOrRecording() == true) {
+                videoManager.stop()
+            }
             videoManager?.invalidatePipelineConfig()
             try {
                 controller.unbind()
@@ -431,7 +444,6 @@ fun CameraPreview(
         }
     }
 
-    // Unified CameraX Pipeline Configuration (Camera Selector + QualitySelector + OverlayEffect + UseCases).
     // Unified CameraX Pipeline Configuration (Camera Selector + QualitySelector + OverlayEffect + UseCases).
     // Running sequentially in a single LaunchedEffect eliminates mid-start rebinds between separate effects.
     // Never mutates CameraX use cases/effects while a recording session is preparing or active.
@@ -443,6 +455,7 @@ fun CameraPreview(
         hasCameraPermission,
         isVideoMode,
         isLandscape,
+        isFlashOn,
         isFrontCamera,
         useStandaloneUltraWide,
         standaloneUltraWideCameraId,
@@ -451,7 +464,8 @@ fun CameraPreview(
         photoQualityPreset,
         overlayManager,
         videoManager,
-        lifecycleResumeVersion
+        lifecycleResumeVersion,
+        retryBindTrigger
     ) {
         if (!hasCameraPermission) return@LaunchedEffect
         if (videoManager?.isPreparingOrRecording() == true) return@LaunchedEffect
@@ -459,17 +473,20 @@ fun CameraPreview(
         try {
             controller.isPinchToZoomEnabled = false
             controller.isTapToFocusEnabled = false
+
+            val shouldEnableVideoPipeline = isVideoMode || isLandscape
             try {
-                // Ultra-fast shutter capture mode: prefer Zero Shutter Lag on supported Android 13+ HALs
-                // when torch/flash is off, otherwise MINIMIZE_LATENCY while preserving full native resolution.
-                val zslSupported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+                // Zero-Shutter Lag is strictly incompatible with VideoCapture & CameraEffect on CameraX HALs.
+                // Enable ZSL only for pure still-photo pipeline when flash is off; use MINIMIZE_LATENCY otherwise.
+                val zslSupported = !shouldEnableVideoPipeline &&
                     !isFlashOn &&
+                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
                     try { controller.cameraInfo?.isZslSupported == true } catch (_: Throwable) { false }
-                val desiredCaptureMode = if (zslSupported) {
-                    ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
-                } else {
-                    ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
-                }
+                val desiredCaptureMode = resolveDesiredImageCaptureMode(
+                    shouldEnableVideoPipeline = shouldEnableVideoPipeline,
+                    isFlashOn = isFlashOn,
+                    zslSupported = zslSupported
+                )
                 if (controller.imageCaptureMode != desiredCaptureMode) {
                     controller.imageCaptureMode = desiredCaptureMode
                 }
@@ -522,12 +539,13 @@ fun CameraPreview(
                 false
             }
 
+            val hasFrontHw = try { controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) } catch (_: Throwable) { false }
+            val hasBackHw = try { controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) } catch (_: Throwable) { false }
+
             val desiredFront = if (isFrontCamera) {
-                if (controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) true
-                else !controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
+                if (hasFrontHw) true else !hasBackHw
             } else {
-                if (canUseStandalone || canUseLogicalWide || controller.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) false
-                else controller.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
+                if (canUseStandalone || canUseLogicalWide || hasBackHw) false else hasFrontHw
             }
 
             val effectiveStandalone = !desiredFront && canUseStandalone
@@ -557,9 +575,27 @@ fun CameraPreview(
                     lastAppliedLogicalWideCameraId = effectiveLogicalWideId
                     videoManager?.invalidatePipelineConfig()
                     adapter.awaitCameraInitialization(3000L)
+                    cameraInitError = null
                     cameraBindEpoch++
-                } catch (e: Exception) {
-                    Log.w("CameraPreview", "Camera selector error", e)
+                } catch (e: Throwable) {
+                    Log.w("CameraPreview", "Camera selector error on $effectiveSelector, falling back to default lens", e)
+                    val fallbackSelector = if (desiredFront) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                    try {
+                        controller.cameraSelector = fallbackSelector
+                        lastAppliedFrontCamera = desiredFront
+                        lastAppliedStandaloneUltraWide = false
+                        lastAppliedLogicalWideCameraId = null
+                        videoManager?.invalidatePipelineConfig()
+                        adapter.awaitCameraInitialization(3000L)
+                        cameraInitError = null
+                        if (effectiveStandalone && zoomRatio < 0.99f) {
+                            onZoomChanged?.invoke(1.0f)
+                        }
+                        cameraBindEpoch++
+                    } catch (fallbackErr: Throwable) {
+                        Log.e("CameraPreview", "Fallback camera selector failed", fallbackErr)
+                        cameraInitError = "Camera lens unavailable (${fallbackErr.localizedMessage ?: "error"})."
+                    }
                 }
             }
 
@@ -568,7 +604,6 @@ fun CameraPreview(
             // In Landscape mode both Photo and Video triggers are immediately accessible without a mode toggle,
             // so pre-warm VIDEO_CAPTURE + OverlayEffect + QualitySelector right away when hardware supports video.
             // In Portrait mode keep strict Photo/Video mode separation (enable video pipeline only when isVideoMode).
-            val shouldEnableVideoPipeline = isVideoMode || isLandscape
             if (videoManager != null) {
                 videoManager.ensureVideoPipelineConfigured(
                     adapter = adapter,
@@ -596,11 +631,13 @@ fun CameraPreview(
                         LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
                     )
                 } catch (e: Throwable) {
-                    if (isVideoMode) {
-                        try {
-                            controller.setEnabledUseCases(LifecycleCameraController.VIDEO_CAPTURE)
-                        } catch (ignored: Exception) {}
-                    }
+                    try {
+                        controller.clearEffects()
+                        controller.setEnabledUseCases(
+                            if (isVideoMode) LifecycleCameraController.VIDEO_CAPTURE
+                            else LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+                        )
+                    } catch (ignored: Throwable) {}
                 }
             } else {
                 if (controller.isVideoCaptureEnabled || !controller.isImageCaptureEnabled) {
@@ -610,7 +647,7 @@ fun CameraPreview(
             }
             // Re-apply active zoom ratio after use-case / video pipeline configuration completes
             cameraBindEpoch++
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w("CameraPreview", "Unified camera pipeline configuration notice: ${e.message}", e)
         }
     }
@@ -697,9 +734,11 @@ fun CameraPreview(
         } catch (ignored: Throwable) {}
     }
 
-    LaunchedEffect(isFlashOn) {
+    LaunchedEffect(hasCameraPermission, isFlashOn, isFrontCamera, cameraBindEpoch) {
+        if (!hasCameraPermission) return@LaunchedEffect
         try {
-            controller.enableTorch(isFlashOn)
+            val hasFlash = try { controller.cameraInfo?.hasFlashUnit() == true } catch (_: Throwable) { false }
+            controller.enableTorch(isFlashOn && hasFlash)
         } catch (ignored: Exception) {}
     }
 
@@ -837,13 +876,21 @@ fun CameraPreview(
         )
     }
 
-    LaunchedEffect(isFrontCamera, isLandscape, hasCameraPermission) {
+    LaunchedEffect(
+        isFrontCamera,
+        useStandaloneUltraWide,
+        standaloneUltraWideCameraId,
+        logicalWideCameraId,
+        hasCameraPermission
+    ) {
         if (!hasCameraPermission) return@LaunchedEffect
         try {
+            // Use sensor-native dimensions (longEdge x shortEdge) so rotating Portrait <-> Landscape
+            // never mutates OutputSize or forces a disruptive CameraX session rebind; targetRotation handles orientation.
             val bestNativeSize = com.example.camera.CameraResolutionHelper.resolveBestAutomaticPhotoSize(
                 context = context,
                 isFrontCamera = isFrontCamera,
-                isLandscape = isLandscape
+                isLandscape = true
             )
             if (controller.imageCaptureTargetSize?.resolution != bestNativeSize) {
                 controller.imageCaptureTargetSize = androidx.camera.view.CameraController.OutputSize(bestNativeSize)
@@ -1029,6 +1076,50 @@ fun CameraPreview(
                         containerWidth = constraints.maxWidth.toFloat(),
                         containerHeight = constraints.maxHeight.toFloat()
                     )
+                }
+
+                // 6. Camera Hardware / Session Recovery Banner (only visible when initialization fails)
+                if (cameraInitError != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.85f))
+                            .testTag("camera_init_error_overlay"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = null,
+                                tint = HighlightYellow,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = cameraInitError ?: "Camera unavailable",
+                                color = PrimaryText,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = {
+                                    cameraInitError = null
+                                    retryBindTrigger++
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = HighlightYellow,
+                                    contentColor = PrimaryBackground
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Retry Camera", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
                 }
             }
         } else {
@@ -1310,8 +1401,24 @@ fun CameraBrightnessIndicator(
 }
 
 /**
+ * Resolves the safe [ImageCapture] capture mode: ZSL is supported ONLY for pure still-photo sessions
+ * with flash disabled; whenever [shouldEnableVideoPipeline] is true, CameraX requires MINIMIZE_LATENCY.
+ */
+fun resolveDesiredImageCaptureMode(
+    shouldEnableVideoPipeline: Boolean,
+    isFlashOn: Boolean,
+    zslSupported: Boolean
+): Int {
+    return if (!shouldEnableVideoPipeline && !isFlashOn && zslSupported) {
+        ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
+    } else {
+        ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+    }
+}
+
+/**
  * Normalizes raw captured bitmap orientation based on CameraX image info rotation
- * and physical device sensor orientation, ensuring true landscape or portrait output.
+ * and active UI mode (Landscape vs Portrait), ensuring true upright output without bogus 180° flips.
  */
 fun normalizeBitmapOrientation(
     rawBitmap: Bitmap,
@@ -1320,9 +1427,10 @@ fun normalizeBitmapOrientation(
     deviceRotationDegrees: Int = 0
 ): Bitmap {
     // 1. First apply CameraX reported rotation to bring image upright relative to target rotation
-    val upright = if (cameraXRotationDegrees != 0) {
+    val normalizedRot = ((cameraXRotationDegrees % 360) + 360) % 360
+    val upright = if (normalizedRot != 0) {
         try {
-            val matrix = Matrix().apply { postRotate(cameraXRotationDegrees.toFloat()) }
+            val matrix = Matrix().apply { postRotate(normalizedRot.toFloat()) }
             Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
         } catch (e: Exception) {
             rawBitmap
@@ -1331,45 +1439,23 @@ fun normalizeBitmapOrientation(
         rawBitmap
     }
 
-    // 2. Validate against desired mode (Landscape vs Portrait)
-    // If device is in landscape mode (or device sensor reports 90/270 degrees),
-    // output MUST be landscape (width >= height).
-    val shouldBeLandscape = isLandscapeMode || deviceRotationDegrees == 90 || deviceRotationDegrees == 270
-
-    if (shouldBeLandscape) {
+    // 2. Guard only when buffer dimensions still disagree with the active UI orientation (some OEM HALs
+    // omit imageInfo.rotationDegrees or deliver sensor-landscape frames). Never flip an already-upright image 180°.
+    if (isLandscapeMode) {
         if (upright.width < upright.height) {
-            // Bitmap is portrait, must be rotated to landscape (width >= height)
             val rotateBy = if (deviceRotationDegrees == 270) 270f else 90f
             return try {
                 val matrix = Matrix().apply { postRotate(rotateBy) }
-                Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
-            } catch (e: Exception) {
-                upright
-            }
-        } else if (deviceRotationDegrees == 270 && cameraXRotationDegrees == 0) {
-            // Reverse landscape 180° adjustment if sensor did not account for it
-            return try {
-                val matrix = Matrix().apply { postRotate(180f) }
                 Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
             } catch (e: Exception) {
                 upright
             }
         }
     } else {
-        // Portrait mode: output MUST be portrait (height >= width)
         if (upright.width > upright.height) {
-            // Bitmap is landscape, must be rotated to portrait (height >= width)
             val rotateBy = if (deviceRotationDegrees == 270) 270f else 90f
             return try {
                 val matrix = Matrix().apply { postRotate(rotateBy) }
-                Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
-            } catch (e: Exception) {
-                upright
-            }
-        } else if (deviceRotationDegrees == 180 && cameraXRotationDegrees == 0) {
-            // Reverse portrait 180° adjustment if sensor did not account for it
-            return try {
-                val matrix = Matrix().apply { postRotate(180f) }
                 Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true)
             } catch (e: Exception) {
                 upright
@@ -1460,6 +1546,27 @@ fun capturePhoto(
     onSuccess: (Bitmap) -> Unit,
     onError: (Throwable) -> Unit
 ) {
+    val mainExecutor = ContextCompat.getMainExecutor(context)
+
+    if (controller.cameraInfo == null) {
+        mainExecutor.execute { onError(IllegalStateException("Camera is still initializing. Please try again.")) }
+        return
+    }
+
+    if (!controller.isImageCaptureEnabled) {
+        try {
+            val mask = if (controller.isVideoCaptureEnabled) {
+                LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.VIDEO_CAPTURE
+            } else {
+                LifecycleCameraController.IMAGE_CAPTURE
+            }
+            controller.setEnabledUseCases(mask)
+        } catch (e: Throwable) {
+            mainExecutor.execute { onError(IllegalStateException("Photo capture use case is unavailable: ${e.message}", e)) }
+            return
+        }
+    }
+
     if (playShutterSound) {
         try {
             android.media.MediaActionSound().apply {
@@ -1468,72 +1575,108 @@ fun capturePhoto(
         } catch (ignored: Throwable) {}
     }
 
-    val mainExecutor = ContextCompat.getMainExecutor(context)
-    controller.takePicture(
-        captureDecodeExecutor,
-        object : ImageCapture.OnImageCapturedCallback() {
-            override fun onCaptureSuccess(image: ImageProxy) {
-                try {
-                    val rotationDegrees = image.imageInfo.rotationDegrees
-                    val rawBitmap = try {
-                        image.toBitmap()
-                    } catch (e: Exception) {
-                        val buffer = image.planes[0].buffer
-                        val bytes = ByteArray(buffer.remaining())
-                        buffer.get(bytes)
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    }
-                    // Release ImageProxy immediately after decoding bytes so camera HAL buffer queue stays free
-                    image.close()
-
-                    if (rawBitmap == null) {
-                        mainExecutor.execute { onError(Exception("Decoded bitmap is null")) }
-                        return
-                    }
-
-                    val normalizedBitmap = normalizeBitmapOrientation(
-                        rawBitmap = rawBitmap,
-                        cameraXRotationDegrees = rotationDegrees,
-                        isLandscapeMode = isLandscape,
-                        deviceRotationDegrees = deviceRotationDegrees
-                    )
-                    if (normalizedBitmap !== rawBitmap && !rawBitmap.isRecycled) {
-                        try { rawBitmap.recycle() } catch (ignored: Throwable) {}
-                    }
-
-                    val finalBitmap = if (isFrontCamera && frontCameraMirror) {
-                        val mirrorMatrix = Matrix().apply {
-                            postScale(-1f, 1f, normalizedBitmap.width / 2f, normalizedBitmap.height / 2f)
+    fun executeTakePicture(allowZslFallbackRetry: Boolean) {
+        try {
+            controller.takePicture(
+                captureDecodeExecutor,
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(image: ImageProxy) {
+                        var rawBitmap: Bitmap? = null
+                        var rotationDegrees = 0
+                        try {
+                            rotationDegrees = image.imageInfo.rotationDegrees
+                            rawBitmap = try {
+                                image.toBitmap()
+                            } catch (t: Throwable) {
+                                val buffer = image.planes[0].buffer
+                                val bytes = ByteArray(buffer.remaining())
+                                buffer.get(bytes)
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: try {
+                                    val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
+                                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                                } catch (_: Throwable) {
+                                    null
+                                }
+                            }
+                        } catch (t: Throwable) {
+                            mainExecutor.execute { onError(t) }
+                            return
+                        } finally {
+                            // Always release ImageProxy immediately so camera HAL buffer queue never stalls
+                            try { image.close() } catch (ignored: Throwable) {}
                         }
-                        val mirrored = Bitmap.createBitmap(
-                            normalizedBitmap,
-                            0,
-                            0,
-                            normalizedBitmap.width,
-                            normalizedBitmap.height,
-                            mirrorMatrix,
-                            true
-                        )
-                        if (mirrored !== normalizedBitmap && !normalizedBitmap.isRecycled) {
-                            try { normalizedBitmap.recycle() } catch (ignored: Throwable) {}
+
+                        if (rawBitmap == null) {
+                            mainExecutor.execute { onError(IllegalStateException("Failed to decode captured camera frame")) }
+                            return
                         }
-                        mirrored
-                    } else {
-                        normalizedBitmap
+
+                        try {
+                            val normalizedBitmap = normalizeBitmapOrientation(
+                                rawBitmap = rawBitmap,
+                                cameraXRotationDegrees = rotationDegrees,
+                                isLandscapeMode = isLandscape,
+                                deviceRotationDegrees = deviceRotationDegrees
+                            )
+                            if (normalizedBitmap !== rawBitmap && !rawBitmap.isRecycled) {
+                                try { rawBitmap.recycle() } catch (ignored: Throwable) {}
+                            }
+
+                            val finalBitmap = if (isFrontCamera && frontCameraMirror) {
+                                val mirrorMatrix = Matrix().apply {
+                                    postScale(-1f, 1f, normalizedBitmap.width / 2f, normalizedBitmap.height / 2f)
+                                }
+                                val mirrored = Bitmap.createBitmap(
+                                    normalizedBitmap,
+                                    0,
+                                    0,
+                                    normalizedBitmap.width,
+                                    normalizedBitmap.height,
+                                    mirrorMatrix,
+                                    true
+                                )
+                                if (mirrored !== normalizedBitmap && !normalizedBitmap.isRecycled) {
+                                    try { normalizedBitmap.recycle() } catch (ignored: Throwable) {}
+                                }
+                                mirrored
+                            } else {
+                                normalizedBitmap
+                            }
+
+                            onSuccess(finalBitmap)
+                        } catch (t: Throwable) {
+                            if (!rawBitmap.isRecycled) {
+                                try { rawBitmap.recycle() } catch (ignored: Throwable) {}
+                            }
+                            mainExecutor.execute { onError(t) }
+                        }
                     }
 
-                    onSuccess(finalBitmap)
-                } catch (e: Exception) {
-                    try { image.close() } catch (ignored: Throwable) {}
-                    mainExecutor.execute { onError(e) }
+                    override fun onError(exception: androidx.camera.core.ImageCaptureException) {
+                        if (allowZslFallbackRetry &&
+                            controller.imageCaptureMode == ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
+                        ) {
+                            Log.w("CameraPreview", "ZSL takePicture failed (${exception.imageCaptureError}), retrying with MINIMIZE_LATENCY")
+                            mainExecutor.execute {
+                                try {
+                                    controller.imageCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                                    executeTakePicture(allowZslFallbackRetry = false)
+                                } catch (retryErr: Throwable) {
+                                    onError(retryErr)
+                                }
+                            }
+                        } else {
+                            mainExecutor.execute { onError(exception) }
+                        }
+                    }
                 }
-            }
-
-            override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                mainExecutor.execute { onError(exception) }
-            }
+            )
+        } catch (t: Throwable) {
+            mainExecutor.execute { onError(t) }
         }
-    )
+    }
+
+    executeTakePicture(allowZslFallbackRetry = true)
 }
 
 /**
@@ -1950,6 +2093,10 @@ class VideoRecordingManager(
         strictVideoMode: Boolean,
         overlayManager: com.example.overlay.RealtimeVideoOverlayManager?
     ): Boolean {
+        if (isRecordingActive()) {
+            return false
+        }
+
         adapter.awaitCameraInitialization(4000L)
 
         // Do not bind VIDEO_CAPTURE or create an OpenGL OverlayEffect when the active camera HAL
@@ -1989,10 +2136,23 @@ class VideoRecordingManager(
             val overlayAttached = adapter.applyOverlayEffect(effect)
             lastOverlayEffectAttached = overlayAttached
 
-            // 3. Enable dual IMAGE_CAPTURE | VIDEO_CAPTURE, with VIDEO_CAPTURE-only fallback in strict video mode
+            // 3. Enable dual IMAGE_CAPTURE | VIDEO_CAPTURE, with VIDEO_CAPTURE-only fallback in strict video mode.
+            //    If the hardware HAL rejects OverlayEffect + VideoCapture stream combinations, retry cleanly
+            //    without OverlayEffect so recording proceeds (VideoOverlayProcessor burns overlays in post-processing).
             var videoBound = adapter.enableVideoUseCases(includeImageCapture = true)
             if (!videoBound && strictVideoMode) {
                 videoBound = adapter.enableVideoUseCases(includeImageCapture = false)
+            }
+            var finalEffectIdentity = if (overlayAttached) targetKey.overlayEffectIdentity else 0
+            if (!videoBound && overlayAttached) {
+                Log.w("VideoRecordingManager", "Video bind failed with OverlayEffect attached; retrying without OverlayEffect")
+                adapter.clearEffects()
+                lastOverlayEffectAttached = false
+                finalEffectIdentity = 0
+                videoBound = adapter.enableVideoUseCases(includeImageCapture = true)
+                if (!videoBound && strictVideoMode) {
+                    videoBound = adapter.enableVideoUseCases(includeImageCapture = false)
+                }
             }
             if (!videoBound && !strictVideoMode) {
                 // Restricted hardware couldn't combine Photo + Video idle pre-warm; revert cleanly to Photo until Record click
@@ -2005,11 +2165,12 @@ class VideoRecordingManager(
 
             adapter.awaitCameraInitialization(4000L)
             if (adapter.isVideoCaptureEnabled) {
-                appliedPipelineKey = targetKey
+                appliedPipelineKey = targetKey.copy(overlayEffectIdentity = finalEffectIdentity)
             }
             return true
         } else {
             adapter.clearEffects()
+            overlayManager?.release()
             adapter.enablePhotoOnlyUseCase()
             lastOverlayEffectAttached = false
             appliedPipelineKey = targetKey
@@ -2068,8 +2229,18 @@ class VideoRecordingManager(
                 return
             }
 
+            if (rebound) {
+                // Allow CameraX async unbind/rebind on main looper to transition previewStreamState
+                // before inspecting awaitPreviewStreaming, preventing ERROR_SOURCE_INACTIVE on cold start.
+                settleDelayFn(150L)
+                if (cancelPrepareRequested) {
+                    _sessionState.value = RecordingSessionState.IDLE
+                    return
+                }
+            }
+
             val videoReady = adapter.isVideoCaptureEnabled && adapter.hasCameraInfo
-            val streaming = if (videoReady) adapter.awaitPreviewStreaming(2500L) else false
+            val streaming = if (videoReady) adapter.awaitPreviewStreaming(3000L) else false
 
             if (cancelPrepareRequested) {
                 _sessionState.value = RecordingSessionState.IDLE
@@ -2084,15 +2255,6 @@ class VideoRecordingManager(
                 _sessionState.value = RecordingSessionState.IDLE
                 onError(IllegalStateException("Camera is still initializing. Please try again."))
                 return
-            }
-
-            if (rebound) {
-                // Fast settle window for SurfaceProcessor + VideoCapture surface on cold rebind
-                settleDelayFn(70L)
-                if (cancelPrepareRequested) {
-                    _sessionState.value = RecordingSessionState.IDLE
-                    return
-                }
             }
 
             val tempDir = File(context.cacheDir, "temp_video").apply { mkdirs() }
@@ -2130,6 +2292,7 @@ class VideoRecordingManager(
             overlayManager?.notifyRecordingStarted(initialRotation)
             onRecordingStarted()
 
+            var finalizedDuringStart = false
             val recordListener = androidx.core.util.Consumer<VideoRecordEvent> { event ->
                 val recFile = currentRecordingFile
                 when (event) {
@@ -2144,6 +2307,7 @@ class VideoRecordingManager(
                         }
                     }
                     is VideoRecordEvent.Finalize -> {
+                        finalizedDuringStart = true
                         _sessionState.value = RecordingSessionState.FINALIZING
                         activeRecording = null
                         overlayManager?.notifyRecordingStopped()
@@ -2166,9 +2330,14 @@ class VideoRecordingManager(
                 Log.w("VideoRecordingManager", "Audio recording permission error, retrying without audio", e)
                 adapter.startRecording(tempFile, AudioConfig.AUDIO_DISABLED, executor, recordListener)
             }
-            activeRecording = pendingRecording
-            if (_sessionState.value == RecordingSessionState.PREPARING) {
-                _sessionState.value = RecordingSessionState.RECORDING
+            if (!finalizedDuringStart) {
+                activeRecording = pendingRecording
+                if (_sessionState.value == RecordingSessionState.PREPARING) {
+                    _sessionState.value = RecordingSessionState.RECORDING
+                }
+            } else {
+                activeRecording = null
+                _sessionState.value = RecordingSessionState.IDLE
             }
         } catch (e: Throwable) {
             activeRecording = null

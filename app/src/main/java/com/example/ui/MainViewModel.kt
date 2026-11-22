@@ -3859,6 +3859,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * - Releases shutter state rapidly while serializing background disk + MediaStore writes via [photoSaveMutex]
      *   so rapid back-to-back shots never freeze the preview or drop/corrupt photos.
      */
+    fun setCapturing(capturing: Boolean) {
+        _isCapturing.value = capturing
+    }
+
     fun processCapture(bitmap: Bitmap, capturedSnapshot: CaptureSnapshot? = null) {
         val snapshot = capturedSnapshot ?: createCurrentSnapshot()
         val settingsNow = cameraSettings.value

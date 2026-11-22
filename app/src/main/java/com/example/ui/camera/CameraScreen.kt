@@ -474,10 +474,24 @@ fun CameraScreen(
     }
     var minZoomRatio by remember { mutableFloatStateOf(zoomCapabilities.minZoomRatio) }
     var maxZoomRatio by remember { mutableFloatStateOf(zoomCapabilities.maxZoomRatio) }
-    val useStandaloneUltraWide = !isFrontCamera &&
+    val rawUseStandaloneUltraWide = !isFrontCamera &&
         zoomCapabilities.usesStandalonePhysicalUltraWide &&
         zoomCapabilities.widePresetRatio != null &&
         currentZoomRatio < 0.99f
+    val isRecordingLensLocked = isRecording || isVideoPreparing
+    var lockedStandaloneUltraWideForRecording by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(isRecordingLensLocked) {
+        lockedStandaloneUltraWideForRecording = if (isRecordingLensLocked) {
+            rawUseStandaloneUltraWide
+        } else {
+            null
+        }
+    }
+    val useStandaloneUltraWide = if (isRecordingLensLocked) {
+        lockedStandaloneUltraWideForRecording ?: rawUseStandaloneUltraWide
+    } else {
+        rawUseStandaloneUltraWide
+    }
     val latestUseStandaloneUltraWide by rememberUpdatedState(useStandaloneUltraWide)
 
     LaunchedEffect(zoomCapabilities) {
@@ -485,12 +499,20 @@ fun CameraScreen(
             minZoomRatio = zoomCapabilities.minZoomRatio
             maxZoomRatio = zoomCapabilities.maxZoomRatio
         }
+        val effectiveMin = zoomCapabilities.effectiveMinZoomRatio.coerceAtMost(1.0f)
+        val effectiveMax = zoomCapabilities.maxZoomRatio.coerceAtLeast(1.0f)
+        val clamped = currentZoomRatio.coerceIn(effectiveMin, effectiveMax)
+        if (kotlin.math.abs(clamped - currentZoomRatio) > 0.01f) {
+            viewModel.setZoomRatio(clamped)
+        }
     }
 
     LaunchedEffect(isFrontCamera) {
-        // When flipping between rear & front cameras, reset to 1.0x so front lens never inherits an unsupported ultra-wide zoom
+        // When flipping between rear & front cameras, clamp zoom cleanly to the active camera's supported range
         if (currentZoomRatio < 0.99f) {
             viewModel.setZoomRatio(1.0f)
+        } else if (currentZoomRatio > zoomCapabilities.maxZoomRatio) {
+            viewModel.setZoomRatio(zoomCapabilities.maxZoomRatio.coerceAtLeast(1.0f))
         }
     }
 
@@ -687,6 +709,7 @@ fun CameraScreen(
     // Execute immediate ultra-fast shutter capture using an immutable snapshot captured at press time
     fun executeImmediatePhotoCapture() {
         val shutterSnapshot = viewModel.createCurrentSnapshot()
+        viewModel.setCapturing(true)
         showQuickCaptureFlash = true
         capturePhoto(
             controller = controller,
@@ -698,27 +721,19 @@ fun CameraScreen(
             frontCameraMirror = cameraSettings.frontCameraMirror,
             playShutterSound = cameraSettings.captureSound,
             onSuccess = { bitmap -> viewModel.processCapture(bitmap, shutterSnapshot) },
-            onError = {
-                val bestSize = com.example.camera.CameraResolutionHelper.resolveBestAutomaticPhotoSize(
-                    context = context,
-                    isFrontCamera = isFrontCamera,
-                    isLandscape = isLandscape
+            onError = { error ->
+                viewModel.setCapturing(false)
+                viewModel.showError(
+                    error.localizedMessage?.takeIf { it.isNotBlank() }
+                        ?: "Photo capture failed. Please try again."
                 )
-                val fallback = createSimulatedCameraFrame(
-                    context = context,
-                    rotationDegrees = rotationDegrees.toInt(),
-                    isLandscapeMode = isLandscape,
-                    resolutionStr = "${bestSize.width} x ${bestSize.height}",
-                    aspectRatioStr = "Full"
-                )
-                viewModel.processCapture(fallback, shutterSnapshot)
             }
         )
     }
 
     // Trigger Photo Capture (with safe rapid-tap debounce and optional countdown)
     fun triggerPhotoCapture() {
-        if (isCountingDown) return
+        if (isCapturing || isCountingDown) return
         val nowMs = android.os.SystemClock.elapsedRealtime()
         if (nowMs - lastShutterTapMs < 180L) return
         lastShutterTapMs = nowMs
@@ -801,7 +816,11 @@ fun CameraScreen(
                 viewModel.updateCaptureExposureTelemetry(level, evStops, hwSupported)
             },
             onTouchToCapture = { triggerPhotoCapture() },
-            onDoubleTapSwitchCamera = { viewModel.toggleCameraFacing() },
+            onDoubleTapSwitchCamera = {
+                if (!isRecording && !isVideoPreparing) {
+                    viewModel.toggleCameraFacing()
+                }
+            },
             onZoomCapabilitiesChanged = { caps -> zoomCapabilities = caps },
             modifier = Modifier.fillMaxSize()
         )
@@ -1724,7 +1743,12 @@ fun CameraScreen(
 
                     // 2. Camera Flip Button
                     IconButton(
-                        onClick = { viewModel.toggleCameraFacing() },
+                        onClick = {
+                            if (!isRecording && !isVideoPreparing) {
+                                viewModel.toggleCameraFacing()
+                            }
+                        },
+                        enabled = !isRecording && !isVideoPreparing,
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
@@ -1734,7 +1758,7 @@ fun CameraScreen(
                         Icon(
                             imageVector = Icons.Default.FlipCameraAndroid,
                             contentDescription = "Flip Camera",
-                            tint = PrimaryText,
+                            tint = if (isRecording || isVideoPreparing) PrimaryText.copy(alpha = 0.4f) else PrimaryText,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -1747,10 +1771,11 @@ fun CameraScreen(
                                 .size(52.dp)
                                 .clip(CircleShape)
                                 .background(hudPillActiveBg)
-                                .clickable {
+                                .clickable(enabled = !isCapturing) {
                                     try {
                                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     } catch (ignored: Exception) {}
+                                    viewModel.setCapturing(true)
                                     showQuickCaptureFlash = true
                                     val quickSnapshot = viewModel.createCurrentSnapshot()
                                     capturePhoto(
@@ -1764,23 +1789,13 @@ fun CameraScreen(
                                         playShutterSound = cameraSettings.captureSound,
                                         onSuccess = { bitmap ->
                                             viewModel.processCapture(bitmap, quickSnapshot)
-                                            viewModel.showSuccess("Quick photo saved to Gallery!")
                                         },
-                                        onError = {
-                                            val bestSize = com.example.camera.CameraResolutionHelper.resolveBestAutomaticPhotoSize(
-                                                context = context,
-                                                isFrontCamera = isFrontCamera,
-                                                isLandscape = isLandscape
+                                        onError = { error ->
+                                            viewModel.setCapturing(false)
+                                            viewModel.showError(
+                                                error.localizedMessage?.takeIf { it.isNotBlank() }
+                                                    ?: "Quick photo capture failed. Please try again."
                                             )
-                                            val fallback = createSimulatedCameraFrame(
-                                                context = context,
-                                                rotationDegrees = rotationDegrees.toInt(),
-                                                isLandscapeMode = isLandscape,
-                                                resolutionStr = "${bestSize.width} x ${bestSize.height}",
-                                                aspectRatioStr = "Full"
-                                            )
-                                            viewModel.processCapture(fallback, quickSnapshot)
-                                            viewModel.showSuccess("Quick photo saved to Gallery!")
                                         }
                                     )
                                 }
@@ -2040,7 +2055,12 @@ fun CameraScreen(
                             }
                             // Flip Camera
                             IconButton(
-                                onClick = { viewModel.toggleCameraFacing() },
+                                onClick = {
+                                    if (!isRecording && !isVideoPreparing) {
+                                        viewModel.toggleCameraFacing()
+                                    }
+                                },
+                                enabled = !isRecording && !isVideoPreparing,
                                 modifier = Modifier
                                     .size(34.dp)
                                     .clip(CircleShape)
@@ -2050,7 +2070,7 @@ fun CameraScreen(
                                 Icon(
                                     imageVector = Icons.Default.FlipCameraAndroid,
                                     contentDescription = "Flip Camera",
-                                    tint = Color.White,
+                                    tint = if (isRecording || isVideoPreparing) Color.White.copy(alpha = 0.4f) else Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -2788,32 +2808,34 @@ fun CameraScreen(
                             borderColor = HighlightYellow,
                             borderWidth = 0.8.dp,
                             onClick = {
-                                try {
-                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                } catch (ignored: Exception) {}
-                                showQuickCaptureFlash = true
-                                capturePhoto(
-                                    controller = controller,
-                                    context = context,
-                                    deviceRotationDegrees = rotationDegrees.toInt(),
-                                    isLandscape = isLandscape,
-                                    photoAspectRatio = cameraSettings.photoAspectRatio,
-                                    onSuccess = { bitmap ->
-                                        viewModel.processCapture(bitmap)
-                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
-                                    },
-                                    onError = {
-                                        val fallback = createSimulatedCameraFrame(
-                                            context = context,
-                                            rotationDegrees = rotationDegrees.toInt(),
-                                            isLandscapeMode = isLandscape,
-                                            resolutionStr = cameraSettings.photoResolution,
-                                            aspectRatioStr = cameraSettings.photoAspectRatio
-                                        )
-                                        viewModel.processCapture(fallback)
-                                        viewModel.showSuccess("Quick photo captured & saved to Gallery!")
-                                    }
-                                )
+                                if (!isCapturing) {
+                                    try {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    } catch (ignored: Exception) {}
+                                    viewModel.setCapturing(true)
+                                    showQuickCaptureFlash = true
+                                    val quickSnapshot = viewModel.createCurrentSnapshot()
+                                    capturePhoto(
+                                        controller = controller,
+                                        context = context,
+                                        deviceRotationDegrees = rotationDegrees.toInt(),
+                                        isLandscape = isLandscape,
+                                        photoAspectRatio = "Full",
+                                        isFrontCamera = isFrontCamera,
+                                        frontCameraMirror = cameraSettings.frontCameraMirror,
+                                        playShutterSound = cameraSettings.captureSound,
+                                        onSuccess = { bitmap ->
+                                            viewModel.processCapture(bitmap, quickSnapshot)
+                                        },
+                                        onError = { error ->
+                                            viewModel.setCapturing(false)
+                                            viewModel.showError(
+                                                error.localizedMessage?.takeIf { it.isNotBlank() }
+                                                    ?: "Quick photo capture failed. Please try again."
+                                            )
+                                        }
+                                    )
+                                }
                             },
                             modifier = Modifier
                                 .size(44.dp)

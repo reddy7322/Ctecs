@@ -696,8 +696,14 @@ object OverlayRenderer {
 
         try {
             FileOutputStream(tempFile).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(50, 100), out)
+                val compressed = bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(50, 100), out)
                 out.flush()
+                if (!compressed) {
+                    throw java.io.IOException("Bitmap JPEG compression returned false")
+                }
+            }
+            if (!tempFile.exists() || tempFile.length() <= 0L) {
+                throw java.io.IOException("Encoded JPEG file is empty")
             }
 
             // Write EXIF tags (or only upright orientation when user disabled EXIF metadata)
@@ -777,11 +783,11 @@ object OverlayRenderer {
 
             // Atomic rename or copy
             if (tempFile.renameTo(destinationFile)) {
-                return true
+                return destinationFile.exists() && destinationFile.length() > 0L
             } else {
                 tempFile.copyTo(destinationFile, overwrite = true)
                 tempFile.delete()
-                return true
+                return destinationFile.exists() && destinationFile.length() > 0L
             }
         } catch (e: Exception) {
             try { tempFile.delete() } catch (ignored: Exception) {}
