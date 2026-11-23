@@ -8,6 +8,9 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+import com.example.siteregister.data.SiteRegisterDao
+import com.example.siteregister.data.SiteRegisterLocalRecordEntity
+import com.example.siteregister.data.SiteRegisterSyncQueueEntity
 import com.example.survey.data.SurveyCalibrationEntity
 import com.example.survey.data.SurveyDao
 import com.example.survey.data.SurveyMarkerEntity
@@ -25,9 +28,11 @@ import com.example.survey.data.SurveySessionEntity
         SurveySessionEntity::class,
         SurveyPointEntity::class,
         SurveyMarkerEntity::class,
-        SurveyCalibrationEntity::class
+        SurveyCalibrationEntity::class,
+        SiteRegisterLocalRecordEntity::class,
+        SiteRegisterSyncQueueEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun qcRecordDao(): QcRecordDao
     abstract fun dailyReportRecordDao(): DailyReportRecordDao
     abstract fun surveyDao(): SurveyDao
+    abstract fun siteRegisterDao(): SiteRegisterDao
 
     companion object {
         @Volatile
@@ -189,6 +195,47 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `sr_records` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `recordType` TEXT NOT NULL,
+                        `projectId` TEXT NOT NULL,
+                        `parentId` TEXT NOT NULL,
+                        `revisionNumber` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `payloadJson` TEXT NOT NULL,
+                        `syncState` TEXT NOT NULL,
+                        `createdAtMs` INTEGER NOT NULL,
+                        `updatedAtMs` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sr_records_recordType_projectId` ON `sr_records` (`recordType`, `projectId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sr_records_recordType_parentId` ON `sr_records` (`recordType`, `parentId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sr_records_syncState` ON `sr_records` (`syncState`)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `sr_sync_queue` (
+                        `operationId` TEXT NOT NULL PRIMARY KEY,
+                        `tableName` TEXT NOT NULL,
+                        `recordId` TEXT NOT NULL,
+                        `registerId` TEXT NOT NULL,
+                        `revisionNumber` INTEGER NOT NULL,
+                        `operationType` TEXT NOT NULL,
+                        `rpcName` TEXT NOT NULL,
+                        `payloadJson` TEXT NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `errorMessage` TEXT NOT NULL,
+                        `retryCount` INTEGER NOT NULL,
+                        `createdAtMs` INTEGER NOT NULL,
+                        `lastAttemptAtMs` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sr_sync_queue_status_createdAtMs` ON `sr_sync_queue` (`status`, `createdAtMs`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -196,7 +243,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ctecs_highway_camera.db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(
+                        MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+                        MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9
+                    )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

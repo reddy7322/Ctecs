@@ -314,29 +314,20 @@ object CameraQualityEngine {
             val c2Control = Camera2CameraControl.from(cameraControl)
             val builder = CaptureRequestOptions.Builder()
 
-            // 1. Hardware HDR Scene Mode for highlight protection (e.g. bright night construction/paver lights)
-            //    Only applied in still-photo mode when flash is off and the active sensor supports SCENE_MODE_HDR.
-            if (!isVideoMode && isHdrEnabled && !isFlashOn && capabilities.supportsHardwareHdrSceneMode) {
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_MODE,
-                    CameraMetadata.CONTROL_MODE_USE_SCENE_MODE
-                )
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_SCENE_MODE,
-                    CameraMetadata.CONTROL_SCENE_MODE_HDR
-                )
-            } else {
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_MODE,
-                    CameraMetadata.CONTROL_MODE_AUTO
-                )
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_SCENE_MODE,
-                    CameraMetadata.CONTROL_SCENE_MODE_DISABLED
-                )
-            }
+            // 1. Keep CONTROL_MODE_AUTO so modern OEM HALs run full tap-to-meter AE + EV compensation
+            //    (critical for dimming bright paver/construction headlights at night) while still engaging
+            //    hardware multi-frame HDR/Night fusion automatically via CAPTURE_MODE_MAXIMIZE_QUALITY.
+            //    Forcing legacy CONTROL_SCENE_MODE_HDR disables/clamps manual EV & highlight spot metering on many HALs.
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_MODE,
+                CameraMetadata.CONTROL_MODE_AUTO
+            )
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_SCENE_MODE,
+                CameraMetadata.CONTROL_SCENE_MODE_DISABLED
+            )
 
-            // 2. Auto Antibanding (prevents 50Hz/60Hz LED & site floodlight glare/banding at night)
+            // 2. Auto Antibanding (prevents 50Hz/60Hz LED & site floodlight flicker/banding at night)
             if (capabilities.supportsAutoAntibanding) {
                 builder.setCaptureRequestOption(
                     CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
@@ -359,7 +350,7 @@ object CameraQualityEngine {
                 builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
             }
 
-            // 4. Hardware ISP Noise Reduction (leaves OEM ISP pipeline natural; never stacks software blur)
+            // 4. Hardware ISP Noise Reduction (natural grain-preserving pipeline; never stacks software blur)
             if (capabilities.supportsHighQualityNoiseReduction) {
                 val nrEnabled = if (isVideoMode) videoNoiseReductionEnabled else photoEnhancementEnabled
                 val nrMode = when {
@@ -370,13 +361,12 @@ object CameraQualityEngine {
                 builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, nrMode)
             }
 
-            // 5. Hardware ISP Edge Preservation (natural detail without artificial oversharpening)
+            // 5. Hardware ISP Edge Preservation (neutral natural detail without artificial oversharpening halos)
             if (capabilities.supportsHighQualityEdge) {
                 val edgeEnabled = if (isVideoMode) videoNoiseReductionEnabled else photoEnhancementEnabled
                 val edgeMode = when {
                     !edgeEnabled -> CameraMetadata.EDGE_MODE_OFF
-                    isVideoMode && targetVideoFps >= 60 -> CameraMetadata.EDGE_MODE_FAST
-                    else -> CameraMetadata.EDGE_MODE_HIGH_QUALITY
+                    else -> CameraMetadata.EDGE_MODE_FAST
                 }
                 builder.setCaptureRequestOption(CaptureRequest.EDGE_MODE, edgeMode)
             }

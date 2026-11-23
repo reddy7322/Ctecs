@@ -1,0 +1,2090 @@
+CTECS – COMPLETE DIGITAL HIGHWAY SITE REGISTER & CONSTRUCTION QUALITY MANAGEMENT SYSTEM
+
+Master Implementation Specification – Android Application, Supabase Serverless Backend, Dynamic Project Registration, Live Monitoring, Highway Measurements and PMC Approval
+
+Priority: Critical – Complete Production-Ready Implementation
+
+Develop a complete, fully functional Digital Site Register and Highway Construction Quality Control Management System inside the existing CTECS Android application.
+
+The system must digitize highway construction site registers, daily work progress, chainage-wise measurements, Length, Width, Depth/Thickness, quantity calculations, vehicle-wise laying records, material consumption, quality-control tests, photographs, observations, rectification, signatures, live multi-user monitoring, PMC approval, controlled reopening, revision history and daily Excel/PDF reporting.
+
+Use the supplied Site Register, handwritten BC Laying register and Tack Coat Spray Test report images as functional references.
+
+STRICT INSTRUCTION: This is an enhancement to the existing CTECS application. Do not remove, replace, reset or modify unrelated existing functionality. Preserve Camera, Gallery, Survey, GPS, KMZ/KML, Chainage, Weather, timestamp, metadata, existing settings and all other application features.
+
+---
+
+PART 1 – EXISTING SUPABASE PROJECT INTEGRATION
+
+1. Connect the Existing Supabase Project
+
+Use the existing Supabase project:
+
+Project Name: Ctecs
+
+Project URL:
+
+"https://ytrolykqyjqwjwtifxmi.supabase.co"
+
+Use the publishable key already supplied by the project owner through secure application configuration.
+
+Do not create another Supabase project.
+
+Required services
+
+- Supabase Authentication.
+- Supabase PostgreSQL Database.
+- PostgreSQL Row Level Security (RLS).
+- Supabase Realtime.
+- Supabase Storage.
+- Secure database RPC functions.
+- Supabase Edge Functions where necessary.
+- Version-controlled SQL migrations.
+- Database backup and recovery procedures.
+
+Use Supabase as the primary source of truth for users, project memberships, site registers, measurements, approvals, revisions, permissions and audit history.
+
+Optional Cloudflare Workers and R2 may be integrated for secure sharing-code operations, rate limiting or additional attachment storage where necessary.
+
+Security
+
+- Use the publishable key only with proper RLS protection.
+- Never include service-role or secret keys in the Android APK.
+- Never expose database passwords or privileged credentials.
+- Validate privileged operations through secure backend functions.
+- Enable RLS on every exposed table.
+- Use authenticated sessions and token refresh.
+- Do not rely on Android UI restrictions as the only security mechanism.
+
+---
+
+PART 2 – LOGIN, REGISTRATION AND PROJECT CODE SYSTEM
+
+2. Login Screen
+
+Create a professional, minimalist CTECS Login screen.
+
+Fields:
+
+- Registered Email Address.
+- Password.
+- Show/Hide Password.
+
+Actions:
+
+- Login.
+- Forgot Password.
+- Create New Account.
+
+Support:
+
+- Secure Supabase Authentication.
+- Email verification.
+- Password reset.
+- Secure session persistence.
+- Token refresh.
+- Logout.
+- Session expiration.
+- Account activation and suspension.
+
+Every employee must have an individual account. Never use shared login credentials.
+
+3. New User Registration
+
+Registration must begin with a PMC-assigned Dynamic Project Code.
+
+Required registration fields:
+
+1. Project Code.
+2. Full Name.
+3. Username.
+4. Email Address.
+5. Mobile Number.
+6. Designation.
+7. Organization Type.
+8. Organization / Company Name, if not automatically assigned.
+9. Password.
+10. Confirm Password.
+
+Organization Type
+
+Provide these primary options:
+
+- Contractor.
+- PMC.
+- IE.
+- Concessionaire.
+- Client.
+
+Designation
+
+Use a searchable, dynamically populated dropdown.
+
+Suggested designations:
+
+Contractor
+
+- Project Manager.
+- Construction Manager.
+- Site Engineer.
+- Site Supervisor.
+- Quality Engineer.
+- Material Engineer.
+- Contractor Representative.
+
+PMC
+
+- Resident Engineer.
+- Project Manager.
+- Highway Engineer.
+- Quality Engineer.
+- PMC Representative.
+- Site Engineer.
+
+IE
+
+- Team Leader.
+- Resident Engineer.
+- IE Representative.
+- Quality Engineer.
+- Site Inspector.
+
+Concessionaire
+
+- Project Manager.
+- Highway Engineer.
+- Maintenance Engineer.
+- Site Supervisor.
+
+Client
+
+- Client Representative.
+- Project Manager.
+- Authorized Viewer.
+
+Allow authorized custom designations.
+
+Organization Type and actual Assigned Project Role must remain separate. Selecting PMC during registration must never automatically grant PMC approval authority.
+
+4. PMC-Assigned Dynamic Project Code
+
+Every project must have a unique, securely generated Project Code.
+
+Example:
+
+"CTECS-NH58-7K92P6"
+
+This is an illustrative format. Generate genuinely unique, unpredictable codes.
+
+Only authorized PMC administrators or Project Administrators can:
+
+- Create projects.
+- Generate Project Codes.
+- Assign codes to projects.
+- Configure permitted organization types.
+- Configure registration restrictions.
+- Set expiry dates.
+- Set registration limits.
+- Enable or disable registration.
+- Copy and share codes.
+- Generate QR codes.
+- Revoke codes.
+- Regenerate codes.
+- View registrations made through each code.
+
+5. Automatic Project Details When Entering Project Code
+
+CRITICAL REQUIREMENT: When a user enters a valid PMC-assigned Project Code, automatically fetch and display all configured project details from Supabase.
+
+Automatically populate:
+
+- Project Name.
+- Highway / Road Name.
+- NH / SH Number.
+- Package Number.
+- Project Location.
+- State.
+- Contractor Name.
+- Concessionaire Name.
+- Client Name.
+- PMC Organization.
+- IE / Independent Engineer Organization.
+- Assigned PMC.
+- Project Identification Details.
+- Project Status.
+- Project Registration Status.
+
+Display a verified project information section.
+
+Show:
+
+Project Verified
+
+The user should not need to manually enter any official project details already available in Supabase.
+
+All official project fields must be read-only during registration.
+
+Only return information that the code holder is authorized to see. Do not expose confidential project information before successful code validation.
+
+6. Organization Validation
+
+After project validation:
+
+- Display the permitted organization types.
+- Automatically populate organization names where configured.
+- Display allowed designations.
+- Validate the selected organization against the project configuration.
+- Provide Request Organization Addition for an unlisted organization.
+- Require PMC verification for unrecognized organizations.
+
+Never trust a self-selected organization type as proof of employment or authority.
+
+7. Create Individual Login Account
+
+After the user enters personal details:
+
+- Create a new Supabase Authentication account.
+- Verify email where required.
+- Create the user profile.
+- Link the account to the validated project.
+- Record the Project Code used.
+- Create a pending project membership.
+- Record registration date and time.
+
+Prevent duplicate email addresses and usernames.
+
+Existing users must be able to join additional projects using another Project Code without creating duplicate accounts.
+
+8. Mandatory PMC Registration Approval
+
+After registration:
+
+Registration Successful – Awaiting PMC Approval
+
+The user may authenticate, but must not access the pending project's Site Register.
+
+Pending users may only:
+
+- View their profile.
+- View registration status.
+- Complete email verification.
+- Contact the assigned PMC.
+- Logout.
+
+The assigned PMC receives a new-user notification.
+
+PMC must review:
+
+- Full Name.
+- Username.
+- Email.
+- Mobile.
+- Designation.
+- Organization Type.
+- Organization Name.
+- Project Name.
+- Project Code.
+- Registration Date.
+
+PMC actions:
+
+- Approve.
+- Reject.
+- Request Additional Information.
+- Verify Organization.
+- Assign Project Role.
+- Suspend Membership.
+- Revoke Project Access.
+
+Only an already authorized PMC administrator or Project Administrator can approve a new PMC representative.
+
+Prevent self-approval and circular approval.
+
+9. Multi-Project User Support
+
+A single user can join multiple projects.
+
+Each project membership must have independent:
+
+- Organization Type.
+- Designation.
+- Assigned Role.
+- Approval Status.
+- Permissions.
+- Project Code history.
+
+A user may be an Engineer in one project and a Viewer in another.
+
+Pending membership in a new project must not interrupt existing approved project access.
+
+10. Login Access Rules
+
+After successful authentication:
+
+- Incomplete registration → Complete Profile.
+- Email verification pending → Verify Email.
+- Project approval pending → Pending Approval.
+- Rejected → Rejected Status.
+- Suspended → Access Blocked.
+- Approved and active → Project Dashboard.
+- Multiple approved projects → Project Selector.
+- No project membership → Join Project using Project Code.
+
+Authentication and project authorization must remain separate.
+
+---
+
+PART 3 – USER MANAGEMENT AND PROJECT ROLES
+
+11. Project-Based Roles
+
+Support:
+
+1. Site Engineer.
+2. Site Supervisor.
+3. Contractor Site Engineer.
+4. Contractor Representative.
+5. IE Representative.
+6. PMC Representative.
+7. Project Manager.
+8. Client Viewer.
+9. Project Administrator.
+10. System Administrator.
+
+The same user may have different roles in different projects.
+
+Permissions
+
+Site Engineer
+
+- Create registers.
+- Enter work measurements.
+- Add vehicle-wise entries.
+- Capture test reports.
+- Upload photographs.
+- Add observations.
+- Submit registers.
+- Request permission for approved-register corrections.
+
+Site Supervisor
+
+- Enter assigned construction data.
+- Update draft entries.
+- Capture site photographs.
+- Add observations.
+- View assigned registers.
+
+Contractor Representative
+
+- View assigned records.
+- Submit contractor information.
+- Sign records.
+- Respond to observations.
+
+IE Representative
+
+- View registers.
+- Inspect measurements and evidence.
+- Add inspection comments.
+- Record verification.
+- Sign where authorized.
+
+PMC Representative
+
+- Review submitted registers.
+- Approve or reject.
+- Request corrections.
+- Grant or revoke temporary editing permissions.
+- View audit history.
+- Review corrected revisions.
+
+Project Manager
+
+- Monitor project-wide progress.
+- Review daily records.
+- View approvals.
+- Generate consolidated reports.
+
+Client Viewer
+
+- Read-only access to authorized project information.
+
+Project Administrator
+
+- Manage project membership and authorized project configuration.
+
+Never allow users to assign themselves privileged roles.
+
+---
+
+PART 4 – SITE REGISTER MAIN DASHBOARD
+
+12. Site Register Navigation
+
+Add a dedicated Site Register module to the existing CTECS application.
+
+Use the existing CTECS theme, including dark and light modes.
+
+UI requirements:
+
+- Minimalist professional interface.
+- Compact searchable dropdowns.
+- Smooth expandable sections.
+- Theme-aware colours.
+- Compact tables.
+- Responsive mobile layout.
+- No bulky cards.
+- No unnecessary borders.
+- No duplicate descriptions.
+- Easy one-handed field operation.
+
+13. Main Dashboard
+
+Display:
+
+- Project Name.
+- Contractor.
+- Location / Package.
+- Highway Name.
+- Date.
+- Day / Night Shift.
+- Selected Activity.
+- Total Registers.
+- Today's Entries.
+- Total Work Length.
+- Total Work Area.
+- Total Calculated Volume.
+- Total Material Quantity.
+- Pending Submissions.
+- PMC Pending Approvals.
+- Approved Registers.
+- Pending Edit Requests.
+- Quality Test Reports.
+- Open Observations.
+- Rectification Status.
+- Online / Offline Status.
+- Last Synchronization Time.
+
+Quick actions:
+
+- Create Site Register.
+- Add Work Entry.
+- Add Measurement.
+- Capture Test Report.
+- Add Observation.
+- View Live Register.
+- PMC Approvals.
+- User Registrations.
+- Request Edit Permission.
+- Daily Excel Export.
+- Daily PDF Export.
+
+---
+
+PART 5 – ALL HIGHWAY WORK ACTIVITIES
+
+14. Dynamic Activity Selection
+
+Provide searchable and expandable activity categories.
+
+Every activity must have an independent configurable register template.
+
+Display only relevant fields.
+
+A. Bituminous Works
+
+1. BC Laying – BM / BC(WC).
+2. DBM Laying.
+3. BM Laying.
+4. SDBC Laying.
+5. Tack Coat Application.
+6. Prime Coat Application.
+7. Surface Dressing.
+8. Bituminous Surface Treatment.
+9. Microsurfacing.
+10. Dense Graded Bituminous Macadam.
+
+B. Pavement Preparation and Strengthening
+
+11. Milling / Pavement Milling.
+12. Surface Preparation.
+13. Crack Sealing.
+14. Pothole Repair.
+15. Glass Grid Application.
+16. Geogrid / Geosynthetic Application.
+17. Existing Pavement Rectification.
+18. Road Shoulder Work.
+
+C. Earthwork and Granular Works
+
+19. GSB.
+20. WMM.
+21. Earthwork / Embankment.
+22. Subgrade Preparation.
+23. Soil Stabilization.
+24. Granular Shoulder Construction.
+25. Drainage Work.
+
+D. Concrete and Structures
+
+26. PQC.
+27. DLC.
+28. Concrete Pavement.
+29. Kerb Laying.
+30. RCC Work.
+31. Culvert Construction.
+32. Minor Bridge / Major Bridge.
+33. Retaining Wall.
+34. Protection Work.
+
+E. Road Safety and Finishing
+
+35. Road Marking.
+36. Thermoplastic Marking.
+37. Road Stud Installation.
+38. Crash Barrier Installation.
+39. Signboard Installation.
+40. Road Furniture.
+41. Final Finishing and Maintenance.
+
+Allow authorized administrators to add custom activity templates.
+
+---
+
+PART 6 – UNIVERSAL LENGTH, WIDTH AND DEPTH MEASUREMENT ENGINE
+
+15. Mandatory Measurement System
+
+Create one centralized measurement engine for every applicable highway activity.
+
+Every applicable work entry must capture actual Length, Width and Depth/Thickness.
+
+Length
+
+- From Chainage.
+- To Chainage.
+- Chainage Difference.
+- Actual Executed Length.
+- Additional Segment Length.
+- Total Length.
+
+Width
+
+- Start Width.
+- Middle Width.
+- End Width.
+- Average Width.
+- Actual Executed Width.
+- Left Offset.
+- Right Offset.
+- Formation Width.
+- Top Width.
+- Bottom Width.
+
+Depth / Thickness
+
+- Design Depth.
+- Actual Depth.
+- Start Depth.
+- Middle Depth.
+- End Depth.
+- Average Depth.
+- Design Thickness.
+- Loose Thickness.
+- Compacted Thickness.
+- Excavation Depth.
+- Foundation Depth.
+- Height, where applicable.
+
+Cross-Section Measurements
+
+- Existing Level.
+- Proposed Level.
+- Formation Level.
+- Top Level.
+- Bottom Level.
+- Left Level.
+- Centre Level.
+- Right Level.
+- Cross-sectional Area.
+
+Units
+
+Support:
+
+- mm.
+- cm.
+- m.
+- m².
+- m³.
+- kg.
+- MT.
+- km.
+
+Store normalized numeric values and explicit measurement units.
+
+Do not mix units or silently convert values.
+
+16. Automatic Calculation Engine
+
+For uniform sections:
+
+[
+L=CH_{to}-CH_{from}
+]
+
+[
+W_{avg}=\frac{W_s+W_m+W_e}{3}
+]
+
+[
+D_{avg}=\frac{D_s+D_m+D_e}{3}
+]
+
+[
+Area=L\times W
+]
+
+[
+Volume=L\times W\times D
+]
+
+For variable cross-sections:
+
+[
+Volume=\frac{A_1+A_2}{2}\times L
+]
+
+For multiple segments, calculate each segment separately and sum valid results.
+
+Where density is verified:
+
+[
+Quantity=Volume\times Density
+]
+
+Calculation rules
+
+- Keep design and actual measurements separate.
+- Keep verified measurements separate.
+- Never assume loose thickness equals compacted thickness.
+- Never assume a universal density.
+- Never calculate volume where not technically applicable.
+- Never force rectangular geometry onto irregular shapes.
+- Allow cross-section-based and surveyed measurements.
+- Show formula, inputs, result and unit.
+- Clearly distinguish estimated, measured and verified quantities.
+- Prevent double counting overlapping chainage or work segments.
+
+---
+
+PART 7 – ACTIVITY-WISE MEASUREMENT DETAILS
+
+17. BC Laying – BM / BC(WC)
+
+Capture:
+
+- Serial Number.
+- Vehicle Number.
+- BC Type.
+- Layer.
+- From Chainage.
+- To Chainage.
+- Side.
+- Lane.
+- Start Time.
+- End Time.
+- Laying Temperature (°C).
+- Rolling Temperature (°C).
+- Start Width.
+- Middle Width.
+- End Width.
+- Average Width.
+- Actual Laid Length.
+- Design Thickness (mm).
+- Loose Thickness (mm), if measured.
+- Actual Compacted Thickness (mm).
+- Average Compacted Thickness.
+- Laid Area (m²).
+- Compacted Volume (m³).
+- Material Quantity (MT), where measured or calculated from verified density.
+- Remarks.
+
+Calculate vehicle-wise and daily totals.
+
+Prevent double counting when multiple vehicle records cover the same laying section.
+
+18. DBM Laying
+
+Capture:
+
+- Chainage From / To.
+- Side.
+- Lane.
+- Vehicle Number.
+- Start / End Time.
+- Laying Temperature.
+- Rolling Temperature.
+- Length.
+- Start / Middle / End Width.
+- Average Width.
+- Design Thickness.
+- Loose Thickness, where applicable.
+- Actual Compacted Thickness.
+- Area.
+- Volume.
+- Material Quantity.
+- Remarks.
+
+19. BM Laying
+
+Capture:
+
+- Chainage.
+- Side.
+- Lane.
+- Length.
+- Width.
+- Loose Thickness.
+- Compacted Thickness.
+- Area.
+- Volume.
+- Material Quantity.
+- Temperature.
+- Vehicle.
+- Remarks.
+
+20. SDBC / Surface Dressing / Microsurfacing
+
+Capture:
+
+- Length.
+- Width.
+- Area.
+- Application Rate.
+- Material Type.
+- Material Consumption.
+- Layer Information.
+- Temperature, where applicable.
+- Surface Condition.
+- Remarks.
+
+21. Tack Coat Application
+
+Capture:
+
+- Chainage From / To.
+- Side.
+- Lane.
+- Length.
+- Width.
+- Application Area.
+- Material Type.
+- Spray Rate (kg/m²).
+- Estimated Material Requirement.
+- Actual Material Consumption.
+- Spray Start / End Time.
+- Surface Condition.
+- Uniformity.
+- Remarks.
+
+Calculate:
+
+[
+Area=L\times W
+]
+
+[
+MaterialRequirement=Area\times SprayRate
+]
+
+Clearly separate estimated requirement from actual measured consumption.
+
+22. Prime Coat
+
+Capture:
+
+- Length.
+- Width.
+- Area.
+- Application Rate.
+- Material Quantity.
+- Surface Preparation.
+- Start / End Time.
+- Weather.
+- Remarks.
+
+23. Milling
+
+Capture:
+
+- Chainage From / To.
+- Side.
+- Lane.
+- Length.
+- Start / Middle / End Width.
+- Average Width.
+- Design Milling Depth.
+- Actual Milling Depth.
+- Start / Middle / End Depth.
+- Milling Area.
+- Milled Volume.
+- Milled Material Quantity, where measured.
+- Milling Machine.
+- Disposal Details.
+- Remarks.
+
+24. Surface Preparation
+
+Capture:
+
+- Length.
+- Width.
+- Area.
+- Existing Distressed Area.
+- Rectified Area.
+- Cleaning Status.
+- Dust Removal Status.
+- Water Logging.
+- Surface Condition.
+- Remarks.
+
+25. Crack Sealing
+
+Capture:
+
+- Chainage.
+- Crack Length.
+- Crack Width.
+- Crack Depth, where measured.
+- Number of Segments.
+- Sealant Type.
+- Sealant Quantity.
+- Remarks.
+
+26. Glass Grid Application
+
+Capture:
+
+- From Chainage.
+- To Chainage.
+- Application Length.
+- Application Width.
+- Roll Width.
+- Number of Rolls.
+- Overlap Width.
+- Effective Covered Width.
+- Total Application Area.
+- Application Side.
+- Start / End Time.
+- Surface Preparation.
+- Tack Coat Status.
+- PTR Passes, where required.
+- Wrinkles / Alignment.
+- Remarks.
+
+Calculate effective coverage after overlap. Avoid double counting overlapping areas.
+
+27. Geogrid / Geosynthetic
+
+Capture:
+
+- Length.
+- Width.
+- Area.
+- Roll Width.
+- Overlap.
+- Number of Rolls.
+- Effective Coverage.
+- Layer.
+- Remarks.
+
+28. Pothole Repair
+
+Capture:
+
+- Number of Potholes.
+- Chainage.
+- Side / Lane.
+- Individual Length.
+- Individual Width.
+- Average Depth.
+- Individual Area.
+- Individual Volume.
+- Total Repaired Area.
+- Total Repaired Volume.
+- Material Type.
+- Material Quantity.
+- Before / After Photographs.
+
+Allow irregular-shape measurements.
+
+29. GSB
+
+Capture:
+
+- Chainage From / To.
+- Side.
+- Layer Number.
+- Length.
+- Start / Middle / End Width.
+- Average Width.
+- Design Thickness.
+- Loose Thickness.
+- Compacted Thickness.
+- Area.
+- Compacted Volume.
+- Verified Material Density.
+- Material Quantity.
+- Moisture Content.
+- Compaction Details.
+- Roller Passes.
+- Remarks.
+
+30. WMM
+
+Capture:
+
+- Length.
+- Width.
+- Design Thickness.
+- Loose Thickness.
+- Compacted Thickness.
+- Area.
+- Volume.
+- Material Quantity.
+- Moisture Content.
+- Compaction.
+- Roller Passes.
+- Remarks.
+
+31. Subgrade Preparation
+
+Capture:
+
+- Chainage.
+- Length.
+- Formation Width.
+- Existing Level.
+- Proposed Level.
+- Cut / Fill Depth.
+- Cross-Sectional Area.
+- Formation Area.
+- Volume.
+- Compaction Details.
+- Field Density Test Reference.
+- Remarks.
+
+32. Earthwork / Embankment
+
+Capture:
+
+- Chainage.
+- Length.
+- Formation Width.
+- Top Width.
+- Bottom Width.
+- Left Side Slope.
+- Right Side Slope.
+- Existing Ground Level.
+- Formation Level.
+- Fill Height.
+- Cut Depth.
+- Cross-Sectional Area.
+- Excavation Volume.
+- Embankment Volume.
+- Material Source.
+- Borrow Area.
+- Material Quantity.
+- Compaction Details.
+- Remarks.
+
+Support multiple cross-sections at different chainages.
+
+Use approved average end-area or other configured measurement methodology.
+
+Do not assume a uniform cross-section.
+
+33. Soil Stabilization
+
+Capture:
+
+- Length.
+- Width.
+- Treatment Depth.
+- Area.
+- Volume.
+- Soil Type.
+- Stabilizer Type.
+- Application Rate.
+- Material Quantity.
+- Moisture Content.
+- Mixing.
+- Compaction.
+- Test Reference.
+
+34. PQC / DLC / Concrete Pavement
+
+Capture:
+
+- Chainage.
+- Side.
+- Lane.
+- Length.
+- Start / Middle / End Width.
+- Average Width.
+- Design Thickness.
+- Actual Thickness.
+- Area.
+- Volume.
+- Concrete Grade.
+- Concrete Quantity.
+- Batching Plant.
+- Transit Mixer Number.
+- Pouring Start / End Time.
+- Slump Test.
+- Cube Test Reference.
+- Joint Details.
+- Curing.
+- Remarks.
+
+Calculate:
+
+[
+ConcreteVolume=Length\times AverageWidth\times AverageThickness
+]
+
+Use segment-wise measurements for non-uniform sections.
+
+35. Kerb Laying
+
+Capture:
+
+- Chainage.
+- Total Length.
+- Kerb Type.
+- Kerb Height.
+- Kerb Width.
+- Foundation Width.
+- Foundation Depth.
+- Number of Units.
+- Bedding Quantity.
+- Concrete Quantity.
+- Alignment.
+- Remarks.
+
+36. RCC Work
+
+Provide configurable templates for:
+
+- Beams.
+- Columns.
+- Slabs.
+- Walls.
+- Foundations.
+- Other structural elements.
+
+Capture:
+
+- Length.
+- Width.
+- Height / Depth.
+- Thickness.
+- Number of Units.
+- Cross-Sectional Area.
+- Concrete Volume.
+- Reinforcement Quantity.
+- Formwork Area.
+- Concrete Grade.
+- Cube Test Reference.
+- Remarks.
+
+37. Culvert Construction
+
+Capture:
+
+- Culvert Type.
+- Chainage.
+- Number of Cells.
+- Internal Length.
+- Internal Width.
+- Internal Height.
+- Wall Thickness.
+- Slab Thickness.
+- Foundation Width.
+- Foundation Depth.
+- Excavation Length.
+- Excavation Width.
+- Excavation Depth.
+- Concrete Volume.
+- Reinforcement Quantity.
+- Formwork Area.
+- Backfilling Volume.
+- Remarks.
+
+38. Major Bridge / Minor Bridge
+
+Provide independent measurement templates for:
+
+- Foundation.
+- Pile.
+- Pile Cap.
+- Pier.
+- Pier Cap.
+- Abutment.
+- Wing Wall.
+- Bearing.
+- Girder.
+- Deck Slab.
+- Approach Slab.
+- Protection Work.
+
+Capture applicable dimensions, cross-sectional areas, concrete volume, reinforcement quantity and formwork area.
+
+39. Retaining Wall and Protection Work
+
+Capture:
+
+- Chainage.
+- Wall Length.
+- Base Width.
+- Top Width.
+- Wall Height.
+- Foundation Depth.
+- Excavation Dimensions.
+- Concrete / Masonry Volume.
+- Reinforcement.
+- Backfill Volume.
+- Drainage Details.
+- Remarks.
+
+40. Road Marking / Thermoplastic Marking
+
+Capture:
+
+- Chainage From / To.
+- Marking Length.
+- Line Width.
+- Marking Thickness.
+- Number of Lines.
+- Total Marking Area.
+- Material Application Rate.
+- Material Quantity.
+- Glass Bead Application.
+- Remarks.
+
+41. Road Stud Installation
+
+Capture:
+
+- Chainage.
+- Side.
+- Installation Length.
+- Spacing.
+- Number of Studs.
+- Stud Type.
+- Adhesive Quantity.
+- Remarks.
+
+42. Crash Barrier Installation
+
+Capture:
+
+- Chainage From / To.
+- Total Length.
+- Barrier Type.
+- Rail Length.
+- Post Spacing.
+- Number of Posts.
+- Post Foundation Depth.
+- Post Embedment.
+- Concrete Quantity.
+- Remarks.
+
+43. Signboard Installation
+
+Capture:
+
+- Signboard Length.
+- Width.
+- Area.
+- Thickness.
+- Post Height.
+- Foundation Length.
+- Foundation Width.
+- Foundation Depth.
+- Foundation Concrete Volume.
+- Location / Chainage.
+
+44. Drainage and Cross-Drainage
+
+Capture:
+
+- Drain Type.
+- Chainage From / To.
+- Length.
+- Internal Width.
+- Internal Depth.
+- Excavation Width.
+- Excavation Depth.
+- Wall Thickness.
+- Concrete Thickness.
+- Bottom Width.
+- Side Slope.
+- Excavation Volume.
+- Concrete Volume.
+- Masonry Volume.
+- Cover Slab Dimensions.
+- Remarks.
+
+45. Shoulder Construction
+
+Capture:
+
+- Length.
+- Width.
+- Layer Thickness.
+- Area.
+- Volume.
+- Material Quantity.
+- Crossfall.
+- Compaction.
+- Remarks.
+
+Allow custom highway activities and measurement templates without modifying existing historical records.
+
+---
+
+PART 8 – DAILY MEASUREMENTS AND PROGRESS
+
+46. Segment-Wise Measurement
+
+One register must support multiple chainage segments.
+
+Example:
+
+Segment| From CH| To CH| Width| Thickness
+1| 201+000| 201+100| 9.0 m| 50 mm
+2| 201+100| 201+200| 9.5 m| 50 mm
+3| 201+200| 201+300| 9.0 m| 45 mm
+
+Calculate each segment independently.
+
+Show:
+
+- Segment Length.
+- Segment Area.
+- Segment Volume.
+- Total Length.
+- Total Area.
+- Total Volume.
+- Material Quantity, where applicable.
+
+47. Design vs Actual vs Verified
+
+Maintain three separate values:
+
+1. Design Measurement.
+2. Actual Executed Measurement.
+3. Verified / Approved Measurement.
+
+Calculate:
+
+[
+Variance=Actual-Design
+]
+
+[
+Variance%=\frac{Actual-Design}{Design}\times100
+]
+
+Display variance without automatically declaring acceptance or rejection unless verified project-specific tolerances are configured.
+
+48. Daily Progress
+
+Calculate:
+
+- Daily Work Length.
+- Daily Work Area.
+- Daily Work Volume.
+- Daily Material Quantity.
+- Activity-Wise Production.
+- Project Cumulative Quantity.
+- Pending Work.
+- Verified Work.
+- Rectification Quantity.
+
+Avoid double counting repeated or overlapping entries.
+
+Provide date-wise, shift-wise, project-wise, activity-wise, chainage-wise, lane-wise and side-wise summaries.
+
+---
+
+PART 9 – TACK COAT SPRAY TEST
+
+49. Dedicated Tack Coat Spray Test Register
+
+Use the supplied Tack Coat Spray Test report image as the reference.
+
+Test identification
+
+- Project.
+- Contractor.
+- Independent Engineer.
+- Construction Consultant / PMC.
+- Project Manager.
+- Location.
+- Chainage.
+- Side.
+- Material Type.
+- Purpose.
+- Date.
+- Weather.
+- Tested By.
+- Temperature.
+
+Tray Measurement Table
+
+- Tray Number.
+- Tray Area (m²).
+- Tray Weight Before Spray (kg).
+- Tray Weight After Spray (kg).
+- Weight of Bitumen (kg).
+- Spray Rate (kg/m²).
+- Specification Limit (kg/m²).
+- Result / Remarks.
+
+Calculate:
+
+[
+BitumenWeight=AfterSpray-BeforeSpray
+]
+
+[
+SprayRate=\frac{BitumenWeight}{TrayArea}
+]
+
+[
+AverageSprayRate=\frac{\sum ValidIndividualRates}{ValidTrayCount}
+]
+
+Validate zero area, negative values and missing measurements.
+
+Preserve all original measurements.
+
+Do not hardcode universal spray rates. Use verified project-approved criteria and test methods.
+
+Display Pass / Fail / Needs Review only when valid acceptance criteria are available.
+
+---
+
+PART 10 – OTHER QUALITY TEST REPORTS AND CAMERA CAPTURE
+
+50. Universal Test Report Module
+
+Support:
+
+- Aggregate Tests.
+- Bitumen Tests.
+- Temperature Records.
+- Density Tests.
+- Field Density Tests.
+- Core Tests.
+- Concrete Tests.
+- Cube Tests.
+- Gradation Tests.
+- Material Inspection.
+- Custom Test Reports.
+
+Allow authorized users to configure new test templates.
+
+51. Capture Test Report
+
+Integrate the existing CTECS Camera.
+
+Provide:
+
+- Direct Camera launch.
+- Portrait and landscape document capture.
+- Multiple photographs.
+- Retake.
+- Additional pages.
+- Preview.
+- Comments.
+- Before/after evidence.
+- Measurement photographs.
+- Attachment to exact register/test ID.
+
+Preserve original image files and existing:
+
+- Timestamp.
+- GPS.
+- Chainage.
+- LHS/RHS.
+- Project.
+- Weather.
+- Watermark.
+- EXIF metadata.
+
+Do not rebuild or modify the existing timestamp engine.
+
+52. OCR
+
+Where technically supported:
+
+- Extract printed information.
+- Attempt handwritten OCR.
+- Suggest measurements.
+- Display confidence.
+- Require manual verification of uncertain values.
+- Preserve the original photograph as the authoritative evidence.
+
+Never automatically approve uncertain OCR values.
+
+---
+
+PART 11 – SITE OBSERVATIONS AND RECTIFICATION
+
+53. Universal Observation Register
+
+Fields:
+
+- Serial Number.
+- Date and Time.
+- Project.
+- Activity.
+- Chainage From / To.
+- Side.
+- Lane.
+- Affected Length.
+- Affected Width.
+- Affected Depth, where applicable.
+- Affected Area.
+- Affected Volume, where applicable.
+- Category.
+- Description.
+- Severity.
+- Photographs.
+- Corrective Action.
+- Responsible Contractor.
+- Target Date.
+- Rectification Status.
+- Verified By.
+- Verification Date.
+- Final Remarks.
+
+Categories:
+
+- Segregation.
+- Undulations.
+- Improper Compaction.
+- Temperature Deficiency.
+- Improper Tack Coat.
+- Surface Contamination.
+- Milling Dust.
+- Water Logging.
+- Incorrect Chainage.
+- Glass Grid Wrinkles.
+- Improper Alignment.
+- Inadequate Rolling.
+- Equipment Delay.
+- Material Supply Delay.
+- Safety Issues.
+- Other.
+
+Statuses:
+
+- Open.
+- Under Rectification.
+- Rectified.
+- Verified.
+- Closed.
+
+Allow before/after photographs and comments.
+
+---
+
+PART 12 – DIGITAL SIGNATURES
+
+54. Signature and Approval
+
+Support signatures for:
+
+- Contractor Site Engineer.
+- IE Representative.
+- PMC Representative.
+- Other authorized representatives.
+
+Capture:
+
+- User ID.
+- Name.
+- Designation.
+- Organization.
+- Signature.
+- Timestamp.
+- Register Revision.
+- Signature Status.
+
+Statuses:
+
+- Pending.
+- Signed.
+- Rejected.
+- Verification Required.
+
+A signature must not automatically imply PMC approval.
+
+Only authorized PMC approval actions may change register approval status.
+
+---
+
+PART 13 – LIVE MULTI-USER SITE REGISTER
+
+55. Unique Dynamic Sharing Code
+
+Generate a unique, unpredictable code for each register.
+
+Example:
+
+"CTECS-BC-7K92P6"
+
+Provide:
+
+- Copy Code.
+- Share Code.
+- QR Code.
+- Expiry.
+- Revoke.
+- Regenerate.
+- Authorized User List.
+
+A sharing code alone must never grant editing, approval or administrative privileges.
+
+56. Real-Time Monitoring
+
+Use Supabase Realtime.
+
+When a Site Engineer saves:
+
+- New vehicle entries.
+- Measurements.
+- Calculated quantities.
+- Tack Coat tests.
+- Glass Grid entries.
+- Photographs.
+- Site observations.
+- Rectification updates.
+- Signatures.
+- Submission status.
+
+All authorized IE, PMC and Project Manager screens update automatically.
+
+Show:
+
+- LIVE indicator.
+- Last Synchronized Time.
+- Online / Offline.
+- Pending Sync.
+- Current Register Status.
+
+Use authorized subscriptions and unsubscribe when leaving the register.
+
+---
+
+PART 14 – PMC APPROVAL AND IMMUTABLE REVISION SYSTEM
+
+57. Mandatory PMC Approval Lock
+
+CRITICAL: Once PMC approves a register revision, nobody, including the original creator, can directly edit or delete that approved revision.
+
+Register statuses:
+
+- Draft.
+- Submitted.
+- Pending PMC Approval.
+- Approved – Locked.
+- Edit Permission Requested.
+- Edit Permission Granted.
+- Edit Permission Expired.
+- Rejected.
+- Reopened.
+- Resubmitted.
+
+58. Approval Workflow
+
+1. Engineer creates register.
+2. Engineer enters measurements and records.
+3. Engineer submits.
+4. Editing becomes disabled.
+5. PMC reviews.
+6. PMC approves or rejects.
+7. Approved revision becomes immutable.
+8. Corrections require a new permission request.
+
+59. Controlled Reopening
+
+When the creator opens an approved register:
+
+- Disable Edit.
+- Disable Delete.
+- Show Approved – Locked.
+- Show Request Edit Permission.
+
+The creator submits:
+
+- Reason.
+- Proposed Correction.
+- Supporting Evidence.
+- Request Date and Time.
+
+PMC can:
+
+- Grant Permission.
+- Reject.
+- Set Expiry.
+- Revoke Permission.
+- View History.
+
+60. Temporary Editing
+
+When PMC grants permission:
+
+- Record PMC User ID.
+- Record Grant Time.
+- Record Expiry.
+- Record Exact Register and Revision.
+- Authorize only the designated creator.
+- Block all other users.
+- Prevent creator self-authorization.
+
+On expiry or revocation, editing must immediately stop.
+
+61. New Revision and Fresh Approval
+
+After correction:
+
+1. Creator submits corrected register.
+2. Permission is revoked immediately.
+3. New revision is created.
+4. Previous approved revision remains unchanged.
+5. New revision enters Pending PMC Approval.
+6. PMC reviews again.
+7. PMC approves or rejects.
+8. New approved revision becomes immutable.
+
+Never overwrite an earlier approved revision.
+
+62. Database-Level Enforcement
+
+Enforce approval and editing rules through PostgreSQL RLS, protected RPC functions and transactional database operations.
+
+A direct API update must also fail when permission is absent.
+
+Never rely only on Android buttons or UI conditions.
+
+---
+
+PART 15 – SUPABASE DATABASE STRUCTURE
+
+63. Required Tables
+
+Create version-controlled database migrations for:
+
+1. "profiles"
+2. "projects"
+3. "project_members"
+4. "contractors"
+5. "project_invitations"
+6. "registration_requests"
+7. "highway_activities"
+8. "activity_measurement_templates"
+9. "site_registers"
+10. "site_register_revisions"
+11. "site_register_entries"
+12. "site_measurements"
+13. "site_segments"
+14. "glass_grid_entries"
+15. "tackcoat_tests"
+16. "tackcoat_test_measurements"
+17. "quality_test_reports"
+18. "site_observations"
+19. "site_rectifications"
+20. "site_attachments"
+21. "site_signatures"
+22. "site_sharing_codes"
+23. "site_edit_requests"
+24. "site_edit_permissions"
+25. "site_approvals"
+26. "site_audit_logs"
+27. "daily_reports"
+28. "user_notifications"
+
+Include:
+
+- UUID primary keys.
+- Foreign keys.
+- Unique constraints.
+- Indexes.
+- Created and updated timestamps.
+- User ownership.
+- Project ownership.
+- Revision numbers.
+- Measurement values and units.
+- Approval references.
+- Audit fields.
+
+Keep design, actual, verified and calculated measurements distinct.
+
+Enable RLS on every exposed table.
+
+Use separate SELECT, INSERT, UPDATE and DELETE policies.
+
+---
+
+PART 16 – OFFLINE DATA AND SYNCHRONIZATION
+
+64. Offline Support
+
+Site engineers must be able to enter records without continuous internet.
+
+- Save records locally.
+- Show Pending Sync.
+- Synchronize when online.
+- Use unique record IDs.
+- Use idempotent upload operations.
+- Prevent duplicate records.
+- Preserve original entry timestamps.
+- Resolve concurrent edits safely.
+- Never silently overwrite another user's changes.
+- Maintain pending uploads until confirmed.
+
+Validate current approval and editing permission before committing changes to the server.
+
+Offline mode must never be used to bypass an approved-register lock.
+
+---
+
+PART 17 – DAILY EXCEL AND PDF REPORTING
+
+65. Excel Export
+
+Generate professionally formatted ".xlsx" workbooks with separate sheets:
+
+1. Daily Summary.
+2. BC Laying Register.
+3. DBM / BM Register.
+4. Glass Grid Register.
+5. Tack Coat Spray Test.
+6. Other Quality Tests.
+7. Measurements and Quantities.
+8. Earthwork.
+9. Concrete and Structures.
+10. Drainage.
+11. Site Observations.
+12. Rectification.
+13. Signatures and Approvals.
+14. Revision and Audit Summary.
+
+Include:
+
+- Length.
+- Width.
+- Depth / Thickness.
+- Area.
+- Volume.
+- Quantity.
+- Units.
+- Design.
+- Actual.
+- Verified.
+- Chainage.
+- Side.
+- Lane.
+- Vehicle details.
+- Temperature.
+- Remarks.
+
+Use proper headings, filters, frozen header rows and readable column widths.
+
+66. PDF Export
+
+Generate printable professional PDFs.
+
+Include:
+
+- Project and Contractor.
+- Highway / Package.
+- Location.
+- Date and Shift.
+- Activity.
+- Register tables.
+- Segment-wise measurements.
+- Calculations.
+- Quality test reports.
+- Photographs where selected.
+- Observations.
+- Rectification.
+- Overall remarks.
+- Signatures.
+- PMC approval status.
+- Revision number.
+- Page numbers.
+- Report generation timestamp.
+
+Use landscape pages for wide registers and portrait pages for individual test reports.
+
+67. Daily Report Generation
+
+Provide:
+
+- Activity-wise Excel.
+- Activity-wise PDF.
+- Combined Daily Excel.
+- Combined Daily PDF.
+- Project-wise reports.
+- Date-wise reports.
+- Chainage-wise reports.
+- Quantity summaries.
+
+Warn if pending offline records have not synchronized.
+
+Never label estimated values as verified quantities.
+
+Never silently overwrite an existing exported report.
+
+---
+
+PART 18 – SETTINGS AND CONFIGURATION
+
+68. Site Register Settings
+
+Provide:
+
+- Default Project.
+- Default Contractor.
+- Default Shift.
+- Default Lane.
+- Frequently Used Activities.
+- Custom Activities.
+- Custom Measurement Templates.
+- Custom Test Templates.
+- Default Units.
+- Decimal Precision.
+- Project-Specific Density Values.
+- Project-Specific Specification References.
+- Cross-Section Templates.
+- Calculation Methods.
+- Signature Requirements.
+- Sharing Code Expiry.
+- Export Preferences.
+- Attachment Settings.
+
+Avoid duplicate settings already available elsewhere.
+
+Do not change historical approved calculations when a template is modified. Maintain versioned templates.
+
+---
+
+PART 19 – PERMANENT AUDIT HISTORY
+
+69. Audit Events
+
+Record:
+
+- User Registration.
+- Project Code Validation.
+- Project Membership Request.
+- Membership Approval.
+- Membership Rejection.
+- Role Assignment.
+- Register Creation.
+- Entry Addition.
+- Measurement Change.
+- Submission.
+- PMC Approval.
+- PMC Rejection.
+- Edit Permission Request.
+- Edit Permission Grant.
+- Edit Permission Revocation.
+- Permission Expiry.
+- Reopening.
+- Resubmission.
+- New Revision Approval.
+- Signature.
+- Attachment Changes.
+- Report Generation.
+
+Each event must contain:
+
+- User ID.
+- Organization Type.
+- Assigned Role.
+- Project ID.
+- Register ID.
+- Revision.
+- Action.
+- Timestamp.
+- Before/After values where applicable.
+
+Ordinary users must not be able to alter or delete audit history.
+
+---
+
+PART 20 – FINAL TESTING AND ACCEPTANCE
+
+70. Registration Tests
+
+1. PMC creates a project.
+2. PMC generates a Project Code.
+3. User enters the code.
+4. All configured project information automatically populates.
+5. User selects organization type.
+6. Designation list dynamically updates.
+7. User creates an individual account.
+8. Registration is submitted.
+9. PMC receives notification.
+10. User remains pending.
+11. PMC approves.
+12. User gains only the assigned project permissions.
+13. Invalid, expired or revoked codes are rejected.
+14. Existing user can join another project without a duplicate account.
+15. Self-assigned PMC privileges are rejected.
+
+71. Measurement Tests
+
+Verify:
+
+- Length calculations.
+- Variable widths.
+- Variable depths.
+- Thickness calculations.
+- Area.
+- Volume.
+- Segment-wise calculations.
+- Cross-section calculations.
+- Unit conversions.
+- Density-based quantities.
+- Overlap handling.
+- Chainage consistency.
+- Design vs Actual variance.
+- No double counting.
+
+Use known test datasets and independently verify the results.
+
+72. Multi-User Tests
+
+Use separate accounts for:
+
+- Contractor.
+- Site Engineer.
+- Site Supervisor.
+- IE.
+- PMC.
+- Project Manager.
+- Client.
+
+Verify project-level access restrictions, live synchronization, sharing codes and permissions.
+
+73. PMC Approval Security Tests
+
+1. Engineer creates a draft.
+2. Engineer edits draft.
+3. Engineer submits.
+4. Editing becomes disabled.
+5. PMC approves.
+6. Creator attempts editing – denied.
+7. Supervisor attempts editing – denied.
+8. Direct API update – denied.
+9. Creator requests permission.
+10. PMC grants permission.
+11. Authorized creator edits.
+12. Another user attempts editing – denied.
+13. PMC revokes permission.
+14. Editing immediately denied.
+15. Permission expires – editing denied.
+16. Corrected revision is submitted.
+17. Previous approved revision remains unchanged.
+18. PMC approves the new revision.
+19. New revision becomes locked.
+
+74. Export and Recovery Tests
+
+Verify:
+
+- Daily Excel export.
+- Daily PDF export.
+- Activity-wise exports.
+- Combined reports.
+- Photograph attachments.
+- Measurement calculations.
+- Long registers.
+- Offline entries.
+- Synchronization recovery.
+- Application restart.
+- Database failure handling.
+- Backup and recovery procedures.
+
+---
+
+PART 21 – FINAL DELIVERABLE
+
+The completed CTECS module must provide:
+
+1. Secure Login and Registration.
+2. PMC-assigned Dynamic Project Codes.
+3. Automatic Project Detail Population.
+4. Individual User Accounts.
+5. Organization Type and Designation Selection.
+6. Mandatory PMC User Approval.
+7. Project-Based Roles and Permissions.
+8. Complete Digital Site Register.
+9. All Major Highway Construction Activities.
+10. Activity-Specific Length, Width and Depth.
+11. Segment-Wise Measurements.
+12. Cross-Section Calculations.
+13. Area, Volume and Quantity Calculations.
+14. Design vs Actual vs Verified Measurements.
+15. BC Vehicle-Wise Laying Register.
+16. Glass Grid Register.
+17. Tack Coat Application and Spray Test.
+18. DBM / BM / GSB / WMM Registers.
+19. Earthwork and Structural Measurements.
+20. Drainage and Road Safety Registers.
+21. Camera-Based Test Report Capture.
+22. OCR-Assisted Data Entry.
+23. Site Observations and Rectification.
+24. Digital Signatures.
+25. Live Sharing Codes and QR Codes.
+26. Realtime Multi-User Monitoring.
+27. PMC Approval and Immutable Revisions.
+28. Controlled Permission-Based Reopening.
+29. Permanent Audit History.
+30. Offline Entry and Synchronization.
+31. Daily Excel and PDF Reporting.
+32. Project-Wise Progress and Quantity Dashboard.
+
+FINAL STRICT INSTRUCTIONS
+
+- Build actual functional features, not static UI.
+- Use the existing Supabase project.
+- Preserve all existing application functionality.
+- Project details must automatically populate from a valid PMC-assigned Project Code.
+- Every user must have an individual login.
+- Every new project membership requires PMC approval.
+- Organization Type must remain separate from Assigned Project Role.
+- Every applicable highway activity must capture Length, Width and Depth/Thickness.
+- Calculate Area, Volume and Quantity only using valid measurements and methods.
+- Support variable dimensions, irregular geometry and cross-sections.
+- Never invent missing dimensions, densities, specification limits or acceptance criteria.
+- Never double count overlapping work.
+- Once PMC approves a revision, nobody, including the creator, can edit it directly.
+- Only PMC can authorize temporary reopening.
+- Every correction creates a new revision.
+- Every corrected revision requires fresh PMC approval.
+- Enforce security at the database level.
+- Preserve original photographs, metadata, signatures, test reports and historical revisions.
+- Never expose privileged backend credentials.
+- Do not claim features are complete without real functional, calculation and security testing.
+
+EXPECTED RESULT: A complete serverless digital highway construction Site Register and quality management system for CTECS. PMC creates and shares a Project Code; employees register individual login accounts and receive project details automatically; PMC approves each user; engineers record all highway work with actual Length, Width and Depth; the system calculates quantities, captures quality reports, synchronizes records live, enforces immutable PMC approval and controlled reopening, and generates professional daily Excel and PDF reports.

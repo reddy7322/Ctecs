@@ -44,7 +44,12 @@ data class CameraLensZoomCapabilities(
     val mainCameraId: String? = null,
     val physicalWideFocalLengthMm: Float? = null,
     val mainFocalLengthMm: Float? = null,
-    val isLogicalMultiCamera: Boolean = false
+    val isLogicalMultiCamera: Boolean = false,
+    /**
+     * Genuine optical telephoto magnification presets detected from physical sub-camera focal lengths
+     * (e.g. `[3.0f, 10.0f]` on multi-telephoto devices), empty when unavailable/single-sensor.
+     */
+    val opticalTelePresets: List<Float> = emptyList()
 ) {
     val supportsUltraWide: Boolean
         get() = widePresetRatio != null
@@ -80,6 +85,8 @@ data class CameraHardwareLensEntry(
  * 2. Discrete standalone physical ultra-wide camera IDs exposed in `CameraManager` when the default
  *    logical rear camera starts at `1.0x` — strictly verified against CameraX `availableCameraInfos`
  *    (via `buildStrictCameraIdSelector`) so we never pretend a non-bindable camera switched lenses.
+ * 3. Optical telephoto physical sub-cameras inside logical multi-cameras (e.g. 2x / 3x / 5x / 10x lenses)
+ *    detected directly from `physicalCameraIds` focal length ratios.
  */
 object CameraUltraWideZoomManager {
     private const val TAG = "CameraUltraWideZoomMgr"
@@ -132,6 +139,57 @@ object CameraUltraWideZoomManager {
             activeCameraMaxZoom = activeMaxZoom,
             bindableCameraIds = bindableCameraIds
         )
+    }
+
+    /**
+     * Extracts genuine optical telephoto magnification presets (e.g. 2x, 3x, 5x, 10x) from
+     * physical sub-camera focal lengths belonging to the active logical multi-camera.
+     */
+    private fun extractOpticalTelePresets(
+        allEntries: List<CameraHardwareLensEntry>,
+        logicalEntry: CameraHardwareLensEntry?,
+        mainEntry: CameraHardwareLensEntry?,
+        widePreset: Float?,
+        maxZoom: Float
+    ): List<Float> {
+        val parentIds = ((logicalEntry?.physicalCameraIds ?: emptySet()) + (mainEntry?.physicalCameraIds ?: emptySet()))
+        if (parentIds.isEmpty()) return emptyList()
+
+        val entryById = allEntries.associateBy { it.cameraId }
+        val subEntries = parentIds.mapNotNull { entryById[it] }
+        if (subEntries.isEmpty()) return emptyList()
+
+        // Identify the primary wide (1x) physical lens focal length accurately:
+        // If widePreset < 0.99f exists, the shortest focal sub-camera is the ultra-wide (~widePreset),
+        // and the next wider/standard physical lens is the 1x primary lens.
+        val sortedFocals = subEntries.mapNotNull { it.minFocalLengthMm?.takeIf { f -> f > 0.4f } }.sorted()
+        val base1xFocal = when {
+            sortedFocals.size >= 2 && widePreset != null && widePreset < 0.95f -> {
+                // Skip ultra-wide sub-lens (shortest focal) to get the true 1x primary wide focal length
+                val ultraShort = sortedFocals.first()
+                sortedFocals.firstOrNull { it > ultraShort * 1.18f } ?: (mainEntry?.minFocalLengthMm ?: sortedFocals.first())
+            }
+            mainEntry?.minFocalLengthMm != null && mainEntry.minFocalLengthMm > 0.4f -> mainEntry.minFocalLengthMm
+            else -> sortedFocals.firstOrNull()
+        } ?: return emptyList()
+
+        val opticalSteps = mutableListOf<Float>()
+        for (focal in sortedFocals) {
+            val ratio = focal / base1xFocal
+            if (ratio >= 1.80f && ratio <= maxZoom + 0.35f) {
+                val snapped = when {
+                    ratio < 2.35f -> 2.0f
+                    ratio < 3.60f -> 3.0f
+                    ratio < 4.50f -> 4.0f
+                    ratio < 6.20f -> 5.0f
+                    else -> ratio.roundToInt().toFloat()
+                }.coerceAtMost(maxZoom)
+                if (snapped >= 1.9f && opticalSteps.none { abs(it - snapped) < 0.25f }) {
+                    opticalSteps.add(snapped)
+                }
+            }
+        }
+        return opticalSteps.sorted()
     }
 
     /**
@@ -188,6 +246,13 @@ object CameraUltraWideZoomManager {
         // seamlessly with zero session restart or black frames.
         if (logicalMinZoom <= MAX_WIDE_THRESHOLD) {
             val widePreset = computeNativeWidePresetRatio(logicalMinZoom)
+            val opticalTele = extractOpticalTelePresets(
+                allEntries = sameFacingAll,
+                logicalEntry = effectiveLogicalEntry,
+                mainEntry = mainEntry,
+                widePreset = widePreset,
+                maxZoom = logicalMaxZoom
+            )
             return CameraLensZoomCapabilities(
                 minZoomRatio = logicalMinZoom,
                 maxZoomRatio = logicalMaxZoom,
@@ -198,7 +263,8 @@ object CameraUltraWideZoomManager {
                 mainCameraId = mainEntry?.cameraId ?: activeCameraId,
                 physicalWideFocalLengthMm = null,
                 mainFocalLengthMm = mainEntry?.minFocalLengthMm,
-                isLogicalMultiCamera = effectiveLogicalEntry?.isLogicalMultiCamera ?: (logicalMinZoom < 0.99f)
+                isLogicalMultiCamera = effectiveLogicalEntry?.isLogicalMultiCamera ?: (logicalMinZoom < 0.99f),
+                opticalTelePresets = opticalTele
             )
         }
 
@@ -239,6 +305,14 @@ object CameraUltraWideZoomManager {
             }
         }
 
+        val opticalTele = extractOpticalTelePresets(
+            allEntries = sameFacingAll,
+            logicalEntry = effectiveLogicalEntry,
+            mainEntry = mainEntry,
+            widePreset = null,
+            maxZoom = logicalMaxZoom
+        )
+
         // Case 3: Hardware has no ultra-wide lens on this side — never show fake 0.5x/0.6x.
         return CameraLensZoomCapabilities(
             minZoomRatio = logicalMinZoom,
@@ -250,27 +324,29 @@ object CameraUltraWideZoomManager {
             mainCameraId = mainEntry?.cameraId ?: activeCameraId,
             physicalWideFocalLengthMm = null,
             mainFocalLengthMm = mainEntry?.minFocalLengthMm,
-            isLogicalMultiCamera = mainEntry?.isLogicalMultiCamera ?: false
+            isLogicalMultiCamera = mainEntry?.isLogicalMultiCamera ?: false,
+            opticalTelePresets = opticalTele
         )
     }
 
     /**
      * Computes the exact native wide preset ratio directly from real hardware `minZoomRatio <= 0.95f`.
-     * Never forces `0.5x` when hardware minimum is `0.6x`, and never hides `0.5x` when hardware
-     * genuinely supports `0.5x`.
+     * Never forces `0.5x` when hardware minimum is `0.6x`, and never picks an unreachable rounded-down
+     * tenth (for instance, `0.72f` rounds up cleanly to `0.8f` rather than unreachable `0.7f`).
      *
      * Examples:
      * - `0.50f` -> `0.5f`
-     * - `0.51f` -> `0.5f` (within small sensor rounding tolerance; clamped to hardware min at apply time)
+     * - `0.505f` -> `0.5f` (within small sensor rounding tolerance; clamped to hardware min at apply time)
      * - `0.60f` -> `0.6f`
      * - `0.67f` -> `0.7f`
+     * - `0.72f` -> `0.8f`
      * - `0.78f` -> `0.8f`
      */
     fun computeNativeWidePresetRatio(minZoomRatio: Float): Float? {
         if (!minZoomRatio.isFinite() || minZoomRatio > MAX_WIDE_THRESHOLD) return null
         val clampedMin = minZoomRatio.coerceAtLeast(0.2f)
         val nearestTenth = (clampedMin * 10f).roundToInt() / 10f
-        return if (abs(nearestTenth - clampedMin) <= 0.025f) {
+        return if (abs(nearestTenth - clampedMin) <= 0.008f) {
             nearestTenth.coerceIn(0.2f, MAX_WIDE_THRESHOLD)
         } else {
             val tenthsUp = ceil((clampedMin * 10.0) - 1e-4).toInt() / 10f
@@ -286,9 +362,10 @@ object CameraUltraWideZoomManager {
 
     /**
      * Dynamically builds the ordered list of quick zoom preset ratios strictly from the device's
-     * real supported `[effectiveMinZoom, effectiveMaxZoom]` range.
+     * real supported `[effectiveMinZoom, effectiveMaxZoom]` range and optical telephoto sub-lenses.
      *
      * Adapts automatically to any hardware:
+     * - Optical tele detected (e.g. 3x + 10x on S21 Ultra) -> `[0.6, 1, 2, 3, 10, ...]`
      * - `0.5x–100x` -> `[0.5, 1, 2, 5, 10, 30, 100]`
      * - `0.5x–30x`  -> `[0.5, 1, 2, 5, 10, 30]`
      * - `0.6x–10x`  -> `[0.6, 1, 2, 5, 10]`
@@ -315,15 +392,38 @@ object CameraUltraWideZoomManager {
             capabilities?.maxZoomRatio ?: maxZoomRatio
         ).coerceAtLeast(1.0f)
 
-        val candidates: List<Float> = when {
-            effectiveMax >= 60.0f -> listOf(2.0f, 5.0f, 10.0f, 30.0f, floor(effectiveMax).coerceAtLeast(50.0f))
-            effectiveMax >= 25.0f -> listOf(2.0f, 5.0f, 10.0f, floor(effectiveMax))
-            effectiveMax >= 10.0f -> listOf(2.0f, 5.0f, 10.0f) + if (effectiveMax >= 19.5f) listOf(floor(effectiveMax)) else emptyList()
-            effectiveMax >= 5.0f -> listOf(2.0f, 5.0f) + if (effectiveMax >= 7.5f) listOf(floor(effectiveMax)) else emptyList()
-            effectiveMax >= 3.0f -> listOf(2.0f, floor(effectiveMax))
-            effectiveMax >= 2.0f -> listOf(2.0f)
-            effectiveMax >= 1.45f -> listOf(((effectiveMax * 10f).toInt() / 10f))
-            else -> emptyList()
+        val opticalTele = capabilities?.opticalTelePresets.orEmpty()
+            .filter { it >= 1.85f && it <= effectiveMax + 0.05f }
+
+        val candidates: List<Float> = if (opticalTele.isNotEmpty()) {
+            buildList {
+                if (effectiveMax >= 2.0f) add(2.0f)
+                for (tele in opticalTele) {
+                    if (none { abs(it - tele) < 0.25f }) {
+                        add(tele)
+                    }
+                }
+                if (effectiveMax >= 25.0f && none { abs(it - 30.0f) < 0.5f } && 30.0f <= effectiveMax) {
+                    add(30.0f)
+                }
+                if (effectiveMax >= 25.0f) {
+                    val top = floor(effectiveMax)
+                    if (none { abs(it - top) < 1.0f }) {
+                        add(top)
+                    }
+                }
+            }.sorted()
+        } else {
+            when {
+                effectiveMax >= 60.0f -> listOf(2.0f, 5.0f, 10.0f, 30.0f, floor(effectiveMax).coerceAtLeast(50.0f))
+                effectiveMax >= 25.0f -> listOf(2.0f, 5.0f, 10.0f, floor(effectiveMax))
+                effectiveMax >= 10.0f -> listOf(2.0f, 5.0f, 10.0f) + if (effectiveMax >= 19.5f) listOf(floor(effectiveMax)) else emptyList()
+                effectiveMax >= 5.0f -> listOf(2.0f, 5.0f) + if (effectiveMax >= 7.5f) listOf(floor(effectiveMax)) else emptyList()
+                effectiveMax >= 3.0f -> listOf(2.0f, floor(effectiveMax))
+                effectiveMax >= 2.0f -> listOf(2.0f)
+                effectiveMax >= 1.45f -> listOf(((effectiveMax * 10f).toInt() / 10f))
+                else -> emptyList()
+            }
         }
 
         for (step in candidates) {
@@ -468,10 +568,13 @@ object CameraUltraWideZoomManager {
             val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
                 ?: return emptyList()
             val results = mutableListOf<CameraHardwareLensEntry>()
-            for (cameraId in manager.cameraIdList) {
+            val seenIds = mutableSetOf<String>()
+
+            fun readEntry(cameraId: String) {
+                if (!seenIds.add(cameraId)) return
                 try {
                     val chars = manager.getCameraCharacteristics(cameraId)
-                    val facing = chars.get(CameraCharacteristics.LENS_FACING) ?: continue
+                    val facing = chars.get(CameraCharacteristics.LENS_FACING) ?: return
                     val capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
                         ?: IntArray(0)
                     val isLogical = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
@@ -510,9 +613,21 @@ object CameraUltraWideZoomManager {
                             physicalCameraIds = physicalIds
                         )
                     )
+
+                    // Also inspect physical sub-camera IDs not listed directly in cameraIdList so optical
+                    // telephoto focal lengths (e.g. 2x / 3x / 5x / 10x sensors) are resolved dynamically.
+                    for (physId in physicalIds) {
+                        if (!seenIds.contains(physId)) {
+                            readEntry(physId)
+                        }
+                    }
                 } catch (e: Throwable) {
                     Log.w(TAG, "Skipping camera ID $cameraId during zoom capability detection: ${e.message}")
                 }
+            }
+
+            for (cameraId in manager.cameraIdList) {
+                readEntry(cameraId)
             }
             results
         } catch (e: Throwable) {
