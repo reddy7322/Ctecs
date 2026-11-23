@@ -92,8 +92,35 @@ class RealtimeVideoOverlayManager(
     @Volatile
     private var effectInvalidated: Boolean = false
 
+    private fun isRunningOnEmulator(): Boolean {
+        val fp = android.os.Build.FINGERPRINT.lowercase()
+        val model = android.os.Build.MODEL.lowercase()
+        val hw = android.os.Build.HARDWARE.lowercase()
+        val product = android.os.Build.PRODUCT.lowercase()
+        val brand = android.os.Build.BRAND.lowercase()
+        val device = android.os.Build.DEVICE.lowercase()
+        return fp.startsWith("generic") ||
+            fp.startsWith("unknown") ||
+            model.contains("google_sdk") ||
+            model.contains("emulator") ||
+            model.contains("android sdk built for") ||
+            hw.contains("goldfish") ||
+            hw.contains("ranchu") ||
+            hw.contains("cutf") ||
+            product.contains("sdk") ||
+            product.contains("emulator") ||
+            product.contains("simulator") ||
+            (brand.startsWith("generic") && device.startsWith("generic"))
+    }
+
     @Synchronized
     fun getOrCreateEffect(): OverlayEffect? {
+        // On Android emulators (EGL_emulation / SwiftShader), CameraX OverlayEffect spawns a
+        // secondary GL context that triggers EGL_BAD_ATTRIBUTE errors. Returning null keeps
+        // video recording clean on emulators while real devices retain full real-time GPU overlay.
+        if (isRunningOnEmulator()) {
+            return null
+        }
         if (currentEffect != null && !effectInvalidated) return currentEffect
         if (effectInvalidated) {
             release()

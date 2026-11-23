@@ -155,6 +155,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalConfiguration
@@ -419,6 +420,14 @@ fun CameraScreen(
         LifecycleCameraController(context).apply {
             try {
                 setEnabledUseCases(LifecycleCameraController.IMAGE_CAPTURE)
+                imageCaptureMode = androidx.camera.core.ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+                imageCaptureResolutionSelector =
+                    com.example.camera.CameraResolutionHelper.buildNativePhotoResolutionSelector(4f / 3f)
+                previewResolutionSelector =
+                    com.example.camera.CameraResolutionHelper.buildNativePreviewResolutionSelector(
+                        sensorLongShortRatio = 4f / 3f,
+                        isVideoMode = false
+                    )
             } catch (ignored: Exception) {}
         }
     }
@@ -461,6 +470,10 @@ fun CameraScreen(
     val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
     val latestWeatherObservation by viewModel.latestWeatherObservation.collectAsStateWithLifecycle()
     val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
+    val videoExportState by viewModel.videoExportState.collectAsStateWithLifecycle()
+    var previewViewportRect by remember { mutableStateOf<com.example.camera.FramingPreviewRect?>(null) }
+    var rootContainerSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val screenDensity = androidx.compose.ui.platform.LocalDensity.current
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var zoomCapabilities by remember {
@@ -780,7 +793,12 @@ fun CameraScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(PrimaryBackground)) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(PrimaryBackground)
+            .onSizeChanged { rootContainerSize = it }
+    ) {
         // 1. CameraX Preview
         CameraPreview(
             isFrontCamera = isFrontCamera,
@@ -828,6 +846,7 @@ fun CameraScreen(
                 }
             },
             onZoomCapabilitiesChanged = { caps -> zoomCapabilities = caps },
+            onPreviewViewportChanged = { rect -> previewViewportRect = rect },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -850,26 +869,31 @@ fun CameraScreen(
             )
         }
 
-        // 2. Composition Grid Lines (Off, 3x3, 4x4)
+        // 2. Composition Grid Lines (Off, 3x3, 4x4) — bounded strictly inside the live FIT_CENTER camera frame
         if (cameraSettings.gridMode != CameraGridMode.OFF) {
             val divisions = if (cameraSettings.gridMode == CameraGridMode.GRID_3X3) 3 else 4
+            val activeVp = previewViewportRect
             ComposeCanvas(modifier = Modifier.fillMaxSize()) {
                 val strokeW = 1.dp.toPx()
                 val gridColor = Color.White.copy(alpha = 0.35f)
-                val stepX = size.width / divisions
-                val stepY = size.height / divisions
+                val left = activeVp?.leftPx ?: 0f
+                val top = activeVp?.topPx ?: 0f
+                val vpW = (activeVp?.widthPx ?: size.width).coerceAtLeast(1f)
+                val vpH = (activeVp?.heightPx ?: size.height).coerceAtLeast(1f)
+                val stepX = vpW / divisions
+                val stepY = vpH / divisions
 
                 for (i in 1 until divisions) {
                     drawLine(
                         color = gridColor,
-                        start = Offset(stepX * i, 0f),
-                        end = Offset(stepX * i, size.height),
+                        start = Offset(left + stepX * i, top),
+                        end = Offset(left + stepX * i, top + vpH),
                         strokeWidth = strokeW
                     )
                     drawLine(
                         color = gridColor,
-                        start = Offset(0f, stepY * i),
-                        end = Offset(size.width, stepY * i),
+                        start = Offset(left, top + stepY * i),
+                        end = Offset(left + vpW, top + stepY * i),
                         strokeWidth = strokeW
                     )
                 }
@@ -894,8 +918,9 @@ fun CameraScreen(
             )
         }
 
-        // 4. Live Custom Logo Overlay on Viewfinder
-        if (overlayConfig.showLogo && overlayConfig.logoPosition != LogoPosition.ABOVE_TEXT) {
+        // 4. Live Custom Logo Overlay on Viewfinder (Portrait standalone positions only;
+        //    Landscape renders a single clean logo anchored inside the camera frame above its timestamp)
+        if (!isLandscape && overlayConfig.showLogo && overlayConfig.logoPosition != LogoPosition.ABOVE_TEXT) {
             val alignment = when (overlayConfig.logoPosition) {
                 LogoPosition.TOP_RIGHT -> Alignment.TopEnd
                 LogoPosition.TOP_LEFT -> Alignment.TopStart
@@ -917,6 +942,26 @@ fun CameraScreen(
             )
         }
 
+        // Compute exact FIT_CENTER viewport insets so Landscape overlays stay 100% inside the live camera frame
+        val vpStartDp = with(screenDensity) { (previewViewportRect?.leftPx ?: 0f).toDp() }
+        val vpEndDp = with(screenDensity) {
+            val rect = previewViewportRect
+            if (rect != null && rootContainerSize.width > 0) {
+                (rootContainerSize.width - (rect.leftPx + rect.widthPx)).coerceAtLeast(0f).toDp()
+            } else {
+                0.dp
+            }
+        }
+        val vpTopDp = with(screenDensity) { (previewViewportRect?.topPx ?: 0f).toDp() }
+        val vpBottomDp = with(screenDensity) {
+            val rect = previewViewportRect
+            if (rect != null && rootContainerSize.height > 0) {
+                (rootContainerSize.height - (rect.topPx + rect.heightPx)).coerceAtLeast(0f).toDp()
+            } else {
+                0.dp
+            }
+        }
+
         // 4b. Configurable Dynamic Mini Map Overlay Preview (Photo & Video independent settings)
         if (showMiniMapOverlay) {
             BoxWithConstraints(
@@ -925,10 +970,10 @@ fun CameraScreen(
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .padding(
-                        start = if (isLandscape) 172.dp else 10.dp,
-                        end = if (isLandscape) 104.dp else 10.dp,
-                        top = if (isLandscape) 56.dp else 104.dp,
-                        bottom = if (isLandscape) 14.dp else 232.dp
+                        start = if (isLandscape) maxOf(166.dp, vpStartDp + 8.dp) else 10.dp,
+                        end = if (isLandscape) maxOf(94.dp, vpEndDp + 8.dp) else 10.dp,
+                        top = if (isLandscape) maxOf(56.dp, vpTopDp + 8.dp) else 104.dp,
+                        bottom = if (isLandscape) maxOf(12.dp, vpBottomDp + 10.dp) else 232.dp
                     )
             ) {
                 val safeW = maxWidth
@@ -1644,7 +1689,7 @@ fun CameraScreen(
                 }
             }
 
-            // 3b. ON-SCREEN ZOOM CONTROLS (LANDSCAPE — Full Transparent Glass)
+            // 3b. ON-SCREEN ZOOM CONTROLS (LANDSCAPE — positioned cleanly above center, clear of bottom timestamp & minimap)
             CameraZoomControlBar(
                 currentZoomRatio = currentZoomRatio,
                 minZoomRatio = minZoomRatio,
@@ -1654,19 +1699,22 @@ fun CameraScreen(
                 isLandscape = true,
                 zoomCapabilities = zoomCapabilities,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(bottom = 12.dp)
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(top = if (showExposureSlider) 104.dp else 56.dp)
             )
 
-            // 4. BOTTOM-RIGHT TIMESTAMP & WATERMARK OVERLAY (Full Transparent Background)
+            // 4. BOTTOM-RIGHT TIMESTAMP & WATERMARK OVERLAY (anchored inside live FIT_CENTER camera frame)
             Column(
                 horizontalAlignment = Alignment.End,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(end = 94.dp, bottom = 12.dp)
+                    .padding(
+                        end = maxOf(94.dp, vpEndDp + 10.dp),
+                        bottom = maxOf(12.dp, vpBottomDp + 10.dp)
+                    )
             ) {
                 // Custom Logo (if enabled)
                 if (overlayConfig.showLogo) {
@@ -3023,6 +3071,18 @@ fun CameraScreen(
                     }
                 }
             }
+        }
+
+        // Non-intrusive Video Export Progress Pill (persists across navigation & rotation)
+        if (videoExportState.isActive) {
+            com.example.ui.video.VideoExportProgressPill(
+                state = videoExportState,
+                onCancel = { viewModel.cancelVideoExport(context) },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(top = if (isLandscape) 98.dp else 86.dp)
+            )
         }
 
         // Minimal Smart Chainage Edit Dialog

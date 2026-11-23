@@ -173,6 +173,7 @@ fun CameraPreview(
     onTouchToCapture: (() -> Unit)? = null,
     onDoubleTapSwitchCamera: (() -> Unit)? = null,
     onZoomCapabilitiesChanged: ((com.example.camera.CameraLensZoomCapabilities) -> Unit)? = null,
+    onPreviewViewportChanged: ((com.example.camera.FramingPreviewRect) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -184,6 +185,7 @@ fun CameraPreview(
     val latestOnTouchToCapture by rememberUpdatedState(onTouchToCapture)
     val latestOnDoubleTapSwitchCamera by rememberUpdatedState(onDoubleTapSwitchCamera)
     val latestOnZoomCapabilitiesChanged by rememberUpdatedState(onZoomCapabilitiesChanged)
+    val latestOnPreviewViewportChanged by rememberUpdatedState(onPreviewViewportChanged)
     val latestZoomRatio by rememberUpdatedState(zoomRatio)
     val latestUseStandaloneUltraWide by rememberUpdatedState(useStandaloneUltraWide)
     val latestTouchToCapture by rememberUpdatedState(touchToCapture)
@@ -575,14 +577,16 @@ fun CameraPreview(
 
             if (needsLensRebind) {
                 try {
-                    controller.cameraSelector = effectiveSelector
+                    if (controller.cameraSelector != effectiveSelector) {
+                        controller.cameraSelector = effectiveSelector
+                        videoManager?.invalidatePipelineConfig()
+                        adapter.awaitCameraInitialization(3000L)
+                        cameraBindEpoch++
+                    }
                     lastAppliedFrontCamera = desiredFront
                     lastAppliedStandaloneUltraWide = effectiveStandalone
                     lastAppliedLogicalWideCameraId = effectiveLogicalWideId
-                    videoManager?.invalidatePipelineConfig()
-                    adapter.awaitCameraInitialization(3000L)
                     cameraInitError = null
-                    cameraBindEpoch++
                 } catch (e: Throwable) {
                     Log.w("CameraPreview", "Camera selector error on $effectiveSelector, falling back to default lens", e)
                     val fallbackSelector = if (desiredFront) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
@@ -888,21 +892,27 @@ fun CameraPreview(
     // Using orientation-agnostic CameraX ResolutionSelector (instead of deprecated OutputSize(Size)) guarantees
     // Portrait and Landscape both capture full native sensor framing (e.g. 4000x3000 12MP) and NEVER fall back
     // to a rotated 1:1 square size (like 1088x1088) on OEM HALs.
-    val nativeSensorAspectRatio = remember(isFrontCamera, isVideoMode, useStandaloneUltraWide, cameraBindEpoch) {
+    // Sync preview aspect ratio to 16:9 whenever Video mode OR active Landscape video recording is running
+    // so live preview FOV matches recorded video frames 1:1 without top/bottom chopping.
+    val isVideoStreamActive = isVideoMode || isVideoRecording
+    val nativeSensorAspectRatio = remember(isFrontCamera, isVideoStreamActive, useStandaloneUltraWide, cameraBindEpoch) {
         com.example.camera.CameraResolutionHelper.resolveNativeSensorAspectRatio(
             context = context,
             isFrontCamera = isFrontCamera,
-            isVideoMode = isVideoMode,
+            isVideoMode = isVideoStreamActive,
             cameraInfo = controller.cameraInfo
         )
     }
+
+    var lastAppliedPhotoAspectBucket by remember { mutableStateOf("4:3") }
+    var lastAppliedPreviewAspectKey by remember { mutableStateOf("4:3|false") }
 
     LaunchedEffect(
         isFrontCamera,
         useStandaloneUltraWide,
         standaloneUltraWideCameraId,
         logicalWideCameraId,
-        isVideoMode,
+        isVideoStreamActive,
         hasCameraPermission
     ) {
         if (!hasCameraPermission) return@LaunchedEffect
@@ -917,18 +927,26 @@ fun CameraPreview(
             val previewSensorRatio = com.example.camera.CameraResolutionHelper.resolveNativeSensorAspectRatio(
                 context = context,
                 isFrontCamera = isFrontCamera,
-                isVideoMode = isVideoMode,
+                isVideoMode = isVideoStreamActive,
                 cameraInfo = controller.cameraInfo
             )
-            controller.imageCaptureResolutionSelector =
-                com.example.camera.CameraResolutionHelper.buildNativePhotoResolutionSelector(
-                    sensorLongShortRatio = photoSensorRatio
-                )
-            controller.previewResolutionSelector =
-                com.example.camera.CameraResolutionHelper.buildNativePreviewResolutionSelector(
-                    sensorLongShortRatio = previewSensorRatio,
-                    isVideoMode = isVideoMode
-                )
+            val targetPhotoBucket = if (photoSensorRatio >= 1.55f) "16:9" else "4:3"
+            val targetPreviewKey = "${if (isVideoStreamActive || previewSensorRatio >= 1.55f) "16:9" else "4:3"}|$isVideoStreamActive"
+            if (lastAppliedPhotoAspectBucket != targetPhotoBucket) {
+                controller.imageCaptureResolutionSelector =
+                    com.example.camera.CameraResolutionHelper.buildNativePhotoResolutionSelector(
+                        sensorLongShortRatio = photoSensorRatio
+                    )
+                lastAppliedPhotoAspectBucket = targetPhotoBucket
+            }
+            if (lastAppliedPreviewAspectKey != targetPreviewKey) {
+                controller.previewResolutionSelector =
+                    com.example.camera.CameraResolutionHelper.buildNativePreviewResolutionSelector(
+                        sensorLongShortRatio = previewSensorRatio,
+                        isVideoMode = isVideoStreamActive
+                    )
+                lastAppliedPreviewAspectKey = targetPreviewKey
+            }
         } catch (e: Exception) {
             Log.w("CameraPreview", "Setting automatic native photo/preview resolution selector notice: ${e.message}", e)
         }
@@ -939,6 +957,17 @@ fun CameraPreview(
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val totalWidth = constraints.maxWidth.toFloat()
                 val totalHeight = constraints.maxHeight.toFloat()
+                val previewViewportRect = remember(totalWidth, totalHeight, nativeSensorAspectRatio, isLandscape) {
+                    com.example.camera.CameraOutputFormatEngine.computePreviewViewportRect(
+                        containerWidth = totalWidth,
+                        containerHeight = totalHeight,
+                        sensorLongShortRatio = nativeSensorAspectRatio,
+                        isLandscape = isLandscape
+                    )
+                }
+                LaunchedEffect(previewViewportRect) {
+                    latestOnPreviewViewportChanged?.invoke(previewViewportRect)
+                }
                 val density = LocalDensity.current
                 val rightZoneWidth = maxOf(with(density) { 92.dp.toPx() }, totalWidth * 0.28f)
                 val rightZoneMargin = if (isLandscape) with(density) { 96.dp.toPx() } else 0f
@@ -1784,85 +1813,162 @@ fun capturePhoto(
     executeTakePicture(allowFallbackRetry = true)
 }
 
-/**
- * Silently checks whether the bound camera sensor exposes at least one hardware
- * CamcorderProfile / EncoderProfiles entry before querying CameraX [QualitySelector]
- * or binding [LifecycleCameraController.VIDEO_CAPTURE].
- *
- * Prevents CameraX's internal `CapabilitiesByQuality` from logging repeated
- * `No supported EncoderProfiles` errors on emulators or virtual camera HALs.
- */
-@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
-fun hasSupportedHardwareVideoProfiles(cameraInfo: androidx.camera.core.CameraInfo?): Boolean {
-    if (cameraInfo == null) return false
-    val cameraId = try {
-        androidx.camera.camera2.interop.Camera2CameraInfo.from(cameraInfo).cameraId
+private val validatedVideoQualitiesCache =
+    java.util.concurrent.ConcurrentHashMap<String, List<androidx.camera.video.Quality>>()
+
+private fun mapCamcorderCodecToMime(videoCodec: Int): String = when (videoCodec) {
+    android.media.MediaRecorder.VideoEncoder.H264 -> android.media.MediaFormat.MIMETYPE_VIDEO_AVC
+    android.media.MediaRecorder.VideoEncoder.HEVC -> android.media.MediaFormat.MIMETYPE_VIDEO_HEVC
+    android.media.MediaRecorder.VideoEncoder.VP8 -> android.media.MediaFormat.MIMETYPE_VIDEO_VP8
+    android.media.MediaRecorder.VideoEncoder.MPEG_4_SP -> android.media.MediaFormat.MIMETYPE_VIDEO_MPEG4
+    android.media.MediaRecorder.VideoEncoder.H263 -> android.media.MediaFormat.MIMETYPE_VIDEO_H263
+    else -> android.media.MediaFormat.MIMETYPE_VIDEO_AVC
+}
+
+internal fun isVideoEncoderSupportedForProfile(
+    mimeType: String,
+    width: Int,
+    height: Int
+): Boolean {
+    if (mimeType.isBlank() || width <= 0 || height <= 0) return false
+    return try {
+        val codecList = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+        codecList.codecInfos.any { info ->
+            if (!info.isEncoder) return@any false
+            if (!info.supportedTypes.any { it.equals(mimeType, ignoreCase = true) }) return@any false
+            try {
+                val caps = info.getCapabilitiesForType(mimeType)
+                val videoCaps = caps.videoCapabilities ?: return@any false
+                videoCaps.isSizeSupported(width, height) || videoCaps.isSizeSupported(height, width)
+            } catch (_: Throwable) {
+                false
+            }
+        }
     } catch (_: Throwable) {
-        return true
+        false
     }
-
-    val qualities = intArrayOf(
-        CamcorderProfile.QUALITY_HIGH,
-        CamcorderProfile.QUALITY_1080P,
-        CamcorderProfile.QUALITY_720P,
-        CamcorderProfile.QUALITY_480P,
-        CamcorderProfile.QUALITY_2160P,
-        CamcorderProfile.QUALITY_LOW
-    )
-
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-        for (q in qualities) {
-            try {
-                val profiles = CamcorderProfile.getAll(cameraId, q)
-                if (profiles != null && profiles.videoProfiles.isNotEmpty()) {
-                    return true
-                }
-            } catch (_: Throwable) {
-                // Probe remaining profiles silently
-            }
-        }
-    }
-
-    val numericId = cameraId.toIntOrNull()
-    if (numericId != null) {
-        for (q in qualities) {
-            try {
-                if (CamcorderProfile.hasProfile(numericId, q)) {
-                    return true
-                }
-            } catch (_: Throwable) {
-                // Probe remaining profiles silently
-            }
-        }
-    }
-
-    return false
 }
 
 /**
- * Safely constructs a QualitySelector with ordered fallback to prevent
- * "No supported EncoderProfiles" errors on emulators and unsupported devices.
+ * Resolves the exact CameraX [androidx.camera.video.Quality] tiers genuinely backed by both
+ * camera [CamcorderProfile]/[android.media.EncoderProfiles] and an active [android.media.MediaCodecList]
+ * video encoder — WITHOUT calling `QualitySelector.getSupportedQualities()` or binding `VIDEO_CAPTURE`.
+ *
+ * Strictly checks only the 4 CameraX quality tiers (`UHD`, `FHD`, `HD`, `SD`) and excludes
+ * `QUALITY_HIGH`/`QUALITY_LOW` aliases that falsely return true on Android emulators/virtual HALs
+ * while CameraX's internal `CapabilitiesByQuality` rejects them with `No supported EncoderProfiles`.
+ */
+@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+fun getValidatedHardwareVideoQualities(
+    cameraInfo: androidx.camera.core.CameraInfo?
+): List<androidx.camera.video.Quality> {
+    if (cameraInfo == null) return emptyList()
+    val camera2Info = try {
+        androidx.camera.camera2.interop.Camera2CameraInfo.from(cameraInfo)
+    } catch (_: Throwable) {
+        return emptyList()
+    }
+    val cameraId = camera2Info.cameraId
+
+    validatedVideoQualitiesCache[cameraId]?.let { return it }
+
+    val supportedCameraVideoSizes: Set<Pair<Int, Int>>? = try {
+        val map = camera2Info.getCameraCharacteristic(
+            android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+        )
+        map?.getOutputSizes(android.media.MediaRecorder::class.java)
+            ?.map { it.width to it.height }
+            ?.toSet()
+    } catch (_: Throwable) {
+        null
+    }
+
+    fun isSizeSupportedByCamera(w: Int, h: Int): Boolean {
+        val sizes = supportedCameraVideoSizes ?: return true
+        if (sizes.isEmpty()) return false
+        return sizes.any { (sw, sh) -> (sw == w && sh == h) || (sw == h && sh == w) }
+    }
+
+    val qualityMapping = listOf(
+        CamcorderProfile.QUALITY_2160P to androidx.camera.video.Quality.UHD,
+        CamcorderProfile.QUALITY_1080P to androidx.camera.video.Quality.FHD,
+        CamcorderProfile.QUALITY_720P to androidx.camera.video.Quality.HD,
+        CamcorderProfile.QUALITY_480P to androidx.camera.video.Quality.SD
+    )
+
+    val supported = mutableListOf<androidx.camera.video.Quality>()
+
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        for ((camcorderQuality, cameraXQuality) in qualityMapping) {
+            try {
+                val profiles = CamcorderProfile.getAll(cameraId, camcorderQuality)
+                val videoProfiles = profiles?.videoProfiles ?: continue
+                val hasValidEncoder = videoProfiles.any { vp ->
+                    vp != null &&
+                        vp.width > 0 &&
+                        vp.height > 0 &&
+                        isSizeSupportedByCamera(vp.width, vp.height) &&
+                        isVideoEncoderSupportedForProfile(vp.mediaType, vp.width, vp.height)
+                }
+                if (hasValidEncoder) {
+                    supported.add(cameraXQuality)
+                }
+            } catch (_: Throwable) {
+                // Probe remaining quality tiers silently
+            }
+        }
+    }
+
+    if (supported.isEmpty()) {
+        val numericId = cameraId.toIntOrNull()
+        if (numericId != null) {
+            for ((camcorderQuality, cameraXQuality) in qualityMapping) {
+                try {
+                    if (CamcorderProfile.hasProfile(numericId, camcorderQuality)) {
+                        @Suppress("DEPRECATION")
+                        val legacy = CamcorderProfile.get(numericId, camcorderQuality)
+                        if (legacy != null &&
+                            legacy.videoFrameWidth > 0 &&
+                            legacy.videoFrameHeight > 0 &&
+                            isSizeSupportedByCamera(legacy.videoFrameWidth, legacy.videoFrameHeight) &&
+                            isVideoEncoderSupportedForProfile(
+                                mapCamcorderCodecToMime(legacy.videoCodec),
+                                legacy.videoFrameWidth,
+                                legacy.videoFrameHeight
+                            )
+                        ) {
+                            supported.add(cameraXQuality)
+                        }
+                    }
+                } catch (_: Throwable) {
+                    // Probe remaining quality tiers silently
+                }
+            }
+        }
+    }
+
+    val result = supported.distinct()
+    validatedVideoQualitiesCache[cameraId] = result
+    return result
+}
+
+/**
+ * Silently checks whether the bound camera sensor exposes at least one CameraX-compatible
+ * hardware `EncoderProfiles` tier before binding `VIDEO_CAPTURE`.
+ */
+fun hasSupportedHardwareVideoProfiles(cameraInfo: androidx.camera.core.CameraInfo?): Boolean {
+    return getValidatedHardwareVideoQualities(cameraInfo).isNotEmpty()
+}
+
+/**
+ * Safely constructs a [androidx.camera.video.QualitySelector] from MediaCodec-validated quality
+ * tiers without triggering CameraX's noisy `CapabilitiesByQuality: No supported EncoderProfiles`.
  */
 fun buildSafeQualitySelector(
     videoResolution: String = "1920 x 1080",
     cameraInfo: androidx.camera.core.CameraInfo? = null
 ): androidx.camera.video.QualitySelector? {
-    if (!hasSupportedHardwareVideoProfiles(cameraInfo)) {
-        return null
-    }
-
-    val supported = if (cameraInfo != null) {
-        try {
-            androidx.camera.video.QualitySelector.getSupportedQualities(cameraInfo)
-        } catch (ignored: Exception) {
-            emptyList()
-        }
-    } else {
-        emptyList()
-    }
-
-    // If device/emulator camera HAL does not report any EncoderProfiles,
-    // return null so CameraX keeps its internal default without forced re-evaluation
+    val supported = getValidatedHardwareVideoQualities(cameraInfo)
     if (supported.isEmpty()) {
         return null
     }
@@ -1881,23 +1987,19 @@ fun buildSafeQualitySelector(
             androidx.camera.video.Quality.UHD,
             androidx.camera.video.Quality.FHD,
             androidx.camera.video.Quality.HD,
-            androidx.camera.video.Quality.SD,
-            androidx.camera.video.Quality.LOWEST
+            androidx.camera.video.Quality.SD
         )
         androidx.camera.video.Quality.FHD -> listOf(
             androidx.camera.video.Quality.FHD,
             androidx.camera.video.Quality.HD,
-            androidx.camera.video.Quality.SD,
-            androidx.camera.video.Quality.LOWEST
+            androidx.camera.video.Quality.SD
         )
         androidx.camera.video.Quality.HD -> listOf(
             androidx.camera.video.Quality.HD,
-            androidx.camera.video.Quality.SD,
-            androidx.camera.video.Quality.LOWEST
+            androidx.camera.video.Quality.SD
         )
         else -> listOf(
-            androidx.camera.video.Quality.SD,
-            androidx.camera.video.Quality.LOWEST
+            androidx.camera.video.Quality.SD
         )
     }
 
@@ -2313,8 +2415,28 @@ class VideoRecordingManager(
         )
 
         try {
-            // Switch ImageCapture to MINIMIZE_LATENCY before binding VideoCapture so quick snapshots
-            // during Landscape/Portrait video recording never stall or conflict with the video encoder.
+            adapter.awaitCameraInitialization(4000L)
+            if (cancelPrepareRequested) {
+                _sessionState.value = RecordingSessionState.IDLE
+                return
+            }
+            if (!adapter.hasSupportedVideoEncoderProfiles) {
+                Log.w("VideoRecordingManager", "Camera reports no supported video EncoderProfiles")
+                _sessionState.value = RecordingSessionState.IDLE
+                onError(IllegalStateException("Video recording is not supported on this camera (no supported encoder profiles)."))
+                return
+            }
+
+            // Align preview stream to 16:9 video framing AND switch ImageCapture to MINIMIZE_LATENCY
+            // BEFORE binding VideoCapture so preview + recorded video match 1:1 in a single bind pass
+            // and quick photo snapshots during recording never stall the encoder.
+            try {
+                controller.previewResolutionSelector =
+                    com.example.camera.CameraResolutionHelper.buildNativePreviewResolutionSelector(
+                        sensorLongShortRatio = 16f / 9f,
+                        isVideoMode = true
+                    )
+            } catch (_: Throwable) {}
             try {
                 if (controller.imageCaptureMode != ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY) {
                     controller.imageCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY

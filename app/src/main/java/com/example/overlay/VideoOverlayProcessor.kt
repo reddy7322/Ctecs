@@ -25,6 +25,8 @@ import kotlin.math.roundToInt
 data class VideoValidationResult(
     val isValid: Boolean,
     val hasVideoTrack: Boolean = false,
+    val hasAudioTrack: Boolean = false,
+    val audioTrackCount: Int = 0,
     val durationMs: Long = 0L,
     val rawWidth: Int = 0,
     val rawHeight: Int = 0,
@@ -61,6 +63,8 @@ object VideoOverlayProcessor {
         var durationMs = 0L
         var rotationDegrees = 0
         var hasVideo = false
+        var hasAudio = false
+        var audioTrackCount = 0
         var frameRate = 30f
 
         try {
@@ -71,6 +75,8 @@ object VideoOverlayProcessor {
             rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
             rotationDegrees = ((retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0) % 360 + 360) % 360
             hasVideo = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) != null || (rawWidth > 0 && rawHeight > 0)
+            hasAudio = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) != null
+            if (hasAudio) audioTrackCount = 1
             val fpsMeta = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloatOrNull()
             if (fpsMeta != null && fpsMeta in 5f..120f) {
                 frameRate = fpsMeta
@@ -81,12 +87,13 @@ object VideoOverlayProcessor {
             try { retriever?.release() } catch (ignored: Exception) {}
         }
 
-        // Secondary MediaExtractor check in case MediaMetadataRetriever missed track details
-        if (!hasVideo || rawWidth <= 0 || rawHeight <= 0 || durationMs <= 0L) {
+        // Secondary MediaExtractor inspection for accurate track counts and fallback metadata
+        if (!hasVideo || rawWidth <= 0 || rawHeight <= 0 || durationMs <= 0L || !hasAudio) {
             var extractor: MediaExtractor? = null
             try {
                 extractor = MediaExtractor()
                 extractor.setDataSource(inputFile.absolutePath)
+                var detectedAudioTracks = 0
                 for (i in 0 until extractor.trackCount) {
                     val format = extractor.getTrackFormat(i)
                     val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
@@ -105,8 +112,13 @@ object VideoOverlayProcessor {
                             val trackFps = format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat()
                             if (trackFps in 5f..120f) frameRate = trackFps
                         }
-                        break
+                    } else if (mime.startsWith("audio/")) {
+                        detectedAudioTracks++
                     }
+                }
+                if (detectedAudioTracks > 0) {
+                    hasAudio = true
+                    audioTrackCount = detectedAudioTracks
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "MediaExtractor validation failed for ${inputFile.name}: ${e.message}")
@@ -119,6 +131,8 @@ object VideoOverlayProcessor {
         return VideoValidationResult(
             isValid = valid,
             hasVideoTrack = hasVideo,
+            hasAudioTrack = hasAudio,
+            audioTrackCount = audioTrackCount,
             durationMs = durationMs,
             rawWidth = rawWidth,
             rawHeight = rawHeight,
@@ -129,8 +143,204 @@ object VideoOverlayProcessor {
     }
 
     /**
+     * Executes a pre-selected [com.example.video.VideoExportPlan] using the fastest lossless or
+     * hardware-accelerated pipeline available, with clean automatic fallback and safe cancellation.
+     */
+    fun executePlannedExport(
+        context: Context,
+        request: com.example.video.VideoExportRequest,
+        validation: VideoValidationResult,
+        plan: com.example.video.VideoExportPlan,
+        onMethodChanged: ((com.example.video.VideoExportMethod) -> Unit)? = null,
+        isCancelled: () -> Boolean = { false },
+        onProgress: ((Float) -> Unit)? = null
+    ): Boolean {
+        val reportProgress: (Float) -> Unit = { p -> onProgress?.invoke(p.coerceIn(0f, 1f)) }
+        val inputFile = request.sourceFile
+        val outputFile = request.destinationFile
+
+        if (isCancelled()) return false
+        outputFile.parentFile?.mkdirs()
+
+        return when (plan.method) {
+            com.example.video.VideoExportMethod.DIRECT_STREAM_COPY -> {
+                Log.i(TAG, "Executing DIRECT_STREAM_COPY (${validation.durationMs}ms, ${validation.displayWidth}x${validation.displayHeight}): ${plan.reason}")
+                com.example.video.HardwareVideoTranscoder.directStreamCopy(
+                    inputFile = inputFile,
+                    outputFile = outputFile,
+                    allowAtomicMove = request.deleteSourceAfterSuccess,
+                    isCancelled = isCancelled,
+                    onProgress = reportProgress
+                )
+            }
+
+            com.example.video.VideoExportMethod.FAST_REMUX -> {
+                Log.i(TAG, "Executing FAST_REMUX (${validation.durationMs}ms, rot=${plan.targetRotationMetadataDegrees}deg): ${plan.reason}")
+                val remuxed = com.example.video.HardwareVideoTranscoder.remuxAllTracks(
+                    inputFile = inputFile,
+                    outputFile = outputFile,
+                    durationMs = validation.durationMs,
+                    orientationHintDegrees = plan.targetRotationMetadataDegrees,
+                    preserveAudio = request.preserveAudio,
+                    isCancelled = isCancelled,
+                    onProgress = reportProgress
+                )
+                if (remuxed || isCancelled()) {
+                    remuxed
+                } else {
+                    Log.w(TAG, "FAST_REMUX unavailable for ${inputFile.name}; falling back to HARDWARE_GPU_TRANSCODE")
+                    onMethodChanged?.invoke(com.example.video.VideoExportMethod.HARDWARE_GPU_TRANSCODE)
+                    executeGpuOrFallbackTranscode(
+                        context = context,
+                        request = request,
+                        validation = validation,
+                        plan = plan,
+                        onMethodChanged = onMethodChanged,
+                        isCancelled = isCancelled,
+                        onProgress = reportProgress
+                    )
+                }
+            }
+
+            com.example.video.VideoExportMethod.HARDWARE_GPU_TRANSCODE,
+            com.example.video.VideoExportMethod.SOFTWARE_FALLBACK_TRANSCODE -> {
+                executeGpuOrFallbackTranscode(
+                    context = context,
+                    request = request,
+                    validation = validation,
+                    plan = plan,
+                    onMethodChanged = onMethodChanged,
+                    isCancelled = isCancelled,
+                    onProgress = reportProgress
+                )
+            }
+        }
+    }
+
+    private fun executeGpuOrFallbackTranscode(
+        context: Context,
+        request: com.example.video.VideoExportRequest,
+        validation: VideoValidationResult,
+        plan: com.example.video.VideoExportPlan,
+        onMethodChanged: ((com.example.video.VideoExportMethod) -> Unit)?,
+        isCancelled: () -> Boolean,
+        onProgress: (Float) -> Unit
+    ): Boolean {
+        val snapshot = request.defaultSnapshot ?: return false
+        val rawTargetW = plan.outputDisplayWidth.coerceAtLeast(16)
+        val rawTargetH = plan.outputDisplayHeight.coerceAtLeast(16)
+        val targetFps = validation.frameRate.roundToInt().coerceIn(15, 60)
+        val sourceRotationForGpu = request.rotationOverrideDegrees ?: validation.rotationDegrees
+
+        // Preserve full 4K/UHD up to 3840 long edge on Hardware GPU when source is >1080p,
+        // and gracefully fall back to 1920p if the device encoder rejects >1080p surface sizes.
+        val hwMaxLongEdge = if (max(rawTargetW, rawTargetH) > 1920) 3840 else 1920
+        val (hwW, hwH) = computeSafeEvenDimensions(rawTargetW, rawTargetH, hwMaxLongEdge)
+
+        Log.i(
+            TAG,
+            "Executing HARDWARE_GPU_TRANSCODE (crop=${request.cropMode.name}, drawOverlay=${plan.needsOverlayBurnIn}, " +
+                "${validation.durationMs}ms, ${hwW}x${hwH} @ ${targetFps}fps)"
+        )
+        val hwSuccess = com.example.video.HardwareVideoTranscoder.transcodeWithHardwareGpu(
+            context = context,
+            inputFile = request.sourceFile,
+            outputFile = request.destinationFile,
+            durationMs = validation.durationMs,
+            sourceRotationDegrees = sourceRotationForGpu,
+            cropMode = request.cropMode,
+            outputWidth = hwW,
+            outputHeight = hwH,
+            targetFps = targetFps,
+            snapshotsTimeline = request.snapshotsTimeline,
+            defaultSnapshot = snapshot,
+            shouldDrawOverlay = plan.needsOverlayBurnIn,
+            preserveAudio = request.preserveAudio,
+            preferSoftwareEncoder = false,
+            isCancelled = isCancelled,
+            onProgress = onProgress
+        )
+        if (hwSuccess || isCancelled()) return hwSuccess
+
+        // Retry Hardware GPU at safe 1080p cap if 4K/UHD exceeded device encoder macroblock limit
+        val (safeW, safeH) = computeSafeEvenDimensions(rawTargetW, rawTargetH, 1920)
+        if (safeW != hwW || safeH != hwH) {
+            Log.w(TAG, "Hardware GPU transcode failed at ${hwW}x${hwH}; retrying at ${safeW}x${safeH}")
+            val hw1080Success = com.example.video.HardwareVideoTranscoder.transcodeWithHardwareGpu(
+                context = context,
+                inputFile = request.sourceFile,
+                outputFile = request.destinationFile,
+                durationMs = validation.durationMs,
+                sourceRotationDegrees = sourceRotationForGpu,
+                cropMode = request.cropMode,
+                outputWidth = safeW,
+                outputHeight = safeH,
+                targetFps = targetFps,
+                snapshotsTimeline = request.snapshotsTimeline,
+                defaultSnapshot = snapshot,
+                shouldDrawOverlay = plan.needsOverlayBurnIn,
+                preserveAudio = request.preserveAudio,
+                preferSoftwareEncoder = false,
+                isCancelled = isCancelled,
+                onProgress = onProgress
+            )
+            if (hw1080Success || isCancelled()) return hw1080Success
+        }
+
+        // Software AVC Surface encoder fallback (still GPU-decoded & streaming — far faster than CPU YUV)
+        onMethodChanged?.invoke(com.example.video.VideoExportMethod.SOFTWARE_FALLBACK_TRANSCODE)
+        Log.w(TAG, "Hardware encoder failed; trying streaming Software AVC Surface fallback (${safeW}x${safeH})")
+        val swSurfaceSuccess = com.example.video.HardwareVideoTranscoder.transcodeWithHardwareGpu(
+            context = context,
+            inputFile = request.sourceFile,
+            outputFile = request.destinationFile,
+            durationMs = validation.durationMs,
+            sourceRotationDegrees = sourceRotationForGpu,
+            cropMode = request.cropMode,
+            outputWidth = safeW,
+            outputHeight = safeH,
+            targetFps = targetFps,
+            snapshotsTimeline = request.snapshotsTimeline,
+            defaultSnapshot = snapshot,
+            shouldDrawOverlay = plan.needsOverlayBurnIn,
+            preserveAudio = request.preserveAudio,
+            preferSoftwareEncoder = true,
+            isCancelled = isCancelled,
+            onProgress = onProgress
+        )
+        if (swSurfaceSuccess || isCancelled()) return swSurfaceSuccess
+
+        // Last-resort CPU fallback if EGL surface creation itself is unsupported on this device
+        Log.w(TAG, "Streaming Surface fallback unavailable; using legacy CPU frame fallback (${safeW}x${safeH})")
+        return processVideoFrames(
+            context = context,
+            inputFile = request.sourceFile,
+            outputFile = request.destinationFile,
+            durationMs = validation.durationMs,
+            snapshotsTimeline = request.snapshotsTimeline,
+            defaultSnapshot = snapshot,
+            videoWidth = safeW,
+            videoHeight = safeH,
+            targetFps = targetFps,
+            shouldDrawOverlay = plan.needsOverlayBurnIn,
+            isCancelled = isCancelled,
+            onProgress = onProgress
+        )
+    }
+
+    private fun computeSafeEvenDimensions(rawWidth: Int, rawHeight: Int, maxLongEdge: Int): Pair<Int, Int> {
+        val longEdge = max(rawWidth, rawHeight).coerceAtLeast(16)
+        val scale = if (longEdge > maxLongEdge) maxLongEdge.toDouble() / longEdge.toDouble() else 1.0
+        val w = ((rawWidth * scale).roundToInt() and 1.inv()).coerceAtLeast(16)
+        val h = ((rawHeight * scale).roundToInt() and 1.inv()).coerceAtLeast(16)
+        return w to h
+    }
+
+    /**
      * Finalizes or post-processes a real camera-recorded MP4 video file with dynamic overlays.
      *
+     * Routes automatically through [com.example.video.VideoExportStrategySelector] (Direct Copy ->
+     * Fast Remux -> Hardware GPU Streaming Surface -> Safe Fallback).
      * Never substitutes demo or simulated road footage when [inputFile] is missing, empty, or invalid.
      */
     suspend fun applyOverlayToVideo(
@@ -155,72 +365,47 @@ object VideoOverlayProcessor {
         }
 
         try {
-            outputFile.parentFile?.mkdirs()
-
-            val displayW = (validation.displayWidth and 1.inv()).coerceAtLeast(16)
-            val displayH = (validation.displayHeight and 1.inv()).coerceAtLeast(16)
-            val isLandscapeVideo = displayW >= displayH
-            val cropRect = com.example.camera.CameraOutputFormatEngine.computeCropRectForMode(
-                sourceWidth = displayW,
-                sourceHeight = displayH,
+            val plan = com.example.video.VideoExportStrategySelector.selectPlan(
+                displayWidth = validation.displayWidth,
+                displayHeight = validation.displayHeight,
+                sourceRotationDegrees = validation.rotationDegrees,
                 cropMode = defaultSnapshot.cropMode,
-                isLandscape = isLandscapeVideo
+                hasRealtimeOverlay = hasRealtimeOverlay,
+                requireOverlayBurnIn = !hasRealtimeOverlay,
+                rotationOverrideDegrees = null,
+                isContainerMp4 = true,
+                preserveAudio = true,
+                sourceHasAudio = validation.hasAudioTrack
             )
-
-            if (hasRealtimeOverlay && !cropRect.isCropped) {
-                Log.i(
-                    TAG,
-                    "Input MP4 has live camera footage with real-time burnt overlays in FULL mode (${validation.durationMs}ms, ${displayW}x${displayH}). Finalizing directly."
-                )
-                if (inputFile.absolutePath == outputFile.absolutePath) {
-                    return@withContext outputFile.exists() && outputFile.length() > 0L
-                }
-                if (inputFile.renameTo(outputFile)) {
-                    return@withContext outputFile.exists() && outputFile.length() > 0L
-                }
-                inputFile.copyTo(outputFile, overwrite = true)
-                try { inputFile.delete() } catch (ignored: Exception) {}
-                return@withContext outputFile.exists() && outputFile.length() > 0L
-            }
-
-            // Either a non-FULL crop mode was selected OR GPU OverlayEffect was unavailable:
-            // encode exact cropped output dimensions while capping >1920 long edge for reliable MediaCodec AVC support
-            // and avoiding overlay duplication when already burnt in real time.
-            val rawTargetW = cropRect.width.coerceAtLeast(16)
-            val rawTargetH = cropRect.height.coerceAtLeast(16)
-            val maxLongEdge = 1920
-            val longEdge = max(rawTargetW, rawTargetH)
-            val scale = if (longEdge > maxLongEdge) maxLongEdge.toDouble() / longEdge.toDouble() else 1.0
-            val targetWidth = ((rawTargetW * scale).roundToInt() and 1.inv()).coerceAtLeast(16)
-            val targetHeight = ((rawTargetH * scale).roundToInt() and 1.inv()).coerceAtLeast(16)
-            val targetFps = validation.frameRate.roundToInt().coerceIn(15, 60)
-            Log.i(
-                TAG,
-                "Post-processing real camera MP4 (crop=${defaultSnapshot.cropMode.name}, hasRealtimeOverlay=$hasRealtimeOverlay, ${validation.durationMs}ms, ${targetWidth}x${targetHeight} @ ${targetFps}fps)"
-            )
-            val processed = processVideoFrames(
-                context = context,
-                inputFile = inputFile,
-                outputFile = outputFile,
-                durationMs = validation.durationMs,
+            val request = com.example.video.VideoExportRequest(
+                sourceFile = inputFile,
+                destinationFile = outputFile,
+                fileName = outputFile.name,
+                cropMode = defaultSnapshot.cropMode,
+                hasRealtimeOverlay = hasRealtimeOverlay,
+                requireOverlayBurnIn = !hasRealtimeOverlay,
                 snapshotsTimeline = snapshotsTimeline,
                 defaultSnapshot = defaultSnapshot,
-                videoWidth = targetWidth,
-                videoHeight = targetHeight,
-                targetFps = targetFps,
-                shouldDrawOverlay = !hasRealtimeOverlay,
+                deleteSourceAfterSuccess = inputFile.absolutePath != outputFile.absolutePath,
+                publishToMediaStore = false
+            )
+            val processed = executePlannedExport(
+                context = context,
+                request = request,
+                validation = validation,
+                plan = plan,
                 onProgress = onProgress
             )
             if (!processed) {
-                try { if (outputFile.exists()) outputFile.delete() } catch (ignored: Exception) {}
-            } else {
                 try {
-                    if (inputFile.absolutePath != outputFile.absolutePath) {
-                        inputFile.delete()
+                    if (outputFile.exists() && outputFile.absolutePath != inputFile.absolutePath) {
+                        outputFile.delete()
                     }
                 } catch (ignored: Exception) {}
+            } else if (inputFile.absolutePath != outputFile.absolutePath && inputFile.exists()) {
+                try { inputFile.delete() } catch (ignored: Exception) {}
             }
-            return@withContext processed
+            return@withContext processed && outputFile.exists() && outputFile.length() > 0L
         } catch (e: Exception) {
             Log.e(TAG, "Failed to finalize recorded video: ${e.message}", e)
             try {
@@ -243,6 +428,7 @@ object VideoOverlayProcessor {
         videoHeight: Int,
         targetFps: Int = 30,
         shouldDrawOverlay: Boolean = true,
+        isCancelled: () -> Boolean = { false },
         onProgress: ((Float) -> Unit)?
     ): Boolean {
         var extractor: MediaExtractor? = null
@@ -338,6 +524,12 @@ object VideoOverlayProcessor {
             var frameCount = 0
 
             while (currentMs < durationMs) {
+                if (isCancelled()) {
+                    lastGoodBitmap?.recycle()
+                    retriever.release()
+                    reusableBitmap.recycle()
+                    return false
+                }
                 val frameUs = currentMs * 1000L
                 val retrieved = try {
                     if (defaultSnapshot.cropMode == com.example.model.CameraCropMode.FULL && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {

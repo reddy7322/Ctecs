@@ -1272,6 +1272,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _recordingDurationSeconds = MutableStateFlow(0)
     val recordingDurationSeconds: StateFlow<Int> = _recordingDurationSeconds.asStateFlow()
 
+    val videoExportState: StateFlow<com.example.video.VideoExportState> =
+        com.example.video.VideoExportManager.exportState
+
     private val _isExportingVideo = MutableStateFlow(false)
     val isExportingVideo: StateFlow<Boolean> = _isExportingVideo.asStateFlow()
 
@@ -3348,165 +3351,181 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         forcedRotation: Int? = null,
         hasRealtimeOverlay: Boolean = true
     ) {
-        viewModelScope.launch(Dispatchers.IO) {
-            _isExportingVideo.value = true
-            try {
-                val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
-                val defaultSnapshot = createCurrentSnapshot(forcedRotation)
+        val appContext = context.applicationContext
+        val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
+        val defaultSnapshot = createCurrentSnapshot(forcedRotation)
 
-                val addrText = if (defaultSnapshot.locationName.isNotBlank() && !defaultSnapshot.locationName.equals("None", ignoreCase = true)) {
-                    defaultSnapshot.locationName
-                } else if (defaultSnapshot.overlayConfig.locationAddressOption != "None") {
-                    defaultSnapshot.overlayConfig.customAddressText.ifBlank { defaultSnapshot.overlayConfig.locationAddressOption }
-                } else {
-                    defaultSnapshot.projectProfile.highwayId
-                }
-                val fileName = com.example.data.PhotoRepository.buildCustomFileName(
-                    preset = cameraSettings.value.filenameFormatPreset,
-                    prefix = cameraSettings.value.customFilenamePrefix,
-                    timestamp = defaultSnapshot.timestamp,
-                    chainage = defaultSnapshot.displayChainage,
-                    address = addrText,
-                    roadName = defaultSnapshot.projectProfile.highwayId,
-                    tag = defaultSnapshot.overlayConfig.customTag,
-                    project = defaultSnapshot.projectProfile.highwayId,
-                    stretch = defaultSnapshot.projectProfile.packageSection,
-                    side = defaultSnapshot.projectProfile.roadSide.label,
-                    lane = defaultSnapshot.projectProfile.lane,
-                    workType = defaultSnapshot.projectProfile.workType,
-                    activity = defaultSnapshot.projectProfile.activity,
-                    subActivity = defaultSnapshot.projectProfile.subActivity,
-                    isVideo = true
-                )
+        val addrText = if (defaultSnapshot.locationName.isNotBlank() && !defaultSnapshot.locationName.equals("None", ignoreCase = true)) {
+            defaultSnapshot.locationName
+        } else if (defaultSnapshot.overlayConfig.locationAddressOption != "None") {
+            defaultSnapshot.overlayConfig.customAddressText.ifBlank { defaultSnapshot.overlayConfig.locationAddressOption }
+        } else {
+            defaultSnapshot.projectProfile.highwayId
+        }
+        val fileName = com.example.data.PhotoRepository.buildCustomFileName(
+            preset = cameraSettings.value.filenameFormatPreset,
+            prefix = cameraSettings.value.customFilenamePrefix,
+            timestamp = defaultSnapshot.timestamp,
+            chainage = defaultSnapshot.displayChainage,
+            address = addrText,
+            roadName = defaultSnapshot.projectProfile.highwayId,
+            tag = defaultSnapshot.overlayConfig.customTag,
+            project = defaultSnapshot.projectProfile.highwayId,
+            stretch = defaultSnapshot.projectProfile.packageSection,
+            side = defaultSnapshot.projectProfile.roadSide.label,
+            lane = defaultSnapshot.projectProfile.lane,
+            workType = defaultSnapshot.projectProfile.workType,
+            activity = defaultSnapshot.projectProfile.activity,
+            subActivity = defaultSnapshot.projectProfile.subActivity,
+            isVideo = true
+        )
 
-                // Reliable App-Specific Storage (guaranteed writable across all Android versions)
-                val localDir = java.io.File(
-                    context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir,
-                    "HighwayCamera"
-                ).apply { mkdirs() }
-                val finalFile = java.io.File(localDir, fileName)
+        val localDir = java.io.File(
+            appContext.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: appContext.filesDir,
+            "HighwayCamera"
+        ).apply { mkdirs() }
+        val finalFile = java.io.File(localDir, fileName)
 
-                if (!hasRealtimeOverlay && rawVideoFile.exists() && rawVideoFile.length() > 0L) {
-                    withContext(Dispatchers.Main) {
-                        showToast("Finalizing video overlays...", ToastType.INFO)
-                    }
-                }
+        val request = com.example.video.VideoExportRequest(
+            sourceFile = rawVideoFile,
+            destinationFile = finalFile,
+            fileName = fileName,
+            cropMode = defaultSnapshot.cropMode,
+            hasRealtimeOverlay = hasRealtimeOverlay,
+            requireOverlayBurnIn = !hasRealtimeOverlay,
+            snapshotsTimeline = timelineCopy,
+            defaultSnapshot = defaultSnapshot,
+            deleteSourceAfterSuccess = true,
+            publishToMediaStore = true
+        )
 
-                val isSaved = com.example.overlay.VideoOverlayProcessor.applyOverlayToVideo(
-                    context = context,
-                    inputFile = rawVideoFile,
-                    outputFile = finalFile,
-                    snapshotsTimeline = timelineCopy,
-                    defaultSnapshot = defaultSnapshot,
-                    hasRealtimeOverlay = hasRealtimeOverlay
-                )
+        val enqueued = com.example.video.VideoExportManager.enqueueExport(
+            context = appContext,
+            request = request
+        ) { success, finalState ->
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    if (success && finalFile.exists() && finalFile.length() > 0L) {
+                        try {
+                            val record = com.example.data.PhotoRecordEntity(
+                                filePath = finalFile.absolutePath,
+                                fileName = fileName,
+                                timestamp = defaultSnapshot.timestamp,
+                                latitude = defaultSnapshot.location?.latitude ?: 0.0,
+                                longitude = defaultSnapshot.location?.longitude ?: 0.0,
+                                accuracy = defaultSnapshot.gpsAccuracy,
+                                altitude = defaultSnapshot.location?.altitude ?: 0.0,
+                                chainageMetres = defaultSnapshot.matchResult.chainage?.metres,
+                                chainageLabel = defaultSnapshot.displayChainage,
+                                chainageConfidence = defaultSnapshot.matchResult.confidence.name,
+                                isManualChainage = defaultSnapshot.matchResult.isManual,
+                                offsetMetres = defaultSnapshot.matchResult.offsetMetres.toFloat(),
+                                highwayId = defaultSnapshot.projectProfile.highwayId,
+                                packageSection = defaultSnapshot.projectProfile.packageSection,
+                                roadSide = defaultSnapshot.projectProfile.roadSide.label,
+                                lane = defaultSnapshot.projectProfile.lane,
+                                activity = defaultSnapshot.projectProfile.activity,
+                                subActivity = defaultSnapshot.projectProfile.subActivity,
+                                customDescription = defaultSnapshot.projectProfile.customDescription,
+                                inspectorName = defaultSnapshot.projectProfile.inspectorName,
+                                formattedOverlayText = defaultSnapshot.projectProfile.buildHighwayText(defaultSnapshot.displayChainage)
+                            )
+                            photoRepository.insertRecord(record)
+                        } catch (ignored: Exception) {}
 
-                if (isSaved && finalFile.exists() && finalFile.length() > 0L) {
-                    // Publish to Shared Device Storage via Android MediaStore (Movies/HighwayCamera)
-                    try {
-                        val resolver = context.contentResolver
-                        val contentValues = ContentValues().apply {
-                            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
-                            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                            put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-                            put(MediaStore.Video.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-                            put(MediaStore.Video.Media.DATE_TAKEN, defaultSnapshot.timestamp)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/HighwayCamera")
-                                put(MediaStore.Video.Media.IS_PENDING, 1)
+                        val secText = String.format(java.util.Locale.US, "%.1fs", (finalState.elapsedMs / 1000.0).coerceAtLeast(0.1))
+                        withContext(Dispatchers.Main) {
+                            showToast("Video saved (${finalState.method.displayLabel}, $secText)", ToastType.SUCCESS)
+                        }
+                    } else {
+                        try {
+                            if (rawVideoFile.exists() && rawVideoFile.absolutePath != finalFile.absolutePath) {
+                                rawVideoFile.delete()
+                            }
+                        } catch (ignored: Exception) {}
+                        withContext(Dispatchers.Main) {
+                            if (finalState.status == com.example.video.VideoExportStatus.CANCELLED) {
+                                showToast("Video export cancelled.", ToastType.INFO)
+                            } else {
+                                showError(finalState.errorMessage ?: "Failed to save video: valid camera footage was not captured.")
                             }
                         }
-
-                        val videoCollection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                        } else {
-                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                        }
-
-                        val itemUri = resolver.insert(videoCollection, contentValues)
-                        if (itemUri != null) {
-                            resolver.openOutputStream(itemUri)?.use { outStream ->
-                                finalFile.inputStream().use { inStream ->
-                                    inStream.copyTo(outStream)
-                                }
-                                outStream.flush()
-                            }
-
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                contentValues.clear()
-                                contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
-                                resolver.update(itemUri, contentValues, null, null)
-                            }
-                        }
-                    } catch (mediaStoreEx: Exception) {
-                        android.util.Log.w("MainViewModel", "Publishing to MediaStore failed: ${mediaStoreEx.message}")
                     }
-
-                    // Also try copy to public Movies/HighwayCamera folder if accessible
-                    try {
-                        val publicDir = java.io.File(
-                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                            "HighwayCamera"
-                        ).apply { mkdirs() }
-                        val publicFile = java.io.File(publicDir, fileName)
-                        if (!publicFile.exists() || publicFile.length() == 0L) {
-                            finalFile.copyTo(publicFile, overwrite = true)
-                        }
-                        android.media.MediaScannerConnection.scanFile(
-                            context,
-                            arrayOf(publicFile.absolutePath, finalFile.absolutePath),
-                            arrayOf("video/mp4")
-                        ) { _, _ -> }
-                    } catch (ignored: Exception) {}
-
-                    try {
-                        val record = com.example.data.PhotoRecordEntity(
-                            filePath = finalFile.absolutePath,
-                            fileName = fileName,
-                            timestamp = defaultSnapshot.timestamp,
-                            latitude = defaultSnapshot.location?.latitude ?: 0.0,
-                            longitude = defaultSnapshot.location?.longitude ?: 0.0,
-                            accuracy = defaultSnapshot.gpsAccuracy,
-                            altitude = defaultSnapshot.location?.altitude ?: 0.0,
-                            chainageMetres = defaultSnapshot.matchResult.chainage?.metres,
-                            chainageLabel = defaultSnapshot.displayChainage,
-                            chainageConfidence = defaultSnapshot.matchResult.confidence.name,
-                            isManualChainage = defaultSnapshot.matchResult.isManual,
-                            offsetMetres = defaultSnapshot.matchResult.offsetMetres.toFloat(),
-                            highwayId = defaultSnapshot.projectProfile.highwayId,
-                            packageSection = defaultSnapshot.projectProfile.packageSection,
-                            roadSide = defaultSnapshot.projectProfile.roadSide.label,
-                            lane = defaultSnapshot.projectProfile.lane,
-                            activity = defaultSnapshot.projectProfile.activity,
-                            subActivity = defaultSnapshot.projectProfile.subActivity,
-                            customDescription = defaultSnapshot.projectProfile.customDescription,
-                            inspectorName = defaultSnapshot.projectProfile.inspectorName,
-                            formattedOverlayText = defaultSnapshot.projectProfile.buildHighwayText(defaultSnapshot.displayChainage)
-                        )
-                        photoRepository.insertRecord(record)
-                    } catch (ignored: Exception) {}
-
-                    withContext(Dispatchers.Main) {
-                        showToast("Video saved with dynamic overlays to Movies/HighwayCamera", ToastType.SUCCESS)
-                    }
-
-                    try {
-                        if (rawVideoFile.exists() && rawVideoFile.absolutePath != finalFile.absolutePath) {
-                            rawVideoFile.delete()
-                        }
-                    } catch (ignored: Exception) {}
-                } else {
-                    android.util.Log.e("MainViewModel", "Video export failed: raw file missing, empty, or invalid (${rawVideoFile.absolutePath}, size=${rawVideoFile.length()})")
-                    try { if (finalFile.exists()) finalFile.delete() } catch (ignored: Exception) {}
-                    try { if (rawVideoFile.exists()) rawVideoFile.delete() } catch (ignored: Exception) {}
-                    withContext(Dispatchers.Main) {
-                        showError("Failed to save video: valid camera footage was not captured.")
-                    }
+                } finally {
+                    _isExportingVideo.value = false
                 }
-            } finally {
-                _isExportingVideo.value = false
             }
         }
+
+        if (enqueued) {
+            _isExportingVideo.value = true
+        } else {
+            showToast("Another video export is already in progress.", ToastType.INFO)
+        }
+    }
+
+    /**
+     * Exports an existing Gallery video losslessly to shared Movies/HighwayCamera using
+     * Direct Stream Copy (zero re-encoding) without ever modifying or deleting the original file.
+     */
+    fun exportGalleryVideo(
+        context: android.content.Context,
+        videoRecord: com.example.data.PhotoRecordEntity
+    ) {
+        val appContext = context.applicationContext
+        val sourceFile = java.io.File(videoRecord.filePath)
+        if (!sourceFile.exists() || sourceFile.length() <= 0L) {
+            showError("Original video file is missing or unavailable.")
+            return
+        }
+
+        val exportStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val baseName = sourceFile.nameWithoutExtension.ifBlank { "CTECS_Video" }
+        val exportFileName = "${baseName}_export_${exportStamp}.mp4"
+        val exportDir = java.io.File(
+            appContext.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: appContext.filesDir,
+            "HighwayCamera/Exports"
+        ).apply { mkdirs() }
+        val destFile = java.io.File(exportDir, exportFileName)
+
+        val request = com.example.video.VideoExportRequest(
+            sourceFile = sourceFile,
+            destinationFile = destFile,
+            fileName = exportFileName,
+            cropMode = com.example.model.CameraCropMode.FULL,
+            hasRealtimeOverlay = true,
+            requireOverlayBurnIn = false,
+            deleteSourceAfterSuccess = false, // NEVER delete or modify gallery original!
+            publishToMediaStore = true
+        )
+
+        val enqueued = com.example.video.VideoExportManager.enqueueExport(
+            context = appContext,
+            request = request
+        ) { success, finalState ->
+            viewModelScope.launch(Dispatchers.Main) {
+                _isExportingVideo.value = false
+                if (success) {
+                    val secText = String.format(java.util.Locale.US, "%.1fs", (finalState.elapsedMs / 1000.0).coerceAtLeast(0.1))
+                    showToast("Exported to Movies/HighwayCamera (${finalState.method.displayLabel}, $secText)", ToastType.SUCCESS)
+                } else if (finalState.status == com.example.video.VideoExportStatus.CANCELLED) {
+                    showToast("Video export cancelled.", ToastType.INFO)
+                } else {
+                    showError(finalState.errorMessage ?: "Video export failed.")
+                }
+            }
+        }
+
+        if (enqueued) {
+            _isExportingVideo.value = true
+            showToast("Exporting video in background...", ToastType.INFO)
+        } else {
+            showToast("A video export is already in progress.", ToastType.INFO)
+        }
+    }
+
+    fun cancelVideoExport(context: android.content.Context) {
+        com.example.video.VideoExportManager.cancelActiveExport(context.applicationContext)
     }
 
     fun resetAllSettings() {

@@ -169,6 +169,7 @@ fun PhotosScreen(
     val gallerySortOption by viewModel.gallerySortOption.collectAsStateWithLifecycle()
     val galleryGroupOption by viewModel.galleryGroupOption.collectAsStateWithLifecycle()
     val miniMapViewDistance by viewModel.miniMapViewDistancePreference.collectAsStateWithLifecycle()
+    val videoExportState by viewModel.videoExportState.collectAsStateWithLifecycle()
 
     var selectedMediaTab by remember { mutableStateOf(GalleryMediaTab.PHOTOS) }
     var searchQuery by remember { mutableStateOf("") }
@@ -706,6 +707,15 @@ fun PhotosScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            if (videoExportState.isActive) {
+                com.example.ui.video.VideoExportProgressPill(
+                    state = videoExportState,
+                    onCancel = { viewModel.cancelVideoExport(context) },
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
             // Smart Switch Tab: Photos / Videos
             Row(
                 modifier = Modifier
@@ -1044,6 +1054,7 @@ fun PhotosScreen(
         FullScreenVideoPlayer(
             video = video,
             onDismiss = { viewingVideo = null },
+            onExport = { viewModel.exportGalleryVideo(context, video) },
             onShare = { shareSinglePhoto(context, video) },
             onDelete = {
                 viewingVideo = null
@@ -2181,6 +2192,7 @@ fun FullScreenPhotoViewer(
 fun FullScreenVideoPlayer(
     video: PhotoRecordEntity,
     onDismiss: () -> Unit,
+    onExport: () -> Unit = {},
     onShare: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -2362,6 +2374,12 @@ fun FullScreenVideoPlayer(
                                     contentDescription = "Toggle Video Info",
                                     tint = if (showInfoSheet) MaterialTheme.colorScheme.primary else Color.White
                                 )
+                            }
+                            IconButton(
+                                onClick = onExport,
+                                modifier = Modifier.testTag("export_gallery_video_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.FileDownload, contentDescription = "Export Video", tint = Color.White)
                             }
                             IconButton(onClick = onShare) {
                                 Icon(imageVector = Icons.Default.Share, contentDescription = "Share Video", tint = Color.White)
