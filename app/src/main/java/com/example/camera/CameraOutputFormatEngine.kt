@@ -305,6 +305,147 @@ object CameraOutputFormatEngine {
     }
 
     /**
+     * Computed edge-to-edge preview display transform that strictly decouples:
+     * 1. Live full-screen edge-to-edge visual presentation (`previewScale` applied via GPU layer on
+     *    a `FIT_CENTER` `PreviewView`, producing ZERO black letterbox/pillarbox bars in FULL mode), and
+     * 2. Full-sensor uncropped `ImageCapture` / `VideoCapture` output (because `PreviewView.scaleType`
+     *    stays `FIT_CENTER`, CameraX NEVER crops the captured JPEG/Video stream to the display ratio!).
+     */
+    data class EdgeToEdgePreviewTransform(
+        val previewScale: Float,
+        val visibleViewportRect: FramingPreviewRect,
+        val cropGuideRect: FramingPreviewRect,
+        val isEdgeToEdgeFilled: Boolean
+    )
+
+    /**
+     * Computes the adaptive GPU preview scale and 1:1 crop guide rectangle for a container of
+     * `[containerWidth x containerHeight]` displaying a native camera sensor of [sensorLongShortRatio]:
+     *
+     * - [CameraCropMode.FULL]: Scales uniformly about center by `max(W / vpW, H / vpH)` so the live
+     *   viewfinder fills 100% edge-to-edge (ZERO black bars in both Portrait and Landscape) while the
+     *   saved photograph/video preserves 100% of the uncropped native sensor resolution.
+     * - [CameraCropMode.SEMI_CROP], [CameraCropMode.RECTANGULAR_CROP], [CameraCropMode.SQUARE_CROP]:
+     *   Scales as close to edge-to-edge as possible while guaranteeing 100% of the active crop region
+     *   remains cleanly visible inside `[containerWidth x containerHeight]` so the golden crop guide
+     *   brackets match the saved output framing pixel-for-pixel.
+     */
+    fun computeEdgeToEdgePreviewTransform(
+        containerWidth: Float,
+        containerHeight: Float,
+        sensorLongShortRatio: Float = 4f / 3f,
+        cropMode: CameraCropMode,
+        isLandscape: Boolean
+    ): EdgeToEdgePreviewTransform {
+        if (containerWidth <= 1f || containerHeight <= 1f) {
+            val empty = FramingPreviewRect(0f, 0f, containerWidth.coerceAtLeast(0f), containerHeight.coerceAtLeast(0f), false, 1f)
+            return EdgeToEdgePreviewTransform(
+                previewScale = 1f,
+                visibleViewportRect = empty,
+                cropGuideRect = empty,
+                isEdgeToEdgeFilled = false
+            )
+        }
+
+        val baseSensorVp = computePreviewViewportRect(
+            containerWidth = containerWidth,
+            containerHeight = containerHeight,
+            sensorLongShortRatio = sensorLongShortRatio,
+            isLandscape = isLandscape
+        )
+        val baseGuide = computeCropGuideOverlayRect(
+            containerWidth = containerWidth,
+            containerHeight = containerHeight,
+            sensorLongShortRatio = sensorLongShortRatio,
+            cropMode = cropMode,
+            isLandscape = isLandscape
+        )
+
+        val fillScale = max(
+            containerWidth / baseSensorVp.widthPx.coerceAtLeast(1f),
+            containerHeight / baseSensorVp.heightPx.coerceAtLeast(1f)
+        ).coerceIn(1f, 3.0f)
+
+        val activeScale = if (cropMode == CameraCropMode.FULL || !baseGuide.isCropped) {
+            fillScale
+        } else {
+            val maxFitCropScale = min(
+                containerWidth / baseGuide.widthPx.coerceAtLeast(1f),
+                containerHeight / baseGuide.heightPx.coerceAtLeast(1f)
+            )
+            min(fillScale, maxFitCropScale).coerceAtLeast(1f)
+        }
+
+        val cx = containerWidth / 2f
+        val cy = containerHeight / 2f
+
+        fun scaleRectAboutCenter(rect: FramingPreviewRect, clampToContainer: Boolean): FramingPreviewRect {
+            val scaledW = rect.widthPx * activeScale
+            val scaledH = rect.heightPx * activeScale
+            val rawLeft = cx + (rect.leftPx - cx) * activeScale
+            val rawTop = cy + (rect.topPx - cy) * activeScale
+            if (!clampToContainer) {
+                return rect.copy(
+                    leftPx = rawLeft,
+                    topPx = rawTop,
+                    widthPx = scaledW,
+                    heightPx = scaledH
+                )
+            }
+            val clampedLeft = rawLeft.coerceIn(0f, containerWidth)
+            val clampedTop = rawTop.coerceIn(0f, containerHeight)
+            val clampedRight = (rawLeft + scaledW).coerceIn(clampedLeft, containerWidth)
+            val clampedBottom = (rawTop + scaledH).coerceIn(clampedTop, containerHeight)
+            val clampedW = (clampedRight - clampedLeft).coerceAtLeast(0f)
+            val clampedH = (clampedBottom - clampedTop).coerceAtLeast(0f)
+            return rect.copy(
+                leftPx = clampedLeft,
+                topPx = clampedTop,
+                widthPx = clampedW,
+                heightPx = clampedH,
+                targetAspectRatio = if (clampedH > 0f) clampedW / clampedH else rect.targetAspectRatio
+            )
+        }
+
+        val visibleVp = scaleRectAboutCenter(baseSensorVp, clampToContainer = true)
+        val scaledGuide = if (cropMode == CameraCropMode.FULL || !baseGuide.isCropped) {
+            visibleVp.copy(isCropped = false)
+        } else {
+            scaleRectAboutCenter(baseGuide, clampToContainer = true).copy(isCropped = true)
+        }
+
+        val isFilled = visibleVp.widthPx >= containerWidth - 1.5f && visibleVp.heightPx >= containerHeight - 1.5f
+        return EdgeToEdgePreviewTransform(
+            previewScale = activeScale,
+            visibleViewportRect = visibleVp,
+            cropGuideRect = scaledGuide,
+            isEdgeToEdgeFilled = isFilled
+        )
+    }
+
+    /**
+     * Maps a touch coordinate `(tapX, tapY)` on the edge-to-edge scaled screen back to the exact
+     * unscaled `PreviewView` coordinate expected by `PreviewView.meteringPointFactory`.
+     */
+    fun mapScreenTapToUnscaledPreview(
+        tapX: Float,
+        tapY: Float,
+        containerWidth: Float,
+        containerHeight: Float,
+        previewScale: Float
+    ): Pair<Float, Float> {
+        val safeScale = previewScale.takeIf { it.isFinite() && it > 0.01f } ?: 1f
+        if (containerWidth <= 1f || containerHeight <= 1f || abs(safeScale - 1f) < 0.001f) {
+            return Pair(tapX, tapY)
+        }
+        val cx = containerWidth / 2f
+        val cy = containerHeight / 2f
+        val unscaledX = (cx + (tapX - cx) / safeScale).coerceIn(0f, containerWidth)
+        val unscaledY = (cy + (tapY - cy) / safeScale).coerceIn(0f, containerHeight)
+        return Pair(unscaledX, unscaledY)
+    }
+
+    /**
      * Resolves the desired target width/height aspect ratio for viewfinder preview and cropping.
      *
      * @param format Active photo or video output format.

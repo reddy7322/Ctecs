@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -485,6 +486,16 @@ fun CameraScreen(
             )
         )
     }
+    var deviceCameraProfile by remember {
+        mutableStateOf(
+            com.example.camera.CameraDeviceCapabilityManager.inspectActiveCamera(
+                context = context,
+                cameraInfo = controller.cameraInfo,
+                isFrontCamera = isFrontCamera,
+                zoomCapabilities = zoomCapabilities
+            )
+        )
+    }
     var minZoomRatio by remember { mutableFloatStateOf(zoomCapabilities.minZoomRatio) }
     var maxZoomRatio by remember { mutableFloatStateOf(zoomCapabilities.maxZoomRatio) }
     val rawUseStandaloneUltraWide = !isFrontCamera &&
@@ -847,6 +858,7 @@ fun CameraScreen(
             },
             onZoomCapabilitiesChanged = { caps -> zoomCapabilities = caps },
             onPreviewViewportChanged = { rect -> previewViewportRect = rect },
+            onDeviceCapabilitiesChanged = { profile -> deviceCameraProfile = profile },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -900,21 +912,13 @@ fun CameraScreen(
             }
         }
 
-        // 3. Electronic Horizon Level Indicator
+        // 3. Sensor-Driven Native Electronic Horizon Level Reticle (matches native camera center crosshair + tilt lock)
         if (cameraSettings.showHorizonLevel) {
-            Box(
+            NativeHorizonLevelIndicator(
+                isLandscape = isLandscape,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .width(160.dp)
-                    .height(2.dp)
-                    .background(HighlightYellow.copy(alpha = 0.85f))
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(HighlightYellow)
+                    .testTag("camera_horizon_level_indicator")
             )
         }
 
@@ -1065,6 +1069,7 @@ fun CameraScreen(
                     .align(Alignment.TopCenter)
                     .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.statusBars)
+                    .windowInsetsPadding(WindowInsets.displayCutout)
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -1101,19 +1106,30 @@ fun CameraScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // 1. Flash Toggle Button
+                            // 1. Flash Toggle Button (adapts automatically to hardware flash availability)
+                            val flashSupported = deviceCameraProfile.hasFlashUnit
                             IconButton(
-                                onClick = { viewModel.toggleFlash() },
+                                onClick = {
+                                    if (flashSupported) {
+                                        viewModel.toggleFlash()
+                                    } else {
+                                        viewModel.showToast("Flash not available on this lens", ToastType.INFO)
+                                    }
+                                },
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(if (isFlashOn) hudPillActiveBg else hudPillBg)
+                                    .background(if (isFlashOn && flashSupported) hudPillActiveBg else hudPillBg)
                                     .testTag("landscape_flash_button")
                             ) {
                                 Icon(
-                                    imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                                    imageVector = if (isFlashOn && flashSupported) Icons.Default.FlashOn else Icons.Default.FlashOff,
                                     contentDescription = "Toggle Flash",
-                                    tint = if (isFlashOn) HighlightYellow else PrimaryText,
+                                    tint = when {
+                                        !flashSupported -> PrimaryText.copy(alpha = 0.35f)
+                                        isFlashOn -> HighlightYellow
+                                        else -> PrimaryText
+                                    },
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -1308,6 +1324,7 @@ fun CameraScreen(
                     .background(Color.Transparent)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .windowInsetsPadding(WindowInsets.navigationBars)
+                    .windowInsetsPadding(WindowInsets.displayCutout)
                     .padding(top = 52.dp, start = 14.dp, bottom = 12.dp)
             ) {
                 val isUltraShortHeight = maxHeight < 180.dp
@@ -2016,9 +2033,16 @@ fun CameraScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            // Flash cycle button
+                            // Flash cycle button (adapts automatically to detected hardware flash unit)
+                            val portraitFlashSupported = deviceCameraProfile.hasFlashUnit
                             IconButton(
-                                onClick = { viewModel.toggleFlash() },
+                                onClick = {
+                                    if (portraitFlashSupported) {
+                                        viewModel.toggleFlash()
+                                    } else {
+                                        viewModel.showToast("Flash not available on this lens", ToastType.INFO)
+                                    }
+                                },
                                 modifier = Modifier
                                     .size(34.dp)
                                     .clip(CircleShape)
@@ -2026,9 +2050,13 @@ fun CameraScreen(
                                     .testTag("flash_toggle_button")
                             ) {
                                 Icon(
-                                    imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                                    imageVector = if (isFlashOn && portraitFlashSupported) Icons.Default.FlashOn else Icons.Default.FlashOff,
                                     contentDescription = "Flash",
-                                    tint = if (isFlashOn) HighlightYellow else Color.White,
+                                    tint = when {
+                                        !portraitFlashSupported -> Color.White.copy(alpha = 0.35f)
+                                        isFlashOn -> HighlightYellow
+                                        else -> Color.White
+                                    },
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -2237,27 +2265,54 @@ fun CameraScreen(
                         }
                     }
 
-                    // Tap-to-Switch Crop Mode Pill (Full -> Semi Crop -> Rectangular Crop -> Square Crop)
-                    CameraCropModeSwitchPill(
-                        cropMode = cameraSettings.cropMode,
-                        isLandscape = false,
-                        animatedRotation = animatedRotation,
-                        onTapCycle = {
-                            try {
-                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                            } catch (ignored: Exception) {}
-                            viewModel.cycleCameraCropMode()
-                        },
-                        onLongPressResetFull = {
-                            if (cameraSettings.cropMode != com.example.model.CameraCropMode.FULL) {
-                                try {
-                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                } catch (ignored: Exception) {}
-                                viewModel.setCameraCropMode(com.example.model.CameraCropMode.FULL)
+                    // Right cluster: Detected Native Sensor Capability Badge (e.g. 12M / 4K) + Dynamic Crop Mode Switch Pill
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val activeCapBadge = deviceCameraProfile.activeModeBadge(isVideoMode = isVideoCaptureMode)
+                        if (activeCapBadge.isNotBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0x40101726),
+                                border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.25f)),
+                                modifier = Modifier
+                                    .graphicsLayer { rotationZ = -animatedRotation }
+                                    .testTag("camera_capability_badge")
+                            ) {
+                                Text(
+                                    text = activeCapBadge,
+                                    color = HighlightYellow,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.4.sp,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                )
                             }
-                        },
-                        modifier = Modifier.testTag("camera_crop_mode_button")
-                    )
+                        }
+
+                        // Tap-to-Switch Crop Mode Pill (Full -> Semi Crop -> Rectangular Crop -> Square Crop)
+                        CameraCropModeSwitchPill(
+                            cropMode = cameraSettings.cropMode,
+                            isLandscape = false,
+                            animatedRotation = animatedRotation,
+                            onTapCycle = {
+                                try {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                } catch (ignored: Exception) {}
+                                viewModel.cycleCameraCropMode()
+                            },
+                            onLongPressResetFull = {
+                                if (cameraSettings.cropMode != com.example.model.CameraCropMode.FULL) {
+                                    try {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    } catch (ignored: Exception) {}
+                                    viewModel.setCameraCropMode(com.example.model.CameraCropMode.FULL)
+                                }
+                            },
+                            modifier = Modifier.testTag("camera_crop_mode_button")
+                        )
+                    }
                 }
 
                 // Expandable Exposure EV Slider
@@ -4762,4 +4817,129 @@ internal fun ChainageStatusBubble(
         }
     }
 }
+
+/**
+ * Live sensor-driven Native Electronic Horizon Level Reticle matching modern OEM camera viewfinders:
+ * - Outer translucent circular guide + center crosshair
+ * - Dynamic horizontal level bar that tilts smoothly with gravity roll angle
+ * - Snaps golden yellow when level within ±1.5°
+ * - Zero battery drain when hidden; safe fallback to 0° on devices without gravity/accelerometer sensors.
+ */
+@Composable
+fun NativeHorizonLevelIndicator(
+    isLandscape: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var rawRollDegrees by remember { mutableFloatStateOf(0f) }
+
+    DisposableEffect(context, isLandscape) {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
+        val sensor = sensorManager?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY)
+            ?: sensorManager?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(event: android.hardware.SensorEvent?) {
+                val values = event?.values ?: return
+                if (values.size < 2) return
+                val ax = values[0].toDouble()
+                val ay = values[1].toDouble()
+                val mag = kotlin.math.hypot(ax, ay)
+                if (mag < 1.5) return // Phone lying flat -> keep level steady
+                val angleRad = kotlin.math.atan2(ax, ay)
+                var deg = Math.toDegrees(angleRad).toFloat()
+                if (isLandscape) {
+                    deg = if (deg >= 0f) deg - 90f else deg + 90f
+                }
+                // Wrap to [-45, +45] relative to nearest horizontal axis
+                while (deg > 90f) deg -= 180f
+                while (deg < -90f) deg += 180f
+                rawRollDegrees = deg.coerceIn(-45f, 45f)
+            }
+
+            override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+        }
+
+        if (sensorManager != null && sensor != null) {
+            try {
+                sensorManager.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+            } catch (_: Throwable) {}
+        }
+
+        onDispose {
+            try {
+                sensorManager?.unregisterListener(listener)
+            } catch (_: Throwable) {}
+        }
+    }
+
+    val smoothRoll by animateFloatAsState(
+        targetValue = rawRollDegrees,
+        animationSpec = tween(90, easing = FastOutSlowInEasing),
+        label = "horizon_roll"
+    )
+    val isLevel = kotlin.math.abs(smoothRoll) <= 1.5f
+    val activeColor by animateColorAsState(
+        targetValue = if (isLevel) HighlightYellow else Color.White.copy(alpha = 0.85f),
+        animationSpec = tween(140),
+        label = "horizon_level_color"
+    )
+
+    ComposeCanvas(
+        modifier = modifier.size(112.dp)
+    ) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val circleRadius = 28.dp.toPx()
+        val strokeThin = 1.3.dp.toPx()
+        val strokeBar = if (isLevel) 2.2.dp.toPx() else 1.7.dp.toPx()
+
+        // Outer reference circle
+        drawCircle(
+            color = Color.White.copy(alpha = 0.50f),
+            radius = circleRadius,
+            center = Offset(cx, cy),
+            style = Stroke(width = strokeThin)
+        )
+
+        // Fixed horizontal reference wing ticks outside circle
+        val outerTickStart = circleRadius + 4.dp.toPx()
+        val outerTickEnd = circleRadius + 18.dp.toPx()
+        drawLine(
+            color = activeColor,
+            start = Offset(cx - outerTickEnd, cy),
+            end = Offset(cx - outerTickStart, cy),
+            strokeWidth = strokeBar,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+        drawLine(
+            color = activeColor,
+            start = Offset(cx + outerTickStart, cy),
+            end = Offset(cx + outerTickEnd, cy),
+            strokeWidth = strokeBar,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+
+        // Dynamic rotating center crosshair + inner horizon line
+        rotate(degrees = -smoothRoll, pivot = Offset(cx, cy)) {
+            val innerHalf = circleRadius - 4.dp.toPx()
+            drawLine(
+                color = activeColor,
+                start = Offset(cx - innerHalf, cy),
+                end = Offset(cx + innerHalf, cy),
+                strokeWidth = strokeBar,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+            val crossVert = 7.dp.toPx()
+            drawLine(
+                color = activeColor,
+                start = Offset(cx, cy - crossVert),
+                end = Offset(cx, cy + crossVert),
+                strokeWidth = strokeThin,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+        }
+    }
+}
+
 

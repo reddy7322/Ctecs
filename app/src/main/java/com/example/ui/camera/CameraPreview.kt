@@ -77,6 +77,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -174,6 +176,7 @@ fun CameraPreview(
     onDoubleTapSwitchCamera: (() -> Unit)? = null,
     onZoomCapabilitiesChanged: ((com.example.camera.CameraLensZoomCapabilities) -> Unit)? = null,
     onPreviewViewportChanged: ((com.example.camera.FramingPreviewRect) -> Unit)? = null,
+    onDeviceCapabilitiesChanged: ((com.example.camera.DeviceCameraProfile) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -186,12 +189,14 @@ fun CameraPreview(
     val latestOnDoubleTapSwitchCamera by rememberUpdatedState(onDoubleTapSwitchCamera)
     val latestOnZoomCapabilitiesChanged by rememberUpdatedState(onZoomCapabilitiesChanged)
     val latestOnPreviewViewportChanged by rememberUpdatedState(onPreviewViewportChanged)
+    val latestOnDeviceCapabilitiesChanged by rememberUpdatedState(onDeviceCapabilitiesChanged)
     val latestZoomRatio by rememberUpdatedState(zoomRatio)
     val latestUseStandaloneUltraWide by rememberUpdatedState(useStandaloneUltraWide)
     val latestTouchToCapture by rememberUpdatedState(touchToCapture)
     val latestEasyToggleCameras by rememberUpdatedState(easyToggleCameras)
     val latestIsVideoMode by rememberUpdatedState(isVideoMode)
     val latestIsVideoRecording by rememberUpdatedState(isVideoRecording)
+    var activePreviewScale by remember { mutableFloatStateOf(1f) }
 
     // Camera Hardware Zoom Range State
     var minZoomRatio by remember { mutableFloatStateOf(1.0f) }
@@ -303,20 +308,25 @@ fun CameraPreview(
         focusTriggerCount++
 
         try {
+            val (mappedX, mappedY) = com.example.camera.CameraOutputFormatEngine.mapScreenTapToUnscaledPreview(
+                tapX = tapOffset.x,
+                tapY = tapOffset.y,
+                containerWidth = viewWidth.toFloat(),
+                containerHeight = viewHeight.toFloat(),
+                previewScale = activePreviewScale
+            )
             val factory = previewViewInstance?.meteringPointFactory
                 ?: SurfaceOrientedMeteringPointFactory(
                     viewWidth.toFloat().coerceAtLeast(1f),
                     viewHeight.toFloat().coerceAtLeast(1f)
                 )
-            val meteringPoint = factory.createPoint(tapOffset.x, tapOffset.y)
+            val meteringPoint = factory.createPoint(mappedX, mappedY)
 
-            // When user manually adjusted capture exposure via gesture, lock AF without letting AE
-            // cancel or reset the user's chosen capture brightness!
-            val meteringFlags = if (captureExposureState.isAutoExposure) {
-                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
-            } else {
-                FocusMeteringAction.FLAG_AF
-            }
+            // Native responsive spot autofocus + AE/AWB metering at tapped subject point.
+            // If user set a manual EV compensation bias, preserve it right after triggering spot AE.
+            val meteringFlags = FocusMeteringAction.FLAG_AF or
+                FocusMeteringAction.FLAG_AE or
+                FocusMeteringAction.FLAG_AWB
             val focusAction = FocusMeteringAction.Builder(
                 meteringPoint,
                 meteringFlags
@@ -324,6 +334,11 @@ fun CameraPreview(
                 .build()
 
             val future = controller.cameraControl?.startFocusAndMetering(focusAction)
+            if (!captureExposureState.isAutoExposure && captureExposureState.capabilities.hasUsableEvRange) {
+                try {
+                    controller.cameraControl?.setExposureCompensationIndex(captureExposureState.targetEvIndex)
+                } catch (_: Throwable) {}
+            }
             future?.addListener({
                 try {
                     val result = future.get()
@@ -684,6 +699,15 @@ fun CameraPreview(
         )
         zoomCapabilities = initialZoomCaps
         latestOnZoomCapabilitiesChanged?.invoke(initialZoomCaps)
+        latestOnDeviceCapabilitiesChanged?.invoke(
+            com.example.camera.CameraDeviceCapabilityManager.inspectActiveCamera(
+                context = context,
+                cameraInfo = controller.cameraInfo,
+                isFrontCamera = isFrontCamera,
+                zoomCapabilities = initialZoomCaps,
+                exposureCapabilities = caps
+            )
+        )
         cameraBindEpoch++
 
         // Re-query shortly after CameraX finishes async lens bind so live ZoomState & ExposureState are picked up
@@ -707,6 +731,15 @@ fun CameraPreview(
         )
         zoomCapabilities = boundZoomCaps
         latestOnZoomCapabilitiesChanged?.invoke(boundZoomCaps)
+        latestOnDeviceCapabilitiesChanged?.invoke(
+            com.example.camera.CameraDeviceCapabilityManager.inspectActiveCamera(
+                context = context,
+                cameraInfo = controller.cameraInfo,
+                isFrontCamera = isFrontCamera,
+                zoomCapabilities = boundZoomCaps,
+                exposureCapabilities = boundCaps
+            )
+        )
         cameraBindEpoch++
     }
 
@@ -957,16 +990,23 @@ fun CameraPreview(
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val totalWidth = constraints.maxWidth.toFloat()
                 val totalHeight = constraints.maxHeight.toFloat()
-                val previewViewportRect = remember(totalWidth, totalHeight, nativeSensorAspectRatio, isLandscape) {
-                    com.example.camera.CameraOutputFormatEngine.computePreviewViewportRect(
+                val edgeToEdgeTransform = remember(totalWidth, totalHeight, nativeSensorAspectRatio, cropMode, isLandscape) {
+                    com.example.camera.CameraOutputFormatEngine.computeEdgeToEdgePreviewTransform(
                         containerWidth = totalWidth,
                         containerHeight = totalHeight,
                         sensorLongShortRatio = nativeSensorAspectRatio,
+                        cropMode = cropMode,
                         isLandscape = isLandscape
                     )
                 }
-                LaunchedEffect(previewViewportRect) {
-                    latestOnPreviewViewportChanged?.invoke(previewViewportRect)
+                val animatedPreviewScale by animateFloatAsState(
+                    targetValue = edgeToEdgeTransform.previewScale,
+                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                    label = "edge_to_edge_preview_scale"
+                )
+                activePreviewScale = animatedPreviewScale
+                LaunchedEffect(edgeToEdgeTransform.visibleViewportRect) {
+                    latestOnPreviewViewportChanged?.invoke(edgeToEdgeTransform.visibleViewportRect)
                 }
                 val density = LocalDensity.current
                 val rightZoneWidth = maxOf(with(density) { 92.dp.toPx() }, totalWidth * 0.28f)
@@ -974,29 +1014,45 @@ fun CameraPreview(
                 val rightZoneStart = (totalWidth - rightZoneMargin - rightZoneWidth).coerceAtLeast(0f)
                 val rightZoneEnd = totalWidth - rightZoneMargin
 
-                // 1. CameraX PreviewView Rendering — FIT_CENTER guarantees 100% corner-to-corner native sensor FOV
-                // with ZERO hidden edge cropping so live preview matches saved photos and videos identically.
-                AndroidView(
-                    factory = { ctx ->
-                        PreviewView(ctx).apply {
-                            this.controller = controller
-                            scaleType = PreviewView.ScaleType.FIT_CENTER
-                            // COMPATIBLE uses TextureView which eliminates SurfaceView EGL_BAD_ATTRIBUTE emulation errors
-                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        }.also {
-                            previewViewInstance = it
-                            videoManager?.attachPreviewView(it)
-                        }
-                    },
-                    update = { pv ->
-                        if (pv.scaleType != PreviewView.ScaleType.FIT_CENTER) {
-                            pv.scaleType = PreviewView.ScaleType.FIT_CENTER
-                        }
-                        previewViewInstance = pv
-                        videoManager?.attachPreviewView(pv)
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
+                // 1. Genuine Edge-to-Edge Live Preview strictly decoupled from Full-Sensor Capture:
+                //    - PreviewView.scaleType stays FIT_CENTER so CameraX LifecycleCameraController NEVER
+                //      attaches a display-aspect-ratio ViewPort crop to ImageCapture or VideoCapture
+                //      (preserving 100% native 4:3 sensor resolution e.g. 4000x3000 in FULL mode!).
+                //    - Uniform GPU graphicsLayer scaling expands the TextureView live feed edge-to-edge
+                //      with zero black bars in FULL mode and 1:1 framing alignment in CROP modes.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            PreviewView(ctx).apply {
+                                this.controller = controller
+                                scaleType = PreviewView.ScaleType.FIT_CENTER
+                                // COMPATIBLE uses TextureView which supports smooth edge-to-edge GPU scaling
+                                // and avoids SurfaceView EGL clipping/emulation artifacts across Android OEMs.
+                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            }.also {
+                                previewViewInstance = it
+                                videoManager?.attachPreviewView(it)
+                            }
+                        },
+                        update = { pv ->
+                            if (pv.scaleType != PreviewView.ScaleType.FIT_CENTER) {
+                                pv.scaleType = PreviewView.ScaleType.FIT_CENTER
+                            }
+                            previewViewInstance = pv
+                            videoManager?.attachPreviewView(pv)
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = animatedPreviewScale
+                                scaleY = animatedPreviewScale
+                            }
+                    )
+                }
 
                 // 2. Gesture Detector Layer for Pinch-to-Zoom, Touch-to-Focus & Existing Right-Side Brightness Drag
                 Box(
@@ -1129,15 +1185,16 @@ fun CameraPreview(
                         .padding(end = if (isLandscape) 104.dp else 16.dp)
                 )
 
-                // 5. Dynamic Crop Mode Framing Overlay — synchronized 1:1 with the FIT_CENTER sensor viewport
-                //    In FULL mode: absolutely ZERO crop mask (complete corner-to-corner sensor frame visible).
+                // 5. Dynamic Crop Mode Framing Overlay — synchronized 1:1 with the edge-to-edge preview transform.
+                //    In FULL mode: absolutely ZERO crop mask (complete edge-to-edge viewfinder unobstructed).
                 if (cropMode != com.example.model.CameraCropMode.FULL && constraints.maxWidth > 0 && constraints.maxHeight > 0) {
                     CameraCropModeGuideOverlay(
                         cropMode = cropMode,
                         sensorLongShortRatio = nativeSensorAspectRatio,
                         isLandscape = isLandscape,
                         containerWidth = constraints.maxWidth.toFloat(),
-                        containerHeight = constraints.maxHeight.toFloat()
+                        containerHeight = constraints.maxHeight.toFloat(),
+                        guideOverride = edgeToEdgeTransform.cropGuideRect
                     )
                 }
 
@@ -1298,57 +1355,34 @@ fun CameraFocusIndicator(
         ) {
             val w = size.width
             val h = size.height
-            val strokeWidth = 2.dp.toPx()
-            val bracketLen = w * 0.28f
+            val strokeWidth = if (status == CameraFocusStatus.SUCCESS) 2.2.dp.toPx() else 1.8.dp.toPx()
+            val cornerRadius = 8.dp.toPx()
 
-            // 1. Draw 4 Viewfinder Corner Brackets
-            val path = Path().apply {
-                // Top-Left Bracket
-                moveTo(0f, bracketLen)
-                lineTo(0f, 0f)
-                lineTo(bracketLen, 0f)
-
-                // Top-Right Bracket
-                moveTo(w - bracketLen, 0f)
-                lineTo(w, 0f)
-                lineTo(w, bracketLen)
-
-                // Bottom-Right Bracket
-                moveTo(w, h - bracketLen)
-                lineTo(w, h)
-                lineTo(w - bracketLen, h)
-
-                // Bottom-Left Bracket
-                moveTo(bracketLen, h)
-                lineTo(0f, h)
-                lineTo(0f, h - bracketLen)
-            }
-
-            drawPath(
-                path = path,
+            // 1. Native rounded focus reticle frame (matches native camera golden focus square)
+            drawRoundRect(
                 color = indicatorColor,
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
+                size = androidx.compose.ui.geometry.Size(
+                    (w - strokeWidth).coerceAtLeast(1f),
+                    (h - strokeWidth).coerceAtLeast(1f)
+                ),
+                cornerRadius = CornerRadius(cornerRadius, cornerRadius),
+                style = Stroke(width = strokeWidth)
             )
 
-            // 2. Inner subtle circular reticle
-            drawCircle(
-                color = indicatorColor.copy(alpha = if (status == CameraFocusStatus.SUCCESS) 0.85f else 0.45f),
-                radius = w * 0.32f,
-                style = Stroke(width = 1.2.dp.toPx())
-            )
+            // 2. Subtle mid-edge focus ticks for optical precision
+            val tickLen = 5.dp.toPx()
+            val midX = w / 2f
+            val midY = h / 2f
+            drawLine(indicatorColor, Offset(midX, strokeWidth), Offset(midX, strokeWidth + tickLen), 1.4.dp.toPx(), StrokeCap.Round)
+            drawLine(indicatorColor, Offset(midX, h - strokeWidth), Offset(midX, h - strokeWidth - tickLen), 1.4.dp.toPx(), StrokeCap.Round)
+            drawLine(indicatorColor, Offset(strokeWidth, midY), Offset(strokeWidth + tickLen, midY), 1.4.dp.toPx(), StrokeCap.Round)
+            drawLine(indicatorColor, Offset(w - strokeWidth, midY), Offset(w - strokeWidth - tickLen, midY), 1.4.dp.toPx(), StrokeCap.Round)
 
-            // 3. Center Target Dot
-            if (status == CameraFocusStatus.SUCCESS) {
-                drawCircle(
-                    color = indicatorColor,
-                    radius = 3.5.dp.toPx()
-                )
-            } else if (status == CameraFocusStatus.RUNNING) {
-                drawCircle(
-                    color = indicatorColor.copy(alpha = 0.6f),
-                    radius = 2.dp.toPx()
-                )
-            }
+            // 3. Center target crosshair pip
+            val crossHalf = if (status == CameraFocusStatus.SUCCESS) 4.dp.toPx() else 3.dp.toPx()
+            drawLine(indicatorColor.copy(alpha = 0.85f), Offset(midX - crossHalf, midY), Offset(midX + crossHalf, midY), 1.3.dp.toPx(), StrokeCap.Round)
+            drawLine(indicatorColor.copy(alpha = 0.85f), Offset(midX, midY - crossHalf), Offset(midX, midY + crossHalf), 1.3.dp.toPx(), StrokeCap.Round)
         }
     }
 }
@@ -2636,10 +2670,11 @@ fun CameraCropModeGuideOverlay(
     isLandscape: Boolean,
     containerWidth: Float,
     containerHeight: Float,
+    guideOverride: com.example.camera.FramingPreviewRect? = null,
     modifier: Modifier = Modifier
 ) {
     if (cropMode == com.example.model.CameraCropMode.FULL) return
-    val guide = com.example.camera.CameraOutputFormatEngine.computeCropGuideOverlayRect(
+    val guide = guideOverride ?: com.example.camera.CameraOutputFormatEngine.computeCropGuideOverlayRect(
         containerWidth = containerWidth,
         containerHeight = containerHeight,
         sensorLongShortRatio = sensorLongShortRatio,
