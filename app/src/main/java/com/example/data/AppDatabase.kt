@@ -8,9 +8,6 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-import com.example.siteregister.data.SiteRegisterDao
-import com.example.siteregister.data.SiteRegisterLocalRecordEntity
-import com.example.siteregister.data.SiteRegisterSyncQueueEntity
 import com.example.survey.data.SurveyCalibrationEntity
 import com.example.survey.data.SurveyDao
 import com.example.survey.data.SurveyMarkerEntity
@@ -28,11 +25,9 @@ import com.example.survey.data.SurveySessionEntity
         SurveySessionEntity::class,
         SurveyPointEntity::class,
         SurveyMarkerEntity::class,
-        SurveyCalibrationEntity::class,
-        SiteRegisterLocalRecordEntity::class,
-        SiteRegisterSyncQueueEntity::class
+        SurveyCalibrationEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,7 +38,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun qcRecordDao(): QcRecordDao
     abstract fun dailyReportRecordDao(): DailyReportRecordDao
     abstract fun surveyDao(): SurveyDao
-    abstract fun siteRegisterDao(): SiteRegisterDao
 
     companion object {
         @Volatile
@@ -236,6 +230,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration after removing the Site Register module.
+         * Leaves any pre-existing SQLite tables untouched so no user data is deleted.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Intentionally non-destructive: preserve all existing user tables and records.
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -245,7 +249,8 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-                        MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9
+                        MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                        MIGRATION_9_10
                     )
                     .fallbackToDestructiveMigration()
                     .build()

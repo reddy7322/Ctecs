@@ -24,7 +24,6 @@ android {
     versionName = "1.0"
 
     buildConfigField("String", "BUILD_CHANNEL", "\"$buildChannel\"")
-    buildConfigField("String", "SUPABASE_URL", "\"https://ytrolykqyjqwjwtifxmi.supabase.co\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

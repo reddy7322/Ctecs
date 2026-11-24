@@ -169,7 +169,7 @@ fun MainScreen(
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY && currentTab != AppTab.WEATHER && currentTab != AppTab.SITE_REGISTER) {
+            if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY && currentTab != AppTab.WEATHER) {
                 val c = com.example.ui.theme.CtecsTheme.colors
                 val selectedPillBg = c.accent.copy(alpha = if (c.isDark) 0.16f else 0.12f)
                 val selectedIconColor = c.accent
@@ -275,8 +275,7 @@ fun MainScreen(
                     },
                     onNavigateToNotes = { viewModel.setTab(AppTab.SMART_NOTES) },
                     onNavigateToSurvey = { viewModel.setTab(AppTab.SURVEY) },
-                    onNavigateToWeather = { viewModel.setTab(AppTab.WEATHER) },
-                    onNavigateToSiteRegister = { viewModel.setTab(AppTab.SITE_REGISTER) }
+                    onNavigateToWeather = { viewModel.setTab(AppTab.WEATHER) }
                 )
                 AppTab.CAMERA -> CameraScreen(
                     viewModel = viewModel,
@@ -306,18 +305,6 @@ fun MainScreen(
                     viewModel = viewModel,
                     onNavigateBack = { viewModel.setTab(AppTab.HOME) }
                 )
-                AppTab.SITE_REGISTER -> {
-                    val liveMatch by viewModel.liveMatchResult.collectAsStateWithLifecycle()
-                    val smartDir by viewModel.smartDirectionState.collectAsStateWithLifecycle()
-                    val recentPhotos by viewModel.allPhotos.collectAsStateWithLifecycle()
-                    com.example.siteregister.ui.SiteRegisterRootScreen(
-                        defaultChainage = liveMatch.displayChainage.takeIf { it.contains("+") }.orEmpty(),
-                        defaultSide = smartDir.confirmedSide ?: "RHS",
-                        recentCtecsPhotoUris = recentPhotos.take(8).map { it.filePath },
-                        onLaunchCtecsCamera = { viewModel.setTab(AppTab.CAMERA) },
-                        onExitToHome = { viewModel.setTab(AppTab.HOME) }
-                    )
-                }
                 AppTab.WEATHER -> {
                     val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
                     val forecastBundle by viewModel.weatherForecastBundle.collectAsStateWithLifecycle()

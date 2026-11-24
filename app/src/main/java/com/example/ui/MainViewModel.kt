@@ -92,7 +92,6 @@ enum class AppTab(val label: String) {
     SURVEY("Survey"),
     HIGHWAY_TOOLS("Tools"),
     SMART_NOTES("Notes"),
-    SITE_REGISTER("Register"),
     WEATHER("Weather"),
     SETTINGS("Settings")
 }

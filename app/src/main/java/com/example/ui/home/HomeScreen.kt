@@ -228,7 +228,6 @@ fun HomeScreen(
     onNavigateToNotes: () -> Unit = {},
     onNavigateToSurvey: () -> Unit = {},
     onNavigateToWeather: () -> Unit = {},
-    onNavigateToSiteRegister: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Normal Home Page obeys the device's system display sleep timeout;
@@ -825,12 +824,11 @@ fun HomeScreen(
                 )
             }
 
-            // 6. Tools, Site Register & DPR Notes Quick Action Buttons (Flush above bottom bar with zero gap)
+            // 6. Survey, Tools & DPR Notes Quick Action Buttons (Flush above bottom bar with zero gap)
             HomeQuickActionButtons(
                 onNavigateToTools = onNavigateToTools,
                 onNavigateToNotes = onNavigateToNotes,
                 onNavigateToSurvey = onNavigateToSurvey,
-                onNavigateToSiteRegister = onNavigateToSiteRegister,
                 onNavigateToCamera = onNavigateToCamera,
                 onNavigateToPhotos = onNavigateToPhotos,
                 onNavigateToRoutes = onNavigateToRoutes,
@@ -2368,7 +2366,6 @@ fun HomeQuickActionButtons(
     onNavigateToTools: () -> Unit,
     onNavigateToNotes: () -> Unit,
     onNavigateToSurvey: () -> Unit = {},
-    onNavigateToSiteRegister: () -> Unit = {},
     onNavigateToCamera: () -> Unit,
     onNavigateToPhotos: () -> Unit,
     onNavigateToRoutes: () -> Unit,
@@ -2385,17 +2382,6 @@ fun HomeQuickActionButtons(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        HomeShortcutPill(
-            label = "Register",
-            icon = Icons.Default.Edit,
-            accent = c.success,
-            surfaceColor = cardBgColor,
-            titleColor = c.textPrimary,
-            height = btnHeight,
-            tag = "home_btn_site_register",
-            onClick = onNavigateToSiteRegister,
-            modifier = Modifier.weight(1f)
-        )
         HomeShortcutPill(
             label = "Survey",
             icon = Icons.Default.Engineering,

@@ -199,7 +199,7 @@ class SmartDirectionManager {
 
     /**
      * Centralized evaluation entry point shared across Camera, Home, Survey, Routes,
-     * Site Register, Overlays, Foreground Services, and Widgets.
+     * Overlays, Foreground Services, and Widgets.
      */
     @Synchronized
     fun evaluate(

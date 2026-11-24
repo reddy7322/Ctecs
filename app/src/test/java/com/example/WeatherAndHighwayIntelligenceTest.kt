@@ -47,10 +47,16 @@ import com.example.model.ChainageMatchResult
 import com.example.model.MatchConfidence
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasTestTag
+import com.example.ui.AppTab
+import com.example.ui.home.HomeQuickActionButtons
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.weather.LiveHighwayLocationSnapshot
 import com.example.ui.weather.WeatherDashboardScreen
-import com.example.ui.weather.WeatherDashboardTab
 import com.example.ui.weather.WeatherIntelligenceSettingsSectionContent
 import com.example.ui.weather.WeatherSectionKeys
 import com.example.ui.weather.buildLiveHighwayLocationSnapshot
@@ -690,12 +696,19 @@ class WeatherAndHighwayIntelligenceTest {
     }
 
     @Test
-    fun `WeatherDashboardScreen renders Forecast, Highway Work Suitability, Targets & Risks, and all 10 animated weather icons`() {
+    fun `WeatherDashboardScreen renders minimalist essential weather, hides empty alerts, and omits missing values`() {
         val nowMs = makeTimestampMs(2026, Calendar.NOVEMBER, 20, 10, 0)
-        val bundle = buildSampleBundle(nowMs = nowMs, rainHours = setOf(13, 14), stormHours = setOf(15))
+        val rawBundle = buildSampleBundle(nowMs = nowMs)
+        val partialObs = rawBundle.current.copy(
+            uvIndex = null,
+            visibilityKm = null,
+            sunriseMs = null,
+            sunsetMs = null
+        )
+        val bundleNoAlerts = rawBundle.copy(current = partialObs, alerts = emptyList())
         val settings = WeatherIntelligenceSettings(animationsEnabled = false)
-        val assessments = IrcMorthWeatherRuleEngine.evaluateAllActivities(bundle.current, settings.contractSpec, referenceTimeMs = nowMs)
-        val timeline = IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(HighwayWorkActivity.BC_LAYING, bundle.hourly, settings.contractSpec)
+        val assessments = IrcMorthWeatherRuleEngine.evaluateAllActivities(bundleNoAlerts.current, settings.contractSpec, referenceTimeMs = nowMs)
+        val timeline = IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(HighwayWorkActivity.BC_LAYING, bundleNoAlerts.hourly, settings.contractSpec)
         val targetInput = WorkTargetInput(
             activity = HighwayWorkActivity.BC_LAYING,
             startChainageKm = 10.0,
@@ -704,24 +717,25 @@ class WeatherAndHighwayIntelligenceTest {
         )
         val targetPred = WorkTargetPredictionEngine.predictWorkTarget(targetInput, timeline)
         val delayRisks = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline, targetPred)
+        var pickedActivity by mutableStateOf(HighwayWorkActivity.BC_LAYING)
 
         composeRule.setContent {
             MyApplicationTheme(themeMode = "light") {
                 WeatherDashboardScreen(
-                    weatherUiState = WeatherUiState.Available(bundle.current),
-                    forecastBundle = bundle,
+                    weatherUiState = WeatherUiState.Available(bundleNoAlerts.current),
+                    forecastBundle = bundleNoAlerts,
                     resolvedLocationName = "NH-334 Roorkee–Haridwar",
                     is24HourFormat = false,
                     settings = settings,
                     assessments = assessments,
-                    selectedActivity = HighwayWorkActivity.BC_LAYING,
+                    selectedActivity = pickedActivity,
                     hourlyWorkTimeline = timeline,
                     siteMeasurements = ActualSiteMeasurements(),
                     workTargetInput = targetInput,
                     workTargetPrediction = targetPred,
                     delayRiskSummary = delayRisks,
-                    actionableAlerts = bundle.alerts,
-                    onSelectActivity = {},
+                    actionableAlerts = emptyList(),
+                    onSelectActivity = { pickedActivity = it },
                     onUpdateContractSpec = {},
                     onUpdateSiteMeasurements = {},
                     onUpdateWorkTargetInput = {},
@@ -733,21 +747,51 @@ class WeatherAndHighwayIntelligenceTest {
         }
 
         composeRule.waitForIdle()
+        // Section A: Main current weather section
         composeRule.onNodeWithTag("weather_dashboard_screen").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_dashboard_hero_card").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_dashboard_temp").assertTextContains("28°C")
+        composeRule.onNodeWithTag("weather_condition_label").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_feels_like").assertTextContains("Feels like", substring = true)
 
-        // Switch to Highway Work Suitability tab
-        composeRule.onNodeWithTag("weather_tab_suitability").performClick()
-        composeRule.waitForIdle()
+        // Section F: Alerts MUST be hidden completely when there are no active warnings
+        composeRule.onNodeWithTag("weather_severe_alerts_section").assertDoesNotExist()
+
+        // Section B: Essential details show available metrics and strictly omit null fields (never invent values)
+        composeRule.onNodeWithTag("weather_details_grid_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_detail_rain").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_detail_wind").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_detail_humidity").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_detail_uv").assertDoesNotExist()
+        composeRule.onNodeWithTag("weather_detail_visibility").assertDoesNotExist()
+        composeRule.onNodeWithTag("weather_detail_sun").assertDoesNotExist()
+
+        // Sections C, D, E: Hourly, 7-Day Forecast, and Compact Highway Work Suitability on single clean screen
+        composeRule.onNodeWithTag("weather_forecast_tab_list")
+            .performScrollToNode(hasTestTag("weather_dashboard_24h_section"))
+        composeRule.onNodeWithTag("weather_dashboard_24h_section").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("weather_forecast_tab_list")
+            .performScrollToNode(hasTestTag("weather_dashboard_7day_section"))
+        composeRule.onNodeWithTag("weather_dashboard_7day_section").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_daily_row_0").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("weather_forecast_tab_list")
+            .performScrollToNode(hasTestTag("highway_work_suitability_section"))
         composeRule.onNodeWithTag("highway_work_suitability_section").assertIsDisplayed()
-        composeRule.onNodeWithTag("irc_morth_spec_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_suitability_activity_name", useUnmergedTree = true)
+            .assertTextContains("BC Laying", substring = true)
+        composeRule.onNodeWithTag("weather_suitability_reason").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_suitability_best_window").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_engineer_disclaimer").assertIsDisplayed()
 
-        // Switch to Targets & Risks tab
-        composeRule.onNodeWithTag("weather_tab_targets").performClick()
+        // Expand compact activity selector & switch to DBM Laying
+        composeRule.onNodeWithTag("weather_suitability_activity_toggle").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("work_target_and_risk_section").assertIsDisplayed()
-        composeRule.onNodeWithTag("work_target_prediction_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_suitability_activity_picker").assertIsDisplayed()
+        composeRule.onNodeWithTag("suitability_pick_dbm_laying").performClick()
+        composeRule.waitForIdle()
+        assertEquals(HighwayWorkActivity.DBM_LAYING, pickedActivity)
     }
 
     @Test
@@ -789,7 +833,12 @@ class WeatherAndHighwayIntelligenceTest {
     }
 
     @Test
-    fun `WeatherDashboardScreen displays live highway chainage with stale fallback and independent smart collapsible sections`() {
+    @Config(sdk = [33], qualifiers = "w800dp-h640dp")
+    fun `WeatherDashboardScreen displays live highway chainage, deduplicated alerts, landscape layout, and Site Register is completely removed`() {
+        // 1. Verify Site Register is completely removed from AppTab navigation
+        assertTrue(AppTab.entries.none { it.name == "SITE_REGISTER" })
+        assertTrue(AppTab.entries.none { it.label.equals("Register", ignoreCase = true) })
+
         val nowMs = makeTimestampMs(2026, Calendar.NOVEMBER, 20, 10, 0)
         val liveMatch = ChainageMatchResult(
             chainage = Chainage(196_450L),
@@ -835,13 +884,12 @@ class WeatherAndHighwayIntelligenceTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val prefs = PreferencesManager(context)
         runBlocking {
-            prefs.updateWeatherExpandedSections(setOf(WeatherSectionKeys.HOURLY_FORECAST, WeatherSectionKeys.BC_SUITABILITY))
+            prefs.updateWeatherExpandedSections(setOf(WeatherSectionKeys.WEATHER_ALERTS))
         }
         val restoredSections = prefs.getInitialWeatherExpandedSections()
-        assertTrue(WeatherSectionKeys.HOURLY_FORECAST in restoredSections)
-        assertTrue(WeatherSectionKeys.BC_SUITABILITY in restoredSections)
+        assertTrue(WeatherSectionKeys.WEATHER_ALERTS in restoredSections)
 
-        // Verify WeatherDashboardScreen renders live chainage banner and independent expand/collapse
+        // Verify Landscape wide layout (800dp) renders live chainage + deduplicated active alerts in dark theme
         val bundle = buildSampleBundle(nowMs = nowMs, rainHours = setOf(13, 14), stormHours = setOf(15))
         val settings = WeatherIntelligenceSettings(animationsEnabled = false)
         val assessments = IrcMorthWeatherRuleEngine.evaluateAllActivities(bundle.current, settings.contractSpec, referenceTimeMs = nowMs)
@@ -857,57 +905,74 @@ class WeatherAndHighwayIntelligenceTest {
 
         composeRule.setContent {
             MyApplicationTheme(themeMode = "dark") {
-                WeatherDashboardScreen(
-                    weatherUiState = WeatherUiState.Available(bundle.current),
-                    forecastBundle = bundle,
-                    resolvedLocationName = "Roorkee Bypass",
-                    is24HourFormat = false,
-                    settings = settings,
-                    assessments = assessments,
-                    selectedActivity = HighwayWorkActivity.BC_LAYING,
-                    hourlyWorkTimeline = timeline,
-                    siteMeasurements = ActualSiteMeasurements(),
-                    workTargetInput = targetInput,
-                    workTargetPrediction = targetPred,
-                    delayRiskSummary = delayRisks,
-                    actionableAlerts = bundle.alerts,
-                    onSelectActivity = {},
-                    onUpdateContractSpec = {},
-                    onUpdateSiteMeasurements = {},
-                    onUpdateWorkTargetInput = {},
-                    onRefreshWeather = {},
-                    onNavigateBack = {},
-                    nowMs = nowMs,
-                    liveHighwayLocation = liveSnap
-                )
+                Box(modifier = Modifier.size(width = 800.dp, height = 620.dp)) {
+                    WeatherDashboardScreen(
+                        weatherUiState = WeatherUiState.Available(bundle.current),
+                        forecastBundle = bundle,
+                        resolvedLocationName = "Roorkee Bypass",
+                        is24HourFormat = true,
+                        settings = settings,
+                        assessments = assessments,
+                        selectedActivity = HighwayWorkActivity.BC_LAYING,
+                        hourlyWorkTimeline = timeline,
+                        siteMeasurements = ActualSiteMeasurements(),
+                        workTargetInput = targetInput,
+                        workTargetPrediction = targetPred,
+                        delayRiskSummary = delayRisks,
+                        actionableAlerts = bundle.alerts + bundle.alerts, // duplicate alerts must be deduplicated
+                        onSelectActivity = {},
+                        onUpdateContractSpec = {},
+                        onUpdateSiteMeasurements = {},
+                        onUpdateWorkTargetInput = {},
+                        onRefreshWeather = {},
+                        onNavigateBack = {},
+                        nowMs = nowMs,
+                        liveHighwayLocation = liveSnap
+                    )
+                }
             }
         }
 
         composeRule.waitForIdle()
-        // Live Highway Location banner is visible immediately inside Hourly Forecast section
-        composeRule.onNodeWithTag("weather_live_highway_location_banner").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_left_column_list").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_live_chainage_line").assertTextContains("NH-58 | 196+450 | LHS")
+        composeRule.onNodeWithTag("weather_severe_alerts_section").assertIsDisplayed()
 
-        // Tap Hourly Forecast header to expand independently, then collapse again
-        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.HOURLY_FORECAST}").performClick()
+        // Tap alert strip to expand details smoothly while centered in viewport
+        composeRule.onNodeWithTag("weather_severe_alerts_section").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("weather_section_body_${WeatherSectionKeys.HOURLY_FORECAST}").assertIsDisplayed()
-        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.HOURLY_FORECAST}").performClick()
-        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("weather_alerts_expanded_body", useUnmergedTree = true).assertIsDisplayed()
 
-        // Switch to Highway Work tab and expand BC Laying Suitability independently
-        composeRule.onNodeWithTag("weather_tab_suitability").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.BC_SUITABILITY}").assertIsDisplayed()
-        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.BC_SUITABILITY}").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("weather_section_body_${WeatherSectionKeys.BC_SUITABILITY}").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_left_column_list")
+            .performScrollToNode(hasTestTag("weather_details_grid_card"))
+        composeRule.onNodeWithTag("weather_detail_uv").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_detail_visibility").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_detail_sun").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_dashboard_24h_section").assertIsDisplayed()
+    }
 
-        // Switch to Targets & Risks tab and expand Target Prediction
-        composeRule.onNodeWithTag("weather_tab_targets").performClick()
+    @Test
+    fun `HomeQuickActionButtons no longer renders Site Register button while keeping Survey, Tools, Notes`() {
+        composeRule.setContent {
+            MyApplicationTheme(themeMode = "dark") {
+                HomeQuickActionButtons(
+                    onNavigateToTools = {},
+                    onNavigateToNotes = {},
+                    onNavigateToSurvey = {},
+                    onNavigateToCamera = {},
+                    onNavigateToPhotos = {},
+                    onNavigateToRoutes = {},
+                    onNavigateToSettings = {},
+                    cardBgColor = ComposeColor(0xFF1E293B),
+                    cardBorderColor = ComposeColor(0xFF334155),
+                    isDark = true
+                )
+            }
+        }
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("weather_section_header_${WeatherSectionKeys.TARGET_PREDICTION}").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("weather_section_body_${WeatherSectionKeys.TARGET_PREDICTION}").assertIsDisplayed()
+        composeRule.onNodeWithTag("home_btn_site_register").assertDoesNotExist()
+        composeRule.onNodeWithTag("home_btn_survey").assertIsDisplayed()
+        composeRule.onNodeWithTag("home_btn_tools").assertIsDisplayed()
+        composeRule.onNodeWithTag("home_btn_notes").assertIsDisplayed()
     }
 }
