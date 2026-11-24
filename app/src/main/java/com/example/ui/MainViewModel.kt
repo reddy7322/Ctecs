@@ -1373,6 +1373,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private val refreshCoordinator = ChainageAccuracyRefreshCoordinator()
     private val stuckChainageMonitor = StuckChainageMonitor()
+    private var manualDirectionInactivityJob: Job? = null
 
     val selectedAlignmentId = MutableStateFlow<String?>(preferencesManager.getInitialSelectedAlignmentId())
     @Volatile
@@ -1620,8 +1621,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Runs the single shared [com.example.navigation.SmartDirectionManager], publishes the result
-     * to [CtecsNavigationTelemetryHub], synchronizes in-memory profile & active survey road side
-     * (without persisting stale GPS state), and announces confirmed direction changes via TTS.
+     * to [CtecsNavigationTelemetryHub], synchronizes auto-reactivation (10-min photo inactivity or
+     * reliable >= 5 km/h speed), updates in-memory profile & active survey road side, and announces
+     * confirmed direction changes via TTS.
      */
     private fun evaluateAndPublishSmartDirection(
         loc: LocationState,
@@ -1637,12 +1639,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         CtecsNavigationTelemetryHub.updateTelemetry(directionState = dirState)
 
-        // Sync in-memory ProjectProfile roadSide ONLY when direction is confirmed (never persist stale GPS direction)
-        val confirmedBinary = dirState.confirmedBinarySide
-        if (!dirState.isManualOverride &&
-            confirmedBinary != null &&
-            _projectProfile.value.roadSide != RoadSide.NONE
+        // If centralized engine expired manual override (10-min photo inactivity OR >= 5 km/h vehicle speed),
+        // immediately synchronize AUTO mode into app preferences, telemetry hub, and widgets.
+        if (dirState.autoReactivatedReason != null ||
+            (!dirState.isManualOverride && prefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE)
         ) {
+            val autoPrefs = prefs.copy(
+                controlMode = com.example.model.DirectionControlMode.AUTO,
+                manualOverrideSide = null,
+                manualSelectedAtMs = 0L
+            )
+            manualDirectionInactivityJob?.cancel()
+            manualDirectionInactivityJob = null
+            progressionTracker.clearManualSide()
+            _smartDirectionPreferences.value = autoPrefs
+            CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = autoPrefs)
+            preferencesManager.launchSafeEdit {
+                preferencesManager.updateSmartDirectionPreferences(autoPrefs)
+            }
+            com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
+        }
+
+        // Sync in-memory ProjectProfile roadSide ONLY when AUTO direction is confirmed
+        // (manual overrides update ProjectProfile directly via updateSide and are never overwritten by GPS).
+        val confirmedBinary = dirState.confirmedBinarySide
+        if (!dirState.isManualOverride && confirmedBinary != null) {
             val detectedEnum = RoadSide.fromString(confirmedBinary)
             if (_projectProfile.value.roadSide != detectedEnum) {
                 _projectProfile.update { it.copy(roadSide = detectedEnum) }
@@ -1675,6 +1696,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         return dirState
+    }
+
+    /**
+     * Lightweight centralized watcher that runs ONLY while a manual direction override is active,
+     * ensuring the 10-minute photo-inactivity timeout fires reliably even if no GPS updates arrive.
+     */
+    private fun scheduleManualDirectionInactivityWatcher() {
+        manualDirectionInactivityJob?.cancel()
+        if (_smartDirectionPreferences.value.controlMode != com.example.model.DirectionControlMode.MANUAL_OVERRIDE) {
+            manualDirectionInactivityJob = null
+            return
+        }
+        manualDirectionInactivityJob = viewModelScope.launch(Dispatchers.Default) {
+            while (_smartDirectionPreferences.value.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE) {
+                val remainingMs = CtecsNavigationTelemetryHub.sharedDirectionManager
+                    .remainingManualInactivityMs(_smartDirectionPreferences.value)
+                    ?: break
+                if (remainingMs <= 0L) {
+                    val loc = locationTracker.locationState.value
+                    val currentMatch = _autoMatchStateFlow.value
+                    val route = activeRouteData.value
+                    val refreshedDir = evaluateAndPublishSmartDirection(loc, currentMatch, route)
+                    _autoMatchStateFlow.update { current ->
+                        current.copy(
+                            detectedSide = refreshedDir.confirmedSide ?: "Unknown",
+                            smartDirectionState = refreshedDir
+                        )
+                    }
+                    break
+                }
+                kotlinx.coroutines.delay(minOf(remainingMs.coerceAtLeast(1_000L), 15_000L))
+            }
+        }
     }
 
     /**
@@ -1717,11 +1771,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) { autoResult, manual, manualText ->
         if (manual != null || !manualText.isNullOrBlank()) {
             val formattedManual = manual?.format() ?: manualText.orEmpty()
-            val preservedSide = if (autoResult.detectedSide.isNotBlank() && autoResult.detectedSide != "Unknown") {
-                autoResult.detectedSide
-            } else {
-                progressionTracker.getCurrentSide()
-            }
+            val preservedSide = autoResult.smartDirectionState?.confirmedSide
+                ?.takeIf { it.isNotBlank() }
+                ?: autoResult.detectedSide.takeIf { it.isNotBlank() }
+                ?: "Unknown"
             autoResult.copy(
                 chainage = manual ?: autoResult.chainage,
                 customChainageText = formattedManual,
@@ -1904,8 +1957,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     !prefs.normalizedManualSide.isNullOrBlank()
                 ) {
                     progressionTracker.setManualSide(prefs.normalizedManualSide!!)
+                    scheduleManualDirectionInactivityWatcher()
                 } else {
                     progressionTracker.clearManualSide()
+                    manualDirectionInactivityJob?.cancel()
+                    manualDirectionInactivityJob = null
                 }
             }
         }
@@ -2831,15 +2887,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateSide(side: RoadSide) {
+        val nowMs = System.currentTimeMillis()
         val updatedPrefs = _smartDirectionPreferences.value.copy(
             controlMode = com.example.model.DirectionControlMode.MANUAL_OVERRIDE,
-            manualOverrideSide = side.label
+            manualOverrideSide = side.label,
+            manualSelectedAtMs = nowMs
         )
         val normalizedLabel = updatedPrefs.normalizedManualSide ?: side.label
+        CtecsNavigationTelemetryHub.sharedDirectionManager.onManualDirectionSelected(normalizedLabel, nowMs)
         progressionTracker.setManualSide(normalizedLabel)
         _smartDirectionPreferences.value = updatedPrefs
         CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
         _projectProfile.update { it.copy(roadSide = side) }
+        scheduleManualDirectionInactivityWatcher()
 
         // Synchronously publish authoritative direction state so Camera preview, immediate captures,
         // Home, Screensaver, Survey, and Notifications stay 100% consistent without async lag.
@@ -2852,6 +2912,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             smartDirectionState = dirState
         )
 
+        // Sync active recording survey road side when a binary/BHS manual option is chosen
+        val activeSurvey = surveyManager.activeSession.value
+        if (activeSurvey != null && activeSurvey.status == com.example.survey.model.SurveyStatus.RECORDING) {
+            val surveySide = when (side) {
+                RoadSide.LHS -> com.example.survey.model.RoadSide.LHS
+                RoadSide.RHS -> com.example.survey.model.RoadSide.RHS
+                RoadSide.BOTH -> com.example.survey.model.RoadSide.BHS
+                else -> null
+            }
+            if (surveySide != null && activeSurvey.roadSide != surveySide) {
+                viewModelScope.launch { surveyManager.updateRoadSide(surveySide) }
+            }
+        }
+
         preferencesManager.launchSafeEdit {
             preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
             preferencesManager.editProjectProfile { it.copy(roadSide = side) }
@@ -2860,15 +2934,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetSideToAuto() {
         viewModelScope.launch {
+            manualDirectionInactivityJob?.cancel()
+            manualDirectionInactivityJob = null
+            CtecsNavigationTelemetryHub.sharedDirectionManager.onAutoModeSelected()
             progressionTracker.clearManualSide()
             val updatedPrefs = _smartDirectionPreferences.value.copy(
                 controlMode = com.example.model.DirectionControlMode.AUTO,
-                manualOverrideSide = null
+                manualOverrideSide = null,
+                manualSelectedAtMs = 0L
             )
             _smartDirectionPreferences.value = updatedPrefs
             CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
             preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
-            // Recalculate immediately from live GPS + alignment state
+            // Recalculate immediately from live GPS + KMZ/KML alignment offset
             val loc = locationTracker.locationState.value
             val currentMatch = _autoMatchStateFlow.value
             val route = activeRouteData.value
@@ -2877,7 +2955,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 detectedSide = dirState.confirmedSide ?: "Unknown",
                 smartDirectionState = dirState
             )
-            _uiMessages.emit(UiMessage.Info("Direction set to Smart Auto-Detection"))
+            _uiMessages.emit(UiMessage.Info("Direction set to Auto (KMZ/KML Offset)"))
         }
     }
 
@@ -3313,6 +3391,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isRecording.value = true
         _isRecordingPaused.value = false
         _recordingDurationSeconds.value = 0
+        CtecsNavigationTelemetryHub.sharedDirectionManager.onVideoRecordingStateChanged(true)
         synchronized(videoSnapshotsTimeline) {
             videoSnapshotsTimeline.clear()
             videoSnapshotsTimeline.add(createCurrentSnapshot())
@@ -3344,6 +3423,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isRecordingPaused.value = false
         _recordingDurationSeconds.value = 0
         videoTickerJob?.cancel()
+        CtecsNavigationTelemetryHub.sharedDirectionManager.onVideoRecordingStateChanged(false)
     }
 
     fun processRecordedVideo(
@@ -3930,6 +4010,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (result.isSuccess) {
                     val record = result.getOrNull()
                     _lastCapturedPhoto.value = record
+                    // Reset 10-minute manual direction inactivity timer ONLY on successful photograph capture
+                    CtecsNavigationTelemetryHub.sharedDirectionManager.onPhotoCaptured()
                     _uiMessages.emit(UiMessage.Success("Photo saved: ${record?.fileName}"))
                 } else {
                     val err = result.exceptionOrNull()?.message ?: "Save error"

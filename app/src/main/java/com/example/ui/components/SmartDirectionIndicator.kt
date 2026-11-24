@@ -288,8 +288,9 @@ fun SmartDirectionModePickerMenu(
         }
 
         manualOptions.forEach { side ->
-            val isSelected = directionState.isManualOverride &&
-                directionState.confirmedSide.equals(side.label, ignoreCase = true)
+            val confirmedNorm = com.example.navigation.SmartDirectionManager.normalizeManualSide(directionState.confirmedSide)
+            val sideNorm = com.example.navigation.SmartDirectionManager.normalizeManualSide(side.label)
+            val isSelected = directionState.isManualOverride && confirmedNorm != null && confirmedNorm == sideNorm
             DropdownMenuItem(
                 text = {
                     Text(

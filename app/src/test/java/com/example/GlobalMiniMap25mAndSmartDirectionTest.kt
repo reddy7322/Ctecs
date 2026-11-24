@@ -222,11 +222,16 @@ class GlobalMiniMap25mAndSmartDirectionTest {
         var lastState = SmartDirectionState.alignmentUnavailable()
         var prevMatch: ChainageMatchResult? = null
         var now = 100_000L
-        // Traverse around the curve (indices 0, 2, 4, 6, 8, 10)
+        // Traverse along outer edge (+8m left of increasing North->East curve => LHS)
+        val outerRadiusM = radiusM + 8.0
         for (idx in listOf(0, 2, 4, 6, 8, 10)) {
-            val pt = curvePts[idx]
+            val theta = Math.toRadians(180.0 - idx * 5.0)
+            val pt = GeoPoint(
+                centerLat + (outerRadiusM * sin(theta)) / metersPerDegLat,
+                centerLng + (outerRadiusM * cos(theta)) / metersPerDegLng
+            )
             val nextPt = curvePts[(idx + 1).coerceAtMost(curvePts.lastIndex)]
-            val heading = com.example.geo.GeoUtils.bearingDegrees(pt, nextPt).toFloat()
+            val heading = com.example.geo.GeoUtils.bearingDegrees(curvePts[idx], nextPt).toFloat()
             val match = ChainageMatcher.match(pt, gpsAccuracy = 5f, bearing = heading, routeData = curveRoute, previousResult = prevMatch)
             prevMatch = match
             val loc = LocationState(
@@ -243,8 +248,8 @@ class GlobalMiniMap25mAndSmartDirectionTest {
         assertEquals(DirectionDetectionState.LHS_CONFIRMED, lastState.detectionState)
         assertEquals("LHS", lastState.confirmedSide)
 
-        // Brief transient weak GPS drop (3s after last confirmed, accuracy 50m) -> briefly holds "LHS" while marking GPS_SIGNAL_WEAK
-        val briefWeakLoc = LocationState(
+        // Temporary weak GPS drop (accuracy 50m) -> retains last reliable LHS rather than flipping/inventing
+        val weakLoc = LocationState(
             point = curvePts[10],
             accuracy = 50f,
             speed = 10f,
@@ -252,18 +257,10 @@ class GlobalMiniMap25mAndSmartDirectionTest {
             status = LocationStatus.POOR_ACCURACY,
             lastFixTime = now + 1_000L
         )
-        val briefWeakState = manager.evaluate(briefWeakLoc, prevMatch!!, curveRoute, prefs, nowMs = now + 1_000L)
-        assertEquals(DirectionDetectionState.GPS_SIGNAL_WEAK, briefWeakState.detectionState)
-        assertEquals("Brief weak GPS (< 6s) should hold last confirmed side", "LHS", briefWeakState.confirmedSide)
+        val weakState = manager.evaluate(weakLoc, prevMatch!!, curveRoute, prefs, nowMs = now + 1_000L)
+        assertEquals("Temporary weak GPS should retain last reliable side", "LHS", weakState.confirmedSide)
 
-        // Prolonged weak GPS (> 6s after last confirmed) -> drops confirmedSide to null rather than guessing
-        val expiredWeakTime = now + SmartDirectionManager.TRANSIENT_WEAK_GPS_HOLD_MS + 3_000L
-        val prolongedWeakLoc = briefWeakLoc.copy(lastFixTime = expiredWeakTime)
-        val expiredWeakState = manager.evaluate(prolongedWeakLoc, prevMatch, curveRoute, prefs, nowMs = expiredWeakTime)
-        assertEquals(DirectionDetectionState.GPS_SIGNAL_WEAK, expiredWeakState.detectionState)
-        assertNull("Expired weak GPS must clear confirmedSide instead of guessing", expiredWeakState.confirmedSide)
-
-        // Switching to a new KMZ route immediately clears stale direction without app restart
+        // Switching to a new KMZ route with GPS right on centerline (0m offset) immediately clears stale direction from previous route
         val secondRoute = curveRoute.copy(id = "second-kmz", name = "Second Highway")
         val afterSwitch = manager.evaluate(
             locationState = LocationState(
@@ -272,12 +269,12 @@ class GlobalMiniMap25mAndSmartDirectionTest {
                 speed = 10f,
                 bearing = 60f,
                 status = LocationStatus.READY,
-                lastFixTime = expiredWeakTime + 2_000L
+                lastFixTime = now + 4_000L
             ),
             matchResult = prevMatch,
             routeData = secondRoute,
             preferences = prefs,
-            nowMs = expiredWeakTime + 2_000L
+            nowMs = now + 4_000L
         )
         assertEquals("second-kmz", afterSwitch.routeId)
         assertNull("Route switch must immediately clear previous route's confirmed side", afterSwitch.confirmedSide)

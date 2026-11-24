@@ -682,12 +682,16 @@ fun SmartNotesScreen(
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
 
     val detectedSideFromRoute = remember(liveMatchResult, activeRoute) {
-        if (activeRoute != null && liveMatchResult.confidence != MatchConfidence.NO_MATCH) {
-            if (liveMatchResult.detectedSide.equals("LHS", true)) "LHS"
-            else if (liveMatchResult.detectedSide.equals("RHS", true)) "RHS"
-            else "LHS"
-        } else {
-            null
+        val smartDir = liveMatchResult.smartDirectionState
+        when {
+            smartDir != null && smartDir.isManualOverride -> smartDir.confirmedSide
+            smartDir != null -> smartDir.confirmedBinarySide
+            activeRoute != null && liveMatchResult.confidence != MatchConfidence.NO_MATCH -> {
+                liveMatchResult.detectedSide
+                    .takeIf { it.equals("LHS", true) || it.equals("RHS", true) }
+                    ?.uppercase(Locale.ROOT)
+            }
+            else -> null
         }
     }
 

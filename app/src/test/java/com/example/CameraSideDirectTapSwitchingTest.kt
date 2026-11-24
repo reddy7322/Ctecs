@@ -35,7 +35,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [33])
 class CameraSideDirectTapSwitchingTest {
 
     @get:Rule
@@ -52,21 +52,20 @@ class CameraSideDirectTapSwitchingTest {
         assertEquals(0, composeTestRule.onAllNodesWithText("MAN▾", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("• M", substring = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("AUTO", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
-        assertEquals(0, composeTestRule.onAllNodesWithText("MEDIAN", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("Auto (Smart Direction)", substring = true).fetchSemanticsNodes().size)
         assertEquals(0, composeTestRule.onAllNodesWithText("Smart Direction Mode", substring = true).fetchSemanticsNodes().size)
     }
 
     @Test
-    fun `CameraSideOption cycles strictly in LHS RHS BHS NONE LHS order and never exposes AUTO`() {
+    fun `CameraSideOption cycles strictly in LHS RHS BHS MEDIAN NONE LHS order and never exposes AUTO`() {
         assertEquals(
-            listOf(CameraSideOption.LHS, CameraSideOption.RHS, CameraSideOption.BHS, CameraSideOption.NONE),
+            listOf(CameraSideOption.LHS, CameraSideOption.RHS, CameraSideOption.BHS, CameraSideOption.MEDIAN, CameraSideOption.NONE),
             CameraSideOption.entries
         )
 
         val sequence = buildList {
             var current = CameraSideOption.LHS
-            repeat(5) {
+            repeat(6) {
                 add(current)
                 current = current.next()
             }
@@ -76,6 +75,7 @@ class CameraSideDirectTapSwitchingTest {
                 CameraSideOption.LHS,
                 CameraSideOption.RHS,
                 CameraSideOption.BHS,
+                CameraSideOption.MEDIAN,
                 CameraSideOption.NONE,
                 CameraSideOption.LHS
             ),
@@ -121,13 +121,20 @@ class CameraSideDirectTapSwitchingTest {
         assertNull(autoUncertain.activeOption)
         assertEquals(CameraSideOption.LHS, autoUncertain.nextOptionOnTap())
 
-        // Manual BHS & NONE map cleanly
+        // Manual BHS, MEDIAN & NONE map cleanly
         val manualBhs = resolveCameraSideDisplayState(
             SmartDirectionState(isManualOverride = true, confirmedSide = "BHS"),
             ProjectProfile(roadSide = RoadSide.BOTH)
         )
         assertEquals("BHS", manualBhs.displayLabel)
-        assertEquals(CameraSideOption.NONE, manualBhs.nextOptionOnTap())
+        assertEquals(CameraSideOption.MEDIAN, manualBhs.nextOptionOnTap())
+
+        val manualMedian = resolveCameraSideDisplayState(
+            SmartDirectionState(isManualOverride = true, confirmedSide = "MEDIAN"),
+            ProjectProfile(roadSide = RoadSide.MEDIAN)
+        )
+        assertEquals("MEDIAN", manualMedian.displayLabel)
+        assertEquals(CameraSideOption.NONE, manualMedian.nextOptionOnTap())
 
         val manualNone = resolveCameraSideDisplayState(
             SmartDirectionState(isManualOverride = true, confirmedSide = "NONE"),
@@ -180,7 +187,16 @@ class CameraSideDirectTapSwitchingTest {
         assertEquals("BHS", OverlayTextGenerator.resolveAuthoritativeCaptureSide(viewModel.createCurrentSnapshot()).first)
         assertNoAutoManualOrDropdownUiPresent()
 
-        // Step 3: Tap -> NONE (omits side cleanly from capture output!)
+        // Step 3: Tap -> MEDIAN
+        composeTestRule.onNodeWithTag("side_chip").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("side_chip").assertTextEquals("MEDIAN")
+        assertEquals(RoadSide.MEDIAN, viewModel.projectProfile.value.roadSide)
+        assertTrue(viewModel.smartDirectionState.value.isManualOverride)
+        assertEquals("MEDIAN", OverlayTextGenerator.resolveAuthoritativeCaptureSide(viewModel.createCurrentSnapshot()).first)
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Step 4: Tap -> NONE (omits side cleanly from capture output!)
         composeTestRule.onNodeWithTag("side_chip").performClick()
         advanceAndIdle(150L)
         composeTestRule.onNodeWithTag("side_chip").assertTextEquals("NONE")
@@ -192,7 +208,7 @@ class CameraSideDirectTapSwitchingTest {
         )
         assertNoAutoManualOrDropdownUiPresent()
 
-        // Step 4: Tap -> wraps cleanly back to LHS
+        // Step 5: Tap -> wraps cleanly back to LHS
         composeTestRule.onNodeWithTag("side_chip").performClick()
         advanceAndIdle(150L)
         composeTestRule.onNodeWithTag("side_chip").assertTextEquals("LHS")
@@ -252,14 +268,21 @@ class CameraSideDirectTapSwitchingTest {
         assertEquals(RoadSide.BOTH, viewModel.projectProfile.value.roadSide)
         assertNoAutoManualOrDropdownUiPresent()
 
-        // Step 3: NONE
+        // Step 3: MEDIAN
+        composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
+        advanceAndIdle(150L)
+        composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("MEDIAN")
+        assertEquals(RoadSide.MEDIAN, viewModel.projectProfile.value.roadSide)
+        assertNoAutoManualOrDropdownUiPresent()
+
+        // Step 4: NONE
         composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
         advanceAndIdle(150L)
         composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("NONE")
         assertEquals(RoadSide.NONE, viewModel.projectProfile.value.roadSide)
         assertNoAutoManualOrDropdownUiPresent()
 
-        // Step 4: Wraps back to LHS
+        // Step 5: Wraps back to LHS
         composeTestRule.onNodeWithTag("landscape_side_pill").performClick()
         advanceAndIdle(150L)
         composeTestRule.onNodeWithTag("landscape_side_pill").assertTextEquals("LHS")

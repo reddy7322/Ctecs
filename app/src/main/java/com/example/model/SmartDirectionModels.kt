@@ -84,14 +84,23 @@ enum class ChainageProgressionTrend(val label: String, val arrow: String) {
 }
 
 /**
- * User-configured preferences for Smart LHS/RHS Direction Detection.
- * Persists ONLY user preferences — never persists stale GPS direction state.
+ * Reason why manual direction override automatically transitioned back to AUTO mode.
+ */
+enum class DirectionAutoReactivationReason(val label: String) {
+    PHOTO_INACTIVITY_TIMEOUT("10-min photo inactivity timeout"),
+    VEHICLE_SPEED_TRIGGER("Vehicle speed >= 5 km/h")
+}
+
+/**
+ * User-configured preferences for Centralized Global LHS/RHS Direction Control.
+ * Persists user mode preference and manual override timestamp — never persists stale GPS direction.
  */
 data class SmartDirectionPreferences(
     val controlMode: DirectionControlMode = DirectionControlMode.AUTO,
     val manualOverrideSide: String? = null,
     val alignmentConvention: AlignmentDirectionConvention = AlignmentDirectionConvention.AUTO_FROM_ALIGNMENT,
-    val voiceDirectionAnnouncementsEnabled: Boolean = true
+    val voiceDirectionAnnouncementsEnabled: Boolean = true,
+    val manualSelectedAtMs: Long = 0L
 ) {
     val normalizedManualSide: String?
         get() = when (manualOverrideSide?.trim()?.uppercase(Locale.ROOT)) {
@@ -109,6 +118,7 @@ data class SmartDirectionPreferences(
             put("manualOverrideSide", normalizedManualSide ?: "")
             put("alignmentConvention", alignmentConvention.id)
             put("voiceDirectionAnnouncementsEnabled", voiceDirectionAnnouncementsEnabled)
+            put("manualSelectedAtMs", if (controlMode == DirectionControlMode.MANUAL_OVERRIDE) manualSelectedAtMs else 0L)
         }.toString()
     }
 
@@ -124,13 +134,15 @@ data class SmartDirectionPreferences(
                 } else {
                     DirectionControlMode.AUTO
                 }
+                val selectedAt = obj.optLong("manualSelectedAtMs", 0L).coerceAtLeast(0L)
                 SmartDirectionPreferences(
                     controlMode = effectiveMode,
                     manualOverrideSide = if (effectiveMode == DirectionControlMode.MANUAL_OVERRIDE) rawManual else null,
                     alignmentConvention = AlignmentDirectionConvention.fromId(
                         obj.optString("alignmentConvention", AlignmentDirectionConvention.AUTO_FROM_ALIGNMENT.id)
                     ),
-                    voiceDirectionAnnouncementsEnabled = obj.optBoolean("voiceDirectionAnnouncementsEnabled", true)
+                    voiceDirectionAnnouncementsEnabled = obj.optBoolean("voiceDirectionAnnouncementsEnabled", true),
+                    manualSelectedAtMs = if (effectiveMode == DirectionControlMode.MANUAL_OVERRIDE) selectedAt else 0L
                 )
             } catch (_: Exception) {
                 SmartDirectionPreferences()
@@ -140,14 +152,14 @@ data class SmartDirectionPreferences(
 }
 
 /**
- * Immutable, authoritative application-wide LHS/RHS travel direction snapshot published by
- * [com.example.navigation.SmartDirectionManager].
+ * Immutable, authoritative application-wide LHS/RHS direction snapshot published by
+ * the single centralized [com.example.navigation.SmartDirectionManager].
  *
  * Strictly guarantees:
- * - [confirmedSide] is non-null ONLY when sufficient reliable evidence exists (or explicit manual override).
- * - [isIncreasingChainage] is resolved from [confirmedSide] + [effectiveConvention] rather than
- *   hardcoding increasing == LHS.
+ * - [confirmedSide] is non-null ONLY when valid KMZ/KML offset evidence exists (or active manual override).
+ * - [isIncreasingChainage] is resolved from [confirmedSide] + [effectiveConvention].
  * - [directionChangedFrom] is populated ONLY on the exact update where a confirmed direction transition completes.
+ * - [autoReactivatedReason] is populated on the update where manual override expires or is overridden by >= 5 km/h speed.
  */
 data class SmartDirectionState(
     val detectionState: DirectionDetectionState = DirectionDetectionState.ALIGNMENT_UNAVAILABLE,
@@ -165,7 +177,9 @@ data class SmartDirectionState(
     val detailReason: String = "Waiting for active road alignment",
     val lastConfirmedTimestampMs: Long = 0L,
     val lastDirectionChangeTimestampMs: Long = 0L,
-    val directionChangedFrom: String? = null
+    val directionChangedFrom: String? = null,
+    val autoReactivatedReason: DirectionAutoReactivationReason? = null,
+    val signedLateralOffsetMetres: Double? = null
 ) {
     /**
      * Strictly returns "LHS" or "RHS" only when a binary highway direction is confirmed (or manually set).
@@ -209,7 +223,7 @@ data class SmartDirectionState(
             routeId = routeId,
             alignmentId = alignmentId,
             statusLabel = "No Route",
-            detailReason = "Load a KMZ/KML road alignment to detect travel direction"
+            detailReason = "Load a KMZ/KML road alignment to detect LHS/RHS from route offset"
         )
     }
 }

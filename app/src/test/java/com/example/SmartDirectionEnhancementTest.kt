@@ -135,10 +135,11 @@ class SmartDirectionEnhancementTest {
         )
     }
 
-    private fun pointForChainage(chainageMetres: Long): GeoPoint {
+    private fun pointForChainage(chainageMetres: Long, eastOffsetMetres: Double = 0.0): GeoPoint {
         val distFromStart = (chainageMetres - 197_000L).toDouble()
         val lat = 19.000 + (distFromStart / 111_111.0)
-        return GeoPoint(lat, 72.870)
+        val lngOffset = eastOffsetMetres / (111_111.0 * kotlin.math.cos(Math.toRadians(lat)))
+        return GeoPoint(lat, 72.870 + lngOffset)
     }
 
     private fun fixFor(
@@ -147,9 +148,10 @@ class SmartDirectionEnhancementTest {
         speedMps: Float = 15f,
         bearingDeg: Float? = 0f,
         accuracyM: Float = 5f,
-        status: LocationStatus = LocationStatus.READY
+        status: LocationStatus = LocationStatus.READY,
+        eastOffsetMetres: Double = 0.0
     ): Pair<LocationState, ChainageMatchResult> {
-        val pt = pointForChainage(chainageMetres)
+        val pt = pointForChainage(chainageMetres, eastOffsetMetres)
         val distAlong = (chainageMetres - 197_000L).toDouble().coerceAtLeast(0.0)
         val loc = LocationState(
             status = status,
@@ -166,8 +168,8 @@ class SmartDirectionEnhancementTest {
             statusMessage = "Matched",
             source = ChainageSource.KMZ,
             detectedSide = "---",
-            offsetMetres = 2.0,
-            projectedPoint = pt,
+            offsetMetres = kotlin.math.abs(eastOffsetMetres).coerceAtLeast(2.0),
+            projectedPoint = pointForChainage(chainageMetres, 0.0),
             distanceAlongAlignmentMetres = distAlong,
             matchedSegmentIndex = 0,
             matchedAlignmentName = "NH-48 Main",
@@ -186,12 +188,20 @@ class SmartDirectionEnhancementTest {
         speedMps: Float = 15f,
         bearingDeg: Float? = 0f,
         accuracyM: Float = 5f,
+        eastOffsetMetres: Double = 0.0,
         prefs: SmartDirectionPreferences = SmartDirectionPreferences()
     ): SmartDirectionState {
         var t = startTimeMs
         var last = manager.currentState()
         for (ch in chainages) {
-            val (loc, match) = fixFor(ch, t, speedMps = speedMps, bearingDeg = bearingDeg, accuracyM = accuracyM)
+            val (loc, match) = fixFor(
+                ch,
+                t,
+                speedMps = speedMps,
+                bearingDeg = bearingDeg,
+                accuracyM = accuracyM,
+                eastOffsetMetres = eastOffsetMetres
+            )
             last = manager.evaluate(loc, match, route, prefs, nowMs = t)
             t += stepTimeMs
         }
@@ -199,20 +209,20 @@ class SmartDirectionEnhancementTest {
     }
 
     // ------------------------------------------------------------------
-    // Scenarios 1, 2, 3, 4: Normal LHS/RHS & Increasing/Decreasing Chainage
-    // (including reversed alignment convention Inc = RHS!)
+    // Scenarios 1, 2, 3, 4: KMZ/KML Offset-Based LHS/RHS & Convention Mapping
     // ------------------------------------------------------------------
     @Test
     fun scenarios1To4_normalLhsRhsAndIncreasingDecreasingConventions() {
         val standardRoute = buildHighwayRoute()
         val manager = SmartDirectionManager()
 
-        // 1 & 3. Normal increasing travel on standard alignment -> LHS_CONFIRMED (↑)
+        // 1 & 3. GPS on West (-8m) of North-going alignment -> LHS_CONFIRMED (↑)
         val lhsState = feedSequence(
             manager = manager,
             route = standardRoute,
             chainages = listOf(197_100L, 197_115L, 197_130L),
-            bearingDeg = 0f
+            bearingDeg = 0f,
+            eastOffsetMetres = -8.0
         )
         assertEquals(DirectionDetectionState.LHS_CONFIRMED, lhsState.detectionState)
         assertEquals("LHS", lhsState.confirmedSide)
@@ -220,20 +230,21 @@ class SmartDirectionEnhancementTest {
         assertEquals("↑", lhsState.directionArrow)
         assertFalse(lhsState.isManualOverride)
 
-        // 2 & 4. Normal decreasing travel on fresh manager -> RHS_CONFIRMED (↓)
+        // 2 & 4. GPS on East (+8m) of North-going alignment -> RHS_CONFIRMED (↓)
         val rhsManager = SmartDirectionManager()
         val rhsState = feedSequence(
             manager = rhsManager,
             route = standardRoute,
             chainages = listOf(198_500L, 198_485L, 198_470L),
-            bearingDeg = 180f
+            bearingDeg = 180f,
+            eastOffsetMetres = +8.0
         )
         assertEquals(DirectionDetectionState.RHS_CONFIRMED, rhsState.detectionState)
         assertEquals("RHS", rhsState.confirmedSide)
         assertEquals(false, rhsState.isIncreasingChainage)
         assertEquals("↓", rhsState.directionArrow)
 
-        // Never assume increasing == LHS: alignment with RHS = INCREASING metadata must resolve increasing -> RHS!
+        // Alignment with RHS = INCREASING convention resolves RHS -> increasing (↑)
         val reversedRoute = buildHighwayRoute(
             routeId = "route_reversed",
             alignmentId = "align_rhs_inc",
@@ -246,7 +257,8 @@ class SmartDirectionEnhancementTest {
             manager = revManager,
             route = reversedRoute,
             chainages = listOf(197_200L, 197_215L, 197_230L),
-            bearingDeg = 0f
+            bearingDeg = 0f,
+            eastOffsetMetres = +8.0
         )
         assertEquals(AlignmentDirectionConvention.INCREASING_IS_RHS, revState.effectiveConvention)
         assertEquals(DirectionDetectionState.RHS_CONFIRMED, revState.detectionState)
@@ -256,129 +268,122 @@ class SmartDirectionEnhancementTest {
     }
 
     // ------------------------------------------------------------------
-    // Scenarios 5 & 6: Stationary Vehicle & Slow-Moving Vehicle
+    // Scenarios 5 & 6: Centerline Deadband Never Guesses & Stationary Offset Works Cleanly
     // ------------------------------------------------------------------
     @Test
-    fun scenarios5And6_stationaryNeverGuessesAndSlowSpeedRequiresStricterConfirmation() {
+    fun scenarios5And6_centerlineNeverGuessesAndStationaryKmzOffsetResolvesCleanly() {
         val route = buildHighwayRoute()
         val manager = SmartDirectionManager()
 
-        // 5a. Stationary from cold start -> STATIONARY with null confirmedSide (never guesses!)
-        val stoppedInitial = feedSequence(
+        // 5a. Cold start directly on centerline (0m offset) -> DIRECTION_UNCERTAIN with null confirmedSide (never guesses!)
+        val onCenter = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_500L, 197_501L, 197_500L, 197_502L),
+            chainages = listOf(197_500L, 197_501L, 197_500L),
             speedMps = 0.1f,
-            bearingDeg = 270f
+            bearingDeg = 270f,
+            eastOffsetMetres = 0.0
         )
-        assertEquals(DirectionDetectionState.STATIONARY, stoppedInitial.detectionState)
-        assertNull("Stationary cold start must never guess LHS/RHS", stoppedInitial.confirmedSide)
+        assertEquals(DirectionDetectionState.DIRECTION_UNCERTAIN, onCenter.detectionState)
+        assertNull("Centerline cold start must never guess LHS/RHS", onCenter.confirmedSide)
 
-        // 6. Slow-moving vehicle (1.4 m/s ~ 5 km/h): 2 short steps should NOT confirm yet;
-        //    sustained slow movement (>= 3 steps & >= 16m) confirms cleanly without flicker.
-        val slowEarly = feedSequence(
-            manager = manager,
-            route = route,
-            chainages = listOf(197_506L, 197_511L),
-            startTimeMs = 120_000L,
-            speedMps = 1.4f,
-            bearingDeg = 0f
-        )
-        assertFalse(
-            "Slow-moving vehicle must wait for sufficient distance/samples before confirming",
-            slowEarly.hasConfirmedDirection
-        )
-
+        // 6. Stationary or slow-moving vehicle clearly on LHS (-7m west) confirms LHS from KMZ offset
         val slowConfirmed = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_516L, 197_522L, 197_528L),
+            chainages = listOf(197_516L, 197_522L),
             startTimeMs = 126_000L,
             speedMps = 1.4f,
-            bearingDeg = 0f
+            bearingDeg = 0f,
+            eastOffsetMetres = -7.0
         )
         assertEquals(DirectionDetectionState.LHS_CONFIRMED, slowConfirmed.detectionState)
         assertEquals("LHS", slowConfirmed.confirmedSide)
 
-        // 5b. Stopping after confirmed LHS holds steady without flipping to RHS
+        // 5b. Stopping with erratic bearing holds LHS steadily without flipping
         val stoppedAfterConfirm = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_528L, 197_527L, 197_528L),
+            chainages = listOf(197_528L, 197_527L),
             startTimeMs = 135_000L,
             speedMps = 0.0f,
-            bearingDeg = 180f // erratic heading while stopped must be ignored
+            bearingDeg = 180f,
+            eastOffsetMetres = -7.0
         )
-        assertEquals(DirectionDetectionState.STATIONARY, stoppedAfterConfirm.detectionState)
+        assertEquals(DirectionDetectionState.LHS_CONFIRMED, stoppedAfterConfirm.detectionState)
         assertEquals("LHS", stoppedAfterConfirm.confirmedSide)
     }
 
     // ------------------------------------------------------------------
-    // Scenarios 7, 8, 9, 10: Temporary Reverse, Genuine U-Turn, LHS->RHS, RHS->LHS
+    // Scenarios 7, 8, 9, 10: Single Noisy Jump Rejected & Genuine LHS<->RHS Carriageway Crossings
     // ------------------------------------------------------------------
     @Test
-    fun scenarios7To10_temporaryReverseRejectedAndGenuineUTurnLhsToRhsAndRhsToLhsConfirmed() {
+    fun scenarios7To10_singleNoisyJumpRejectedAndGenuineCarriagewaySwitchesConfirmed() {
         val route = buildHighwayRoute()
         val manager = SmartDirectionManager()
 
-        // Confirm initial LHS travel
+        // Confirm initial LHS (-8m west)
         val lhs = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_300L, 197_318L, 197_336L),
+            chainages = listOf(197_300L, 197_318L),
             startTimeMs = 200_000L,
-            bearingDeg = 0f
+            bearingDeg = 0f,
+            eastOffsetMetres = -8.0
         )
         assertEquals("LHS", lhs.confirmedSide)
 
-        // 7. Temporary short reverse movement (~8m back) -> enters DIRECTION_CHANGING, does NOT flip!
-        val tempRev = feedSequence(
+        // 7. Single noisy GPS spike to RHS (+8m east) -> does NOT flip immediately!
+        val singleSpike = feedSequence(
             manager = manager,
             route = route,
             chainages = listOf(197_328L),
             startTimeMs = 206_000L,
             speedMps = 3.5f,
-            bearingDeg = 180f
+            bearingDeg = 180f,
+            eastOffsetMetres = +8.0
         )
-        assertEquals(DirectionDetectionState.DIRECTION_CHANGING, tempRev.detectionState)
-        assertEquals("LHS", tempRev.confirmedSide)
-        assertNull(tempRev.directionChangedFrom)
+        assertEquals("LHS", singleSpike.confirmedSide)
+        assertNull(singleSpike.directionChangedFrom)
 
-        // Resume forward LHS -> recovers cleanly back to LHS_CONFIRMED
+        // Next fix back on LHS -> recovers cleanly
         val recovered = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_342L, 197_358L),
+            chainages = listOf(197_342L),
             startTimeMs = 208_000L,
             speedMps = 12f,
-            bearingDeg = 0f
+            bearingDeg = 0f,
+            eastOffsetMetres = -8.0
         )
         assertEquals(DirectionDetectionState.LHS_CONFIRMED, recovered.detectionState)
         assertEquals("LHS", recovered.confirmedSide)
         assertNull(recovered.directionChangedFrom)
 
-        // 8 & 9. Genuine U-Turn (LHS -> RHS): sustained decreasing movement > 30m over 3 observations
+        // 8 & 9. Genuine crossing to RHS (+8m east across 2 consecutive fixes) -> RHS_CONFIRMED
         val rhsFlipped = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_344L, 197_328L, 197_310L),
+            chainages = listOf(197_344L, 197_328L),
             startTimeMs = 214_000L,
             speedMps = 12f,
-            bearingDeg = 180f
+            bearingDeg = 180f,
+            eastOffsetMetres = +8.0
         )
         assertEquals(DirectionDetectionState.RHS_CONFIRMED, rhsFlipped.detectionState)
         assertEquals("RHS", rhsFlipped.confirmedSide)
         assertEquals("LHS", rhsFlipped.directionChangedFrom)
         assertEquals(false, rhsFlipped.isIncreasingChainage)
 
-        // 10. Genuine reverse back (RHS -> LHS): sustained increasing movement > 30m over 3 observations
+        // 10. Genuine crossing back to LHS (-8m west across 2 consecutive fixes) -> LHS_CONFIRMED
         val lhsFlippedBack = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_325L, 197_342L, 197_360L),
+            chainages = listOf(197_325L, 197_342L),
             startTimeMs = 222_000L,
             speedMps = 12f,
-            bearingDeg = 0f
+            bearingDeg = 0f,
+            eastOffsetMetres = -8.0
         )
         assertEquals(DirectionDetectionState.LHS_CONFIRMED, lhsFlippedBack.detectionState)
         assertEquals("LHS", lhsFlippedBack.confirmedSide)
@@ -387,40 +392,41 @@ class SmartDirectionEnhancementTest {
     }
 
     // ------------------------------------------------------------------
-    // Scenarios 11 & 12: Weak GPS + Recovery & GPS Drift / Inaccurate Heading
+    // Scenarios 11 & 12: Weak GPS + Recovery & Inaccurate Compass Ignored
     // ------------------------------------------------------------------
     @Test
-    fun scenarios11And12_weakGpsNeverGuessesAndInaccurateCompassDoesNotCorruptTrajectory() {
+    fun scenarios11And12_weakGpsNeverGuessesAndInaccurateCompassDoesNotCorruptKmzOffset() {
         val route = buildHighwayRoute()
         val manager = SmartDirectionManager()
 
         // 11a. Weak GPS (accuracy 65m) -> GPS_SIGNAL_WEAK with null confirmedSide
-        val (weakLoc, weakMatch) = fixFor(197_400L, 300_000L, accuracyM = 65f)
+        val (weakLoc, weakMatch) = fixFor(197_400L, 300_000L, accuracyM = 65f, eastOffsetMetres = -8.0)
         val weakState = manager.evaluate(weakLoc, weakMatch, route, nowMs = 300_000L)
         assertEquals(DirectionDetectionState.GPS_SIGNAL_WEAK, weakState.detectionState)
         assertNull("Weak GPS must never publish guessed direction", weakState.confirmedSide)
 
-        // 11b. GPS recovers cleanly and confirms LHS
+        // 11b. GPS recovers cleanly on LHS (-8m west)
         val recovered = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_410L, 197_426L, 197_442L),
+            chainages = listOf(197_410L, 197_426L),
             startTimeMs = 304_000L,
             accuracyM = 5f,
-            bearingDeg = 0f
+            bearingDeg = 0f,
+            eastOffsetMetres = -8.0
         )
         assertEquals(DirectionDetectionState.LHS_CONFIRMED, recovered.detectionState)
         assertEquals("LHS", recovered.confirmedSide)
 
-        // 12. Inaccurate phone compass / 180-deg wrong GPS bearing while actually progressing forward on LHS
-        //     must NOT override alignment geometry + consecutive GPS trajectory!
+        // 12. Opposite 180-deg compass/GPS bearing never overrides KMZ/KML offset-based LHS!
         val badHeadingState = feedSequence(
             manager = manager,
             route = route,
-            chainages = listOf(197_458L, 197_474L, 197_490L),
+            chainages = listOf(197_458L, 197_474L),
             startTimeMs = 310_000L,
             accuracyM = 6f,
-            bearingDeg = 180f // opposite inaccurate heading
+            bearingDeg = 180f,
+            eastOffsetMetres = -8.0
         )
         assertEquals(DirectionDetectionState.LHS_CONFIRMED, badHeadingState.detectionState)
         assertEquals("LHS", badHeadingState.confirmedSide)
@@ -488,13 +494,14 @@ class SmartDirectionEnhancementTest {
         val confirmedA = feedSequence(
             manager = manager,
             route = routeA,
-            chainages = listOf(197_100L, 197_115L, 197_130L),
-            startTimeMs = 500_000L
+            chainages = listOf(197_100L, 197_115L),
+            startTimeMs = 500_000L,
+            eastOffsetMetres = -8.0
         )
         assertEquals("LHS", confirmedA.confirmedSide)
 
-        // Switch to Route B with single initial sample -> stale LHS from Route A must be cleared!
-        val (locB, matchB) = fixFor(198_000L, 510_000L)
+        // Switch to Route B with single initial sample on centerline (0m) -> stale LHS from Route A must be cleared!
+        val (locB, matchB) = fixFor(198_000L, 510_000L, eastOffsetMetres = 0.0)
         val firstOnB = manager.evaluate(
             locB,
             matchB.copy(matchedAlignmentName = "Highway B"),
@@ -853,14 +860,15 @@ class SmartDirectionEnhancementTest {
         val route = buildHighwayRoute()
         val manager = SmartDirectionManager()
 
-        // Drive 3 consecutive RHS (decreasing) fixes to confirm RHS authoritatively
+        // Confirm RHS authoritatively from KMZ lateral offset (+8m east)
         val authState = feedSequence(
             manager = manager,
             route = route,
             chainages = listOf(198_600L, 198_582L, 198_564L),
             startTimeMs = 1_000_000L,
             speedMps = 15f,
-            bearingDeg = 180f
+            bearingDeg = 180f,
+            eastOffsetMetres = +8.0
         )
         assertEquals(DirectionDetectionState.RHS_CONFIRMED, authState.detectionState)
         assertEquals("RHS", authState.confirmedSide)

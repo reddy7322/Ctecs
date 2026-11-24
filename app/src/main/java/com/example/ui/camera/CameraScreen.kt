@@ -218,19 +218,21 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Direct-tap Camera Screen side options in strict cycling order:
- * LHS -> RHS -> BHS -> NONE -> LHS
+ * Direct-tap Camera Screen manual side options in cycling order:
+ * LHS -> RHS -> BHS -> MEDIAN -> NONE -> LHS
  */
 internal enum class CameraSideOption(val label: String) {
     LHS("LHS"),
     RHS("RHS"),
     BHS("BHS"),
+    MEDIAN("MEDIAN"),
     NONE("NONE");
 
     fun next(): CameraSideOption = when (this) {
         LHS -> RHS
         RHS -> BHS
-        BHS -> NONE
+        BHS -> MEDIAN
+        MEDIAN -> NONE
         NONE -> LHS
     }
 }
@@ -239,8 +241,8 @@ internal enum class CameraSideOption(val label: String) {
  * Resolved Camera Screen side display state.
  * - Never displays "AUTO" or "MANUAL".
  * - In underlying Automatic Detection mode, displays ONLY detected "LHS" or "RHS"
- *   (or neutral "---" if internally uncertain, without guessing).
- * - In Manual mode, displays ONLY "LHS", "RHS", "BHS", or "NONE".
+ *   (or neutral "---" if unavailable/uncertain, without guessing).
+ * - In Manual mode, displays ONLY "LHS", "RHS", "BHS", "MEDIAN", or "NONE".
  */
 internal data class CameraSideDisplayState(
     val activeOption: CameraSideOption?,
@@ -264,13 +266,14 @@ internal fun resolveCameraSideDisplayState(
         "LHS" -> CameraSideOption.LHS
         "RHS" -> CameraSideOption.RHS
         "BHS", "BOTH" -> CameraSideOption.BHS
+        "MEDIAN" -> CameraSideOption.MEDIAN
         "NONE" -> CameraSideOption.NONE
         else -> when (projectProfile.roadSide) {
             RoadSide.LHS -> CameraSideOption.LHS
             RoadSide.RHS -> CameraSideOption.RHS
             RoadSide.BOTH -> CameraSideOption.BHS
+            RoadSide.MEDIAN -> CameraSideOption.MEDIAN
             RoadSide.NONE -> CameraSideOption.NONE
-            RoadSide.MEDIAN -> CameraSideOption.BHS
         }
     }
     return CameraSideDisplayState(option, option.label)
@@ -280,6 +283,7 @@ private fun cameraSideOptionTint(option: CameraSideOption?): Color = when (optio
     CameraSideOption.LHS -> Color(0xFF34D399)
     CameraSideOption.RHS -> Color(0xFF38BDF8)
     CameraSideOption.BHS -> HighlightYellow
+    CameraSideOption.MEDIAN -> Color(0xFFF59E0B)
     CameraSideOption.NONE -> Color.White.copy(alpha = 0.78f)
     null -> Color.White.copy(alpha = 0.82f)
 }
@@ -632,6 +636,7 @@ fun CameraScreen(
             CameraSideOption.LHS -> viewModel.updateSide(RoadSide.LHS)
             CameraSideOption.RHS -> viewModel.updateSide(RoadSide.RHS)
             CameraSideOption.BHS -> viewModel.updateSide(RoadSide.BOTH)
+            CameraSideOption.MEDIAN -> viewModel.updateSide(RoadSide.MEDIAN)
             CameraSideOption.NONE -> viewModel.updateSide(RoadSide.NONE)
         }
     }

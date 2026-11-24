@@ -3178,42 +3178,48 @@ fun SettingsScreen(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        val isAutoMode = smartDirectionPrefs.controlMode == com.example.model.DirectionControlMode.AUTO
-                        val isManualLhs = !isAutoMode && smartDirectionPrefs.normalizedManualSide == "LHS"
-                        val isManualRhs = !isAutoMode && smartDirectionPrefs.normalizedManualSide == "RHS"
-
-                        listOf(
-                            Triple("Auto (Smart)", isAutoMode, "settings_dir_mode_auto") to { viewModel.resetSideToAuto() },
-                            Triple("Manual LHS", isManualLhs, "settings_dir_mode_lhs") to { viewModel.updateSide(RoadSide.LHS) },
-                            Triple("Manual RHS", isManualRhs, "settings_dir_mode_rhs") to { viewModel.updateSide(RoadSide.RHS) }
-                        ).forEach { (meta, action) ->
-                            val (label, selected, tag) = meta
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (selected) primaryAccent.copy(alpha = 0.18f) else c.secondarySurface,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { action() }
-                                    .testTag(tag)
-                            ) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                    val isAutoMode = smartDirectionPrefs.controlMode == com.example.model.DirectionControlMode.AUTO
+                    val activeManualNorm = if (!isAutoMode) smartDirectionPrefs.normalizedManualSide else null
+                    val directionOptionsRow1 = listOf(
+                        Triple("Auto (KMZ)", isAutoMode, "settings_dir_mode_auto") to { viewModel.resetSideToAuto() },
+                        Triple("LHS", activeManualNorm == "LHS", "settings_dir_mode_lhs") to { viewModel.updateSide(RoadSide.LHS) },
+                        Triple("RHS", activeManualNorm == "RHS", "settings_dir_mode_rhs") to { viewModel.updateSide(RoadSide.RHS) }
+                    )
+                    val directionOptionsRow2 = listOf(
+                        Triple("BOTH", activeManualNorm == "BHS", "settings_dir_mode_both") to { viewModel.updateSide(RoadSide.BOTH) },
+                        Triple("MEDIAN", activeManualNorm == "MEDIAN", "settings_dir_mode_median") to { viewModel.updateSide(RoadSide.MEDIAN) },
+                        Triple("NONE", activeManualNorm == "NONE", "settings_dir_mode_none") to { viewModel.updateSide(RoadSide.NONE) }
+                    )
+                    listOf(directionOptionsRow1, directionOptionsRow2).forEach { rowItems ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            rowItems.forEach { (meta, action) ->
+                                val (label, selected, tag) = meta
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (selected) primaryAccent.copy(alpha = 0.18f) else c.secondarySurface,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { action() }
+                                        .testTag(tag)
                                 ) {
-                                    Text(
-                                        text = label,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (selected) primaryAccent else MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1
-                                    )
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (selected) primaryAccent else MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
                             }
                         }

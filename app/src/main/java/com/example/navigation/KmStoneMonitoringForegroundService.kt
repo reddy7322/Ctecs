@@ -328,7 +328,21 @@ class KmStoneMonitoringForegroundService : Service() {
                         routeData = route,
                         preferences = dirPrefs
                     )
-                    CtecsNavigationTelemetryHub.updateTelemetry(directionState = recoveredDir)
+                    if (recoveredDir.autoReactivatedReason != null ||
+                        (!recoveredDir.isManualOverride && dirPrefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE)
+                    ) {
+                        val autoPrefs = dirPrefs.copy(
+                            controlMode = com.example.model.DirectionControlMode.AUTO,
+                            manualOverrideSide = null,
+                            manualSelectedAtMs = 0L
+                        )
+                        CtecsNavigationTelemetryHub.updateTelemetry(
+                            directionState = recoveredDir,
+                            directionPreferences = autoPrefs
+                        )
+                    } else {
+                        CtecsNavigationTelemetryHub.updateTelemetry(directionState = recoveredDir)
+                    }
                     if (recoveredDir.directionChangedFrom != null && !recoveredDir.isManualOverride) {
                         KmStoneVoiceAnnouncementManager.announceDirectionChange(
                             context = applicationContext,

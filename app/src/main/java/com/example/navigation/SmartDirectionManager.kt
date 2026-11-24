@@ -2,15 +2,16 @@ package com.example.navigation
 
 import com.example.geo.ChainageMatcher
 import com.example.geo.GeoUtils
+import com.example.geo.SegmentProjection
 import com.example.location.LocationState
 import com.example.location.LocationStatus
 import com.example.model.AlignmentDirectionConvention
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageProgressionTrend
+import com.example.model.DirectionAutoReactivationReason
 import com.example.model.DirectionControlMode
 import com.example.model.DirectionDetectionState
 import com.example.model.GeoPoint
-import com.example.model.MatchConfidence
 import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.SmartDirectionPreferences
@@ -18,262 +19,402 @@ import com.example.model.SmartDirectionState
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
- * Single authoritative application-wide LHS/RHS Smart Direction Detection Engine.
+ * Single Centralized Global LHS/RHS Direction Control Engine for CTECS.
  *
- * Core engineering guarantees:
- * 1. Reuses CTECS's existing GPS fixes ([LocationState]) and map-matched KMZ/KML alignment
- *    geometry ([ChainageMatchResult] + [ChainageMatcher.getOrCreateCachedGeometry]) — zero duplicate
- *    GPS listeners or competing alignment calculations.
- * 2. Never assumes increasing chainage always equals LHS: resolves the exact relationship from
- *    imported alignment metadata (`carriagewayType`, `direction`, alignment name) and user convention.
- * 3. Uses consecutive GPS positions along the alignment polyline + calibrated chainage progression +
- *    alignment tangent geometry (and speed-gated GPS course bearing as a secondary corroborator).
- *    Never relies exclusively on phone compass or magnetic heading.
- * 4. Ignores unreliable heading when stationary or moving slowly, filters GPS drift and temporary
- *    reverse movement, and requires multi-observation confirmation before flipping LHS <-> RHS.
- * 5. Never publishes a guessed direction when GPS is weak, alignment is unavailable, or movement
- *    evidence is insufficient.
- * 6. Resets stale route direction state immediately when switching active KMZ/KML alignments.
+ * Strict priority order:
+ * 1. Valid manual selection (LHS, RHS, BOTH/BHS, MEDIAN, NONE) remains active until either
+ *    10 continuous minutes pass without a photograph capture (paused while recording video)
+ *    or reliable vehicle speed reaches >= 5 km/h.
+ * 2. Reliable consecutive GPS speed >= 5 km/h immediately activates AUTO mode, removing any
+ *    active manual override, and stays in AUTO even when speed later drops below 5 km/h.
+ * 3. AUTO mode determines LHS or RHS exclusively from the signed lateral offset between the
+ *    current GPS position and the actual loaded KMZ/KML road alignment geometry (including
+ *    curves, bends, irregular routes, and dual-carriageway LHS/RHS alignments).
+ * 4. If valid KMZ/KML alignment or reliable GPS is unavailable, retains the last reliable
+ *    direction on the active route or reports an unavailable state without inventing LHS/RHS.
  */
 class SmartDirectionManager {
 
-    private data class FilteredSample(
-        val point: GeoPoint,
-        val projectedPoint: GeoPoint?,
-        val distanceAlongM: Double,
-        val chainageM: Long,
-        val timestampMs: Long,
-        val accuracyM: Float,
-        val speedMps: Float?,
-        val gpsBearingDeg: Float?,
-        val segmentIndex: Int
+    private data class KmzOffsetSample(
+        val side: String?, // "LHS", "RHS", or null when within centerline deadband / off-corridor
+        val signedOffsetMetres: Double,
+        val distanceToAlignmentMetres: Double,
+        val alignmentId: String?,
+        val isOffCorridor: Boolean = false
     )
 
+    // Active route & alignment context
     private var activeRouteId: String? = null
     private var activeAlignmentId: String? = null
     private var activeConvention: AlignmentDirectionConvention = AlignmentDirectionConvention.INCREASING_IS_LHS
 
-    private val recentSamples = ArrayDeque<FilteredSample>()
-    private var confirmedSide: String? = null
-    private var confirmedIncreasing: Boolean? = null
+    // AUTO KMZ/KML offset confirmation state (single centralized state, zero legacy progression cues)
+    private var confirmedAutoSide: String? = null
     private var lastConfirmedTimestampMs: Long = 0L
     private var lastDirectionChangeTimestampMs: Long = 0L
+    private var pendingOppositeSide: String? = null
+    private var pendingOppositeCount: Int = 0
+    private var lastOffsetEvaluatedFixTimeMs: Long = Long.MIN_VALUE
 
-    // Confirmation hysteresis buffers for initial lock and genuine direction reversals
-    private var pendingSide: String? = null
-    private var pendingConsecutiveCount: Int = 0
-    private var pendingCumulativeDisplacementM: Double = 0.0
-    private var pendingFirstTimestampMs: Long = 0L
+    // Manual override & 10-minute photo-inactivity tracking
+    private var activeManualKey: String? = null
+    private var manualActivityAnchorMs: Long = Long.MIN_VALUE
+    private var manualExpiredToAuto: Boolean = false
+    private var isVideoRecordingActive: Boolean = false
 
-    private var lastPublishedState: SmartDirectionState = SmartDirectionState.alignmentUnavailable()
+    // Reliable consecutive >= 5 km/h speed trigger tracking
+    private var consecutiveHighSpeedSamples: Int = 0
+    private var lastHighSpeedFixTimeMs: Long = Long.MIN_VALUE
+    private var lastHighSpeedEvalMs: Long = 0L
 
+    @Volatile
+    private var latestState: SmartDirectionState = SmartDirectionState.alignmentUnavailable()
+
+    fun currentState(): SmartDirectionState = latestState
+
+    /**
+     * Resets all automatic offset detection state (e.g. route unload or explicit reset).
+     */
     @Synchronized
     fun reset() {
-        activeRouteId = null
-        activeAlignmentId = null
-        recentSamples.clear()
-        confirmedSide = null
-        confirmedIncreasing = null
+        confirmedAutoSide = null
         lastConfirmedTimestampMs = 0L
         lastDirectionChangeTimestampMs = 0L
-        clearPendingCandidate()
-        lastPublishedState = SmartDirectionState.alignmentUnavailable()
+        pendingOppositeSide = null
+        pendingOppositeCount = 0
+        lastOffsetEvaluatedFixTimeMs = Long.MIN_VALUE
+        consecutiveHighSpeedSamples = 0
+        lastHighSpeedFixTimeMs = Long.MIN_VALUE
+        lastHighSpeedEvalMs = 0L
+        latestState = SmartDirectionState.alignmentUnavailable(activeRouteId, activeAlignmentId)
     }
 
+    /**
+     * Clears stale route-bound AUTO direction immediately whenever route or alignment changes.
+     * Does NOT erase an active valid manual selection.
+     */
     @Synchronized
     fun onAlignmentChanged(routeId: String?, alignmentId: String?) {
-        if (routeId != activeRouteId || alignmentId != activeAlignmentId) {
-            activeRouteId = routeId
-            activeAlignmentId = alignmentId
-            recentSamples.clear()
-            confirmedSide = null
-            confirmedIncreasing = null
+        val routeChanged = routeId != activeRouteId
+        val alignChanged = alignmentId != activeAlignmentId
+        activeRouteId = routeId
+        activeAlignmentId = alignmentId
+        if (routeChanged || alignChanged) {
+            confirmedAutoSide = null
             lastConfirmedTimestampMs = 0L
-            clearPendingCandidate()
-            lastPublishedState = SmartDirectionState.alignmentUnavailable(routeId, alignmentId)
+            pendingOppositeSide = null
+            pendingOppositeCount = 0
+            lastOffsetEvaluatedFixTimeMs = Long.MIN_VALUE
+            if (!latestState.isManualOverride) {
+                latestState = SmartDirectionState.alignmentUnavailable(routeId, alignmentId)
+            }
         }
     }
 
+    /**
+     * Records a new user manual direction selection (LHS, RHS, BOTH/BHS, MEDIAN, NONE),
+     * starting a fresh 10-minute photo-inactivity timer and clearing stale speed triggers.
+     */
     @Synchronized
-    fun currentState(): SmartDirectionState = lastPublishedState
+    fun onManualDirectionSelected(side: String, nowMs: Long = System.currentTimeMillis()) {
+        val normalized = normalizeManualSide(side) ?: return
+        manualActivityAnchorMs = nowMs
+        manualExpiredToAuto = false
+        activeManualKey = "$normalized@$nowMs"
+        consecutiveHighSpeedSamples = 0
+        lastHighSpeedFixTimeMs = Long.MIN_VALUE
+        lastHighSpeedEvalMs = 0L
+    }
 
     /**
-     * Evaluates the latest GPS fix and map-matched alignment result to produce the single
-     * authoritative [SmartDirectionState] synchronized across the entire CTECS application.
+     * Explicitly returns control to AUTO mode and clears manual override tracking.
+     */
+    @Synchronized
+    fun onAutoModeSelected() {
+        activeManualKey = null
+        manualActivityAnchorMs = Long.MIN_VALUE
+        manualExpiredToAuto = false
+        consecutiveHighSpeedSamples = 0
+        lastHighSpeedFixTimeMs = Long.MIN_VALUE
+        lastHighSpeedEvalMs = 0L
+    }
+
+    /**
+     * Resets the 10-minute manual-override inactivity timer ONLY when a photograph is
+     * successfully captured. Preview activity, phone movement, or GPS updates never call this.
+     */
+    @Synchronized
+    fun onPhotoCaptured(nowMs: Long = System.currentTimeMillis()) {
+        if (!manualExpiredToAuto && (activeManualKey != null || latestState.isManualOverride)) {
+            manualActivityAnchorMs = if (manualActivityAnchorMs == Long.MIN_VALUE) {
+                nowMs
+            } else {
+                max(manualActivityAnchorMs, nowMs)
+            }
+        }
+    }
+
+    /**
+     * Updates active video recording state. While actively recording video, the 10-minute
+     * photo-inactivity timeout MUST NOT fire; stopping active recording resets the inactivity
+     * anchor because video recording counts as an active capture operation.
+     */
+    @Synchronized
+    fun onVideoRecordingStateChanged(isRecording: Boolean, nowMs: Long = System.currentTimeMillis()) {
+        val wasRecording = isVideoRecordingActive
+        isVideoRecordingActive = isRecording
+        if (wasRecording && !isRecording && !manualExpiredToAuto && (activeManualKey != null || latestState.isManualOverride)) {
+            manualActivityAnchorMs = if (manualActivityAnchorMs == Long.MIN_VALUE) {
+                nowMs
+            } else {
+                max(manualActivityAnchorMs, nowMs)
+            }
+        }
+    }
+
+    /**
+     * Returns remaining milliseconds before an active manual override expires due to photo inactivity,
+     * or null when not in manual mode or while video recording is actively suspending expiry.
+     */
+    @Synchronized
+    fun remainingManualInactivityMs(
+        preferences: SmartDirectionPreferences,
+        nowMs: Long = System.currentTimeMillis()
+    ): Long? {
+        if (preferences.controlMode != DirectionControlMode.MANUAL_OVERRIDE || manualExpiredToAuto) {
+            return null
+        }
+        if (isVideoRecordingActive) {
+            return MANUAL_INACTIVITY_TIMEOUT_MS
+        }
+        val anchor = resolveManualAnchorMs(preferences, nowMs)
+        val elapsed = (nowMs - anchor).coerceAtLeast(0L)
+        return (MANUAL_INACTIVITY_TIMEOUT_MS - elapsed).coerceAtLeast(0L)
+    }
+
+    /**
+     * Centralized evaluation entry point shared across Camera, Home, Survey, Routes,
+     * Site Register, Overlays, Foreground Services, and Widgets.
      */
     @Synchronized
     fun evaluate(
         locationState: LocationState?,
-        matchResult: ChainageMatchResult,
+        matchResult: ChainageMatchResult?,
         routeData: RouteData?,
         preferences: SmartDirectionPreferences = SmartDirectionPreferences(),
         nowMs: Long = System.currentTimeMillis()
     ): SmartDirectionState {
+        val activeAlignment = resolveMatchedOrActiveAlignment(routeData, matchResult)
         val routeId = routeData?.id
-        val activeAlign = resolveMatchedOrActiveAlignment(routeData, matchResult)
-        val alignmentId = activeAlign?.id
-
-        // 1. Reset stale automatic direction whenever route or selected alignment switches
-        val alignmentSwitched = (routeId != activeRouteId) || (alignmentId != activeAlignmentId)
-        if (alignmentSwitched) {
-            activeRouteId = routeId
-            activeAlignmentId = alignmentId
-            recentSamples.clear()
-            confirmedSide = null
-            confirmedIncreasing = null
-            lastConfirmedTimestampMs = 0L
-            clearPendingCandidate()
-        }
-
-        // Resolve the effective chainage-to-side convention for the active alignment
-        val resolvedConvention = resolveEffectiveConvention(
+        val alignmentId = activeAlignment?.id
+        val effectiveConvention = resolveEffectiveConvention(
             routeData = routeData,
-            activeAlignment = activeAlign,
+            activeAlignment = activeAlignment,
             requested = preferences.alignmentConvention
         )
-        if (resolvedConvention != activeConvention) {
-            activeConvention = resolvedConvention
-            // Re-map confirmed increasing/decreasing relationship if convention changed
-            confirmedSide?.let { side ->
-                confirmedIncreasing = isIncreasingForSide(side, resolvedConvention)
-            }
+        activeConvention = effectiveConvention
+
+        // Clear stale route-bound AUTO direction immediately when switching or unloading routes
+        if (routeId != activeRouteId || alignmentId != activeAlignmentId) {
+            onAlignmentChanged(routeId, alignmentId)
         }
 
-        // 2. Explicit Manual Override (clearly distinguished; never corrupts alignment calibration)
-        if (preferences.controlMode == DirectionControlMode.MANUAL_OVERRIDE) {
-            val manualSide = preferences.normalizedManualSide
-            if (manualSide != null) {
-                val inc = when (manualSide) {
-                    "LHS", "RHS" -> isIncreasingForSide(manualSide, resolvedConvention)
-                    else -> null
-                }
-                val detState = when (manualSide) {
-                    "LHS" -> DirectionDetectionState.LHS_CONFIRMED
-                    "RHS" -> DirectionDetectionState.RHS_CONFIRMED
-                    else -> DirectionDetectionState.DIRECTION_UNCERTAIN
-                }
-                val trend = when (inc) {
-                    true -> ChainageProgressionTrend.INCREASING
-                    false -> ChainageProgressionTrend.DECREASING
-                    null -> ChainageProgressionTrend.UNKNOWN
-                }
-                val manualState = SmartDirectionState(
-                    detectionState = detState,
-                    confirmedSide = manualSide,
-                    pendingCandidateSide = null,
-                    chainageTrend = trend,
-                    isIncreasingChainage = inc,
-                    directionArrow = trend.arrow,
-                    isManualOverride = true,
-                    confidenceScore = 1f,
-                    routeId = routeId,
-                    alignmentId = alignmentId,
-                    effectiveConvention = resolvedConvention,
-                    statusLabel = "$manualSide (Manual)",
-                    detailReason = "Manual direction override active",
-                    lastConfirmedTimestampMs = nowMs,
-                    lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-                    directionChangedFrom = null
-                )
-                lastPublishedState = manualState
-                return manualState
-            }
-        }
-
-        // 3. Check Alignment Availability
-        if (routeData == null || activeAlign == null || activeAlign.points.size < 2) {
-            confirmedSide = null
-            confirmedIncreasing = null
-            clearPendingCandidate()
-            val state = SmartDirectionState.alignmentUnavailable(routeId, alignmentId).copy(
-                effectiveConvention = resolvedConvention
-            )
-            lastPublishedState = state
-            return state
-        }
-
-        // 4. Check GPS Signal Quality (never publish guessed direction when GPS is weak or lost)
-        val fixAgeMs = if (locationState != null && locationState.lastFixTime > 0L) {
-            (nowMs - locationState.lastFixTime).coerceAtLeast(0L)
+        // Track manual preference transitions cleanly (supports both ViewModel callbacks and direct pref injection)
+        val requestedManualSide = if (preferences.controlMode == DirectionControlMode.MANUAL_OVERRIDE) {
+            preferences.normalizedManualSide
         } else {
-            0L
+            null
         }
-        val isGpsWeak = locationState == null ||
-            locationState.point == null ||
-            !locationState.isUsable ||
-            locationState.status == LocationStatus.PERMISSION_DENIED ||
-            locationState.status == LocationStatus.DISABLED ||
-            locationState.status == LocationStatus.POOR_ACCURACY ||
-            locationState.accuracy > MAX_RELIABLE_GPS_ACCURACY_M ||
-            fixAgeMs > MAX_GPS_FIX_AGE_MS
 
-        if (isGpsWeak) {
-            clearPendingCandidate()
-            val isHardGpsLoss = locationState == null ||
-                locationState.point == null ||
-                locationState.status == LocationStatus.DISABLED ||
-                locationState.status == LocationStatus.PERMISSION_DENIED ||
-                fixAgeMs > MAX_GPS_FIX_AGE_MS
-            val canBrieflyHoldLastSide = !isHardGpsLoss &&
-                confirmedSide != null &&
-                lastConfirmedTimestampMs > 0L &&
-                (nowMs - lastConfirmedTimestampMs) in 0L..TRANSIENT_WEAK_GPS_HOLD_MS
+        if (requestedManualSide == null) {
+            activeManualKey = null
+            manualActivityAnchorMs = Long.MIN_VALUE
+            manualExpiredToAuto = false
+        } else {
+            val prefKey = buildManualPreferenceKey(requestedManualSide, preferences.manualSelectedAtMs)
+            if (activeManualKey == null) {
+                activeManualKey = prefKey
+                manualActivityAnchorMs = if (preferences.manualSelectedAtMs > 0L) preferences.manualSelectedAtMs else nowMs
+                manualExpiredToAuto = false
+                consecutiveHighSpeedSamples = 0
+                lastHighSpeedFixTimeMs = Long.MIN_VALUE
+                lastHighSpeedEvalMs = 0L
+            } else if (!activeManualKey!!.startsWith("$requestedManualSide@") ||
+                (preferences.manualSelectedAtMs > 0L && activeManualKey != prefKey)
+            ) {
+                // User changed manual side or re-selected manual side with a newer timestamp
+                activeManualKey = prefKey
+                manualActivityAnchorMs = if (preferences.manualSelectedAtMs > 0L) preferences.manualSelectedAtMs else nowMs
+                manualExpiredToAuto = false
+                consecutiveHighSpeedSamples = 0
+                lastHighSpeedFixTimeMs = Long.MIN_VALUE
+                lastHighSpeedEvalMs = 0L
+            }
+        }
 
-            val reason = when {
-                locationState == null || locationState.point == null -> "Waiting for GPS signal"
-                locationState.status == LocationStatus.DISABLED -> "GPS is turned off"
-                locationState.status == LocationStatus.PERMISSION_DENIED -> "Location permission required"
-                fixAgeMs > MAX_GPS_FIX_AGE_MS -> "GPS fix is stale"
-                canBrieflyHoldLastSide -> String.format(
-                    Locale.US,
-                    "Brief weak GPS (±%.0fm) — holding last reliable %s",
-                    locationState.accuracy,
-                    confirmedSide
-                )
-                else -> String.format(Locale.US, "GPS accuracy weak (±%.0fm)", locationState.accuracy)
+        val isManualCurrentlyActive = requestedManualSide != null && !manualExpiredToAuto
+        var autoReactivatedReason: DirectionAutoReactivationReason? = null
+
+        // Priority 2 check (overrides Manual immediately): Reliable consecutive GPS speed >= 5 km/h
+        val speedTriggerConfirmed = updateAndCheckSpeedTrigger(locationState, nowMs)
+        if (isManualCurrentlyActive && speedTriggerConfirmed) {
+            manualExpiredToAuto = true
+            autoReactivatedReason = DirectionAutoReactivationReason.VEHICLE_SPEED_TRIGGER
+        }
+
+        // Priority 1 timeout check: 10 continuous minutes without photo capture (suspended during active video recording)
+        if (requestedManualSide != null && !manualExpiredToAuto && !isVideoRecordingActive) {
+            val anchor = resolveManualAnchorMs(preferences, nowMs)
+            if (nowMs - anchor >= MANUAL_INACTIVITY_TIMEOUT_MS) {
+                manualExpiredToAuto = true
+                autoReactivatedReason = DirectionAutoReactivationReason.PHOTO_INACTIVITY_TIMEOUT
             }
-            val heldSide = if (canBrieflyHoldLastSide) confirmedSide else null
-            val heldInc = if (canBrieflyHoldLastSide) confirmedIncreasing else null
-            val heldTrend = when (heldInc) {
-                true -> ChainageProgressionTrend.INCREASING
-                false -> ChainageProgressionTrend.DECREASING
-                null -> ChainageProgressionTrend.UNKNOWN
-            }
-            val state = SmartDirectionState(
-                detectionState = DirectionDetectionState.GPS_SIGNAL_WEAK,
-                confirmedSide = heldSide,
-                pendingCandidateSide = null,
-                chainageTrend = heldTrend,
-                isIncreasingChainage = heldInc,
-                directionArrow = heldTrend.arrow,
-                isManualOverride = false,
-                confidenceScore = if (heldSide != null) 0.35f else 0f,
+        }
+
+        // Priority 1: Valid manual override remains active and is NEVER overwritten by GPS updates
+        if (requestedManualSide != null && !manualExpiredToAuto) {
+            val manualState = buildManualState(
+                manualSide = requestedManualSide,
                 routeId = routeId,
                 alignmentId = alignmentId,
-                effectiveConvention = resolvedConvention,
-                statusLabel = heldSide ?: DirectionDetectionState.GPS_SIGNAL_WEAK.shortLabel,
-                detailReason = reason,
-                lastConfirmedTimestampMs = lastConfirmedTimestampMs,
-                lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-                directionChangedFrom = null
+                convention = effectiveConvention,
+                nowMs = nowMs
             )
-            lastPublishedState = state
-            return state
+            latestState = manualState
+            return manualState
         }
 
-        // 5. Check Map-Matched Alignment Validity
-        val currentChainage = matchResult.chainage
-        if (currentChainage == null ||
-            matchResult.confidence == MatchConfidence.NO_MATCH ||
-            matchResult.offsetMetres > MAX_ALIGNMENT_CORRIDOR_OFFSET_M
-        ) {
-            clearPendingCandidate()
-            val state = SmartDirectionState(
-                detectionState = DirectionDetectionState.ALIGNMENT_UNAVAILABLE,
+        // Priority 3 & 4: AUTO mode — KMZ/KML offset-based LHS/RHS detection ONLY
+        val autoState = evaluateKmzOffsetAutoDirection(
+            locationState = locationState,
+            matchResult = matchResult,
+            routeData = routeData,
+            activeAlignment = activeAlignment,
+            convention = effectiveConvention,
+            nowMs = nowMs,
+            autoReactivatedReason = autoReactivatedReason
+        )
+        latestState = autoState
+        return autoState
+    }
+
+    private fun buildManualPreferenceKey(normalizedSide: String, selectedAtMs: Long): String {
+        return "$normalizedSide@$selectedAtMs"
+    }
+
+    private fun resolveManualAnchorMs(preferences: SmartDirectionPreferences, nowMs: Long): Long {
+        if (manualActivityAnchorMs != Long.MIN_VALUE) return manualActivityAnchorMs
+        if (preferences.manualSelectedAtMs > 0L) {
+            manualActivityAnchorMs = preferences.manualSelectedAtMs
+            return manualActivityAnchorMs
+        }
+        manualActivityAnchorMs = nowMs
+        return manualActivityAnchorMs
+    }
+
+    /**
+     * Tracks reliable consecutive GPS speed readings >= 5 km/h (1.3889 m/s).
+     * - Rejects inaccurate/unusable/stale fixes and impossible speed spikes.
+     * - Rejects duplicate evaluations of the exact same GPS fix timestamp.
+     * - Requires [SPEED_CONFIRM_CONSECUTIVE_SAMPLES] consecutive reliable readings >= 5 km/h
+     *   within [MAX_SPEED_SAMPLE_GAP_MS] so a single noisy GPS reading never triggers switching.
+     */
+    private fun updateAndCheckSpeedTrigger(locationState: LocationState?, nowMs: Long): Boolean {
+        if (locationState == null || !isReliableGpsForSpeed(locationState, nowMs)) {
+            return false
+        }
+        val rawSpeedMps = locationState.speed ?: return false
+        if (rawSpeedMps.isNaN() || rawSpeedMps.isInfinite() || rawSpeedMps < 0f || rawSpeedMps > MAX_SANE_SPEED_MPS) {
+            return false
+        }
+
+        val fixTime = locationState.lastFixTime
+        // Do not double-count repeated evaluations of the same GPS fix
+        if (fixTime > 0L && fixTime == lastHighSpeedFixTimeMs) {
+            return consecutiveHighSpeedSamples >= SPEED_CONFIRM_CONSECUTIVE_SAMPLES
+        }
+
+        val speedKmh = rawSpeedMps.toDouble() * 3.6
+        if (speedKmh >= SPEED_AUTO_TRIGGER_KMH - SPEED_EPSILON_KMH) {
+            val gapMs = if (lastHighSpeedEvalMs > 0L) abs(nowMs - lastHighSpeedEvalMs) else 0L
+            if (consecutiveHighSpeedSamples == 0 || gapMs <= MAX_SPEED_SAMPLE_GAP_MS) {
+                consecutiveHighSpeedSamples += 1
+            } else {
+                consecutiveHighSpeedSamples = 1
+            }
+            lastHighSpeedFixTimeMs = fixTime
+            lastHighSpeedEvalMs = nowMs
+        } else {
+            // Speed dropped below 5 km/h: reset pending consecutive trigger counter without ever switching
+            consecutiveHighSpeedSamples = 0
+            lastHighSpeedFixTimeMs = fixTime
+            lastHighSpeedEvalMs = nowMs
+        }
+
+        return consecutiveHighSpeedSamples >= SPEED_CONFIRM_CONSECUTIVE_SAMPLES
+    }
+
+    /**
+     * Pure KMZ/KML offset-based AUTO direction detection.
+     * Uses ONLY the loaded KMZ/KML route alignment geometry and current GPS position.
+     * Never uses old travel progression, fixed compass bearing, or hardcoded offsets.
+     */
+    private fun evaluateKmzOffsetAutoDirection(
+        locationState: LocationState?,
+        matchResult: ChainageMatchResult?,
+        routeData: RouteData?,
+        activeAlignment: RouteAlignment?,
+        convention: AlignmentDirectionConvention,
+        nowMs: Long,
+        autoReactivatedReason: DirectionAutoReactivationReason?
+    ): SmartDirectionState {
+        val routeId = routeData?.id
+        val alignmentId = activeAlignment?.id
+
+        // 1. Require loaded KMZ/KML alignment geometry with at least 2 points
+        val validAlignments = routeData?.alignments?.filter { it.points.size >= 2 }.orEmpty()
+        if (routeData == null || validAlignments.isEmpty()) {
+            confirmedAutoSide = null
+            pendingOppositeSide = null
+            pendingOppositeCount = 0
+            return SmartDirectionState.alignmentUnavailable(routeId, alignmentId).copy(
+                effectiveConvention = convention,
+                autoReactivatedReason = autoReactivatedReason
+            )
+        }
+
+        // 2. Validate GPS availability & accuracy
+        val gpsPoint = locationState?.point
+        val gpsReliable = locationState != null && gpsPoint != null && isReliableGpsForOffset(locationState, nowMs)
+        if (!gpsReliable || gpsPoint == null) {
+            pendingOppositeSide = null
+            pendingOppositeCount = 0
+            val retained = confirmedAutoSide
+            if (retained != null) {
+                return buildConfirmedAutoState(
+                    side = retained,
+                    routeId = routeId,
+                    alignmentId = alignmentId,
+                    convention = convention,
+                    nowMs = nowMs,
+                    signedOffsetMetres = latestState.signedLateralOffsetMetres,
+                    confidence = 0.55f,
+                    detailReason = formatAutoDetailReason(
+                        base = "Retaining $retained (GPS accuracy weak)",
+                        reactivation = autoReactivatedReason
+                    ),
+                    changedFrom = null,
+                    autoReactivatedReason = autoReactivatedReason
+                )
+            }
+            return SmartDirectionState(
+                detectionState = DirectionDetectionState.GPS_SIGNAL_WEAK,
                 confirmedSide = null,
-                pendingCandidateSide = null,
                 chainageTrend = ChainageProgressionTrend.UNKNOWN,
                 isIncreasingChainage = null,
                 directionArrow = "",
@@ -281,630 +422,584 @@ class SmartDirectionManager {
                 confidenceScore = 0f,
                 routeId = routeId,
                 alignmentId = alignmentId,
-                effectiveConvention = resolvedConvention,
-                statusLabel = DirectionDetectionState.ALIGNMENT_UNAVAILABLE.shortLabel,
-                detailReason = "Vehicle is off the active road alignment",
-                lastConfirmedTimestampMs = lastConfirmedTimestampMs,
-                lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-                directionChangedFrom = null
+                effectiveConvention = convention,
+                statusLabel = DirectionDetectionState.GPS_SIGNAL_WEAK.displayLabel,
+                detailReason = formatAutoDetailReason(
+                    base = "Waiting for reliable GPS fix for KMZ/KML offset",
+                    reactivation = autoReactivatedReason
+                ),
+                autoReactivatedReason = autoReactivatedReason
             )
-            lastPublishedState = state
-            return state
         }
 
-        // Ignore transient GPS spike / uncertain match without flipping confirmed direction
-        if (matchResult.isUncertain ||
-            (matchResult.confidence == MatchConfidence.LOW && matchResult.offsetMetres > 45.0)
-        ) {
-            clearPendingCandidate()
-            val heldSide = confirmedSide
-            val heldInc = confirmedIncreasing
-            val state = if (heldSide != null) {
-                buildConfirmedOrHeldState(
-                    detectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
-                    side = heldSide,
-                    isIncreasing = heldInc,
-                    confidence = 0.35f,
-                    routeId = routeId,
-                    alignmentId = alignmentId,
-                    convention = resolvedConvention,
-                    detailReason = "Transient alignment uncertainty — holding previous direction",
-                    nowMs = nowMs,
-                    changedFrom = null
-                )
-            } else {
-                SmartDirectionState(
-                    detectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
-                    confirmedSide = null,
-                    pendingCandidateSide = null,
-                    chainageTrend = ChainageProgressionTrend.UNKNOWN,
-                    isIncreasingChainage = null,
-                    directionArrow = "",
-                    isManualOverride = false,
-                    confidenceScore = 0.2f,
-                    routeId = routeId,
-                    alignmentId = alignmentId,
-                    effectiveConvention = resolvedConvention,
-                    statusLabel = DirectionDetectionState.DIRECTION_UNCERTAIN.shortLabel,
-                    detailReason = "Alignment confidence low — verifying direction",
-                    lastConfirmedTimestampMs = lastConfirmedTimestampMs,
-                    lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-                    directionChangedFrom = null
-                )
-            }
-            lastPublishedState = state
-            return state
-        }
-
-        // 6. Record filtered sample into short trajectory window
-        val gpsPoint = locationState!!.point!!
-        val speedMps = locationState.speed?.takeIf { !it.isNaN() && it >= 0f }
-        val sample = FilteredSample(
-            point = gpsPoint,
-            projectedPoint = matchResult.projectedPoint,
-            distanceAlongM = matchResult.distanceAlongAlignmentMetres,
-            chainageM = currentChainage.metres,
-            timestampMs = nowMs,
-            accuracyM = locationState.accuracy,
-            speedMps = speedMps,
-            gpsBearingDeg = locationState.bearing?.takeIf { !it.isNaN() },
-            segmentIndex = matchResult.matchedSegmentIndex
+        // 3. Compute exact signed lateral offset from the actual KMZ/KML alignment geometry
+        val offsetSample = computeKmzOffsetSample(
+            gpsPoint = gpsPoint,
+            routeData = routeData,
+            activeAlignment = activeAlignment,
+            matchResult = matchResult
         )
-        val prevSample = recentSamples.lastOrNull()
 
-        // Guard against extreme impossible teleport (> 400m in < 2s) which indicates GPS jump
-        if (prevSample != null) {
-            val dtSec = ((nowMs - prevSample.timestampMs).coerceAtLeast(1L)) / 1000.0
-            val stepM = abs(sample.distanceAlongM - prevSample.distanceAlongM)
-            if (dtSec < 2.0 && stepM > 350.0) {
-                recentSamples.clear()
+        if (offsetSample == null || offsetSample.isOffCorridor) {
+            pendingOppositeSide = null
+            pendingOppositeCount = 0
+            val retained = confirmedAutoSide
+            if (retained != null) {
+                return buildConfirmedAutoState(
+                    side = retained,
+                    routeId = routeId,
+                    alignmentId = alignmentId,
+                    convention = convention,
+                    nowMs = nowMs,
+                    signedOffsetMetres = offsetSample?.signedOffsetMetres,
+                    confidence = 0.50f,
+                    detailReason = formatAutoDetailReason(
+                        base = "Retaining $retained (outside route corridor)",
+                        reactivation = autoReactivatedReason
+                    ),
+                    changedFrom = null,
+                    autoReactivatedReason = autoReactivatedReason
+                )
             }
-        }
-        recentSamples.addLast(sample)
-        while (recentSamples.size > MAX_SAMPLE_WINDOW) {
-            recentSamples.removeFirst()
-        }
-
-        // 7. Compute alignment-relative movement and stationary / slow-speed classification
-        val baselineSample = selectMovementBaselineSample(sample)
-        val stepChainageDeltaM = if (prevSample != null) (sample.chainageM - prevSample.chainageM).toDouble() else 0.0
-        val stepAlignDeltaM = if (prevSample != null) (sample.distanceAlongM - prevSample.distanceAlongM) else 0.0
-        val netChainageDeltaM = if (baselineSample != null) (sample.chainageM - baselineSample.chainageM).toDouble() else 0.0
-        val netAlignDeltaM = if (baselineSample != null) (sample.distanceAlongM - baselineSample.distanceAlongM) else 0.0
-        val rawGpsMoveM = if (baselineSample != null) GeoUtils.distanceMetres(baselineSample.point, sample.point) else 0.0
-        val stepGpsMoveM = if (prevSample != null) GeoUtils.distanceMetres(prevSample.point, sample.point) else 0.0
-
-        val isStationaryBySpeed = speedMps != null && speedMps < STATIONARY_SPEED_MPS
-        val isStationaryByDisplacement = abs(netAlignDeltaM) < MIN_DISPLACEMENT_FOR_MOVEMENT_M &&
-            abs(netChainageDeltaM) < MIN_DISPLACEMENT_FOR_MOVEMENT_M &&
-            rawGpsMoveM < MIN_GPS_DISPLACEMENT_M
-        val isStepStationary = prevSample != null &&
-            abs(stepAlignDeltaM) < STEP_JITTER_DEADBAND_M &&
-            abs(stepChainageDeltaM) < STEP_JITTER_DEADBAND_M &&
-            stepGpsMoveM < STEP_JITTER_DEADBAND_M
-
-        if (isStationaryBySpeed && isStationaryByDisplacement) {
-            clearPendingCandidate()
-            val heldSide = confirmedSide
-            val heldInc = confirmedIncreasing
-            val state = SmartDirectionState(
-                detectionState = DirectionDetectionState.STATIONARY,
-                confirmedSide = heldSide,
-                pendingCandidateSide = null,
-                chainageTrend = if (heldInc == true) {
-                    ChainageProgressionTrend.INCREASING
-                } else if (heldInc == false) {
-                    ChainageProgressionTrend.DECREASING
-                } else {
-                    ChainageProgressionTrend.STATIONARY
-                },
-                isIncreasingChainage = heldInc,
-                directionArrow = when (heldInc) {
-                    true -> "↑"
-                    false -> "↓"
-                    null -> "•"
-                },
+            return SmartDirectionState(
+                detectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
+                confirmedSide = null,
+                chainageTrend = ChainageProgressionTrend.UNKNOWN,
+                isIncreasingChainage = null,
+                directionArrow = "",
                 isManualOverride = false,
-                confidenceScore = if (heldSide != null) 0.78f else 0f,
+                confidenceScore = 0f,
                 routeId = routeId,
                 alignmentId = alignmentId,
-                effectiveConvention = resolvedConvention,
-                statusLabel = heldSide ?: DirectionDetectionState.STATIONARY.shortLabel,
-                detailReason = if (heldSide != null) {
-                    "Vehicle stationary — holding confirmed $heldSide"
-                } else {
-                    "Vehicle stationary — move along highway to detect direction"
-                },
-                lastConfirmedTimestampMs = lastConfirmedTimestampMs,
-                lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-                directionChangedFrom = null
+                effectiveConvention = convention,
+                statusLabel = DirectionDetectionState.DIRECTION_UNCERTAIN.displayLabel,
+                detailReason = formatAutoDetailReason(
+                    base = "Outside KMZ/KML route corridor — direction unavailable",
+                    reactivation = autoReactivatedReason
+                ),
+                autoReactivatedReason = autoReactivatedReason,
+                signedLateralOffsetMetres = offsetSample?.signedOffsetMetres
             )
-            lastPublishedState = state
-            return state
         }
 
-        // 8. Determine Alignment Tangent Bearing at matched segment & check movement vector agreement
-        val cachedGeometry = ChainageMatcher.getOrCreateCachedGeometry(activeAlign, routeData.markers)
-        val alignmentTangentDeg = computeAlignmentTangentBearing(
-            cached = cachedGeometry,
-            segmentIndex = matchResult.matchedSegmentIndex
-        )
+        val gpsAccuracy = locationState.accuracy.coerceAtLeast(1f)
+        val absOffset = abs(offsetSample.signedOffsetMetres)
+        val initialDeadband = CENTERLINE_DEADBAND_M
+        val switchHysteresis = max(SWITCH_HYSTERESIS_OFFSET_M, gpsAccuracy * ACCURACY_HYSTERESIS_FACTOR)
 
-        // Determine if chainage increases along polyline direction (p1 -> p2)
-        val alignmentChainageIncreasesForward = isAlignmentChainageIncreasingForward(cachedGeometry, activeAlign)
-
-        // Primary Cue: Calibrated chainage & alignment distance progression from consecutive positions
-        val effectiveDeltaM = if (abs(netChainageDeltaM) >= 2.0) netChainageDeltaM else {
-            if (alignmentChainageIncreasesForward) netAlignDeltaM else -netAlignDeltaM
-        }
-        val effectiveStepDeltaM = if (abs(stepChainageDeltaM) >= 1.5) stepChainageDeltaM else {
-            if (alignmentChainageIncreasesForward) stepAlignDeltaM else -stepAlignDeltaM
-        }
-
-        // Check local geometric vector alignment against local segment tangent (accurate on curves & bends!)
-        var vectorAlignmentCos = 0.0
-        if (alignmentTangentDeg != null) {
-            if (prevSample != null && stepGpsMoveM >= 2.5) {
-                val localStepBearing = GeoUtils.bearingDegrees(
-                    prevSample.projectedPoint ?: prevSample.point,
-                    sample.projectedPoint ?: sample.point
-                )
-                vectorAlignmentCos = cos(Math.toRadians(angleDifferenceDegrees(localStepBearing, alignmentTangentDeg)))
-            } else if (baselineSample != null && rawGpsMoveM >= 3.5) {
-                val moveBearing = GeoUtils.bearingDegrees(
-                    baselineSample.projectedPoint ?: baselineSample.point,
-                    sample.projectedPoint ?: sample.point
-                )
-                vectorAlignmentCos = cos(Math.toRadians(angleDifferenceDegrees(moveBearing, alignmentTangentDeg)))
-            }
-        }
-
-        // Geometric centreline lateral-offset cue for single-centreline divided highways
-        val lateralOffsetSideCue: String? = if (
-            !activeAlign.carriagewayType.equals("LHS", ignoreCase = true) &&
-            !activeAlign.carriagewayType.equals("RHS", ignoreCase = true) &&
-            cachedGeometry.points.size >= 2 &&
-            sample.accuracyM <= 15f
-        ) {
-            val segIdx = matchResult.matchedSegmentIndex.coerceIn(0, cachedGeometry.points.size - 2)
-            val signedLatM = ChainageMatcher.calculateSignedLateralOffsetMetres(
-                point = gpsPoint,
-                p1 = cachedGeometry.points[segIdx],
-                p2 = cachedGeometry.points[segIdx + 1]
-            )
-            if (abs(signedLatM) in 3.5..35.0) {
-                if ((signedLatM > 0.0) == alignmentChainageIncreasesForward) "LHS" else "RHS"
-            } else {
-                null
-            }
-        } else {
-            null
-        }
-
-        // Secondary Cue (ONLY when moving >= 2.5 m/s with good GPS accuracy <= 18m): GPS course bearing
-        var gpsBearingCos: Double? = null
-        if (alignmentTangentDeg != null &&
-            sample.gpsBearingDeg != null &&
-            (speedMps == null || speedMps >= MIN_SPEED_FOR_GPS_BEARING_MPS) &&
-            sample.accuracyM <= 18f
-        ) {
-            gpsBearingCos = cos(Math.toRadians(angleDifferenceDegrees(sample.gpsBearingDeg.toDouble(), alignmentTangentDeg)))
-        }
-
-        // Check if movement is strictly lateral/noisy jitter rather than longitudinal travel along road
-        val isSlowSpeed = speedMps != null && speedMps < SLOW_SPEED_MPS
-        val minStepForObservation = if (isSlowSpeed) SLOW_SPEED_STEP_M else NORMAL_STEP_M
-
-        val observedIncreasing: Boolean? = when {
-            abs(effectiveStepDeltaM) >= minStepForObservation && abs(effectiveDeltaM) >= minStepForObservation -> {
-                // Step and window net movement agree
-                if ((effectiveStepDeltaM > 0.0) == (effectiveDeltaM > 0.0)) {
-                    effectiveDeltaM > 0.0
-                } else {
-                    // Instantaneous step opposes window (e.g. just started U-turn or reversing)
-                    if (abs(effectiveStepDeltaM) >= 4.0) effectiveStepDeltaM > 0.0 else null
-                }
-            }
-            abs(effectiveDeltaM) >= (if (isSlowSpeed) 8.0 else 5.5) -> {
-                effectiveDeltaM > 0.0
-            }
-            // Dedicated dual-carriageway alignment (explicit LHS or RHS polyline) with strong match
-            (activeAlign.carriagewayType.equals("LHS", ignoreCase = true) ||
-                activeAlign.carriagewayType.equals("RHS", ignoreCase = true)) &&
-                matchResult.confidence == MatchConfidence.HIGH &&
-                matchResult.offsetMetres <= 18.0 &&
-                abs(effectiveDeltaM) >= 3.0 -> {
-                isIncreasingForSide(activeAlign.carriagewayType.uppercase(Locale.ROOT), resolvedConvention)
-            }
-            // High-speed immediate movement bearing cue on first fix / route switch (still gated by confirmation hysteresis)
-            gpsBearingCos != null &&
-                speedMps != null &&
-                speedMps >= 4.0f &&
-                sample.accuracyM <= 15f &&
-                abs(gpsBearingCos) >= 0.78 -> {
-                if (alignmentChainageIncreasesForward) gpsBearingCos > 0.0 else gpsBearingCos < 0.0
-            }
-            else -> null
-        }
-
-        // Validate observation against alignment geometry & filter GPS drift
-        val stepDisplacementAbs = abs(effectiveStepDeltaM).coerceAtLeast(abs(stepAlignDeltaM))
-        val observedSide: String? = observedIncreasing?.let { inc ->
-            sideForProgression(isIncreasing = inc, convention = resolvedConvention)
-        }
-
-        // Confidence scoring combining GPS accuracy, map-match offset, vector agreement, lateral offset, and bearing corroboration
-        val observationConfidence = computeObservationConfidence(
-            accuracyM = sample.accuracyM,
-            offsetM = matchResult.offsetMetres,
-            vectorCos = vectorAlignmentCos,
-            gpsBearingCos = gpsBearingCos,
-            alignmentChainageIncreasesForward = alignmentChainageIncreasesForward,
-            observedIncreasing = observedIncreasing,
-            dedicatedCarriageway = activeAlign.carriagewayType.uppercase(Locale.ROOT),
-            lateralOffsetSideCue = lateralOffsetSideCue,
-            observedSide = observedSide,
-            isSlowSpeed = isSlowSpeed
-        )
-
-        // If movement is too small or confidence too weak, hold existing confirmed state or report UNCERTAIN
-        if (observedSide == null || observedIncreasing == null || isStepStationary || observationConfidence < MIN_OBSERVATION_CONFIDENCE) {
-            val heldSide = confirmedSide
-            val heldInc = confirmedIncreasing
-            val state = if (heldSide != null) {
-                val detState = if (isStepStationary && (speedMps == null || speedMps < STATIONARY_SPEED_MPS)) {
-                    DirectionDetectionState.STATIONARY
-                } else {
-                    if (heldSide == "LHS") DirectionDetectionState.LHS_CONFIRMED else DirectionDetectionState.RHS_CONFIRMED
-                }
-                buildConfirmedOrHeldState(
-                    detectionState = detState,
-                    side = heldSide,
-                    isIncreasing = heldInc,
-                    confidence = 0.80f,
+        // 4. Handle centerline deadband smoothly without guessing or noisy oscillation
+        val detectedSide = offsetSample.side
+        if (detectedSide == null || absOffset < initialDeadband) {
+            pendingOppositeSide = null
+            pendingOppositeCount = 0
+            val retained = confirmedAutoSide
+            if (retained != null) {
+                return buildConfirmedAutoState(
+                    side = retained,
                     routeId = routeId,
-                    alignmentId = alignmentId,
-                    convention = resolvedConvention,
-                    detailReason = if (detState == DirectionDetectionState.STATIONARY) {
-                        "Vehicle stationary — holding confirmed $heldSide"
-                    } else {
-                        "Confirmed $heldSide along ${activeAlign.name}"
-                    },
+                    alignmentId = offsetSample.alignmentId ?: alignmentId,
+                    convention = convention,
                     nowMs = nowMs,
-                    changedFrom = null
-                )
-            } else {
-                SmartDirectionState(
-                    detectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
-                    confirmedSide = null,
-                    pendingCandidateSide = pendingSide,
-                    chainageTrend = ChainageProgressionTrend.UNKNOWN,
-                    isIncreasingChainage = null,
-                    directionArrow = "",
-                    isManualOverride = false,
-                    confidenceScore = observationConfidence,
-                    routeId = routeId,
-                    alignmentId = alignmentId,
-                    effectiveConvention = resolvedConvention,
-                    statusLabel = DirectionDetectionState.DIRECTION_UNCERTAIN.shortLabel,
-                    detailReason = "Checking road alignment and travel movement",
-                    lastConfirmedTimestampMs = lastConfirmedTimestampMs,
-                    lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-                    directionChangedFrom = null
+                    signedOffsetMetres = offsetSample.signedOffsetMetres,
+                    confidence = 0.72f,
+                    detailReason = formatAutoDetailReason(
+                        base = String.format(
+                            Locale.US,
+                            "AUTO %s (near centerline %.1fm)",
+                            retained,
+                            offsetSample.signedOffsetMetres
+                        ),
+                        reactivation = autoReactivatedReason
+                    ),
+                    changedFrom = null,
+                    autoReactivatedReason = autoReactivatedReason
                 )
             }
-            lastPublishedState = state
-            return state
+            return SmartDirectionState(
+                detectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
+                confirmedSide = null,
+                chainageTrend = ChainageProgressionTrend.UNKNOWN,
+                isIncreasingChainage = null,
+                directionArrow = "",
+                isManualOverride = false,
+                confidenceScore = 0.2f,
+                routeId = routeId,
+                alignmentId = offsetSample.alignmentId ?: alignmentId,
+                effectiveConvention = convention,
+                statusLabel = DirectionDetectionState.DIRECTION_UNCERTAIN.displayLabel,
+                detailReason = formatAutoDetailReason(
+                    base = String.format(
+                        Locale.US,
+                        "On KMZ/KML centerline (%.1fm) — waiting for clear lateral offset",
+                        offsetSample.signedOffsetMetres
+                    ),
+                    reactivation = autoReactivatedReason
+                ),
+                autoReactivatedReason = autoReactivatedReason,
+                signedLateralOffsetMetres = offsetSample.signedOffsetMetres
+            )
         }
 
-        // 9. State Machine: Initial Confirmation vs Steady Travel vs Direction Change / U-Turn Detection
-        val currentConfirmed = confirmedSide
+        // 5. Initial confirmation vs hysteresis-filtered opposite-side transition
+        val currentConfirmed = confirmedAutoSide
+        val fixTime = locationState.lastFixTime
+        val isNewFix = fixTime <= 0L || fixTime != lastOffsetEvaluatedFixTimeMs
+        lastOffsetEvaluatedFixTimeMs = fixTime
+
+        var changedFrom: String? = null
+
         if (currentConfirmed == null) {
-            // Accumulate reliable evidence before initial confirmation (never guess on 1 noisy fix!)
-            accumulatePending(observedSide, stepDisplacementAbs.coerceAtLeast(abs(netAlignDeltaM) / 2.0), nowMs)
-            val reqCount = if (isSlowSpeed) INITIAL_CONFIRM_COUNT_SLOW else INITIAL_CONFIRM_COUNT_NORMAL
-            val reqDistM = if (isSlowSpeed) INITIAL_CONFIRM_DIST_SLOW_M else INITIAL_CONFIRM_DIST_NORMAL_M
-            val effectiveDistM = maxOf(pendingCumulativeDisplacementM, abs(netAlignDeltaM), abs(netChainageDeltaM))
-
-            if (pendingConsecutiveCount >= reqCount && effectiveDistM >= reqDistM) {
-                confirmedSide = observedSide
-                confirmedIncreasing = observedIncreasing
-                lastConfirmedTimestampMs = nowMs
-                clearPendingCandidate()
-                val state = buildConfirmedOrHeldState(
-                    detectionState = if (observedSide == "LHS") {
-                        DirectionDetectionState.LHS_CONFIRMED
-                    } else {
-                        DirectionDetectionState.RHS_CONFIRMED
-                    },
-                    side = observedSide,
-                    isIncreasing = observedIncreasing,
-                    confidence = observationConfidence,
-                    routeId = routeId,
-                    alignmentId = alignmentId,
-                    convention = resolvedConvention,
-                    detailReason = "Confirmed $observedSide (${if (observedIncreasing) "Increasing" else "Decreasing"} chainage)",
-                    nowMs = nowMs,
-                    changedFrom = null
-                )
-                lastPublishedState = state
-                return state
-            } else {
-                val state = SmartDirectionState(
-                    detectionState = DirectionDetectionState.DIRECTION_UNCERTAIN,
-                    confirmedSide = null,
-                    pendingCandidateSide = pendingSide,
-                    chainageTrend = if (observedIncreasing) {
-                        ChainageProgressionTrend.INCREASING
-                    } else {
-                        ChainageProgressionTrend.DECREASING
-                    },
-                    isIncreasingChainage = null,
-                    directionArrow = "",
-                    isManualOverride = false,
-                    confidenceScore = observationConfidence * 0.6f,
-                    routeId = routeId,
-                    alignmentId = alignmentId,
-                    effectiveConvention = resolvedConvention,
-                    statusLabel = DirectionDetectionState.DIRECTION_UNCERTAIN.shortLabel,
-                    detailReason = "Verifying travel direction along alignment",
-                    lastConfirmedTimestampMs = lastConfirmedTimestampMs,
-                    lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-                    directionChangedFrom = null
-                )
-                lastPublishedState = state
-                return state
-            }
-        }
-
-        // Case B: Observation agrees with current confirmed direction -> reinforce & clear any transient reversal
-        if (observedSide == currentConfirmed) {
-            clearPendingCandidate()
-            confirmedIncreasing = observedIncreasing
+            // Cold start or fresh route: confirm immediately from clear reliable KMZ/KML lateral offset
+            confirmedAutoSide = detectedSide
             lastConfirmedTimestampMs = nowMs
-            val state = buildConfirmedOrHeldState(
-                detectionState = if (currentConfirmed == "LHS") {
-                    DirectionDetectionState.LHS_CONFIRMED
-                } else {
-                    DirectionDetectionState.RHS_CONFIRMED
-                },
-                side = currentConfirmed,
-                isIncreasing = observedIncreasing,
-                confidence = observationConfidence,
-                routeId = routeId,
-                alignmentId = alignmentId,
-                convention = resolvedConvention,
-                detailReason = "Confirmed $currentConfirmed (${if (observedIncreasing) "Increasing" else "Decreasing"} chainage)",
-                nowMs = nowMs,
-                changedFrom = null
-            )
-            lastPublishedState = state
-            return state
-        }
-
-        // Case C: Observation opposes current confirmed direction -> distinguish temporary reverse/drift vs genuine U-turn / reversal
-        accumulatePending(observedSide, stepDisplacementAbs, nowMs)
-        val changeReqCount = if (isSlowSpeed) CHANGE_CONFIRM_COUNT_SLOW else CHANGE_CONFIRM_COUNT_NORMAL
-        val changeReqDistM = if (isSlowSpeed) CHANGE_CONFIRM_DIST_SLOW_M else CHANGE_CONFIRM_DIST_NORMAL_M
-
-        val isGenuineDirectionChange =
-            (pendingConsecutiveCount >= changeReqCount && pendingCumulativeDisplacementM >= changeReqDistM) ||
-                (pendingConsecutiveCount >= 2 && pendingCumulativeDisplacementM >= FAST_UTURN_CONFIRM_DIST_M && observationConfidence >= 0.72f)
-
-        if (isGenuineDirectionChange) {
-            val previousSide = currentConfirmed
-            confirmedSide = observedSide
-            confirmedIncreasing = observedIncreasing
+            pendingOppositeSide = null
+            pendingOppositeCount = 0
+        } else if (detectedSide == currentConfirmed) {
+            // Consistent with current confirmed side
             lastConfirmedTimestampMs = nowMs
-            lastDirectionChangeTimestampMs = nowMs
-            clearPendingCandidate()
-
-            val state = buildConfirmedOrHeldState(
-                detectionState = if (observedSide == "LHS") {
-                    DirectionDetectionState.LHS_CONFIRMED
-                } else {
-                    DirectionDetectionState.RHS_CONFIRMED
-                },
-                side = observedSide,
-                isIncreasing = observedIncreasing,
-                confidence = observationConfidence,
-                routeId = routeId,
-                alignmentId = alignmentId,
-                convention = resolvedConvention,
-                detailReason = "Direction changed from $previousSide to $observedSide",
-                nowMs = nowMs,
-                changedFrom = previousSide
-            )
-            lastPublishedState = state
-            return state
-        }
-
-        // Not enough confirmation yet (e.g., temporary reverse movement or start of U-turn):
-        // Publish DIRECTION_CHANGING while preserving the previously confirmed direction until proven.
-        val changingState = SmartDirectionState(
-            detectionState = DirectionDetectionState.DIRECTION_CHANGING,
-            confirmedSide = currentConfirmed,
-            pendingCandidateSide = observedSide,
-            chainageTrend = if (confirmedIncreasing == true) {
-                ChainageProgressionTrend.INCREASING
-            } else {
-                ChainageProgressionTrend.DECREASING
-            },
-            isIncreasingChainage = confirmedIncreasing,
-            directionArrow = "⇄",
-            isManualOverride = false,
-            confidenceScore = 0.55f,
-            routeId = routeId,
-            alignmentId = alignmentId,
-            effectiveConvention = resolvedConvention,
-            statusLabel = DirectionDetectionState.DIRECTION_CHANGING.shortLabel,
-            detailReason = "Detecting possible direction change to $observedSide",
-            lastConfirmedTimestampMs = lastConfirmedTimestampMs,
-            lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-            directionChangedFrom = null
-        )
-        lastPublishedState = changingState
-        return changingState
-    }
-
-    private fun accumulatePending(candidateSide: String, stepDistM: Double, nowMs: Long) {
-        if (pendingSide == candidateSide) {
-            pendingConsecutiveCount += 1
-            pendingCumulativeDisplacementM += stepDistM.coerceAtLeast(0.0)
+            pendingOppositeSide = null
+            pendingOppositeCount = 0
         } else {
-            pendingSide = candidateSide
-            pendingConsecutiveCount = 1
-            pendingCumulativeDisplacementM = stepDistM.coerceAtLeast(0.0)
-            pendingFirstTimestampMs = nowMs
-        }
-    }
+            // Opposite side detected: require clear lateral hysteresis + consecutive reliable fixes
+            // so a single noisy GPS reading NEVER triggers a sudden direction flip.
+            if (absOffset >= switchHysteresis) {
+                if (pendingOppositeSide == detectedSide) {
+                    if (isNewFix) {
+                        pendingOppositeCount += 1
+                    }
+                } else {
+                    pendingOppositeSide = detectedSide
+                    pendingOppositeCount = 1
+                }
 
-    private fun clearPendingCandidate() {
-        pendingSide = null
-        pendingConsecutiveCount = 0
-        pendingCumulativeDisplacementM = 0.0
-        pendingFirstTimestampMs = 0L
-    }
-
-    private fun selectMovementBaselineSample(latest: FilteredSample): FilteredSample? {
-        if (recentSamples.size < 2) return null
-        // Pick the earliest sample in the short window that is at least 1.5s old or >= 8m away for noise rejection
-        var best: FilteredSample? = null
-        for (i in 0 until recentSamples.size - 1) {
-            val s = recentSamples[i]
-            val ageMs = latest.timestampMs - s.timestampMs
-            if (ageMs <= MAX_WINDOW_AGE_MS) {
-                best = s
-                break
+                if (pendingOppositeCount >= SWITCH_CONFIRM_SAMPLES) {
+                    changedFrom = currentConfirmed
+                    confirmedAutoSide = detectedSide
+                    lastConfirmedTimestampMs = nowMs
+                    lastDirectionChangeTimestampMs = nowMs
+                    pendingOppositeSide = null
+                    pendingOppositeCount = 0
+                }
+            } else {
+                // Opposite offset still within hysteresis margin — hold current confirmed side steadily
+                pendingOppositeSide = null
+                pendingOppositeCount = 0
             }
         }
-        return best ?: recentSamples[recentSamples.size - 2]
+
+        val finalSide = confirmedAutoSide ?: detectedSide
+        val confidence = ((absOffset / (absOffset + gpsAccuracy * 0.5)).toFloat()).coerceIn(0.60f, 0.99f)
+        val detailBase = if (pendingOppositeSide != null && pendingOppositeSide != finalSide) {
+            String.format(
+                Locale.US,
+                "AUTO %s (KMZ offset %+.1fm, verifying %s)",
+                finalSide,
+                offsetSample.signedOffsetMetres,
+                pendingOppositeSide
+            )
+        } else {
+            String.format(
+                Locale.US,
+                "AUTO %s from KMZ/KML offset (%+.1fm)",
+                finalSide,
+                offsetSample.signedOffsetMetres
+            )
+        }
+
+        return buildConfirmedAutoState(
+            side = finalSide,
+            routeId = routeId,
+            alignmentId = offsetSample.alignmentId ?: alignmentId,
+            convention = convention,
+            nowMs = nowMs,
+            signedOffsetMetres = offsetSample.signedOffsetMetres,
+            confidence = confidence,
+            detailReason = formatAutoDetailReason(detailBase, autoReactivatedReason),
+            changedFrom = changedFrom,
+            autoReactivatedReason = autoReactivatedReason,
+            pendingSide = pendingOppositeSide
+        )
     }
 
-    private fun buildConfirmedOrHeldState(
-        detectionState: DirectionDetectionState,
-        side: String,
-        isIncreasing: Boolean?,
-        confidence: Float,
+    /**
+     * Computes signed lateral offset of [gpsPoint] relative to the actual loaded KMZ/KML route geometry.
+     *
+     * Supports:
+     * - Dual-carriageway KMZ/KML routes with explicit separate LHS and RHS alignment polylines.
+     * - Single-centerline or multi-alignment KMZ/KML routes with straight segments, sweeping curves,
+     *   sharp 90°/180° bends (vertex bisector tangent), and irregular polyline geometry.
+     */
+    private fun computeKmzOffsetSample(
+        gpsPoint: GeoPoint,
+        routeData: RouteData,
+        activeAlignment: RouteAlignment?,
+        matchResult: ChainageMatchResult?
+    ): KmzOffsetSample? {
+        val validAlignments = routeData.alignments.filter { it.points.size >= 2 }
+        if (validAlignments.isEmpty()) return null
+
+        // Case A: Explicit Dual-Carriageway KMZ/KML (both LHS and RHS polylines present & no single alignment forced)
+        if (routeData.selectedAlignmentId == null) {
+            val lhsAlignments = validAlignments.filter { isExplicitCarriageway(it, "LHS") }
+            val rhsAlignments = validAlignments.filter { isExplicitCarriageway(it, "RHS") }
+            if (lhsAlignments.isNotEmpty() && rhsAlignments.isNotEmpty()) {
+                val nearestLhs = findNearestAlignmentProjection(gpsPoint, lhsAlignments, routeData)
+                val nearestRhs = findNearestAlignmentProjection(gpsPoint, rhsAlignments, routeData)
+                if (nearestLhs != null && nearestRhs != null) {
+                    val distLhs = nearestLhs.second.perpendicularDistance
+                    val distRhs = nearestRhs.second.perpendicularDistance
+                    val minDist = min(distLhs, distRhs)
+                    val margin = distRhs - distLhs // > 0 => closer to LHS, < 0 => closer to RHS
+                    if (minDist > MAX_ALIGNMENT_CORRIDOR_OFFSET_M) {
+                        return KmzOffsetSample(
+                            side = null,
+                            signedOffsetMetres = margin,
+                            distanceToAlignmentMetres = minDist,
+                            alignmentId = if (distLhs <= distRhs) nearestLhs.first.alignmentId else nearestRhs.first.alignmentId,
+                            isOffCorridor = true
+                        )
+                    }
+                    val side = when {
+                        abs(margin) < CENTERLINE_DEADBAND_M -> null
+                        margin > 0.0 -> "LHS"
+                        else -> "RHS"
+                    }
+                    return KmzOffsetSample(
+                        side = side,
+                        signedOffsetMetres = margin,
+                        distanceToAlignmentMetres = minDist,
+                        alignmentId = if (distLhs <= distRhs) nearestLhs.first.alignmentId else nearestRhs.first.alignmentId,
+                        isOffCorridor = false
+                    )
+                }
+            }
+        }
+
+        // Case B: Single-centerline or matched alignment polyline — exact signed perpendicular lateral offset
+        val candidateAlignments = when {
+            routeData.selectedAlignmentId != null -> {
+                val selected = validAlignments.filter { it.id == routeData.selectedAlignmentId }
+                if (selected.isNotEmpty()) selected else validAlignments
+            }
+            activeAlignment != null && activeAlignment.points.size >= 2 && validAlignments.size == 1 -> {
+                listOf(activeAlignment)
+            }
+            else -> validAlignments
+        }
+
+        val nearest = findNearestAlignmentProjection(gpsPoint, candidateAlignments, routeData) ?: return null
+        val (cached, proj, segIdx) = nearest
+
+        if (proj.perpendicularDistance > MAX_ALIGNMENT_CORRIDOR_OFFSET_M) {
+            return KmzOffsetSample(
+                side = null,
+                signedOffsetMetres = 0.0,
+                distanceToAlignmentMetres = proj.perpendicularDistance,
+                alignmentId = cached.alignmentId,
+                isOffCorridor = true
+            )
+        }
+
+        val rawSignedOffset = computeCurveAwareSignedLateralOffset(
+            gpsPoint = gpsPoint,
+            cached = cached,
+            segIdx = segIdx,
+            proj = proj
+        )
+
+        val isDecreasingGeometry = cached.direction.equals("DECREASING", ignoreCase = true)
+        val orientedOffset = if (isDecreasingGeometry) -rawSignedOffset else rawSignedOffset
+        val side = when {
+            abs(orientedOffset) < CENTERLINE_DEADBAND_M -> null
+            orientedOffset > 0.0 -> "LHS"
+            else -> "RHS"
+        }
+
+        return KmzOffsetSample(
+            side = side,
+            signedOffsetMetres = orientedOffset,
+            distanceToAlignmentMetres = proj.perpendicularDistance,
+            alignmentId = cached.alignmentId,
+            isOffCorridor = false
+        )
+    }
+
+    /**
+     * Projects [gpsPoint] onto the closest segment across [alignments] using cached alignment geometry.
+     * Guarantees exact nearest-segment selection even on tight curves, hairpins, and irregular routes.
+     */
+    private fun findNearestAlignmentProjection(
+        gpsPoint: GeoPoint,
+        alignments: List<RouteAlignment>,
+        routeData: RouteData
+    ): Triple<ChainageMatcher.CachedAlignmentGeometry, SegmentProjection, Int>? {
+        var bestCached: ChainageMatcher.CachedAlignmentGeometry? = null
+        var bestProj: SegmentProjection? = null
+        var bestSegIdx = -1
+        var minDist = Double.MAX_VALUE
+
+        for (align in alignments) {
+            if (align.points.size < 2) continue
+            val cached = ChainageMatcher.getOrCreateCachedGeometry(align, routeData.markers)
+            val pts = cached.points
+            val useFastCull = cached.segmentCount > 500
+            for (i in 0 until cached.segmentCount) {
+                val p1 = pts[i]
+                val p2 = pts[i + 1]
+                if (useFastCull) {
+                    val minLat = min(p1.latitude, p2.latitude) - 0.004
+                    val maxLat = max(p1.latitude, p2.latitude) + 0.004
+                    val minLng = min(p1.longitude, p2.longitude) - 0.004
+                    val maxLng = max(p1.longitude, p2.longitude) + 0.004
+                    if (gpsPoint.latitude !in minLat..maxLat || gpsPoint.longitude !in minLng..maxLng) {
+                        continue
+                    }
+                }
+                val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
+                if (proj.perpendicularDistance < minDist) {
+                    minDist = proj.perpendicularDistance
+                    bestCached = cached
+                    bestProj = proj
+                    bestSegIdx = i
+                }
+            }
+        }
+
+        val chosenCached = bestCached ?: return null
+        val chosenProj = bestProj ?: return null
+        return Triple(chosenCached, chosenProj, bestSegIdx)
+    }
+
+    /**
+     * Computes signed lateral offset in metres relative to the local polyline tangent.
+     * - Positive => Left of segment direction (`p1 -> p2`)
+     * - Negative => Right of segment direction (`p1 -> p2`)
+     * At shared bend vertices (`t == 0` or `t == 1`), uses the unit bisector tangent of the
+     * incoming and outgoing segments so sharp 90°/S-bend outer & inner corners never invert sign.
+     */
+    private fun computeCurveAwareSignedLateralOffset(
+        gpsPoint: GeoPoint,
+        cached: ChainageMatcher.CachedAlignmentGeometry,
+        segIdx: Int,
+        proj: SegmentProjection
+    ): Double {
+        val pts = cached.points
+        if (segIdx !in 0 until cached.segmentCount) return 0.0
+        val p1 = pts[segIdx]
+        val p2 = pts[segIdx + 1]
+
+        // Interior of segment: direct exact perpendicular signed offset
+        if (proj.t > VERTEX_EPSILON && proj.t < 1.0 - VERTEX_EPSILON) {
+            return ChainageMatcher.calculateSignedLateralOffsetMetres(gpsPoint, p1, p2)
+        }
+
+        // At a shared vertex between two adjacent segments: use local bisector tangent
+        val vertexIdx = if (proj.t <= VERTEX_EPSILON) segIdx else segIdx + 1
+        if (vertexIdx in 1 until pts.lastIndex) {
+            val prev = pts[vertexIdx - 1]
+            val vertex = pts[vertexIdx]
+            val next = pts[vertexIdx + 1]
+
+            val midLatRad = Math.toRadians((prev.latitude + vertex.latitude + next.latitude + gpsPoint.latitude) / 4.0)
+            val cosLat = cos(midLatRad)
+
+            val ax = Math.toRadians(vertex.longitude - prev.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosLat
+            val ay = Math.toRadians(vertex.latitude - prev.latitude) * GeoUtils.EARTH_RADIUS_METRES
+            val aLen = sqrt(ax * ax + ay * ay)
+
+            val bx = Math.toRadians(next.longitude - vertex.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosLat
+            val by = Math.toRadians(next.latitude - vertex.latitude) * GeoUtils.EARTH_RADIUS_METRES
+            val bLen = sqrt(bx * bx + by * by)
+
+            if (aLen > 1e-4 && bLen > 1e-4) {
+                val tx = (ax / aLen) + (bx / bLen)
+                val ty = (ay / aLen) + (by / bLen)
+                val tLen = sqrt(tx * tx + ty * ty)
+                if (tLen > 1e-3) {
+                    val px = Math.toRadians(gpsPoint.longitude - vertex.longitude) * GeoUtils.EARTH_RADIUS_METRES * cosLat
+                    val py = Math.toRadians(gpsPoint.latitude - vertex.latitude) * GeoUtils.EARTH_RADIUS_METRES
+                    val cross = (tx / tLen) * py - (ty / tLen) * px
+                    val sign = if (cross >= 0.0) 1.0 else -1.0
+                    return sign * proj.perpendicularDistance
+                }
+            }
+        }
+
+        return ChainageMatcher.calculateSignedLateralOffsetMetres(gpsPoint, p1, p2)
+    }
+
+    private fun isExplicitCarriageway(alignment: RouteAlignment, side: String): Boolean {
+        val cw = alignment.carriagewayType.trim().uppercase(Locale.ROOT)
+        if (cw == side) return true
+        val lower = alignment.name.lowercase(Locale.ROOT)
+        return when (side) {
+            "LHS" -> lower.contains("lhs") || lower.contains("left carriageway") || lower.contains("left side")
+            "RHS" -> lower.contains("rhs") || lower.contains("right carriageway") || lower.contains("right side")
+            else -> false
+        }
+    }
+
+    private fun isReliableGpsForOffset(locationState: LocationState, nowMs: Long): Boolean {
+        if (!locationState.isUsable || locationState.point == null) return false
+        if (locationState.status == LocationStatus.POOR_ACCURACY ||
+            locationState.status == LocationStatus.DISABLED ||
+            locationState.status == LocationStatus.PERMISSION_DENIED
+        ) {
+            return false
+        }
+        val acc = locationState.accuracy
+        if (acc.isNaN() || acc <= 0f || acc > MAX_RELIABLE_GPS_ACCURACY_M) return false
+        if (locationState.lastFixTime > 0L && nowMs > 0L) {
+            val age = nowMs - locationState.lastFixTime
+            if (age > MAX_GPS_FIX_AGE_MS) return false
+        }
+        return true
+    }
+
+    private fun isReliableGpsForSpeed(locationState: LocationState, nowMs: Long): Boolean {
+        return isReliableGpsForOffset(locationState, nowMs) && locationState.speed != null
+    }
+
+    private fun buildManualState(
+        manualSide: String,
         routeId: String?,
         alignmentId: String?,
         convention: AlignmentDirectionConvention,
-        detailReason: String,
-        nowMs: Long,
-        changedFrom: String?
+        nowMs: Long
     ): SmartDirectionState {
-        val trend = when (isIncreasing) {
+        val isBinary = manualSide == "LHS" || manualSide == "RHS"
+        val isInc = if (isBinary) isIncreasingForSide(manualSide, convention) else null
+        val detState = when (manualSide) {
+            "LHS" -> DirectionDetectionState.LHS_CONFIRMED
+            "RHS" -> DirectionDetectionState.RHS_CONFIRMED
+            else -> DirectionDetectionState.DIRECTION_UNCERTAIN
+        }
+        val trend = when (isInc) {
             true -> ChainageProgressionTrend.INCREASING
             false -> ChainageProgressionTrend.DECREASING
             null -> ChainageProgressionTrend.UNKNOWN
         }
+        val arrow = when (isInc) {
+            true -> "↑"
+            false -> "↓"
+            null -> ""
+        }
+        val detail = if (isVideoRecordingActive) {
+            "Manual override: $manualSide (timeout paused during recording)"
+        } else {
+            "Manual override: $manualSide (auto resumes after 10 min inactivity or >= 5 km/h)"
+        }
         return SmartDirectionState(
-            detectionState = detectionState,
-            confirmedSide = side,
+            detectionState = detState,
+            confirmedSide = manualSide,
             pendingCandidateSide = null,
             chainageTrend = trend,
-            isIncreasingChainage = isIncreasing,
-            directionArrow = trend.arrow,
-            isManualOverride = false,
-            confidenceScore = confidence.coerceIn(0f, 1f),
+            isIncreasingChainage = isInc,
+            directionArrow = arrow,
+            isManualOverride = true,
+            confidenceScore = 1f,
             routeId = routeId,
             alignmentId = alignmentId,
             effectiveConvention = convention,
-            statusLabel = if (detectionState.isConfirmed) side else detectionState.shortLabel,
-            detailReason = detailReason,
-            lastConfirmedTimestampMs = lastConfirmedTimestampMs.coerceAtLeast(nowMs),
+            statusLabel = "Manual $manualSide",
+            detailReason = detail,
+            lastConfirmedTimestampMs = nowMs,
             lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
-            directionChangedFrom = changedFrom
+            directionChangedFrom = null,
+            autoReactivatedReason = null
         )
     }
 
-    private fun computeObservationConfidence(
-        accuracyM: Float,
-        offsetM: Double,
-        vectorCos: Double,
-        gpsBearingCos: Double?,
-        alignmentChainageIncreasesForward: Boolean,
-        observedIncreasing: Boolean?,
-        dedicatedCarriageway: String,
-        lateralOffsetSideCue: String?,
-        observedSide: String?,
-        isSlowSpeed: Boolean
-    ): Float {
-        if (observedIncreasing == null || observedSide == null) return 0f
-        var score = 0.72f
-
-        // Reward good GPS accuracy and close alignment snap
-        if (accuracyM <= 10f) score += 0.12f
-        else if (accuracyM > 20f) score -= 0.14f
-
-        if (offsetM <= 15.0) score += 0.08f
-        else if (offsetM > 35.0) score -= 0.12f
-
-        // Check geometric vector alignment with the polyline tangent
-        val expectedPolylineSign = if (observedIncreasing == alignmentChainageIncreasesForward) 1.0 else -1.0
-        if (abs(vectorCos) > 0.01) {
-            val signedAgreement = vectorCos * expectedPolylineSign
-            if (signedAgreement >= 0.45) score += 0.08f
-            else if (signedAgreement < -0.25) score -= 0.28f
+    private fun buildConfirmedAutoState(
+        side: String,
+        routeId: String?,
+        alignmentId: String?,
+        convention: AlignmentDirectionConvention,
+        nowMs: Long,
+        signedOffsetMetres: Double?,
+        confidence: Float,
+        detailReason: String,
+        changedFrom: String?,
+        autoReactivatedReason: DirectionAutoReactivationReason?,
+        pendingSide: String? = null
+    ): SmartDirectionState {
+        val isInc = isIncreasingForSide(side, convention)
+        val detState = if (side == "LHS") {
+            DirectionDetectionState.LHS_CONFIRMED
+        } else {
+            DirectionDetectionState.RHS_CONFIRMED
         }
-
-        // Secondary corroboration from GPS bearing (only when speed >= 2.5 m/s)
-        // Note: inaccurate or drifting bearing penalizes mildly, never overrides solid alignment trajectory
-        if (gpsBearingCos != null) {
-            val signedBearingAgreement = gpsBearingCos * expectedPolylineSign
-            if (signedBearingAgreement >= 0.50) score += 0.06f
-            else if (signedBearingAgreement < -0.50) score -= 0.10f
+        val trend = if (isInc) {
+            ChainageProgressionTrend.INCREASING
+        } else {
+            ChainageProgressionTrend.DECREASING
         }
+        val arrow = if (isInc) "↑" else "↓"
+        return SmartDirectionState(
+            detectionState = detState,
+            confirmedSide = side,
+            pendingCandidateSide = pendingSide,
+            chainageTrend = trend,
+            isIncreasingChainage = isInc,
+            directionArrow = arrow,
+            isManualOverride = false,
+            confidenceScore = confidence,
+            routeId = routeId,
+            alignmentId = alignmentId,
+            effectiveConvention = convention,
+            statusLabel = detState.displayLabel,
+            detailReason = detailReason,
+            lastConfirmedTimestampMs = lastConfirmedTimestampMs.takeIf { it > 0L } ?: nowMs,
+            lastDirectionChangeTimestampMs = lastDirectionChangeTimestampMs,
+            directionChangedFrom = changedFrom,
+            autoReactivatedReason = autoReactivatedReason,
+            signedLateralOffsetMetres = signedOffsetMetres
+        )
+    }
 
-        // Dedicated carriageway bonus (when KMZ separates LHS and RHS polylines)
-        if ((dedicatedCarriageway == "LHS" || dedicatedCarriageway == "RHS") && dedicatedCarriageway == observedSide) {
-            score += 0.08f
-        } else if (lateralOffsetSideCue != null) {
-            // Corroborate single-centreline divided highway travel side using lateral offset relative to centreline
-            if (lateralOffsetSideCue == observedSide) {
-                score += 0.07f
-            } else {
-                score -= 0.05f
-            }
+    private fun formatAutoDetailReason(
+        base: String,
+        reactivation: DirectionAutoReactivationReason?
+    ): String {
+        return if (reactivation != null) {
+            "$base (${reactivation.label})"
+        } else {
+            base
         }
-
-        if (isSlowSpeed) {
-            score -= 0.06f
-        }
-
-        return score.coerceIn(0f, 1f)
     }
 
     companion object {
-        const val MAX_RELIABLE_GPS_ACCURACY_M = 30f
-        const val MAX_GPS_FIX_AGE_MS = 12_000L
-        const val TRANSIENT_WEAK_GPS_HOLD_MS = 6_000L
-        const val MAX_ALIGNMENT_CORRIDOR_OFFSET_M = 95.0
+        // 10 continuous minutes of photo inactivity before manual override expires to AUTO
+        const val MANUAL_INACTIVITY_TIMEOUT_MS = 10L * 60L * 1000L
 
-        const val STATIONARY_SPEED_MPS = 0.8f      // ~2.9 km/h
-        const val SLOW_SPEED_MPS = 2.2f            // ~7.9 km/h
-        const val MIN_SPEED_FOR_GPS_BEARING_MPS = 2.5f
+        // Vehicle speed threshold: >= 5 km/h confirmed across consecutive reliable GPS readings
+        const val SPEED_AUTO_TRIGGER_KMH = 5.0
+        const val SPEED_AUTO_TRIGGER_MPS = 5.0f / 3.6f
+        const val SPEED_CONFIRM_CONSECUTIVE_SAMPLES = 2
+        private const val SPEED_EPSILON_KMH = 0.001
+        private const val MAX_SANE_SPEED_MPS = 70.0f // ~252 km/h sanity upper bound
+        private const val MAX_SPEED_SAMPLE_GAP_MS = 10_000L
 
-        private const val MIN_DISPLACEMENT_FOR_MOVEMENT_M = 4.5
-        private const val MIN_GPS_DISPLACEMENT_M = 4.5
-        private const val STEP_JITTER_DEADBAND_M = 1.8
-        private const val NORMAL_STEP_M = 2.5
-        private const val SLOW_SPEED_STEP_M = 4.0
+        // GPS accuracy, freshness & KMZ/KML offset filtering
+        const val MAX_RELIABLE_GPS_ACCURACY_M = 25.0f
+        const val MAX_GPS_FIX_AGE_MS = 20_000L
+        const val MAX_ALIGNMENT_CORRIDOR_OFFSET_M = 120.0
+        const val CENTERLINE_DEADBAND_M = 1.5
+        const val SWITCH_HYSTERESIS_OFFSET_M = 2.0
+        const val SWITCH_CONFIRM_SAMPLES = 2
+        private const val ACCURACY_HYSTERESIS_FACTOR = 0.25
+        private const val VERTEX_EPSILON = 1e-4
 
-        private const val INITIAL_CONFIRM_COUNT_NORMAL = 2
-        private const val INITIAL_CONFIRM_COUNT_SLOW = 3
-        private const val INITIAL_CONFIRM_DIST_NORMAL_M = 10.0
-        private const val INITIAL_CONFIRM_DIST_SLOW_M = 16.0
-
-        private const val CHANGE_CONFIRM_COUNT_NORMAL = 3
-        private const val CHANGE_CONFIRM_COUNT_SLOW = 4
-        private const val CHANGE_CONFIRM_DIST_NORMAL_M = 25.0
-        private const val CHANGE_CONFIRM_DIST_SLOW_M = 32.0
-        private const val FAST_UTURN_CONFIRM_DIST_M = 36.0
-
-        private const val MIN_OBSERVATION_CONFIDENCE = 0.45f
-        private const val MAX_SAMPLE_WINDOW = 8
-        private const val MAX_WINDOW_AGE_MS = 18_000L
+        fun normalizeManualSide(raw: String?): String? {
+            return when (raw?.trim()?.uppercase(Locale.ROOT)) {
+                "LHS" -> "LHS"
+                "RHS" -> "RHS"
+                "BHS", "BOTH" -> "BHS"
+                "MEDIAN" -> "MEDIAN"
+                "NONE" -> "NONE"
+                else -> null
+            }
+        }
 
         /**
          * Resolves the active [RouteAlignment] matching the current [ChainageMatchResult] or selected alignment.
@@ -926,7 +1021,6 @@ class SmartDirectionManager {
 
         /**
          * Resolves whether increasing chainage maps to LHS or RHS based on alignment metadata & user convention.
-         * Never hardcodes increasing == LHS when the alignment explicitly configures RHS = INCREASING or LHS = DECREASING.
          */
         fun resolveEffectiveConvention(
             routeData: RouteData?,
@@ -939,7 +1033,6 @@ class SmartDirectionManager {
                 return requested
             }
 
-            // Inspect active alignment and sibling alignments in the route for explicit convention cues
             val candidates = buildList {
                 if (activeAlignment != null) add(activeAlignment)
                 routeData?.alignments?.forEach { if (it.id != activeAlignment?.id) add(it) }
@@ -971,7 +1064,6 @@ class SmartDirectionManager {
                 }
             }
 
-            // Highway standard default when alignment carries no inverted convention metadata
             return AlignmentDirectionConvention.INCREASING_IS_LHS
         }
 
@@ -996,36 +1088,6 @@ class SmartDirectionManager {
                 AlignmentDirectionConvention.INCREASING_IS_LHS,
                 AlignmentDirectionConvention.AUTO_FROM_ALIGNMENT -> upper == "LHS"
             }
-        }
-
-        private fun computeAlignmentTangentBearing(
-            cached: ChainageMatcher.CachedAlignmentGeometry,
-            segmentIndex: Int
-        ): Double? {
-            if (cached.segmentBearingsDeg.isEmpty()) return null
-            val idx = segmentIndex.coerceIn(0, cached.segmentBearingsDeg.lastIndex)
-            return cached.segmentBearingsDeg[idx]
-        }
-
-        private fun isAlignmentChainageIncreasingForward(
-            cached: ChainageMatcher.CachedAlignmentGeometry,
-            alignment: RouteAlignment
-        ): Boolean {
-            if (cached.mappedMarkers.size >= 2) {
-                val first = cached.mappedMarkers.first()
-                val last = cached.mappedMarkers.last()
-                if (first.chainageMetres != last.chainageMetres) {
-                    return last.chainageMetres > first.chainageMetres
-                }
-            }
-            return !alignment.direction.equals("DECREASING", ignoreCase = true)
-        }
-
-        private fun angleDifferenceDegrees(a: Double, b: Double): Double {
-            var diff = (a - b) % 360.0
-            if (diff > 180.0) diff -= 360.0
-            if (diff < -180.0) diff += 360.0
-            return diff
         }
     }
 }
