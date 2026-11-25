@@ -157,10 +157,13 @@ fun MainScreen(
     // BackHandler to return to Home or previous tab if on another tab
     if (currentTab != AppTab.HOME) {
         BackHandler {
-            if (currentTab == AppTab.HIGHWAY_TOOLS && previousTabBeforeTools != null) {
-                viewModel.setTab(previousTabBeforeTools ?: AppTab.HOME)
-            } else {
-                viewModel.setTab(AppTab.HOME)
+            when {
+                currentTab == AppTab.HIGHWAY_TOOLS && previousTabBeforeTools != null ->
+                    viewModel.setTab(previousTabBeforeTools ?: AppTab.HOME)
+                currentTab == AppTab.WORK_PLANNING ->
+                    viewModel.setTab(AppTab.WEATHER)
+                else ->
+                    viewModel.setTab(AppTab.HOME)
             }
         }
     }
@@ -169,7 +172,7 @@ fun MainScreen(
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY && currentTab != AppTab.WEATHER) {
+            if (currentTab != AppTab.CAMERA && currentTab != AppTab.SURVEY && currentTab != AppTab.WEATHER && currentTab != AppTab.WORK_PLANNING) {
                 val c = com.example.ui.theme.CtecsTheme.colors
                 val selectedPillBg = c.accent.copy(alpha = if (c.isDark) 0.16f else 0.12f)
                 val selectedIconColor = c.accent
@@ -324,6 +327,11 @@ fun MainScreen(
                     val projProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
                     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
                     val weatherExpandedSections by viewModel.weatherExpandedSections.collectAsStateWithLifecycle()
+                    val activeHighwayWorkPlan by viewModel.activeHighwayWorkPlan.collectAsStateWithLifecycle()
+                    val savedHighwayWorkPlans by viewModel.savedHighwayWorkPlans.collectAsStateWithLifecycle()
+                    val machineryCatalog by viewModel.machineryCatalog.collectAsStateWithLifecycle()
+                    val isRefreshingMachineryCatalog by viewModel.isRefreshingMachineryCatalog.collectAsStateWithLifecycle()
+                    val machineryCatalogLastRefreshedMs by viewModel.machineryCatalogLastRefreshedMs.collectAsStateWithLifecycle()
 
                     var lastValidHighwaySnapshot by remember {
                         mutableStateOf<com.example.ui.weather.LiveHighwayLocationSnapshot?>(null)
@@ -378,7 +386,65 @@ fun MainScreen(
                         onNavigateBack = { viewModel.setTab(AppTab.HOME) },
                         liveHighwayLocation = liveHighwayLocation,
                         expandedSections = weatherExpandedSections,
-                        onToggleSection = { viewModel.toggleWeatherSection(it) }
+                        onToggleSection = { viewModel.toggleWeatherSection(it) },
+                        highwayWorkPlan = activeHighwayWorkPlan,
+                        savedHighwayWorkPlans = savedHighwayWorkPlans,
+                        machineryCatalog = machineryCatalog,
+                        isRefreshingMachineryCatalog = isRefreshingMachineryCatalog,
+                        machineryCatalogLastRefreshedMs = machineryCatalogLastRefreshedMs,
+                        onUpdateHighwayWorkPlan = { viewModel.updateHighwayWorkPlan(it) },
+                        onSaveHighwayWorkPlan = { viewModel.saveCurrentHighwayWorkPlan() },
+                        onLoadHighwayWorkPlan = { viewModel.loadSavedHighwayWorkPlan(it) },
+                        onDeleteSavedHighwayWorkPlan = { viewModel.deleteSavedHighwayWorkPlan(it) },
+                        onClearHighwayWorkPlan = { viewModel.clearHighwayWorkPlan() },
+                        onRefreshMachineryCatalog = { viewModel.refreshMachineryCatalog() },
+                        onUpdateWeatherSettings = { viewModel.updateWeatherIntelligenceSettings(it) },
+                        onNavigateToWorkPlanning = { viewModel.setTab(AppTab.WORK_PLANNING) }
+                    )
+                }
+                AppTab.WORK_PLANNING -> {
+                    val activeHighwayWorkPlan by viewModel.activeHighwayWorkPlan.collectAsStateWithLifecycle()
+                    val savedHighwayWorkPlans by viewModel.savedHighwayWorkPlans.collectAsStateWithLifecycle()
+                    val machineryCatalog by viewModel.machineryCatalog.collectAsStateWithLifecycle()
+                    val isRefreshingMachineryCatalog by viewModel.isRefreshingMachineryCatalog.collectAsStateWithLifecycle()
+                    val workPlanningSettings by viewModel.workPlanningSettings.collectAsStateWithLifecycle()
+                    val workPlanSaveStatus by viewModel.workPlanSaveStatus.collectAsStateWithLifecycle()
+                    val localWorkPlanBackups by viewModel.localWorkPlanBackups.collectAsStateWithLifecycle()
+                    val forecastBundle by viewModel.weatherForecastBundle.collectAsStateWithLifecycle()
+                    val weatherIntelSettings by viewModel.weatherIntelligenceSettings.collectAsStateWithLifecycle()
+                    val siteMeasurements by viewModel.actualSiteMeasurements.collectAsStateWithLifecycle()
+
+                    com.example.ui.workplan.WorkPlanningScreen(
+                        plan = activeHighwayWorkPlan,
+                        savedPlans = savedHighwayWorkPlans,
+                        machineryCatalog = machineryCatalog,
+                        isRefreshingCatalog = isRefreshingMachineryCatalog,
+                        workPlanningSettings = workPlanningSettings,
+                        saveStatus = workPlanSaveStatus,
+                        localBackups = localWorkPlanBackups,
+                        forecastBundle = forecastBundle,
+                        contractSpec = weatherIntelSettings.contractSpec,
+                        siteMeasurements = siteMeasurements,
+                        animationsEnabled = weatherIntelSettings.animationsEnabled,
+                        staleThresholdMs = weatherIntelSettings.staleDataThresholdMinutes.toLong() * 60_000L,
+                        onUpdatePlan = { viewModel.updateHighwayWorkPlan(it) },
+                        onNewPlan = { viewModel.createNewHighwayWorkPlan() },
+                        onSavePlan = { viewModel.saveCurrentHighwayWorkPlan() },
+                        onRetrySave = { viewModel.retrySaveHighwayWorkPlan() },
+                        onOpenPlan = { viewModel.loadSavedHighwayWorkPlan(it) },
+                        onDuplicatePlan = { viewModel.duplicateHighwayWorkPlan(it) },
+                        onRenamePlan = { id, title -> viewModel.renameHighwayWorkPlan(id, title) },
+                        onDeletePlan = { viewModel.deleteSavedHighwayWorkPlan(it) },
+                        onUpdateWorkPlanningSettings = { viewModel.updateWorkPlanningSettings(it) },
+                        onRefreshMachineryCatalog = { viewModel.refreshMachineryCatalog() },
+                        onBuildBackupJson = { viewModel.createWorkPlansBackupJson() },
+                        onInspectBackupJson = { viewModel.inspectWorkPlansBackup(it) },
+                        onApplyBackupImport = { insp, res -> viewModel.applyWorkPlansImport(insp, res) },
+                        onSaveLocalSnapshot = { viewModel.saveLocalWorkPlanSnapshot() },
+                        onSafeRestoreLocalBackup = { viewModel.safeRestoreLocalWorkPlanBackup(it) },
+                        onNavigateToWeather = { viewModel.setTab(AppTab.WEATHER) },
+                        onNavigateBack = { viewModel.setTab(AppTab.HOME) },
+                        onNotifyUser = { msg -> viewModel.showToast(msg, ToastType.INFO) }
                     )
                 }
                 AppTab.SETTINGS -> SettingsScreen(

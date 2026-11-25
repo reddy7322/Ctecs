@@ -331,6 +331,9 @@ class PreferencesManager(context: Context) {
         val KEY_WORK_TARGET_INPUT_JSON = stringPreferencesKey("weather_work_target_input_json")
         val KEY_ACTUAL_SITE_MEASUREMENTS_JSON = stringPreferencesKey("weather_actual_site_measurements_json")
         val KEY_WEATHER_EXPANDED_SECTIONS = stringPreferencesKey("weather_expanded_sections_csv")
+        val KEY_ACTIVE_HIGHWAY_WORK_PLAN_JSON = stringPreferencesKey("weather_active_highway_work_plan_json")
+        val KEY_SAVED_HIGHWAY_WORK_PLANS_JSON = stringPreferencesKey("weather_saved_highway_work_plans_json")
+        val KEY_WORK_PLANNING_SETTINGS_JSON = stringPreferencesKey("work_planning_settings_json")
     }
 
     private val observedDataFlow: Flow<Preferences> = appContext.dataStore.data.onEach { prefs ->
@@ -445,6 +448,21 @@ class PreferencesManager(context: Context) {
 
     fun getInitialWeatherExpandedSections(): Set<String> =
         parseCsvSet(getInitialPreferences()[KEY_WEATHER_EXPANDED_SECTIONS])
+
+    fun getInitialActiveHighwayWorkPlan(): com.example.model.HighwayWorkPlan? =
+        com.example.model.HighwayWorkPlan.fromJsonString(
+            getInitialPreferences()[KEY_ACTIVE_HIGHWAY_WORK_PLAN_JSON]
+        )
+
+    fun getInitialSavedHighwayWorkPlans(): List<com.example.model.HighwayWorkPlan> =
+        com.example.model.HighwayWorkPlan.listFromJsonString(
+            getInitialPreferences()[KEY_SAVED_HIGHWAY_WORK_PLANS_JSON]
+        )
+
+    fun getInitialWorkPlanningSettings(): com.example.model.WorkPlanningSettings =
+        com.example.model.WorkPlanningSettings.fromJsonString(
+            getInitialPreferences()[KEY_WORK_PLANNING_SETTINGS_JSON]
+        )
 
     fun getInitialCameraSettings(): CameraSettings =
         parseCameraSettingsFromPrefs(getInitialPreferences())
@@ -779,6 +797,43 @@ class PreferencesManager(context: Context) {
     suspend fun updateWeatherExpandedSections(sections: Set<String>) {
         safeEdit { prefs ->
             prefs[KEY_WEATHER_EXPANDED_SECTIONS] = sections.filter { it.isNotBlank() }.sorted().joinToString(",")
+        }
+    }
+
+    val activeHighwayWorkPlanFlow: Flow<com.example.model.HighwayWorkPlan?> =
+        observedDataFlow.map { prefs ->
+            com.example.model.HighwayWorkPlan.fromJsonString(prefs[KEY_ACTIVE_HIGHWAY_WORK_PLAN_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateActiveHighwayWorkPlan(plan: com.example.model.HighwayWorkPlan?) {
+        safeEdit { prefs ->
+            if (plan == null) {
+                prefs.remove(KEY_ACTIVE_HIGHWAY_WORK_PLAN_JSON)
+            } else {
+                prefs[KEY_ACTIVE_HIGHWAY_WORK_PLAN_JSON] = plan.toJsonString()
+            }
+        }
+    }
+
+    val savedHighwayWorkPlansFlow: Flow<List<com.example.model.HighwayWorkPlan>> =
+        observedDataFlow.map { prefs ->
+            com.example.model.HighwayWorkPlan.listFromJsonString(prefs[KEY_SAVED_HIGHWAY_WORK_PLANS_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateSavedHighwayWorkPlans(plans: List<com.example.model.HighwayWorkPlan>) {
+        safeEdit { prefs ->
+            prefs[KEY_SAVED_HIGHWAY_WORK_PLANS_JSON] = com.example.model.HighwayWorkPlan.listToJsonString(plans)
+        }
+    }
+
+    val workPlanningSettingsFlow: Flow<com.example.model.WorkPlanningSettings> =
+        observedDataFlow.map { prefs ->
+            com.example.model.WorkPlanningSettings.fromJsonString(prefs[KEY_WORK_PLANNING_SETTINGS_JSON])
+        }.distinctUntilChanged()
+
+    suspend fun updateWorkPlanningSettings(settings: com.example.model.WorkPlanningSettings) {
+        safeEdit { prefs ->
+            prefs[KEY_WORK_PLANNING_SETTINGS_JSON] = settings.toJsonString()
         }
     }
 

@@ -591,20 +591,51 @@ data class DelayRiskSummary(
     val overallConfidence: ForecastConfidence
 )
 
+enum class WindSpeedUnit(val symbol: String, val label: String) {
+    KMH("km/h", "km/h"),
+    MS("m/s", "m/s"),
+    MPH("mph", "mph");
+
+    fun format(kmh: Double): String {
+        val converted = when (this) {
+            KMH -> kmh
+            MS -> kmh / 3.6
+            MPH -> kmh * 0.621371
+        }
+        return if (this == MS) String.format(java.util.Locale.US, "%.1f %s", converted, symbol)
+        else "${Math.round(converted)} $symbol"
+    }
+
+    companion object {
+        fun fromName(raw: String?): WindSpeedUnit =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: KMH
+    }
+}
+
 /**
- * Persisted settings for Settings -> Weather & Highway Work Intelligence.
- * Organized cleanly across all 9 required subsections without duplicating Camera Timestamp toggles.
+ * Persisted settings for the Weather Page contextual Settings popup.
+ * Preserves all existing JSON keys for seamless migration and zero data loss.
  */
 data class WeatherIntelligenceSettings(
     // 1. Weather Display
     val temperatureUnit: TemperatureUnit = TemperatureUnit.CELSIUS,
+    val windSpeedUnit: WindSpeedUnit = WindSpeedUnit.KMH,
+    val compactForecastLayout: Boolean = true,
     val animationsEnabled: Boolean = true,
     val showHomeHourlyStrip: Boolean = true,
     val showRainProbabilityOnHomeCard: Boolean = true,
     // 2. Hourly and Daily Forecast
+    val showHourlyForecastSection: Boolean = true,
+    val showDailyForecastSection: Boolean = true,
+    val forecastDaysCount: Int = 7,
     val showHourlyTrendChart: Boolean = true,
     val showSevenDayUncertaintyIndicators: Boolean = true,
-    // 3. Weather Notifications
+    // 3. Activity Prediction
+    val activityPredictionEnabled: Boolean = true,
+    val predictionIntervalHours: Int = 1,
+    val showSuitabilityIndicators: Boolean = true,
+    val showBestWorkingWindow: Boolean = true,
+    // 4. Weather Alerts
     val weatherAlertsEnabled: Boolean = true,
     val alertExpectedRain: Boolean = true,
     val alertHeavyRain: Boolean = true,
@@ -618,7 +649,7 @@ data class WeatherIntelligenceSettings(
     val alertStrongWindThresholdKmh: Int = 40,
     val alertHighTempThresholdC: Int = 42,
     val alertLowTempThresholdC: Int = 10,
-    // 4. Highway Work Activities
+    // 5. Highway Work Activities
     val primaryActivity: HighwayWorkActivity = HighwayWorkActivity.BC_LAYING,
     val enabledAlertActivities: Set<HighwayWorkActivity> = setOf(
         HighwayWorkActivity.BC_LAYING,
@@ -628,23 +659,33 @@ data class WeatherIntelligenceSettings(
         HighwayWorkActivity.ROAD_MARKING,
         HighwayWorkActivity.CONCRETE_WORKS
     ),
-    // 5 & 6. BC/DBM Suitability & Applicable IRC/MoRTH References
+    // 6. Contract Specification & IRC/MoRTH References
     val contractSpec: ContractSpecificationConfig = ContractSpecificationConfig(),
-    // 7 & 8. Project Work Targets & Production Rates (stored as per-activity map of user/historical rates)
+    // 7. Project Work Targets & Production Rates
     val savedProductionRatesByActivity: Map<HighwayWorkActivity, Double> = emptyMap(),
     val defaultProductionRateSource: ValueSourceTag = ValueSourceTag.USER_ENTERED,
-    // 9. Forecast and Data Preferences
+    // 8. Weather Data Preferences
+    val autoRefreshEnabled: Boolean = true,
     val autoRefreshIntervalMinutes: Int = 15,
     val staleDataThresholdMinutes: Int = 60,
     val preferCachedForecastOffline: Boolean = true
 ) {
     fun toJsonString(): String = JSONObject().apply {
         put("temperatureUnit", temperatureUnit.name)
+        put("windSpeedUnit", windSpeedUnit.name)
+        put("compactForecastLayout", compactForecastLayout)
         put("animationsEnabled", animationsEnabled)
         put("showHomeHourlyStrip", showHomeHourlyStrip)
         put("showRainProbabilityOnHomeCard", showRainProbabilityOnHomeCard)
+        put("showHourlyForecastSection", showHourlyForecastSection)
+        put("showDailyForecastSection", showDailyForecastSection)
+        put("forecastDaysCount", forecastDaysCount)
         put("showHourlyTrendChart", showHourlyTrendChart)
         put("showSevenDayUncertaintyIndicators", showSevenDayUncertaintyIndicators)
+        put("activityPredictionEnabled", activityPredictionEnabled)
+        put("predictionIntervalHours", predictionIntervalHours)
+        put("showSuitabilityIndicators", showSuitabilityIndicators)
+        put("showBestWorkingWindow", showBestWorkingWindow)
         put("weatherAlertsEnabled", weatherAlertsEnabled)
         put("alertExpectedRain", alertExpectedRain)
         put("alertHeavyRain", alertHeavyRain)
@@ -665,6 +706,7 @@ data class WeatherIntelligenceSettings(
             savedProductionRatesByActivity.forEach { (act, rate) -> put(act.name, rate) }
         })
         put("defaultProductionRateSource", defaultProductionRateSource.name)
+        put("autoRefreshEnabled", autoRefreshEnabled)
         put("autoRefreshIntervalMinutes", autoRefreshIntervalMinutes)
         put("staleDataThresholdMinutes", staleDataThresholdMinutes)
         put("preferCachedForecastOffline", preferCachedForecastOffline)
@@ -700,11 +742,20 @@ data class WeatherIntelligenceSettings(
 
                 WeatherIntelligenceSettings(
                     temperatureUnit = TemperatureUnit.fromName(obj.optString("temperatureUnit", "")),
+                    windSpeedUnit = WindSpeedUnit.fromName(obj.optString("windSpeedUnit", "")),
+                    compactForecastLayout = obj.optBoolean("compactForecastLayout", true),
                     animationsEnabled = obj.optBoolean("animationsEnabled", true),
                     showHomeHourlyStrip = obj.optBoolean("showHomeHourlyStrip", true),
                     showRainProbabilityOnHomeCard = obj.optBoolean("showRainProbabilityOnHomeCard", true),
+                    showHourlyForecastSection = obj.optBoolean("showHourlyForecastSection", true),
+                    showDailyForecastSection = obj.optBoolean("showDailyForecastSection", true),
+                    forecastDaysCount = obj.optInt("forecastDaysCount", 7).coerceIn(3, 7),
                     showHourlyTrendChart = obj.optBoolean("showHourlyTrendChart", true),
                     showSevenDayUncertaintyIndicators = obj.optBoolean("showSevenDayUncertaintyIndicators", true),
+                    activityPredictionEnabled = obj.optBoolean("activityPredictionEnabled", true),
+                    predictionIntervalHours = obj.optInt("predictionIntervalHours", 1).coerceIn(1, 3),
+                    showSuitabilityIndicators = obj.optBoolean("showSuitabilityIndicators", true),
+                    showBestWorkingWindow = obj.optBoolean("showBestWorkingWindow", true),
                     weatherAlertsEnabled = obj.optBoolean("weatherAlertsEnabled", true),
                     alertExpectedRain = obj.optBoolean("alertExpectedRain", true),
                     alertHeavyRain = obj.optBoolean("alertHeavyRain", true),
@@ -723,6 +774,7 @@ data class WeatherIntelligenceSettings(
                     contractSpec = ContractSpecificationConfig.fromJsonObject(obj.optJSONObject("contractSpec")),
                     savedProductionRatesByActivity = rateMap,
                     defaultProductionRateSource = ValueSourceTag.fromName(obj.optString("defaultProductionRateSource", "")),
+                    autoRefreshEnabled = obj.optBoolean("autoRefreshEnabled", true),
                     autoRefreshIntervalMinutes = obj.optInt("autoRefreshIntervalMinutes", 15).coerceIn(5, 120),
                     staleDataThresholdMinutes = obj.optInt("staleDataThresholdMinutes", 60).coerceIn(15, 360),
                     preferCachedForecastOffline = obj.optBoolean("preferCachedForecastOffline", true)

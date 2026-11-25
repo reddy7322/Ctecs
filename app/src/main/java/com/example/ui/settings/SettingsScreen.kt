@@ -301,7 +301,7 @@ fun SettingsScreen(
             "project", "camera", "timestamp", "mini_map", "gps", "chainage",
             "offline_maps", "logo", "storage", "display", "screensaver",
             "navigation_notifications", "widgets", "km_stone_alerts",
-            "chainage_voice_assistant", "weather_intelligence", "backup_restore", "permissions_about"
+            "chainage_voice_assistant", "backup_restore", "permissions_about"
         )
     }
 
@@ -4046,35 +4046,66 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 13. DISPLAY AND APPEARANCE
+            // 13. APPEARANCE (LIGHT / DARK / AMOLED / SYSTEM)
             // ====================================================
-            if (matchesSearch("display appearance theme mode dark light amoled system", searchQuery)) {
+            if (matchesSearch("display appearance theme mode dark light amoled charcoal black system", searchQuery)) {
+                val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+                val themeDisplayName = when (themeMode.lowercase()) {
+                    "light" -> "Light (Clean White)"
+                    "dark" -> "Dark (Deep Charcoal)"
+                    "amoled" -> "AMOLED (True Black)"
+                    else -> "System Default"
+                }
                 SmartDropdownSection(
-                    title = "Display and Appearance",
-                    subtitle = "Theme: ${viewModel.themeMode.collectAsStateWithLifecycle().value.uppercase()}",
+                    title = "Appearance & Theme",
+                    subtitle = "Theme: $themeDisplayName",
                     icon = Icons.Default.Palette,
                     accentColor = primaryAccent,
                     isExpanded = expandedSections["display"] ?: false,
                     onToggleExpand = { expandedSections["display"] = !(expandedSections["display"] ?: false) }
                 ) {
-                    Text("App Theme Mode", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+                    Text(
+                        text = "App Theme Mode",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Switches instantaneously across all CTECS pages without restart.",
+                        fontSize = 11.sp,
+                        color = c.textMuted
+                    )
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("system" to "System", "light" to "Light", "dark" to "AMOLED Dark").forEach { (mode, label) ->
+                        listOf(
+                            "light" to "Light",
+                            "dark" to "Dark",
+                            "amoled" to "AMOLED",
+                            "system" to "System"
+                        ).forEach { (mode, label) ->
                             FilterChip(
-                                selected = themeMode == mode,
+                                selected = themeMode.equals(mode, ignoreCase = true),
                                 onClick = { viewModel.setThemeMode(mode) },
-                                label = { Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                },
                                 border = null,
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = primaryAccent,
                                     selectedLabelColor = primaryAccentContent,
                                     containerColor = c.secondarySurface,
                                     labelColor = c.textSecondary
-                                )
+                                ),
+                                modifier = Modifier.testTag("theme_mode_$mode")
                             )
                         }
                     }
@@ -4296,36 +4327,8 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // ====================================================
-            // 13g. WEATHER & HIGHWAY WORK INTELLIGENCE
-            // ====================================================
-            if (matchesSearch("weather forecast hourly daily alerts notifications highway work suitability bc dbm irc morth 501 105 target production rate binder", searchQuery)) {
-                val weatherIntelSettings by viewModel.weatherIntelligenceSettings.collectAsStateWithLifecycle()
-                val workTargetInput by viewModel.workTargetInput.collectAsStateWithLifecycle()
-                val weatherIntelSummary = "${weatherIntelSettings.temperatureUnit.symbol} • ${weatherIntelSettings.contractSpec.morthRevision.shortLabel} • ${weatherIntelSettings.primaryActivity.shortName}"
-                SmartDropdownSection(
-                    title = "Weather & Highway Work Intelligence",
-                    subtitle = weatherIntelSummary,
-                    icon = Icons.Rounded.Cloud,
-                    accentColor = primaryAccent,
-                    isExpanded = expandedSections["weather_intelligence"] ?: false,
-                    onToggleExpand = {
-                        expandedSections["weather_intelligence"] = !(expandedSections["weather_intelligence"] ?: false)
-                    }
-                ) {
-                    com.example.ui.weather.WeatherIntelligenceSettingsSectionContent(
-                        settings = weatherIntelSettings,
-                        workTargetInput = workTargetInput,
-                        accentColor = primaryAccent,
-                        onUpdateSettings = { transform -> viewModel.updateWeatherIntelligenceSettings(transform) },
-                        onUpdateWorkTargetInput = { updatedInput -> viewModel.updateWorkTargetInput(updatedInput) },
-                        onOpenWeatherDashboard = { viewModel.setTab(com.example.ui.AppTab.WEATHER) },
-                        onResetDefaults = { viewModel.resetWeatherIntelligenceSettings() }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
+            // Weather & Work Planning settings now live exclusively inside their respective
+            // contextual animated Settings popups on the Weather Page and Work Planning Page.
 
             // ====================================================
             // BACKUP & RESTORE

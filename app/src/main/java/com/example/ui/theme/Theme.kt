@@ -23,11 +23,12 @@ import androidx.core.view.WindowCompat
 
 /**
  * Central semantic color tokens for the CTECS Borderless Flat Design System.
- * Covers 100% of screens, dialogs, bottom sheets, menus, inputs, and controls.
+ * Supports Light, Dark (Deep Charcoal), and AMOLED (True Black #000000) modes across 100% of screens.
  */
 @Immutable
 data class CtecsColorTokens(
     val isDark: Boolean,
+    val isAmoled: Boolean = false,
     val background: Color,
     val secondaryBackground: Color,
     val surface: Color,
@@ -46,28 +47,57 @@ data class CtecsColorTokens(
     val subtleSeparator: Color
 )
 
-val DarkCtecsColorTokens = CtecsColorTokens(
+/** Deep Charcoal Dark Mode — soft contrast & comfortable eye relief */
+val CharcoalDarkCtecsColorTokens = CtecsColorTokens(
     isDark = true,
-    background = DarkMainBackground,
-    secondaryBackground = DarkSecondaryBackground,
-    surface = DarkPrimarySurface,
-    secondarySurface = DarkSecondarySurface,
-    elevatedSurface = DarkElevatedSurface,
-    textPrimary = DarkPrimaryText,
-    textSecondary = DarkSecondaryText,
-    textMuted = DarkMutedText,
+    isAmoled = false,
+    background = CharcoalDarkMainBackground,
+    secondaryBackground = CharcoalDarkSecondaryBackground,
+    surface = CharcoalDarkPrimarySurface,
+    secondarySurface = CharcoalDarkSecondarySurface,
+    elevatedSurface = CharcoalDarkElevatedSurface,
+    textPrimary = CharcoalDarkPrimaryText,
+    textSecondary = CharcoalDarkSecondaryText,
+    textMuted = CharcoalDarkMutedText,
     accent = DarkPrimaryAccent,
     accentSecondary = DarkSecondaryAccent,
     onAccent = Color.White,
     success = DarkSuccess,
     warning = DarkWarning,
     error = DarkError,
-    scrim = Color(0xCC000000),
-    subtleSeparator = Color(0xFF171E2B)
+    scrim = Color(0xBA0B0E14),
+    subtleSeparator = CharcoalDarkSeparator
 )
 
+/** True Black AMOLED Mode (#000000) — minimal bright pixels, high contrast, zero excessive glow */
+val AmoledCtecsColorTokens = CtecsColorTokens(
+    isDark = true,
+    isAmoled = true,
+    background = AmoledMainBackground,
+    secondaryBackground = AmoledSecondaryBackground,
+    surface = AmoledPrimarySurface,
+    secondarySurface = AmoledSecondarySurface,
+    elevatedSurface = AmoledElevatedSurface,
+    textPrimary = AmoledPrimaryText,
+    textSecondary = AmoledSecondaryText,
+    textMuted = AmoledMutedText,
+    accent = DarkPrimaryAccent,
+    accentSecondary = DarkSecondaryAccent,
+    onAccent = Color.White,
+    success = DarkSuccess,
+    warning = DarkWarning,
+    error = DarkError,
+    scrim = Color(0xD6000000),
+    subtleSeparator = AmoledSeparator
+)
+
+// Alias preserved for any existing callers
+val DarkCtecsColorTokens = CharcoalDarkCtecsColorTokens
+
+/** Clean White Light Mode — neutral surfaces & crisp typography */
 val LightCtecsColorTokens = CtecsColorTokens(
     isDark = false,
+    isAmoled = false,
     background = LightMainBackground,
     secondaryBackground = LightSecondaryBackground,
     surface = LightPrimarySurface,
@@ -86,37 +116,70 @@ val LightCtecsColorTokens = CtecsColorTokens(
     subtleSeparator = Color(0xFFEAF0F7)
 )
 
-private val DarkColorScheme = darkColorScheme(
+private val CharcoalDarkColorScheme = darkColorScheme(
     primary = DarkPrimaryAccent,
     onPrimary = Color.White,
-    primaryContainer = DarkSecondarySurface,
-    onPrimaryContainer = DarkPrimaryText,
+    primaryContainer = CharcoalDarkSecondarySurface,
+    onPrimaryContainer = CharcoalDarkPrimaryText,
     secondary = DarkSecondaryAccent,
-    onSecondary = DarkMainBackground,
-    secondaryContainer = DarkElevatedSurface,
-    onSecondaryContainer = DarkPrimaryText,
+    onSecondary = CharcoalDarkMainBackground,
+    secondaryContainer = CharcoalDarkElevatedSurface,
+    onSecondaryContainer = CharcoalDarkPrimaryText,
     tertiary = DarkWarning,
-    onTertiary = DarkMainBackground,
-    tertiaryContainer = DarkElevatedSurface,
-    onTertiaryContainer = DarkPrimaryText,
-    background = DarkMainBackground,
-    onBackground = DarkPrimaryText,
-    surface = DarkPrimarySurface,
-    onSurface = DarkPrimaryText,
-    surfaceVariant = DarkSecondarySurface,
-    onSurfaceVariant = DarkSecondaryText,
-    surfaceContainerLowest = DarkMainBackground,
-    surfaceContainerLow = DarkSecondaryBackground,
-    surfaceContainer = DarkPrimarySurface,
-    surfaceContainerHigh = DarkSecondarySurface,
-    surfaceContainerHighest = DarkElevatedSurface,
-    outline = DarkElevatedSurface,
-    outlineVariant = DarkSecondarySurface,
+    onTertiary = CharcoalDarkMainBackground,
+    tertiaryContainer = CharcoalDarkElevatedSurface,
+    onTertiaryContainer = CharcoalDarkPrimaryText,
+    background = CharcoalDarkMainBackground,
+    onBackground = CharcoalDarkPrimaryText,
+    surface = CharcoalDarkPrimarySurface,
+    onSurface = CharcoalDarkPrimaryText,
+    surfaceVariant = CharcoalDarkSecondarySurface,
+    onSurfaceVariant = CharcoalDarkSecondaryText,
+    surfaceContainerLowest = CharcoalDarkMainBackground,
+    surfaceContainerLow = CharcoalDarkSecondaryBackground,
+    surfaceContainer = CharcoalDarkPrimarySurface,
+    surfaceContainerHigh = CharcoalDarkSecondarySurface,
+    surfaceContainerHighest = CharcoalDarkElevatedSurface,
+    outline = CharcoalDarkElevatedSurface,
+    outlineVariant = CharcoalDarkSeparator,
+    error = DarkError,
+    onError = Color.White,
+    errorContainer = Color(0xFF33181F),
+    onErrorContainer = DarkError,
+    scrim = Color(0xBA0B0E14)
+)
+
+private val AmoledColorScheme = darkColorScheme(
+    primary = DarkPrimaryAccent,
+    onPrimary = Color.White,
+    primaryContainer = AmoledSecondarySurface,
+    onPrimaryContainer = AmoledPrimaryText,
+    secondary = DarkSecondaryAccent,
+    onSecondary = AmoledMainBackground,
+    secondaryContainer = AmoledElevatedSurface,
+    onSecondaryContainer = AmoledPrimaryText,
+    tertiary = DarkWarning,
+    onTertiary = AmoledMainBackground,
+    tertiaryContainer = AmoledElevatedSurface,
+    onTertiaryContainer = AmoledPrimaryText,
+    background = AmoledMainBackground,
+    onBackground = AmoledPrimaryText,
+    surface = AmoledPrimarySurface,
+    onSurface = AmoledPrimaryText,
+    surfaceVariant = AmoledSecondarySurface,
+    onSurfaceVariant = AmoledSecondaryText,
+    surfaceContainerLowest = AmoledMainBackground,
+    surfaceContainerLow = AmoledSecondaryBackground,
+    surfaceContainer = AmoledPrimarySurface,
+    surfaceContainerHigh = AmoledSecondarySurface,
+    surfaceContainerHighest = AmoledElevatedSurface,
+    outline = AmoledElevatedSurface,
+    outlineVariant = AmoledSeparator,
     error = DarkError,
     onError = Color.White,
     errorContainer = Color(0xFF2B1117),
     onErrorContainer = DarkError,
-    scrim = Color(0xCC000000)
+    scrim = Color(0xD6000000)
 )
 
 private val LightColorScheme = lightColorScheme(
@@ -161,6 +224,7 @@ val CtecsShapes = Shapes(
 )
 
 val LocalIsDarkTheme = compositionLocalOf { false }
+val LocalIsAmoledTheme = compositionLocalOf { false }
 val LocalCtecsColors = staticCompositionLocalOf { LightCtecsColorTokens }
 
 object CtecsTheme {
@@ -170,13 +234,13 @@ object CtecsTheme {
         get() = LocalCtecsColors.current
 }
 
-/**
- * Returns true if the app is currently displaying Deep Black Dark Mode, respecting
- * the user's explicit preference ("dark", "light") or following device system appearance ("system").
- */
 @Composable
 @ReadOnlyComposable
 fun isAppDarkTheme(): Boolean = LocalIsDarkTheme.current
+
+@Composable
+@ReadOnlyComposable
+fun isAppAmoledTheme(): Boolean = LocalIsAmoledTheme.current
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -184,19 +248,37 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
+/**
+ * Supports instant theme switching across:
+ * - "light": Clean white Light Mode
+ * - "dark": Deep charcoal Dark Mode
+ * - "amoled": True black (#000000) AMOLED Mode
+ * - "system": Follows OS dark/light preference (uses Deep Charcoal Dark when OS is dark)
+ */
 @Composable
 fun MyApplicationTheme(
     themeMode: String = "system",
     content: @Composable () -> Unit
 ) {
-    val darkTheme = when (themeMode.lowercase()) {
-        "dark" -> true
+    val normalized = themeMode.trim().lowercase()
+    val systemDark = isSystemInDarkTheme()
+    val isAmoled = normalized == "amoled"
+    val darkTheme = when (normalized) {
+        "amoled", "dark" -> true
         "light" -> false
-        else -> isSystemInDarkTheme()
+        else -> systemDark
     }
 
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-    val ctecsColors = if (darkTheme) DarkCtecsColorTokens else LightCtecsColorTokens
+    val colorScheme = when {
+        isAmoled -> AmoledColorScheme
+        darkTheme -> CharcoalDarkColorScheme
+        else -> LightColorScheme
+    }
+    val ctecsColors = when {
+        isAmoled -> AmoledCtecsColorTokens
+        darkTheme -> CharcoalDarkCtecsColorTokens
+        else -> LightCtecsColorTokens
+    }
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -214,6 +296,7 @@ fun MyApplicationTheme(
 
     CompositionLocalProvider(
         LocalIsDarkTheme provides darkTheme,
+        LocalIsAmoledTheme provides isAmoled,
         LocalCtecsColors provides ctecsColors
     ) {
         MaterialTheme(

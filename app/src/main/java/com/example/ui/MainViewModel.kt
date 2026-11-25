@@ -93,6 +93,7 @@ enum class AppTab(val label: String) {
     HIGHWAY_TOOLS("Tools"),
     SMART_NOTES("Notes"),
     WEATHER("Weather"),
+    WORK_PLANNING("Work Plan"),
     SETTINGS("Settings")
 }
 
@@ -530,7 +531,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     fun selectWeatherWorkActivity(activity: com.example.model.HighwayWorkActivity) {
+        if (_selectedWeatherWorkActivity.value == activity &&
+            weatherIntelligenceSettings.value.primaryActivity == activity
+        ) return
         _selectedWeatherWorkActivity.value = activity
+        val updated = weatherIntelligenceSettings.value.copy(primaryActivity = activity)
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateWeatherIntelligenceSettings(updated)
+        }
     }
 
     fun updateWeatherIntelligenceSettings(
@@ -573,6 +581,290 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updated = if (sectionKey in current) current - sectionKey else current + sectionKey
         preferencesManager.launchSafeEdit {
             preferencesManager.updateWeatherExpandedSections(updated)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Separate Highway Work Planning, Auto-Save, Contextual Settings & Backup
+    // -------------------------------------------------------------------------
+    private val machineryCatalogRepository = com.example.weather.MachineryCatalogRepository(application)
+    val workPlanBackupManager = com.example.weather.WorkPlanBackupManager(application)
+
+    private val initialCatalogPair: Pair<List<com.example.model.MachineryCatalogEntry>, Long> =
+        machineryCatalogRepository.loadCatalog()
+
+    private val _machineryCatalog = MutableStateFlow(initialCatalogPair.first)
+    val machineryCatalog: StateFlow<List<com.example.model.MachineryCatalogEntry>> = _machineryCatalog.asStateFlow()
+
+    private val _machineryCatalogLastRefreshedMs = MutableStateFlow(initialCatalogPair.second)
+    val machineryCatalogLastRefreshedMs: StateFlow<Long> = _machineryCatalogLastRefreshedMs.asStateFlow()
+
+    private val _isRefreshingMachineryCatalog = MutableStateFlow(false)
+    val isRefreshingMachineryCatalog: StateFlow<Boolean> = _isRefreshingMachineryCatalog.asStateFlow()
+
+    val workPlanningSettings: StateFlow<com.example.model.WorkPlanningSettings> =
+        preferencesManager.workPlanningSettingsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = preferencesManager.getInitialWorkPlanningSettings()
+        )
+
+    private val _workPlanSaveStatus = MutableStateFlow(com.example.model.WorkPlanSaveStatus.SAVED)
+    val workPlanSaveStatus: StateFlow<com.example.model.WorkPlanSaveStatus> = _workPlanSaveStatus.asStateFlow()
+
+    private val _localWorkPlanBackups = MutableStateFlow(workPlanBackupManager.listLocalBackups())
+    val localWorkPlanBackups: StateFlow<List<com.example.weather.LocalBackupRecord>> =
+        _localWorkPlanBackups.asStateFlow()
+
+    fun updateWorkPlanningSettings(transform: (com.example.model.WorkPlanningSettings) -> com.example.model.WorkPlanningSettings) {
+        val updated = transform(workPlanningSettings.value)
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateWorkPlanningSettings(updated)
+        }
+    }
+
+    private fun buildDefaultHighwayWorkPlan(): com.example.model.HighwayWorkPlan {
+        val profile = preferencesManager.getInitialProjectProfile()
+        val wpSettings = workPlanningSettings.value
+        val todayIso = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        val defaultSide = profile.roadSide.takeIf { it != com.example.model.RoadSide.NONE }?.label ?: "LHS"
+        val defaultProjectName = listOf(profile.highwayId.trim(), profile.packageSection.trim())
+            .filter { it.isNotBlank() }
+            .joinToString(" - ")
+        val isNight = wpSettings.defaultShift == com.example.model.WorkShiftType.NIGHT_SHIFT
+        return com.example.model.HighwayWorkPlan(
+            projectName = defaultProjectName,
+            roadOrHighwayName = profile.highwayId.trim(),
+            workDateIso = todayIso,
+            shiftStartDateIso = todayIso,
+            shiftEndDateIso = if (isNight) com.example.model.ShiftTimingCalculator.nextIsoDate(todayIso) else todayIso,
+            shiftType = wpSettings.defaultShift,
+            plannedStartHour24 = if (isNight) 20 else 8,
+            plannedEndHour24 = if (isNight) 6 else 17,
+            roadSide = defaultSide,
+            activity = wpSettings.defaultActivity,
+            layerThicknessMm = wpSettings.defaultActivity.defaultThicknessMm.takeIf { it > 0.0 },
+            materialDensityTPerM3 = null, // Never invent material density
+            morthRevision = wpSettings.morthRevision
+        )
+    }
+
+    private val _activeHighwayWorkPlan = MutableStateFlow(
+        preferencesManager.getInitialActiveHighwayWorkPlan() ?: buildDefaultHighwayWorkPlan()
+    )
+    val activeHighwayWorkPlan: StateFlow<com.example.model.HighwayWorkPlan> =
+        _activeHighwayWorkPlan.asStateFlow()
+
+    val savedHighwayWorkPlans: StateFlow<List<com.example.model.HighwayWorkPlan>> =
+        preferencesManager.savedHighwayWorkPlansFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = preferencesManager.getInitialSavedHighwayWorkPlans()
+        )
+
+    fun updateHighwayWorkPlan(updated: com.example.model.HighwayWorkPlan) {
+        val stamped = updated.copy(updatedAtMs = System.currentTimeMillis())
+        _activeHighwayWorkPlan.value = stamped
+        if (!workPlanningSettings.value.autoSaveEnabled) return
+        _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVING
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                preferencesManager.updateActiveHighwayWorkPlan(stamped)
+                // Also keep saved entry in sync if already stored in Saved Plans
+                val existing = savedHighwayWorkPlans.value
+                if (existing.any { it.planId == stamped.planId }) {
+                    val synced = listOf(stamped) + existing.filterNot { it.planId == stamped.planId }
+                    preferencesManager.updateSavedHighwayWorkPlans(synced)
+                }
+            }.onSuccess {
+                val isOffline = weatherUiState.value is com.example.model.WeatherUiState.Unavailable
+                _workPlanSaveStatus.value = if (isOffline) {
+                    com.example.model.WorkPlanSaveStatus.OFFLINE_SAVED_LOCALLY
+                } else {
+                    com.example.model.WorkPlanSaveStatus.SAVED
+                }
+            }.onFailure {
+                _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVE_FAILED
+            }
+        }
+    }
+
+    fun retrySaveHighwayWorkPlan() {
+        updateHighwayWorkPlan(_activeHighwayWorkPlan.value)
+    }
+
+    fun saveCurrentHighwayWorkPlan() {
+        val current = _activeHighwayWorkPlan.value.copy(updatedAtMs = System.currentTimeMillis())
+        _activeHighwayWorkPlan.value = current
+        _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVING
+        val existing = savedHighwayWorkPlans.value.filterNot { it.planId == current.planId }
+        val updatedList = listOf(current) + existing
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                preferencesManager.updateActiveHighwayWorkPlan(current)
+                preferencesManager.updateSavedHighwayWorkPlans(updatedList)
+                workPlanBackupManager.runScheduledAutoBackupIfDue(
+                    frequency = workPlanningSettings.value.backupFrequency,
+                    plans = updatedList,
+                    settings = workPlanningSettings.value
+                )?.let {
+                    _localWorkPlanBackups.value = workPlanBackupManager.listLocalBackups()
+                }
+            }.onSuccess {
+                val isOffline = weatherUiState.value is com.example.model.WeatherUiState.Unavailable
+                _workPlanSaveStatus.value = if (isOffline) {
+                    com.example.model.WorkPlanSaveStatus.OFFLINE_SAVED_LOCALLY
+                } else {
+                    com.example.model.WorkPlanSaveStatus.SAVED
+                }
+            }.onFailure {
+                _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVE_FAILED
+            }
+        }
+        showToast("Work plan saved (${current.effectiveActivityName})", ToastType.SETTINGS_SAVED)
+    }
+
+    fun createNewHighwayWorkPlan() {
+        val fresh = buildDefaultHighwayWorkPlan()
+        _activeHighwayWorkPlan.value = fresh
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateActiveHighwayWorkPlan(fresh)
+        }
+        _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVED
+        showToast("New work plan ready", ToastType.INFO)
+    }
+
+    fun duplicateHighwayWorkPlan(source: com.example.model.HighwayWorkPlan) {
+        val now = System.currentTimeMillis()
+        val copy = source.copy(
+            planId = java.util.UUID.randomUUID().toString(),
+            planTitle = "${source.effectivePlanTitle} (Copy)",
+            createdAtMs = now,
+            updatedAtMs = now
+        )
+        val updatedList = listOf(copy) + savedHighwayWorkPlans.value
+        _activeHighwayWorkPlan.value = copy
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateActiveHighwayWorkPlan(copy)
+            preferencesManager.updateSavedHighwayWorkPlans(updatedList)
+        }
+        showToast("Plan duplicated", ToastType.SETTINGS_SAVED)
+    }
+
+    fun renameHighwayWorkPlan(planId: String, newTitle: String) {
+        val clean = newTitle.trim()
+        if (clean.isEmpty()) return
+        val updatedList = savedHighwayWorkPlans.value.map { p ->
+            if (p.planId == planId) p.copy(planTitle = clean, updatedAtMs = System.currentTimeMillis()) else p
+        }
+        if (_activeHighwayWorkPlan.value.planId == planId) {
+            val activeUpdated = _activeHighwayWorkPlan.value.copy(planTitle = clean, updatedAtMs = System.currentTimeMillis())
+            _activeHighwayWorkPlan.value = activeUpdated
+            preferencesManager.launchSafeEdit {
+                preferencesManager.updateActiveHighwayWorkPlan(activeUpdated)
+                preferencesManager.updateSavedHighwayWorkPlans(updatedList)
+            }
+        } else {
+            preferencesManager.launchSafeEdit {
+                preferencesManager.updateSavedHighwayWorkPlans(updatedList)
+            }
+        }
+        showToast("Plan renamed", ToastType.SETTINGS_SAVED)
+    }
+
+    fun loadSavedHighwayWorkPlan(plan: com.example.model.HighwayWorkPlan) {
+        _activeHighwayWorkPlan.value = plan
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateActiveHighwayWorkPlan(plan)
+        }
+        showToast("Loaded plan: ${plan.effectiveActivityName}", ToastType.INFO)
+    }
+
+    fun deleteSavedHighwayWorkPlan(planId: String) {
+        val updatedList = savedHighwayWorkPlans.value.filterNot { it.planId == planId }
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateSavedHighwayWorkPlans(updatedList)
+        }
+    }
+
+    fun clearHighwayWorkPlan() {
+        createNewHighwayWorkPlan()
+    }
+
+    fun createWorkPlansBackupJson(): String {
+        val allPlans = (listOf(_activeHighwayWorkPlan.value) + savedHighwayWorkPlans.value)
+            .distinctBy { it.planId }
+        return workPlanBackupManager.createBackupJson(allPlans, workPlanningSettings.value)
+    }
+
+    fun inspectWorkPlansBackup(rawJson: String): com.example.weather.WorkPlanBackupInspection {
+        return workPlanBackupManager.inspectBackupJson(rawJson, savedHighwayWorkPlans.value)
+    }
+
+    fun applyWorkPlansImport(
+        inspection: com.example.weather.WorkPlanBackupInspection,
+        resolution: com.example.model.BackupDuplicateResolution
+    ) {
+        if (!inspection.isValid) {
+            showToast(inspection.errorMessage ?: "Invalid backup", ToastType.ERROR)
+            return
+        }
+        val result = workPlanBackupManager.applyImport(savedHighwayWorkPlans.value, inspection, resolution)
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateSavedHighwayWorkPlans(result.mergedPlans)
+            inspection.settings?.let { preferencesManager.updateWorkPlanningSettings(it) }
+        }
+        showToast("Imported ${result.importedCount}, replaced ${result.replacedCount}, skipped ${result.skippedCount}", ToastType.SETTINGS_SAVED)
+    }
+
+    fun saveLocalWorkPlanSnapshot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val allPlans = (listOf(_activeHighwayWorkPlan.value) + savedHighwayWorkPlans.value).distinctBy { it.planId }
+            workPlanBackupManager.saveLocalBackupSnapshot(allPlans, workPlanningSettings.value, prefix = "manual_backup")
+            _localWorkPlanBackups.value = workPlanBackupManager.listLocalBackups()
+            showToast("Local backup snapshot saved", ToastType.SETTINGS_SAVED)
+        }
+    }
+
+    fun safeRestoreLocalWorkPlanBackup(record: com.example.weather.LocalBackupRecord) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val raw = workPlanBackupManager.readLocalBackup(record.filePath)
+            if (raw == null) {
+                showToast("Backup file unreadable", ToastType.ERROR)
+                return@launch
+            }
+            val result = workPlanBackupManager.safeRestoreBackup(
+                rawJson = raw,
+                existingPlans = savedHighwayWorkPlans.value,
+                existingSettings = workPlanningSettings.value
+            )
+            result.onSuccess { applied ->
+                preferencesManager.updateSavedHighwayWorkPlans(applied.mergedPlans)
+                applied.mergedPlans.firstOrNull()?.let { first ->
+                    _activeHighwayWorkPlan.value = first
+                    preferencesManager.updateActiveHighwayWorkPlan(first)
+                }
+                _localWorkPlanBackups.value = workPlanBackupManager.listLocalBackups()
+                showToast("Restored ${applied.importedCount} plan(s) safely", ToastType.SETTINGS_SAVED)
+            }.onFailure { err ->
+                showToast("Restore aborted: ${err.localizedMessage ?: "Invalid backup"}", ToastType.ERROR)
+            }
+        }
+    }
+
+    fun refreshMachineryCatalog() {
+        if (_isRefreshingMachineryCatalog.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isRefreshingMachineryCatalog.value = true
+            try {
+                // Never overwrites user-entered actual site machinery values in activeHighwayWorkPlan
+                val result = machineryCatalogRepository.refreshCatalogOnline(_machineryCatalog.value)
+                _machineryCatalog.value = result.entries
+                _machineryCatalogLastRefreshedMs.value = result.lastRefreshedMs
+                showToast(result.message, if (result.success) ToastType.SETTINGS_SAVED else ToastType.INFO)
+            } finally {
+                _isRefreshingMachineryCatalog.value = false
+            }
         }
     }
 

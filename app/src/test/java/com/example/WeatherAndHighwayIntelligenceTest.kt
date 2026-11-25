@@ -757,7 +757,25 @@ class WeatherAndHighwayIntelligenceTest {
         // Section F: Alerts MUST be hidden completely when there are no active warnings
         composeRule.onNodeWithTag("weather_severe_alerts_section").assertDoesNotExist()
 
-        // Section B: Essential details show available metrics and strictly omit null fields (never invent values)
+        // Section 2: Smart Hourly Highway Activity Prediction immediately below Main Weather Card
+        composeRule.onNodeWithTag("weather_forecast_tab_list")
+            .performScrollToNode(hasTestTag("highway_work_suitability_section"))
+        composeRule.onNodeWithTag("highway_work_suitability_section").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_suitability_activity_name")
+            .assertTextContains("BC Laying", substring = true)
+        composeRule.onNodeWithTag("weather_best_working_window").assertIsDisplayed()
+        composeRule.onNodeWithTag("smart_hourly_prediction_row").assertIsDisplayed()
+        composeRule.onNodeWithTag("hourly_prediction_card_0").assertIsDisplayed()
+        composeRule.onNodeWithTag("weather_engineer_disclaimer").assertExists()
+
+        // Tap DBM Laying chip in horizontal activity selector -> immediately switches activity
+        composeRule.onNodeWithTag("activity_chip_dbm_laying").performClick()
+        composeRule.waitForIdle()
+        assertEquals(HighwayWorkActivity.DBM_LAYING, pickedActivity)
+
+        // Section 3: Essential details show available metrics and strictly omit null fields (never invent values)
+        composeRule.onNodeWithTag("weather_forecast_tab_list")
+            .performScrollToNode(hasTestTag("weather_details_grid_card"))
         composeRule.onNodeWithTag("weather_details_grid_card").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_detail_rain").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_detail_wind").assertIsDisplayed()
@@ -766,7 +784,7 @@ class WeatherAndHighwayIntelligenceTest {
         composeRule.onNodeWithTag("weather_detail_visibility").assertDoesNotExist()
         composeRule.onNodeWithTag("weather_detail_sun").assertDoesNotExist()
 
-        // Sections C, D, E: Hourly, 7-Day Forecast, and Compact Highway Work Suitability on single clean screen
+        // Sections 4 & 5: Compact General Hourly Forecast and 7-Day Forecast
         composeRule.onNodeWithTag("weather_forecast_tab_list")
             .performScrollToNode(hasTestTag("weather_dashboard_24h_section"))
         composeRule.onNodeWithTag("weather_dashboard_24h_section").assertIsDisplayed()
@@ -775,23 +793,6 @@ class WeatherAndHighwayIntelligenceTest {
             .performScrollToNode(hasTestTag("weather_dashboard_7day_section"))
         composeRule.onNodeWithTag("weather_dashboard_7day_section").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_daily_row_0").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("weather_forecast_tab_list")
-            .performScrollToNode(hasTestTag("highway_work_suitability_section"))
-        composeRule.onNodeWithTag("highway_work_suitability_section").assertIsDisplayed()
-        composeRule.onNodeWithTag("weather_suitability_activity_name", useUnmergedTree = true)
-            .assertTextContains("BC Laying", substring = true)
-        composeRule.onNodeWithTag("weather_suitability_reason").assertIsDisplayed()
-        composeRule.onNodeWithTag("weather_suitability_best_window").assertIsDisplayed()
-        composeRule.onNodeWithTag("weather_engineer_disclaimer").assertIsDisplayed()
-
-        // Expand compact activity selector & switch to DBM Laying
-        composeRule.onNodeWithTag("weather_suitability_activity_toggle").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("weather_suitability_activity_picker").assertIsDisplayed()
-        composeRule.onNodeWithTag("suitability_pick_dbm_laying").performClick()
-        composeRule.waitForIdle()
-        assertEquals(HighwayWorkActivity.DBM_LAYING, pickedActivity)
     }
 
     @Test

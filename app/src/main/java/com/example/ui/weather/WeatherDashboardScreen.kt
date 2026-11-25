@@ -36,10 +36,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Engineering
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Route
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.rounded.WaterDrop
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +63,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,8 +78,10 @@ import com.example.model.ContractSpecificationConfig
 import com.example.model.DailyWeatherPoint
 import com.example.model.DelayRiskSummary
 import com.example.model.HighwayWorkActivity
+import com.example.model.HighwayWorkPlan
 import com.example.model.HourlyWeatherPoint
 import com.example.model.HourlyWorkWindow
+import com.example.model.MachineryCatalogEntry
 import com.example.model.TemperatureUnit
 import com.example.model.WeatherAlertItem
 import com.example.model.WeatherAlertSeverity
@@ -91,6 +96,7 @@ import com.example.ui.home.AnimatedWeatherIcon
 import com.example.ui.home.weatherAtmosphereColor
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.SmartFadeDivider
+import com.example.weather.MachineryCatalogRepository
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -103,15 +109,16 @@ private data class EssentialWeatherMetric(
 )
 
 /**
- * Minimalist, high-clarity CTECS Weather Page.
+ * Minimalist, high-clarity CTECS Weather Page with Smart Hourly Highway Work Prediction.
  *
- * Displays only essential, non-duplicated weather information:
- * 1. Current Weather main section (location/chainage, primary temperature, icon, condition, feels-like)
- * 2. Active Weather Alerts (only shown when meaningful active warnings exist; hidden completely otherwise)
- * 3. Essential Weather Details in one compact grid (Rain %, Wind speed & direction, Humidity %, UV Index, Visibility km, Sunrise/Sunset — only when reliable data is available)
- * 4. Compact horizontal Hourly Forecast (next 12 important hours)
- * 5. Clean 7-Day Forecast (one compact row per day)
- * 6. Compact Highway Weather Suitability (selected activity, status, short reason, best working window)
+ * Exact Section Order (zero duplicated metrics or redundant cards):
+ * 1. Main Weather Card (Current temperature, weather condition & icon, feels-like, location / chainage,
+ *    and one important weather alert inline if applicable — hidden completely when none)
+ * 2. Smart Hourly Highway Activity Prediction (immediately below Main Weather Card:
+ *    activity selector, best working window, 12–24h prediction cards with MoRTH/IRC engineering reasons)
+ * 3. Essential Weather Details (Rain %, Wind, Humidity, UV Index, Visibility, Sunrise/Sunset — only when available)
+ * 4. Compact General Hourly Forecast (next 12 important hours)
+ * 5. Seven-Day Forecast (one compact row per day)
  *
  * Responsive across portrait and landscape layouts and supports both dark and light CTECS themes.
  */
@@ -140,7 +147,20 @@ fun WeatherDashboardScreen(
     nowMs: Long = System.currentTimeMillis(),
     liveHighwayLocation: LiveHighwayLocationSnapshot = LiveHighwayLocationSnapshot(),
     expandedSections: Set<String>? = null,
-    onToggleSection: ((String) -> Unit)? = null
+    onToggleSection: ((String) -> Unit)? = null,
+    highwayWorkPlan: HighwayWorkPlan? = null,
+    savedHighwayWorkPlans: List<HighwayWorkPlan> = emptyList(),
+    machineryCatalog: List<MachineryCatalogEntry> = remember { MachineryCatalogRepository.builtInCatalog() },
+    isRefreshingMachineryCatalog: Boolean = false,
+    machineryCatalogLastRefreshedMs: Long = nowMs,
+    onUpdateHighwayWorkPlan: ((HighwayWorkPlan) -> Unit)? = null,
+    onSaveHighwayWorkPlan: (() -> Unit)? = null,
+    onLoadHighwayWorkPlan: ((HighwayWorkPlan) -> Unit)? = null,
+    onDeleteSavedHighwayWorkPlan: ((String) -> Unit)? = null,
+    onClearHighwayWorkPlan: (() -> Unit)? = null,
+    onRefreshMachineryCatalog: (() -> Unit)? = null,
+    onUpdateWeatherSettings: (((WeatherIntelligenceSettings) -> WeatherIntelligenceSettings) -> Unit)? = null,
+    onNavigateToWorkPlanning: (() -> Unit)? = null
 ) {
     val c = CtecsTheme.colors
     val isDark = c.isDark
@@ -168,8 +188,24 @@ fun WeatherDashboardScreen(
         }
     }
 
-    val shouldAnimate = isLifecycleResumed && settings.animationsEnabled
-    val unit = settings.temperatureUnit
+    var showWeatherSettingsPopup by remember { mutableStateOf(false) }
+    var localWeatherSettingsOverride by remember(settings) { mutableStateOf(settings) }
+    val activeSettings = if (onUpdateWeatherSettings != null) settings else localWeatherSettingsOverride
+    val handleUpdateWeatherSettings: ((WeatherIntelligenceSettings) -> WeatherIntelligenceSettings) -> Unit = { transform ->
+        if (onUpdateWeatherSettings != null) {
+            onUpdateWeatherSettings(transform)
+        } else {
+            localWeatherSettingsOverride = transform(localWeatherSettingsOverride)
+        }
+    }
+
+    val shouldAnimate = isLifecycleResumed && activeSettings.animationsEnabled
+    val unit = activeSettings.temperatureUnit
+    val settingsGearRotation by animateFloatAsState(
+        targetValue = if (showWeatherSettingsPopup) 90f else 0f,
+        animationSpec = tween(if (shouldAnimate) 220 else 0),
+        label = "weather_settings_gear_rot"
+    )
 
     val activeObservation: WeatherObservation? = forecastBundle?.current ?: when (weatherUiState) {
         is WeatherUiState.Available -> weatherUiState.observation
@@ -180,7 +216,7 @@ fun WeatherDashboardScreen(
     val isRefreshing = weatherUiState is WeatherUiState.Loading ||
         (weatherUiState is WeatherUiState.Available && weatherUiState.isRefreshing)
     val isOffline = weatherUiState is WeatherUiState.Unavailable
-    val staleMs = settings.staleDataThresholdMinutes.toLong() * 60_000L
+    val staleMs = activeSettings.staleDataThresholdMinutes.toLong() * 60_000L
     val isStale = activeObservation != null && !activeObservation.isFreshAt(nowMs, staleMs)
 
     val atmosphereColor = weatherAtmosphereColor(
@@ -201,8 +237,9 @@ fun WeatherDashboardScreen(
         activeObservation?.let { timeFmt.format(Date(it.observedAtMs)) }.orEmpty()
     }
 
-    // Deduplicated active warnings — strictly hidden when empty
-    val uniqueAlerts = remember(actionableAlerts, forecastBundle?.alerts) {
+    // Deduplicated active warnings — strictly hidden when empty or disabled in Weather Settings
+    val uniqueAlerts = remember(actionableAlerts, forecastBundle?.alerts, activeSettings.weatherAlertsEnabled) {
+        if (!activeSettings.weatherAlertsEnabled) return@remember emptyList()
         val combined = actionableAlerts + forecastBundle?.alerts.orEmpty()
         val seen = LinkedHashSet<String>()
         combined.filter { alert ->
@@ -211,12 +248,19 @@ fun WeatherDashboardScreen(
         }.sortedByDescending { it.severity.ordinal }
     }
 
-    val nextHours = remember(forecastBundle, nowMs) {
-        forecastBundle?.next24Hours(nowMs).orEmpty().take(12)
+    val filteredHourlyTimeline = remember(hourlyWorkTimeline, activeSettings.predictionIntervalHours) {
+        val step = activeSettings.predictionIntervalHours.coerceIn(1, 3)
+        if (step <= 1) hourlyWorkTimeline
+        else hourlyWorkTimeline.filterIndexed { idx, _ -> idx % step == 0 }
     }
 
-    val sevenDayForecast = remember(forecastBundle) {
-        forecastBundle?.daily.orEmpty().take(7)
+    val nextHours = remember(forecastBundle, nowMs, activeSettings.compactForecastLayout) {
+        val count = if (activeSettings.compactForecastLayout) 12 else 24
+        forecastBundle?.next24Hours(nowMs).orEmpty().take(count)
+    }
+
+    val sevenDayForecast = remember(forecastBundle, activeSettings.forecastDaysCount) {
+        forecastBundle?.daily.orEmpty().take(activeSettings.forecastDaysCount.coerceIn(1, 7))
     }
 
     val statusBadgeText = when {
@@ -277,8 +321,35 @@ fun WeatherDashboardScreen(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    if (onNavigateToWorkPlanning != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(c.secondarySurface)
+                                .clickable(onClick = onNavigateToWorkPlanning)
+                                .padding(horizontal = 9.dp, vertical = 6.dp)
+                                .testTag("weather_open_work_planning_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Engineering,
+                                contentDescription = "Open Work Planning",
+                                tint = c.accent,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Work Plan",
+                                color = c.textPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -286,6 +357,7 @@ fun WeatherDashboardScreen(
                             .clip(RoundedCornerShape(20.dp))
                             .background(statusBadgeColor.copy(alpha = if (isDark) 0.16f else 0.11f))
                             .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .semantics(mergeDescendants = true) {}
                             .testTag("weather_provider_status_bar")
                     ) {
                         Box(
@@ -306,7 +378,7 @@ fun WeatherDashboardScreen(
                     IconButton(
                         onClick = onRefreshWeather,
                         modifier = Modifier
-                            .size(48.dp)
+                            .size(44.dp)
                             .testTag("weather_dashboard_refresh_button")
                     ) {
                         if (isRefreshing) {
@@ -323,6 +395,20 @@ fun WeatherDashboardScreen(
                             )
                         }
                     }
+
+                    IconButton(
+                        onClick = { showWeatherSettingsPopup = true },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("weather_settings_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Settings,
+                            contentDescription = "Weather Settings",
+                            tint = c.textPrimary,
+                            modifier = Modifier.rotate(settingsGearRotation)
+                        )
+                    }
                 }
             }
 
@@ -334,7 +420,6 @@ fun WeatherDashboardScreen(
             ) {
                 val isWideLayout = maxWidth >= 640.dp
                 val isAlertsExpanded = WeatherSectionKeys.WEATHER_ALERTS in effectiveExpanded
-                val isSuitabilityPickerExpanded = WeatherSectionKeys.OTHER_HIGHWAY_WORK in effectiveExpanded
 
                 if (isWideLayout) {
                     // Responsive Landscape / Tablet 2-Column Layout
@@ -349,7 +434,7 @@ fun WeatherDashboardScreen(
                     ) {
                         LazyColumn(
                             modifier = Modifier
-                                .weight(0.95f)
+                                .weight(0.92f)
                                 .fillMaxHeight()
                                 .testTag("weather_left_column_list"),
                             contentPadding = PaddingValues(top = 6.dp, bottom = 20.dp),
@@ -364,23 +449,18 @@ fun WeatherDashboardScreen(
                                     temperatureUnit = unit,
                                     atmosphereColor = atmosphereColor,
                                     isDark = isDark,
-                                    shouldAnimate = shouldAnimate
+                                    shouldAnimate = shouldAnimate,
+                                    alerts = uniqueAlerts,
+                                    isAlertsExpanded = isAlertsExpanded,
+                                    onToggleAlerts = { toggleSection(WeatherSectionKeys.WEATHER_ALERTS) }
                                 )
-                            }
-                            if (uniqueAlerts.isNotEmpty()) {
-                                item(key = "alerts") {
-                                    CompactWeatherAlertsSection(
-                                        alerts = uniqueAlerts,
-                                        isExpanded = isAlertsExpanded,
-                                        onToggle = { toggleSection(WeatherSectionKeys.WEATHER_ALERTS) }
-                                    )
-                                }
                             }
                             if (activeObservation != null) {
                                 item(key = "essential_details") {
                                     EssentialWeatherDetailsGrid(
                                         observation = activeObservation,
                                         fallbackRainProbability = nextHours.firstOrNull()?.rainProbabilityPercent,
+                                        windSpeedUnit = activeSettings.windSpeedUnit,
                                         timeFmt = timeFmt,
                                         isDark = isDark
                                     )
@@ -390,13 +470,31 @@ fun WeatherDashboardScreen(
 
                         LazyColumn(
                             modifier = Modifier
-                                .weight(1.05f)
+                                .weight(1.08f)
                                 .fillMaxHeight()
                                 .testTag("weather_forecast_tab_list"),
                             contentPadding = PaddingValues(top = 6.dp, bottom = 20.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            if (nextHours.isNotEmpty()) {
+                            if (activeSettings.activityPredictionEnabled) {
+                                item(key = "smart_hourly_prediction") {
+                                    SmartHourlyHighwayPredictionSection(
+                                        selectedActivity = selectedActivity,
+                                        assessments = assessments,
+                                        hourlyWorkTimeline = filteredHourlyTimeline,
+                                        contractSpec = activeSettings.contractSpec,
+                                        temperatureUnit = unit,
+                                        is24HourFormat = is24HourFormat,
+                                        isDark = isDark,
+                                        shouldAnimate = shouldAnimate,
+                                        isCachedForecast = isOffline && activeObservation != null,
+                                        isStaleForecast = isStale,
+                                        lastUpdatedLabel = updatedLabel,
+                                        onSelectActivity = onSelectActivity
+                                    )
+                                }
+                            }
+                            if (activeSettings.showHourlyForecastSection && nextHours.isNotEmpty()) {
                                 item(key = "hourly") {
                                     CompactHourlyForecastSection(
                                         hours = nextHours,
@@ -407,7 +505,7 @@ fun WeatherDashboardScreen(
                                     )
                                 }
                             }
-                            if (sevenDayForecast.isNotEmpty()) {
+                            if (activeSettings.showDailyForecastSection && sevenDayForecast.isNotEmpty()) {
                                 item(key = "daily") {
                                     CompactSevenDayForecastSection(
                                         days = sevenDayForecast,
@@ -416,21 +514,16 @@ fun WeatherDashboardScreen(
                                     )
                                 }
                             }
-                            item(key = "suitability") {
-                                CompactHighwaySuitabilitySection(
-                                    assessments = assessments,
-                                    selectedActivity = selectedActivity,
-                                    hourlyWorkTimeline = hourlyWorkTimeline,
-                                    is24HourFormat = is24HourFormat,
-                                    isPickerExpanded = isSuitabilityPickerExpanded,
-                                    onTogglePicker = { toggleSection(WeatherSectionKeys.OTHER_HIGHWAY_WORK) },
-                                    onSelectActivity = onSelectActivity
-                                )
-                            }
                         }
                     }
                 } else {
-                    // Clean Portrait Single-Column Layout
+                    // Clean Portrait Single-Column Layout in Exact Minimal Section Order:
+                    // 1. Main Weather Card (with inline alert if applicable)
+                    // 2. Smart Hourly Highway Activity Prediction & Best Available Working Window
+                    // 3. Essential Weather Details
+                    // 4. Compact General Hourly Forecast
+                    // 5. Seven-Day Forecast
+                    // (Work Planning lives on its own separate internal page!)
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
@@ -450,16 +543,28 @@ fun WeatherDashboardScreen(
                                 temperatureUnit = unit,
                                 atmosphereColor = atmosphereColor,
                                 isDark = isDark,
-                                shouldAnimate = shouldAnimate
+                                shouldAnimate = shouldAnimate,
+                                alerts = uniqueAlerts,
+                                isAlertsExpanded = isAlertsExpanded,
+                                onToggleAlerts = { toggleSection(WeatherSectionKeys.WEATHER_ALERTS) }
                             )
                         }
 
-                        if (uniqueAlerts.isNotEmpty()) {
-                            item(key = "alerts") {
-                                CompactWeatherAlertsSection(
-                                    alerts = uniqueAlerts,
-                                    isExpanded = isAlertsExpanded,
-                                    onToggle = { toggleSection(WeatherSectionKeys.WEATHER_ALERTS) }
+                        if (activeSettings.activityPredictionEnabled) {
+                            item(key = "smart_hourly_prediction") {
+                                SmartHourlyHighwayPredictionSection(
+                                    selectedActivity = selectedActivity,
+                                    assessments = assessments,
+                                    hourlyWorkTimeline = filteredHourlyTimeline,
+                                    contractSpec = activeSettings.contractSpec,
+                                    temperatureUnit = unit,
+                                    is24HourFormat = is24HourFormat,
+                                    isDark = isDark,
+                                    shouldAnimate = shouldAnimate,
+                                    isCachedForecast = isOffline && activeObservation != null,
+                                    isStaleForecast = isStale,
+                                    lastUpdatedLabel = updatedLabel,
+                                    onSelectActivity = onSelectActivity
                                 )
                             }
                         }
@@ -469,13 +574,14 @@ fun WeatherDashboardScreen(
                                 EssentialWeatherDetailsGrid(
                                     observation = activeObservation,
                                     fallbackRainProbability = nextHours.firstOrNull()?.rainProbabilityPercent,
+                                    windSpeedUnit = activeSettings.windSpeedUnit,
                                     timeFmt = timeFmt,
                                     isDark = isDark
                                 )
                             }
                         }
 
-                        if (nextHours.isNotEmpty()) {
+                        if (activeSettings.showHourlyForecastSection && nextHours.isNotEmpty()) {
                             item(key = "hourly") {
                                 CompactHourlyForecastSection(
                                     hours = nextHours,
@@ -487,7 +593,7 @@ fun WeatherDashboardScreen(
                             }
                         }
 
-                        if (sevenDayForecast.isNotEmpty()) {
+                        if (activeSettings.showDailyForecastSection && sevenDayForecast.isNotEmpty()) {
                             item(key = "daily") {
                                 CompactSevenDayForecastSection(
                                     days = sevenDayForecast,
@@ -495,18 +601,6 @@ fun WeatherDashboardScreen(
                                     isDark = isDark
                                 )
                             }
-                        }
-
-                        item(key = "suitability") {
-                            CompactHighwaySuitabilitySection(
-                                assessments = assessments,
-                                selectedActivity = selectedActivity,
-                                hourlyWorkTimeline = hourlyWorkTimeline,
-                                is24HourFormat = is24HourFormat,
-                                isPickerExpanded = isSuitabilityPickerExpanded,
-                                onTogglePicker = { toggleSection(WeatherSectionKeys.OTHER_HIGHWAY_WORK) },
-                                onSelectActivity = onSelectActivity
-                            )
                         }
 
                         item(key = "bottom_space") {
@@ -517,12 +611,23 @@ fun WeatherDashboardScreen(
             }
         }
     }
+
+    // Contextual Animated Weather Settings Popup (ONLY Weather Page preferences)
+    WeatherSettingsPopup(
+        visible = showWeatherSettingsPopup,
+        settings = activeSettings,
+        lastUpdatedLabel = updatedLabel,
+        isOfflineCached = isOffline,
+        onUpdateSettings = handleUpdateWeatherSettings,
+        onManualRefresh = onRefreshWeather,
+        onDismiss = { showWeatherSettingsPopup = false }
+    )
 }
 
 /**
- * Section A: Current Weather – Main Section.
- * Displays ONLY: Location / current chainage (when available), primary temperature,
- * animated weather icon, weather condition, and feels-like temperature.
+ * Section 1: Main Weather Card.
+ * Displays: Current temperature, weather condition & icon, feels-like temperature,
+ * current location / chainage, and one important weather alert inline if applicable.
  */
 @Composable
 private fun CurrentWeatherMainSection(
@@ -533,7 +638,10 @@ private fun CurrentWeatherMainSection(
     temperatureUnit: TemperatureUnit,
     atmosphereColor: Color,
     isDark: Boolean,
-    shouldAnimate: Boolean
+    shouldAnimate: Boolean,
+    alerts: List<WeatherAlertItem>,
+    isAlertsExpanded: Boolean,
+    onToggleAlerts: () -> Unit
 ) {
     val c = CtecsTheme.colors
 
@@ -705,6 +813,14 @@ private fun CurrentWeatherMainSection(
                     }
                 }
             }
+
+            if (alerts.isNotEmpty()) {
+                InlineMainWeatherAlertStrip(
+                    alerts = alerts,
+                    isExpanded = isAlertsExpanded,
+                    onToggle = onToggleAlerts
+                )
+            }
         }
     }
 }
@@ -717,13 +833,14 @@ private fun CurrentWeatherMainSection(
 private fun EssentialWeatherDetailsGrid(
     observation: WeatherObservation,
     fallbackRainProbability: Int?,
+    windSpeedUnit: com.example.model.WindSpeedUnit,
     timeFmt: SimpleDateFormat,
     isDark: Boolean
 ) {
     val c = CtecsTheme.colors
     val rainAccent = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
 
-    val metrics = remember(observation, fallbackRainProbability, timeFmt, isDark) {
+    val metrics = remember(observation, fallbackRainProbability, windSpeedUnit, timeFmt, isDark) {
         buildList {
             val rainProb = observation.rainProbabilityPercent ?: fallbackRainProbability
             if (rainProb != null) {
@@ -741,7 +858,7 @@ private fun EssentialWeatherDetailsGrid(
                     EssentialWeatherMetric(
                         key = "wind",
                         label = "Wind",
-                        value = "${observation.formatWindSpeed()} ${observation.windDirectionCompass}"
+                        value = "${windSpeedUnit.format(observation.windSpeedKmh)} ${observation.windDirectionCompass}"
                     )
                 )
             }
@@ -849,11 +966,11 @@ private fun EssentialWeatherDetailsGrid(
 }
 
 /**
- * Section F: Weather Alerts.
- * Rendered ONLY when meaningful active warnings exist; never shown when empty.
+ * Single inline important weather alert inside the Main Weather Card.
+ * Rendered ONLY when meaningful active warnings exist; completely hidden when empty.
  */
 @Composable
-private fun CompactWeatherAlertsSection(
+private fun InlineMainWeatherAlertStrip(
     alerts: List<WeatherAlertItem>,
     isExpanded: Boolean,
     onToggle: () -> Unit

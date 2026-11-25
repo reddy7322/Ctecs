@@ -189,6 +189,25 @@ object IrcMorthWeatherRuleEngine {
                 wmoCode = pt.wmoCode,
                 visibilityKm = pt.visibilityKm
             )
+            // Guard against corrupted/missing hourly telemetry so we never fabricate Suitable
+            val hasValidTelemetry = pt.temperatureC.isFinite() &&
+                pt.windSpeedKmh.isFinite() &&
+                pt.windSpeedKmh >= 0.0 &&
+                pt.rainProbabilityPercent in 0..100 &&
+                pt.precipitationMm.isFinite() &&
+                pt.precipitationMm >= 0.0
+            if (!hasValidTelemetry) {
+                return@mapIndexed HourlyWorkWindow(
+                    hourPoint = pt,
+                    activity = activity,
+                    status = WorkSuitabilityStatus.INSUFFICIENT_DATA,
+                    confidence = ForecastConfidence.LOW,
+                    primaryReason = "Forecast data incomplete for this hour; verify site conditions.",
+                    restrictions = listOf("Incomplete forecast telemetry"),
+                    isMandatoryViolation = false
+                )
+            }
+
             // Only apply live site measurements to the first 2 immediate hours; later hours rely on forecast
             val eval = evaluateSnapshotForActivity(
                 activity = activity,
@@ -208,22 +227,12 @@ object IrcMorthWeatherRuleEngine {
                 index < 18 -> ForecastConfidence.MODERATE
                 else -> ForecastConfidence.LOW
             }
-            val primaryReason = when (eval.status) {
-                WorkSuitabilityStatus.NOT_RECOMMENDED ->
-                    eval.checks.firstOrNull { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED }?.detail
-                        ?: "Unsuitable weather conditions for ${activity.shortName}."
-                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
-                    eval.checks.firstOrNull { it.status == WorkSuitabilityStatus.SUITABLE_WITH_CAUTION }?.detail
-                        ?: "Verify site conditions before proceeding with ${activity.shortName}."
-                WorkSuitabilityStatus.INSUFFICIENT_DATA ->
-                    "Insufficient forecast or site specification data."
-                WorkSuitabilityStatus.SUITABLE ->
-                    if (activity.isBituminousHotMix) {
-                        "Forecast within limits; verify site pavement surface temperature & dry base before laying."
-                    } else {
-                        "Forecast conditions within acceptable limits for ${activity.shortName}."
-                    }
-            }
+            val primaryReason = buildHourlyEngineeringReason(
+                activity = activity,
+                weather = snapshot,
+                contractSpec = contractSpec,
+                eval = eval
+            )
 
             HourlyWorkWindow(
                 hourPoint = pt,
@@ -234,6 +243,298 @@ object IrcMorthWeatherRuleEngine {
                 restrictions = restrictions,
                 isMandatoryViolation = hasMandatoryViolation
             )
+        }
+    }
+
+    enum class BestWindowState {
+        SUITABLE_WINDOW,
+        CAUTION_WINDOW,
+        NO_SUITABLE_WINDOW,
+        INCOMPLETE_DATA
+    }
+
+    data class BestWorkingWindowSummary(
+        val state: BestWindowState,
+        val timeRangeLabel: String?,
+        val activityLabel: String,
+        val summaryText: String
+    )
+
+    /**
+     * Derives the best contiguous working window from an hourly timeline.
+     * - Returns SUITABLE_WINDOW when one or more contiguous Suitable hours exist.
+     * - Returns CAUTION_WINDOW when no fully Suitable hours exist, but Caution hours exist (e.g. site surface temp verification needed).
+     * - Returns NO_SUITABLE_WINDOW when reliable forecast exists but every hour is Not Recommended.
+     * - Returns INCOMPLETE_DATA when forecast is unavailable or insufficient.
+     */
+    fun summarizeBestWorkingWindow(
+        activity: HighwayWorkActivity,
+        timeline: List<HourlyWorkWindow>,
+        is24HourFormat: Boolean,
+        activityDisplayLabel: String = activity.displayName
+    ): BestWorkingWindowSummary {
+        if (timeline.isEmpty() || timeline.all { it.status == WorkSuitabilityStatus.INSUFFICIENT_DATA }) {
+            return BestWorkingWindowSummary(
+                state = BestWindowState.INCOMPLETE_DATA,
+                timeRangeLabel = null,
+                activityLabel = activityDisplayLabel,
+                summaryText = "Working window cannot be reliably determined. Check site conditions."
+            )
+        }
+
+        fun findLongestRun(predicate: (HourlyWorkWindow) -> Boolean): Pair<Int, Int>? {
+            var bestStart = -1
+            var bestLen = 0
+            var curStart = -1
+            var curLen = 0
+            timeline.forEachIndexed { idx, w ->
+                if (predicate(w)) {
+                    if (curStart == -1) curStart = idx
+                    curLen++
+                    if (curLen > bestLen) {
+                        bestLen = curLen
+                        bestStart = curStart
+                    }
+                } else {
+                    curStart = -1
+                    curLen = 0
+                }
+            }
+            return if (bestStart >= 0 && bestLen > 0) bestStart to bestLen else null
+        }
+
+        fun formatHourClock(localHour: Int): String {
+            val h = ((localHour % 24) + 24) % 24
+            return if (is24HourFormat) {
+                String.format(Locale.US, "%02d:00", h)
+            } else {
+                when (h) {
+                    0 -> "12:00 AM"
+                    in 1..11 -> "$h:00 AM"
+                    12 -> "12:00 PM"
+                    else -> "${h - 12}:00 PM"
+                }
+            }
+        }
+
+        fun formatRange(startIdx: Int, len: Int): String {
+            val startHour = timeline[startIdx].hourPoint.localHourOfDay
+            val endHourExclusive = (timeline[(startIdx + len - 1).coerceAtMost(timeline.lastIndex)].hourPoint.localHourOfDay + 1) % 24
+            return "${formatHourClock(startHour)} – ${formatHourClock(endHourExclusive)}"
+        }
+
+        val suitableRun = findLongestRun { it.status == WorkSuitabilityStatus.SUITABLE }
+        if (suitableRun != null) {
+            val range = formatRange(suitableRun.first, suitableRun.second)
+            return BestWorkingWindowSummary(
+                state = BestWindowState.SUITABLE_WINDOW,
+                timeRangeLabel = range,
+                activityLabel = activityDisplayLabel,
+                summaryText = "$range | $activityDisplayLabel | Suitable based on available forecast"
+            )
+        }
+
+        val cautionRun = findLongestRun { it.status == WorkSuitabilityStatus.SUITABLE_WITH_CAUTION }
+        if (cautionRun != null) {
+            val range = formatRange(cautionRun.first, cautionRun.second)
+            return BestWorkingWindowSummary(
+                state = BestWindowState.CAUTION_WINDOW,
+                timeRangeLabel = range,
+                activityLabel = activityDisplayLabel,
+                summaryText = "$range | $activityDisplayLabel | Caution — verify site conditions"
+            )
+        }
+
+        return BestWorkingWindowSummary(
+            state = BestWindowState.NO_SUITABLE_WINDOW,
+            timeRangeLabel = null,
+            activityLabel = activityDisplayLabel,
+            summaryText = "No suitable weather window identified in the available forecast."
+        )
+    }
+
+    /**
+     * Generates a concise (1–2 line), activity-specific, MoRTH/IRC-grounded engineering reason
+     * for compact hourly prediction cards without mixing bituminous limits into non-bituminous works.
+     */
+    private fun buildHourlyEngineeringReason(
+        activity: HighwayWorkActivity,
+        weather: WeatherSnapshotInput,
+        contractSpec: ContractSpecificationConfig,
+        eval: SnapshotEvalResult
+    ): String {
+        val failingCheck = eval.checks.firstOrNull { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED }
+        val cautionCheck = eval.checks.firstOrNull { it.status == WorkSuitabilityStatus.SUITABLE_WITH_CAUTION }
+
+        if (eval.status == WorkSuitabilityStatus.INSUFFICIENT_DATA) {
+            return "Insufficient forecast or site data; verify conditions at site."
+        }
+
+        if (activity.isBituminousHotMix) {
+            val binder = contractSpec.binderFor(activity)
+            val minTemp = binder.minPavementSurfaceTempC.toInt()
+            return when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED -> {
+                    val rule = failingCheck?.ruleName.orEmpty()
+                    when {
+                        rule.contains("Standing Water", ignoreCase = true) ||
+                            rule.contains("Damp Base", ignoreCase = true) ->
+                            "Wet/damp base; laying prohibited (MoRTH Cl. 501.5.1)."
+                        rule.contains("Active Rainfall", ignoreCase = true) ->
+                            "Rain forecast during proposed laying window (Cl. 501.5.1)."
+                        rule.contains("Imminent Rain", ignoreCase = true) ->
+                            "Imminent rain (${weather.rainProbabilityPercent}%); do not lay ${activity.shortName} (IRC:105)."
+                        rule.contains("Fog", ignoreCase = true) || rule.contains("Dust", ignoreCase = true) ->
+                            "Fog/dust storm restriction; laying prohibited (Cl. 501.5.1)."
+                        rule.contains("Wind", ignoreCase = true) ->
+                            "Wind >40 km/h limit; rapid mat cooling risk (Cl. 501.5.1)."
+                        rule.contains("Surface Temp", ignoreCase = true) ->
+                            "Below ${minTemp}°C surface min for ${binder.displayName}; verify at site."
+                        rule.contains("Tack Coat", ignoreCase = true) ->
+                            "Tack coat must be clean & broken before ${activity.shortName} laying."
+                        else -> failingCheck?.detail ?: "Restricted under MoRTH Cl. 501.5.1 / IRC:105."
+                    }
+                }
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION -> {
+                    val rule = cautionCheck?.ruleName.orEmpty()
+                    when {
+                        rule.contains("Rain", ignoreCase = true) ->
+                            "Rain probability rising (${weather.rainProbabilityPercent}%); monitor before paving."
+                        rule.contains("Wind", ignoreCase = true) ->
+                            "Wind near 40 km/h limit; verify 2m site wind before laying."
+                        rule.contains("Surface Temp", ignoreCase = true) && binder.isModified ->
+                            "Modified binder (≥${minTemp}°C); measure pavement surface temp at site."
+                        rule.contains("Surface Temp", ignoreCase = true) ->
+                            "Verify pavement surface temp (≥${minTemp}°C) & dry base at site."
+                        else -> cautionCheck?.detail ?: "Verify dry base & pavement surface temp at site."
+                    }
+                }
+                WorkSuitabilityStatus.SUITABLE ->
+                    "No forecast rain; verify dry base & surface temp (≥${minTemp}°C) before laying."
+                WorkSuitabilityStatus.INSUFFICIENT_DATA ->
+                    "Insufficient forecast or surface temp data; verify at site."
+            }
+        }
+
+        // Non-bituminous & specialized activities — strictly activity-specific engineering reasons
+        return when (activity) {
+            HighwayWorkActivity.TACK_COAT_APPLICATION,
+            HighwayWorkActivity.PRIME_COAT_APPLICATION -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    if (failingCheck?.ruleName?.contains("Wind", ignoreCase = true) == true) {
+                        "High wind (${weather.windSpeedKmh.toInt()} km/h); spray drift risk for distributor."
+                    } else {
+                        "Wet/rain risk; coat requires clean, dry surface (MoRTH Cl. 502/503)."
+                    }
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    "Check surface dryness, wind drift & emulsion breaking time."
+                else -> "Dry window; verify clean surface & emulsion breaking (Cl. 502/503)."
+            }
+
+            HighwayWorkActivity.GLASS_GRID_APPLICATION -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    if (failingCheck?.ruleName?.contains("Wind", ignoreCase = true) == true) {
+                        "Strong wind (${weather.windSpeedKmh.toInt()} km/h) causes grid lift/wrinkling."
+                    } else {
+                        "Wet surface prevents glass grid bond; dry base required (Sec. 700)."
+                    }
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    if (cautionCheck?.ruleName?.contains("Wind", ignoreCase = true) == true) {
+                        "Wind ${weather.windSpeedKmh.toInt()} km/h; keep grid tensioned & pinned."
+                    } else {
+                        "Verify dry clean surface & manufacturer min surface temp."
+                    }
+                else -> "Dry, calm window; verify clean surface & immediate overlay plan."
+            }
+
+            HighwayWorkActivity.CRACK_SEALING -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    "Moisture in cracks prevents sealant bond & causes foaming (IRC:82)."
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    "Cool air; pre-warm & dry cracks with hot-air lance before sealing."
+                else -> "Dry window suitable for air-blasting & crack sealing (IRC:82)."
+            }
+
+            HighwayWorkActivity.MILLING_OPERATIONS -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    if (failingCheck?.ruleName?.contains("Visibility", ignoreCase = true) == true) {
+                        "Poor visibility hazard for work-zone traffic during milling."
+                    } else {
+                        "Heavy rain/storm; unsafe drainage & visibility for milling."
+                    }
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    "Light rain risk; protect milled box drainage & traffic safety."
+                else -> "Clear visibility & dry conditions for profile milling (Cl. 501.8)."
+            }
+
+            HighwayWorkActivity.GSB_OPERATIONS,
+            HighwayWorkActivity.WMM_OPERATIONS -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    "Saturation exceeds OMC tolerance; subgrade/layer rutting risk."
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    if (cautionCheck?.ruleName?.contains("Evaporation", ignoreCase = true) == true) {
+                        "High evaporation; maintain OMC with water tanker during rolling."
+                    } else {
+                        "Verify field moisture stays within OMC tolerance before rolling."
+                    }
+                else -> "Suitable for ${activity.shortName} spreading & OMC vibratory compaction."
+            }
+
+            HighwayWorkActivity.EARTHWORK -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    "Saturated soil exceeds OMC; halt embankment compaction (Cl. 305.3)."
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    "Seal & grade embankment with crossfall ahead of expected rain."
+                else -> "Suitable for excavation, spreading & OMC-controlled compaction."
+            }
+
+            HighwayWorkActivity.CONCRETE_WORKS -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    if (failingCheck?.ruleName?.contains("Cold", ignoreCase = true) == true) {
+                        "Cold-weather concreting restriction (<4.5°C); Engineer approval needed."
+                    } else {
+                        "Rain alters w/c ratio & damages fresh PQC/DLC finish (Sec. 600)."
+                    }
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    when {
+                        cautionCheck?.ruleName?.contains("Rain", ignoreCase = true) == true ->
+                            "Keep waterproof covers/tents ready before starting pour."
+                        else -> "Evaporation risk; verify concrete mix temp & immediate curing."
+                    }
+                else -> "Suitable for PQC/DLC pour; verify slump, mix temp & curing."
+            }
+
+            HighwayWorkActivity.ROAD_MARKING -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    if (failingCheck?.ruleName?.contains("Temp", ignoreCase = true) == true) {
+                        "Temp <10°C impairs thermoplastic bonding & bead embedment."
+                    } else {
+                        "Surface must be completely dry, free of rain/dew (Cl. 803.4)."
+                    }
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    "Check surface dryness & shield drop-on glass beads from wind."
+                else -> "Dry, calm window suitable for thermoplastic & glass beads."
+            }
+
+            HighwayWorkActivity.SURFACE_PREPARATION_CLEANING -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    "Active rain/storm prevents clean, dry mechanical brooming."
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    "Wetness or windblown dust risk; re-sweep before tack coat."
+                else -> "Suitable for brooming, air-blasting & surface inspection."
+            }
+
+            HighwayWorkActivity.GENERAL_HIGHWAY_MAINTENANCE -> when (eval.status) {
+                WorkSuitabilityStatus.NOT_RECOMMENDED ->
+                    "Severe storm/wind; restrict work to emergency hazard clearance."
+                WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ->
+                    "Prioritize drainage & traffic visibility; defer hot-mix patching."
+                else -> "Suitable for routine shoulder, drain & corridor maintenance."
+            }
+
+            HighwayWorkActivity.BC_LAYING,
+            HighwayWorkActivity.DBM_LAYING ->
+                "No forecast rain; verify dry base & surface temp before laying."
         }
     }
 
@@ -390,7 +691,12 @@ object IrcMorthWeatherRuleEngine {
         }
 
         // 4. Fog or dust storms (MANDATORY RESTRICTION)
-        val isFogOrDust = weather.condition == WeatherConditionType.FOGGY || (weather.visibilityKm != null && weather.visibilityKm < 0.8)
+        val isDustStorm = weather.conditionLabel.contains("dust", ignoreCase = true) ||
+            weather.conditionLabel.contains("sandstorm", ignoreCase = true) ||
+            weather.conditionLabel.contains("sand storm", ignoreCase = true)
+        val isFogOrDust = weather.condition == WeatherConditionType.FOGGY ||
+            isDustStorm ||
+            (weather.visibilityKm != null && weather.visibilityKm < 0.8)
         checks += if (isFogOrDust) {
             SpecificationRuleCheck(
                 ruleName = "Fog / Dust Storm / Poor Visibility",
@@ -474,6 +780,15 @@ object IrcMorthWeatherRuleEngine {
                     status = WorkSuitabilityStatus.NOT_RECOMMENDED,
                     observedValue = String.format(Locale.US, "Forecast Air %.1f°C < %.0f°C Min (Surface Unmeasured)", weather.airTempC, minSurfaceTemp),
                     detail = "Forecast air temperature is below the ${minSurfaceTemp.toInt()}°C pavement surface minimum for ${binder.displayName}. Measure actual pavement surface temperature on site; laying prohibited if surface is <${minSurfaceTemp.toInt()}°C.",
+                    requiresSiteVerification = true
+                )
+                binder.isModified -> SpecificationRuleCheck(
+                    ruleName = "Pavement Surface Temp Verification (${binder.displayName})",
+                    clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
+                    isMandatoryRestriction = false,
+                    status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
+                    observedValue = String.format(Locale.US, "Forecast Air %.1f°C (Surface Temp Unmeasured; Min %.0f°C)", weather.airTempC, minSurfaceTemp),
+                    detail = "Pavement surface temperature is unmeasured for ${binder.displayName} (min ${minSurfaceTemp.toInt()}°C). Measure actual pavement surface temperature at site before laying.",
                     requiresSiteVerification = true
                 )
                 weather.airTempC < minSurfaceTemp + 4.0 -> SpecificationRuleCheck(

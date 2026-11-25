@@ -1,0 +1,1250 @@
+CTECS – COMPLETE WEATHER PAGE, SEPARATE WORK PLANNING PAGE & SETTINGS REDESIGN
+
+Smart Highway Engineering | Machinery | Compaction | Weather | Data Management | PDF
+
+1. Main Application Structure
+
+Create two separate internal pages within the existing application:
+
+1. WEATHER
+2. WORK PLANNING
+
+Work Planning must be a completely separate internal page/tab, not an expandable form inside the Weather Page.
+
+Both pages must retain their own content, controls and contextual settings.
+
+Navigation requirements
+
+- Weather Page: display weather information and hourly highway activity suitability.
+- Work Planning Page: display all construction planning inputs, calculations, machinery, compaction, manpower and saved plans.
+- Provide smooth navigation between the two pages.
+- Use the existing app navigation style.
+- Do not create duplicate bottom navigation bars.
+- Do not add unnecessary navigation items.
+- Preserve existing app navigation and page functionality.
+
+---
+
+PART A – WEATHER PAGE
+
+2. Weather Page Layout
+
+Keep the Weather Page minimal.
+
+Display:
+
+1. Main Weather Card.
+2. Smart Hourly Highway Activity Prediction.
+3. Best Available Working Window.
+4. Essential weather details.
+5. Seven-day forecast, where available.
+6. Smart animated Settings button.
+
+Show only useful weather information without duplicates.
+
+Hourly activity predictions must cover:
+
+- BC.
+- DBM.
+- Tack Coat.
+- Prime Coat.
+- Milling.
+- Glass Grid.
+- GSB.
+- WMM.
+- Earthwork.
+- PQC / DLC.
+- Road Marking.
+- Crack Sealing.
+- Surface Dressing.
+- Other supported activities.
+
+Use statuses:
+
+- Suitable.
+- Caution.
+- Not Recommended.
+- Insufficient Data.
+
+Show a short reason for every recommendation.
+
+The Work Planning calculations and detailed machinery inputs must remain on the separate Work Planning Page.
+
+---
+
+PART B – SEPARATE WORK PLANNING PAGE
+
+3. Work Planning Page – Main Objective
+
+Create a dedicated internal page named WORK PLANNING.
+
+This page must operate independently while sharing relevant weather, project, chainage and machinery information through existing application services.
+
+Provide complete planning for:
+
+- Highway work activities.
+- Chainage-based length.
+- Road width and area.
+- Day and Night shifts.
+- Time-to-time work planning.
+- Material and quantity calculations.
+- Compacted and loose thickness.
+- Laying and rolling temperatures.
+- Machinery and transport.
+- Roller and PTR passes.
+- Rolling patterns.
+- Manpower.
+- Weather-based recommendations.
+- Estimated production.
+- Automatic saving.
+- Backup and restore.
+- PDF export.
+
+Keep the normal Weather Page uncluttered.
+
+4. Work Planning Page – Main Layout
+
+Organise the page into these compact expandable sections:
+
+1. Work Details.
+2. Material & Thickness.
+3. Machinery & Transport.
+4. Temperature & Weather.
+5. Compaction & Rolling.
+6. Manpower.
+7. Production Summary.
+8. Saved Plans & Backup.
+
+Display a compact summary at the top:
+
+- Activity.
+- Chainage.
+- Length.
+- Width.
+- Shift.
+- Working Hours.
+- Target Quantity.
+- Weather Suitability.
+
+Provide clear actions:
+
+- New Plan.
+- Save Plan.
+- Calculate Plan.
+- Export PDF.
+- Saved Plans.
+
+Keep advanced specifications inside expandable sections.
+
+---
+
+5. Work Details – Chainage-Based Planning
+
+Provide:
+
+Project Details
+
+- Project Name.
+- Highway / Road Name.
+- Work Date.
+- Work Activity.
+- Location.
+- Side: LHS / RHS / Both / Median.
+
+Chainage Inputs
+
+- Start Chainage.
+- End Chainage.
+- Calculated Length.
+- Manual Length Override.
+
+Support chainage formats such as:
+
+- 188+840.
+- 189+050.
+- 202+560.
+
+Automatically calculate:
+
+Length = Absolute Difference Between End Chainage and Start Chainage.
+
+Example:
+
+Start: 188+840
+End: 189+240
+Length: 400 metres.
+
+Requirements:
+
+- Correctly handle kilometre transitions.
+- Preserve original chainage values.
+- Handle reversed chainage entries safely.
+- Show a warning for invalid entries.
+- Allow manual length when chainage is unavailable.
+- Clearly distinguish calculated and manually entered length.
+
+Width and Lane Inputs
+
+- Total Road Width (m).
+- Individual Lane Width (m).
+- Number of Lanes.
+- Actual Work Width (m).
+- Individual stretch width, where applicable.
+
+Do not automatically multiply lane width by lane count when the entered work width already represents the total width.
+
+---
+
+6. Day and Night Shift Planning
+
+Provide animated selection controls:
+
+- DAY SHIFT.
+- NIGHT SHIFT.
+- CUSTOM SHIFT.
+
+Day Shift
+
+- Work Date.
+- Start Time.
+- End Time.
+- Break Duration.
+- Effective Working Hours.
+
+Night Shift
+
+- Start Date and Time.
+- End Date and Time.
+- Break Duration.
+- Effective Working Hours.
+
+Time-to-Time Inputs
+
+Allow multiple working periods, for example:
+
+- 08:00–12:00.
+- 13:00–17:00.
+
+For night work:
+
+- Start: 24-11-2026, 20:00.
+- End: 25-11-2026, 06:00.
+- Total: 10 hours.
+- Break: 30 minutes.
+- Effective Time: 9.5 hours.
+
+Calculate:
+
+- Total Shift Duration.
+- Break Duration.
+- Effective Working Hours.
+- Remaining Hours.
+- Actual Working Time.
+- Machinery Mobilisation Time.
+- Loading and Waiting Time.
+- Work Completion Time.
+
+Support overnight and multiple working periods without incorrect date calculations.
+
+Do not assume fixed shift hours.
+
+---
+
+7. Automatic Area, Volume and Quantity
+
+Calculate:
+
+Area
+
+Area = Length × Width
+
+Volume
+
+Volume = Area × Compacted Thickness / 1000
+
+Material Quantity
+
+Quantity = Volume × Approved Material Density
+
+Display:
+
+- Length.
+- Width.
+- Area.
+- Compacted Thickness.
+- Volume.
+- Density.
+- Estimated Quantity.
+- Actual Quantity.
+- Quantity Difference.
+
+For multiple stretches or lanes, calculate individual and combined totals.
+
+Never invent material density.
+
+---
+
+8. Work Categories and Material Selection
+
+Provide searchable dropdowns for:
+
+- BC.
+- DBM.
+- BM.
+- SDBC.
+- SMA.
+- Tack Coat.
+- Prime Coat.
+- Glass Grid.
+- GSB.
+- WMM.
+- Earthwork.
+- Subgrade.
+- Milling.
+- DLC.
+- PQC.
+- Concrete Works.
+- Road Marking.
+- Surface Dressing.
+- Crack Sealing.
+- Road Studs.
+- Drainage.
+- Crash Barriers.
+- Other Highway Works.
+
+Allow custom activities and material types.
+
+Show only relevant engineering inputs for the selected activity.
+
+---
+
+9. Compacted and Loose Thickness
+
+Create a THICKNESS & COMPACTION section.
+
+Fields:
+
+- Target Compacted Thickness (mm).
+- Recommended Loose Thickness (mm).
+- Actual Loose Thickness (mm).
+- Achieved Compacted Thickness (mm).
+- Thickness Variation (mm).
+- Material Density, where applicable.
+
+Calculate loose thickness using an approved loose-to-compacted factor from:
+
+- Approved method statement.
+- Trial-section results.
+- Material-specific specifications.
+- JMF, where applicable.
+- Verified site calibration.
+
+Formula:
+
+Loose Thickness = Target Compacted Thickness × Approved Loose-to-Compacted Factor.
+
+Do not apply a universal multiplier.
+
+If no verified factor is available, display:
+
+Trial Section / Engineer Verification Required
+
+Allow manual input with a clear manual-entry status.
+
+Compare actual and target thickness only against verified project tolerances.
+
+---
+
+10. Material Laying and Rolling Temperatures
+
+Create a MATERIAL TEMPERATURE section.
+
+Provide applicable fields:
+
+- Material Type.
+- Mix / Binder Grade.
+- Plant Production Temperature.
+- Dispatch Temperature.
+- Arrival Temperature.
+- Laying Temperature.
+- Minimum Rolling Temperature.
+- Actual Rolling Temperature.
+- Measurement Time.
+
+For bituminous works, separately consider:
+
+- Binder temperature.
+- Aggregate temperature.
+- Mixed material temperature.
+- Dispatch temperature.
+- Site arrival temperature.
+- Laying temperature.
+- Rolling temperature.
+
+For other activities, display relevant requirements:
+
+- Concrete placement and curing.
+- Thermoplastic heating and application.
+- Emulsion application and breaking.
+- Stabilised material mixing and compaction timing.
+
+Use material-specific verified limits. Do not apply bituminous limits to unrelated materials.
+
+---
+
+11. Machinery and Transport Planning
+
+Reuse the existing central machinery database.
+
+Include latest, current and legacy equipment across all categories:
+
+- Asphalt pavers.
+- HMP and other plants.
+- HYVA and dumpers.
+- Tandem rollers.
+- PTR.
+- Broomers.
+- Milling equipment.
+- Road marking machinery.
+- Earthwork machinery.
+- Concrete equipment.
+- Bitumen distributors.
+- Road stud equipment.
+- Drainage and structure equipment.
+- Supporting machinery.
+
+Use cascading dropdowns:
+
+Category → Manufacturer → Model → Variant.
+
+Automatically fill verified specifications and maximum rated capacities.
+
+Keep maximum rated capacity separate from actual operating capacity.
+
+HMP-to-Work-Zone Planning
+
+Calculate:
+
+- Road lead distance.
+- Round-trip distance.
+- Loading time.
+- Loaded travel time.
+- Unloading time.
+- Empty return time.
+- Waiting time.
+- Dumper cycle time.
+- Actual payload.
+- Total fleet supply per hour.
+- Estimated number of dumpers required.
+
+Use road-route distance where available, not straight-line distance.
+
+Never confuse HYVA cylinder capacity, dumper body volume and legal vehicle payload.
+
+---
+
+12. Roller, PTR and Rolling Pattern
+
+Create a COMPACTION & ROLLING section.
+
+Consider:
+
+- Selected roller model.
+- Operating weight.
+- Drum width.
+- PTR model.
+- Ballast.
+- Tyre configuration.
+- Tyre pressure.
+- Working width.
+- Roller speed.
+- Road width.
+- Camber.
+- Material type.
+- Layer thickness.
+- Temperature window.
+- Trial-section results.
+
+For applicable bituminous work, display:
+
+Breakdown Rolling
+
+- Roller type.
+- Operating mode.
+- Rolling sequence.
+- Recommended passes.
+
+Intermediate Rolling
+
+- Roller / PTR.
+- Operating mode.
+- Rolling sequence.
+- Recommended passes.
+
+Finish Rolling
+
+- Finishing roller.
+- Static rolling requirements.
+- Recommended passes.
+
+PTR Planning
+
+- PTR suitability.
+- Model.
+- Operating weight.
+- Ballast.
+- Tyre pressure.
+- Working width.
+- Recommended passes.
+- Estimated rolling time.
+
+Do not prescribe PTR for every activity.
+
+Rolling Pattern Diagram
+
+Provide a compact animated top-view diagram showing:
+
+- Road width.
+- Roller width.
+- Track positions.
+- Overlap.
+- Rolling direction.
+- Edge-to-centre sequence where applicable.
+- Lower-to-upper sequence where applicable.
+- Joint rolling.
+- Pass count per stage.
+
+Update dynamically when the user changes width, camber, equipment or material.
+
+Pass Calculations
+
+Calculate estimated rolling coverage using:
+
+- Length.
+- Width.
+- Effective roller width.
+- Overlap.
+- Speed.
+- Pass count.
+- Working hours.
+- Site operating efficiency.
+
+Use approved trial-section and field-density results for recommended passes.
+
+If trial data is missing, show provisional recommendations and require engineer verification.
+
+Pass count alone must never be treated as proof of compaction compliance.
+
+---
+
+13. MoRTH / IRC Engineering Recommendation Engine
+
+Use the following hierarchy:
+
+1. Contractually applicable MoRTH specifications.
+2. Applicable IRC standards.
+3. Relevant IS standards.
+4. Approved project specifications.
+5. Approved JMF.
+6. Trial-section results.
+7. Approved method statements.
+
+Support all applicable categories:
+
+- Bituminous works.
+- Granular works.
+- Earthwork.
+- Subgrade.
+- Concrete.
+- Geosynthetics.
+- Surface treatment.
+- Road marking.
+- Drainage and structures.
+
+Maintain:
+
+- Standard name.
+- Edition / revision.
+- Clause / table reference.
+- Activity.
+- Material.
+- Requirement.
+- Source.
+- Verification status.
+
+Support MoRTH Fifth Revision (2013) and Sixth Revision (2026) separately.
+
+Select the applicable edition according to the contract, applicable circular and effective date.
+
+Never invent clause numbers, temperatures, thickness factors, tolerances or pass counts.
+
+When data is unavailable, display Specification Verification Required.
+
+---
+
+14. Weather-Based Engineering Recommendations
+
+Connect Work Planning to the existing Weather Page forecast.
+
+Evaluate:
+
+- Rain probability.
+- Expected rainfall.
+- Air temperature.
+- Actual pavement/material temperature, when measured.
+- Wind and gusts.
+- Humidity.
+- Fog.
+- Visibility.
+- Surface moisture risk.
+- Forecast confidence.
+
+Generate recommendations specific to the selected activity and exact working period.
+
+Examples:
+
+BC / DBM
+
+- Rain and surface moisture risk.
+- Laying temperature.
+- Rolling temperature.
+- Available compaction window.
+- Material cooling risk.
+
+GSB / WMM / Earthwork
+
+- Moisture changes.
+- Rainfall risk.
+- Compaction suitability.
+- Actual moisture and density verification.
+
+Concrete
+
+- Placement conditions.
+- Temperature.
+- Rain and wind protection.
+- Curing requirements.
+
+Road Marking
+
+- Surface dryness.
+- Humidity.
+- Application temperature.
+- Drying and curing.
+
+Glass Grid
+
+- Substrate condition.
+- Rainfall risk.
+- Approved installation methodology.
+
+Use statuses:
+
+- Suitable.
+- Caution.
+- Not Recommended.
+- Insufficient Data.
+
+Display a short engineering reason.
+
+For Night Shift, evaluate the exact overnight hourly forecast, including date changes.
+
+Do not use daily averages as a substitute for hourly working conditions.
+
+Weather recommendations remain advisory. Actual site measurements and applicable specifications take priority.
+
+---
+
+15. Manpower and Production Prediction
+
+Provide editable manpower roles:
+
+- Site Engineer.
+- Quality Engineer.
+- Surveyor.
+- HMP Operator.
+- Paver Operator.
+- Roller Operator.
+- PTR Operator.
+- Dumper Drivers.
+- Rakers.
+- Labourers.
+- Mechanics.
+- Electricians.
+- Safety Officer.
+- Traffic Marshals.
+- Other support staff.
+
+Calculate required, available and shortage quantities.
+
+Calculate production using:
+
+- Length and width.
+- Material thickness and density.
+- HMP output.
+- Paver output.
+- Dumper supply.
+- Roller availability.
+- PTR availability.
+- Manpower.
+- Effective working hours.
+- Weather suitability.
+
+Display:
+
+- Work Area.
+- Material Volume.
+- Estimated Quantity.
+- Hourly Production.
+- Shift Production.
+- Estimated Completion.
+- Machinery Bottleneck.
+- Manpower Shortage.
+
+Clearly label estimates as planning values.
+
+---
+
+16. Automatic Work Plan Storage
+
+Create a MY WORK PLANS section.
+
+Automatically save:
+
+- Project details.
+- Chainages.
+- Length and width.
+- Day/Night shift.
+- Start and end times.
+- Breaks and working hours.
+- Material and thickness.
+- Temperatures.
+- Machinery.
+- Transport.
+- Roller/PTR details.
+- Rolling pattern and passes.
+- Manpower.
+- Weather forecast used.
+- Engineering recommendations.
+- Calculation assumptions.
+- Source references.
+- Creation and modification dates.
+
+Show save status:
+
+- Saving…
+- Saved.
+- Offline – Saved Locally.
+- Save Failed – Retry.
+
+Preserve data during navigation and internet interruptions.
+
+---
+
+17. Work Plan Management and Backup
+
+Provide compact actions:
+
+- New Plan.
+- Open Plan.
+- Edit Plan.
+- Duplicate Plan.
+- Rename Plan.
+- Delete Plan.
+- Export PDF.
+- Export Backup.
+- Import Backup.
+
+Allow search by project, date, activity, chainage and shift.
+
+Export Backup
+
+Export all saved plans with inputs, calculations, machinery, recommendations, references and timestamps in a versioned JSON or ZIP format.
+
+Import Backup
+
+- Select through Android file picker.
+- Validate format and version.
+- Check data integrity.
+- Identify duplicate plan IDs.
+- Preview import count.
+- Confirm import.
+
+Duplicate options:
+
+- Skip.
+- Replace.
+- Import as New.
+
+Never overwrite silently.
+
+Restore Backup
+
+- Create a safety backup first.
+- Confirm replacement.
+- Preserve existing data if restoration fails.
+
+Automatic Backup
+
+- Daily.
+- Weekly.
+- Manual Only.
+
+Retain a limited number of previous backups.
+
+Support local and user-selected storage. Cloud backup requires an authorised service and user consent.
+
+---
+
+18. PDF Work Plan Export
+
+Provide a clear EXPORT PDF button.
+
+Support:
+
+- Complete Work Plan.
+- Selected Activity.
+- Machinery and Manpower.
+- Material and Compaction.
+- Weather Recommendations.
+- Full Combined Report.
+
+Generate a professional A4 engineering report.
+
+Page 1 – Work Overview
+
+- Project.
+- Highway.
+- Date and shift.
+- Chainages.
+- Side.
+- Length.
+- Width.
+- Area.
+- Activity.
+- Start/end times.
+- Effective working hours.
+- Weather suitability.
+
+Page 2 – Material and Quantity
+
+- Material type and grade.
+- Compacted thickness.
+- Recommended loose thickness.
+- Actual loose thickness.
+- Volume.
+- Density.
+- Estimated quantity.
+
+Page 3 – Machinery and Transport
+
+- HMP.
+- Paver.
+- HYVA/dumper.
+- HMP lead.
+- Fleet and cycle time.
+- Rollers and PTR.
+- Supporting equipment.
+
+Page 4 – Temperature Control
+
+- Production temperature.
+- Dispatch temperature.
+- Arrival temperature.
+- Laying temperature.
+- Rolling temperature.
+- Actual measurements.
+- Applicable limits.
+
+Page 5 – Rolling and Compaction
+
+- Roller models.
+- PTR details.
+- Rolling diagram.
+- Breakdown passes.
+- Intermediate passes.
+- Finish passes.
+- PTR passes.
+- Density verification.
+
+Page 6 – Manpower and Production
+
+- Required manpower.
+- Available manpower.
+- Shortage.
+- Hourly production.
+- Shift production.
+- Completion estimate.
+- Bottlenecks.
+
+Page 7 – Weather Recommendations
+
+- Hourly forecast for exact working period.
+- Rain and wind risks.
+- Temperature suitability.
+- Activity recommendations.
+- Field verification requirements.
+
+Final Page – Standards and Approval
+
+- Applicable MoRTH edition.
+- IRC references.
+- Relevant IS standards.
+- Project specification.
+- JMF / trial-section references.
+- Verification status.
+- Prepared by.
+- Checked by.
+- Approved by.
+- Date and signature.
+
+Omit irrelevant or empty sections.
+
+PDF must include:
+
+- A4 layout.
+- Professional typography.
+- Clear tables and units.
+- Page numbers.
+- Project header.
+- Generation date.
+- Repeated table headings.
+- No clipped text or overlap.
+- Print-friendly colour and black-and-white layout.
+- Relevant rolling diagrams.
+
+Provide PDF Preview, Save, Share and Re-export.
+
+Generate PDF from actual saved plan data only.
+
+---
+
+PART C – ANIMATED SMART UI
+
+19. Smart Animated Controls
+
+All smart UI elements on Weather and Work Planning pages must use consistent, lightweight animations.
+
+Apply animations to:
+
+- Searchable dropdowns.
+- Manufacturer/model selection.
+- Material selection.
+- Day/Night shift buttons.
+- Date and time pickers.
+- Expandable sections.
+- Sliders.
+- Switches.
+- Save buttons.
+- Backup actions.
+- PDF export.
+- Rolling pattern diagram.
+- Calculation result updates.
+- Status indicators.
+- Popup dialogs.
+
+Use:
+
+- Smooth expand/collapse.
+- Fade and slide transitions.
+- Selected-state animation.
+- Subtle button feedback.
+- Loading indicators.
+- Success/failure feedback.
+
+All controls must be fully functional, not decorative.
+
+Respect Android reduced-motion preferences and lower-end device performance.
+
+---
+
+PART D – CONTEXTUAL SETTINGS
+
+20. Weather Page Settings
+
+Add a smart animated Settings button to the Weather Page.
+
+The button must open a floating popup or smart bottom sheet.
+
+The popup must contain only Weather Page-related settings:
+
+Weather Display
+
+- Temperature unit.
+- Wind speed unit.
+- Forecast layout.
+- Hourly forecast.
+- Daily forecast.
+- Forecast days.
+
+Activity Prediction
+
+- Enable/disable.
+- Default activity.
+- Prediction interval.
+- Suitability indicators.
+- Best working window.
+
+Weather Alerts
+
+- Rain alerts.
+- Wind alerts.
+- Fog and visibility alerts.
+- Working-window changes.
+
+Weather Data
+
+- Automatic refresh.
+- Manual refresh.
+- Data freshness.
+- Last updated time.
+- Offline status.
+
+Provide smooth animations, outside-tap dismissal, Back handling and persistent settings.
+
+Do not put Work Planning form inputs inside this popup.
+
+21. Work Planning Page Settings
+
+Add a separate smart animated Settings button on the Work Planning Page.
+
+Its popup must contain only relevant Work Planning preferences:
+
+Planning Preferences
+
+- Default activity.
+- Default shift.
+- Default units.
+- Default measurement format.
+
+Machinery Preferences
+
+- Latest / Legacy / All models.
+- Manufacturer filter.
+- Verified specifications.
+- Catalogue refresh.
+- Offline catalogue.
+
+Engineering Preferences
+
+- Specification edition preference.
+- Show calculation details.
+- Show compaction recommendations.
+- Show rolling diagram.
+- Show source references.
+
+Data and Export
+
+- Automatic saving.
+- Backup frequency.
+- PDF page options.
+- Export preferences.
+
+Keep actual plan inputs, machinery selection and calculations inside the Work Planning page, not inside the settings popup.
+
+Each page must have its own contextual settings button and popup.
+
+---
+
+PART E – MAIN SETTINGS PAGE REDESIGN
+
+22. Completely Remove Weather and Work Planning Settings
+
+Remove all Weather and Work Planning settings from the main Settings Page.
+
+This includes:
+
+- Weather display preferences.
+- Hourly and daily forecast settings.
+- Activity prediction settings.
+- Weather alert settings.
+- Work Planning preferences.
+- Machinery catalogue preferences.
+- Machinery selection preferences.
+- Thickness and compaction preferences.
+- Rolling and PTR settings.
+- Planning units and shift defaults.
+- Work-plan backup and PDF preferences.
+
+These controls must remain accessible only through their respective contextual Settings popups.
+
+Important: Remove their entries from the main Settings Page, not their underlying functionality or stored preferences.
+
+Preserve existing values during relocation.
+
+---
+
+23. Complete Main Settings Page UI
+
+Redesign the main Settings Page with a professional, minimalist interface.
+
+Provide three themes:
+
+Dark Mode
+
+- Deep charcoal background.
+- Clear contrast.
+- Soft separators.
+
+Light Mode
+
+- Clean white background.
+- Neutral surfaces.
+- Professional typography.
+
+AMOLED Mode
+
+- True black (#000000) primary background.
+- Dark secondary surfaces.
+- Minimal bright pixels.
+- High contrast.
+- No excessive glow.
+
+Theme changes must apply instantly across the application without restarting.
+
+Settings Page Categories
+
+Organise all remaining unique settings into:
+
+1. Appearance.
+2. Camera.
+3. Timestamp & Watermark.
+4. GPS & Location.
+5. KMZ / KML & Chainage.
+6. Map & Navigation.
+7. Gallery & Media.
+8. Survey & DPR.
+9. Data & Storage.
+10. Notifications.
+11. App Information.
+
+Retain every other existing unique setting in its correct category.
+
+Do not silently remove settings that are not listed above.
+
+Smart Settings Controls
+
+Use:
+
+- Searchable dropdowns.
+- Compact selectors.
+- Functional switches.
+- Expandable categories.
+- Clear selected states.
+- Smooth animations.
+- Minimal descriptions.
+
+Avoid:
+
+- Duplicate settings.
+- Repeated controls.
+- Long descriptions.
+- Oversized cards.
+- Excessive borders.
+- Unnecessary nested screens.
+- Decorative, non-functional controls.
+
+One setting must have one authoritative control location.
+
+For settings that genuinely affect multiple modules, retain one authoritative control rather than creating duplicates.
+
+---
+
+PART F – DATA ARCHITECTURE AND FINAL SAFEGUARDS
+
+24. Settings and Planning Data Preservation
+
+Use a central settings architecture with feature-specific groups.
+
+Keep Weather and Work Planning preferences separate from main Settings Page controls.
+
+Preserve:
+
+- Existing preference keys where possible.
+- Saved user selections.
+- Existing plan data.
+- Machinery catalogue data.
+- Offline data.
+- Data migration compatibility.
+
+Do not reset settings or planning data during the redesign.
+
+Do not create duplicate settings keys for the same preference.
+
+25. Strict Development Scope
+
+Modify only:
+
+- Weather Page UI and contextual Settings.
+- New separate Work Planning Page.
+- Work Planning calculations and engineering recommendations.
+- Work Planning storage and backup.
+- PDF export.
+- Main Settings Page UI and settings organisation.
+- Required supporting data architecture.
+
+Do not modify unrelated functionality in:
+
+- Camera.
+- Gallery.
+- Routes.
+- Survey.
+- DPR.
+- Tools.
+- GPS.
+- KMZ / KML processing.
+- Chainage calculations.
+- Timestamp and metadata.
+- Existing map functionality.
+
+Do not reintroduce the removed Digital Site Register.
+
+Preserve existing navigation and application features.
+
+26. Final Acceptance Tests
+
+Verify:
+
+1. Weather and Work Planning are separate internal pages.
+2. Work Planning is not embedded as a Weather Page form.
+3. Both pages have their own contextual Settings buttons.
+4. Both popups contain only their related settings.
+5. Weather and Work Planning settings are completely removed from main Settings.
+6. Main Settings retains all other unique existing controls.
+7. Dark, Light and AMOLED modes work across all pages.
+8. Chainage length calculation handles kilometre transitions.
+9. Manual length and width inputs work.
+10. Day and Night shifts calculate correctly, including midnight crossings.
+11. Multiple working periods calculate correctly.
+12. Area, volume and quantity calculate correctly.
+13. Compacted and loose thickness remain separate.
+14. Material-specific temperatures are shown.
+15. Roller and PTR recommendations are activity-specific.
+16. Rolling diagrams and pass calculations work.
+17. MoRTH / IRC references are traceable and contract-aware.
+18. Weather recommendations use the exact planned shift.
+19. Machinery, transport and manpower bottlenecks are calculated.
+20. Plans save automatically and reopen correctly.
+21. Backup export, import and restore work safely.
+22. PDF includes actual planning data and calculations.
+23. All dropdowns, buttons, popups and animations are functional.
+24. Offline saving works.
+25. No unrelated functionality is broken.
+
+FINAL DEVELOPMENT INSTRUCTION
+
+Deliver a complete redesign with:
+
+- A dedicated Weather Page.
+- A separate internal Work Planning Page.
+- Independent smart animated Settings popups for both pages.
+- A clean main Settings Page with Dark, Light and AMOLED modes.
+- Complete chainage, length, width, Day/Night and time-to-time planning.
+- Material-specific thickness, temperature and compaction calculations.
+- Roller/PTR rolling patterns and passes.
+- MoRTH/IRC-based, weather-aware recommendations across all supported categories.
+- Machinery, transport and manpower planning.
+- Automatic saving, backup, import, export and restore.
+- Professional PDF work-plan generation.
+
+Strictly preserve every existing unique feature. No duplicate settings, no missing controls, no unrelated modifications and no unnecessary descriptions. All smart controls must be animated and fully functional.

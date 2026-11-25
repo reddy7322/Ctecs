@@ -84,6 +84,7 @@ object WeatherSectionKeys {
     const val TARGET_PREDICTION = "target_prediction"
     const val WEATHER_DELAY_ESTIMATION = "weather_delay_estimation"
     const val IRC_MORTH_REFERENCES = "irc_morth_references"
+    const val HIGHWAY_WORK_PLANNING = "highway_work_planning"
 }
 
 /**

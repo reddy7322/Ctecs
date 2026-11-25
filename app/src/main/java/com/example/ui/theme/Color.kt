@@ -3,17 +3,43 @@ package com.example.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // ============================================================================
-// PART 1.1 – PREMIUM AMOLED DEEP BLACK DARK THEME PALETTE
+// PART 1.1 – DEEP CHARCOAL DARK THEME PALETTE
 // ============================================================================
-val DarkMainBackground = Color(0xFF000000)
-val DarkSecondaryBackground = Color(0xFF080B12)
-val DarkPrimarySurface = Color(0xFF0D111A)
-val DarkSecondarySurface = Color(0xFF111827)
-val DarkElevatedSurface = Color(0xFF171E2B)
+val CharcoalDarkMainBackground = Color(0xFF12151C)
+val CharcoalDarkSecondaryBackground = Color(0xFF171B24)
+val CharcoalDarkPrimarySurface = Color(0xFF1C212C)
+val CharcoalDarkSecondarySurface = Color(0xFF232937)
+val CharcoalDarkElevatedSurface = Color(0xFF2B3344)
 
-val DarkPrimaryText = Color(0xFFFFFFFF)
-val DarkSecondaryText = Color(0xFFA1AAB9)
-val DarkMutedText = Color(0xFF718096)
+val CharcoalDarkPrimaryText = Color(0xFFF3F6FA)
+val CharcoalDarkSecondaryText = Color(0xFFB0B9C8)
+val CharcoalDarkMutedText = Color(0xFF7D899E)
+val CharcoalDarkSeparator = Color(0xFF283040)
+
+// ============================================================================
+// PART 1.2 – TRUE BLACK AMOLED THEME PALETTE (#000000)
+// ============================================================================
+val AmoledMainBackground = Color(0xFF000000)
+val AmoledSecondaryBackground = Color(0xFF06080D)
+val AmoledPrimarySurface = Color(0xFF0B0E16)
+val AmoledSecondarySurface = Color(0xFF111622)
+val AmoledElevatedSurface = Color(0xFF171E2B)
+
+val AmoledPrimaryText = Color(0xFFFFFFFF)
+val AmoledSecondaryText = Color(0xFFA1AAB9)
+val AmoledMutedText = Color(0xFF718096)
+val AmoledSeparator = Color(0xFF161D2A)
+
+// Backwards-compatible aliases used across legacy screens (mapped to AMOLED/Dark tokens)
+val DarkMainBackground = AmoledMainBackground
+val DarkSecondaryBackground = AmoledSecondaryBackground
+val DarkPrimarySurface = AmoledPrimarySurface
+val DarkSecondarySurface = AmoledSecondarySurface
+val DarkElevatedSurface = AmoledElevatedSurface
+
+val DarkPrimaryText = AmoledPrimaryText
+val DarkSecondaryText = AmoledSecondaryText
+val DarkMutedText = AmoledMutedText
 
 val DarkPrimaryAccent = Color(0xFF1685FF)
 val DarkSecondaryAccent = Color(0xFF20B8F0)
@@ -22,7 +48,7 @@ val DarkWarning = Color(0xFFFFB52E)
 val DarkError = Color(0xFFFF5263)
 
 // ============================================================================
-// PART 1.2 – PROFESSIONAL MINIMALIST LIGHT THEME PALETTE
+// PART 1.3 – PROFESSIONAL MINIMALIST LIGHT THEME PALETTE
 // ============================================================================
 val LightMainBackground = Color(0xFFFFFFFF)
 val LightSecondaryBackground = Color(0xFFF7F9FC)
@@ -41,7 +67,7 @@ val LightWarning = Color(0xFFD99A20)
 val LightError = Color(0xFFDC4455)
 
 // ============================================================================
-// COMPATIBILITY ALIASES (Mapped cleanly to the unified AMOLED/Light tokens)
+// COMPATIBILITY ALIASES
 // ============================================================================
 val PrimaryBackground = DarkMainBackground
 val SecondaryBackground = DarkSecondaryBackground
