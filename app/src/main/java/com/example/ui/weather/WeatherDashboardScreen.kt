@@ -36,7 +36,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Engineering
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Refresh
@@ -78,10 +77,8 @@ import com.example.model.ContractSpecificationConfig
 import com.example.model.DailyWeatherPoint
 import com.example.model.DelayRiskSummary
 import com.example.model.HighwayWorkActivity
-import com.example.model.HighwayWorkPlan
 import com.example.model.HourlyWeatherPoint
 import com.example.model.HourlyWorkWindow
-import com.example.model.MachineryCatalogEntry
 import com.example.model.TemperatureUnit
 import com.example.model.WeatherAlertItem
 import com.example.model.WeatherAlertSeverity
@@ -96,7 +93,7 @@ import com.example.ui.home.AnimatedWeatherIcon
 import com.example.ui.home.weatherAtmosphereColor
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.SmartFadeDivider
-import com.example.weather.MachineryCatalogRepository
+import com.example.weather.IrcMorthWeatherRuleEngine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -148,19 +145,7 @@ fun WeatherDashboardScreen(
     liveHighwayLocation: LiveHighwayLocationSnapshot = LiveHighwayLocationSnapshot(),
     expandedSections: Set<String>? = null,
     onToggleSection: ((String) -> Unit)? = null,
-    highwayWorkPlan: HighwayWorkPlan? = null,
-    savedHighwayWorkPlans: List<HighwayWorkPlan> = emptyList(),
-    machineryCatalog: List<MachineryCatalogEntry> = remember { MachineryCatalogRepository.builtInCatalog() },
-    isRefreshingMachineryCatalog: Boolean = false,
-    machineryCatalogLastRefreshedMs: Long = nowMs,
-    onUpdateHighwayWorkPlan: ((HighwayWorkPlan) -> Unit)? = null,
-    onSaveHighwayWorkPlan: (() -> Unit)? = null,
-    onLoadHighwayWorkPlan: ((HighwayWorkPlan) -> Unit)? = null,
-    onDeleteSavedHighwayWorkPlan: ((String) -> Unit)? = null,
-    onClearHighwayWorkPlan: (() -> Unit)? = null,
-    onRefreshMachineryCatalog: (() -> Unit)? = null,
-    onUpdateWeatherSettings: (((WeatherIntelligenceSettings) -> WeatherIntelligenceSettings) -> Unit)? = null,
-    onNavigateToWorkPlanning: (() -> Unit)? = null
+    onUpdateWeatherSettings: (((WeatherIntelligenceSettings) -> WeatherIntelligenceSettings) -> Unit)? = null
 ) {
     val c = CtecsTheme.colors
     val isDark = c.isDark
@@ -248,10 +233,41 @@ fun WeatherDashboardScreen(
         }.sortedByDescending { it.severity.ordinal }
     }
 
-    val filteredHourlyTimeline = remember(hourlyWorkTimeline, activeSettings.predictionIntervalHours) {
+    val effectiveSelectedActivity = if (onUpdateWeatherSettings == null && localWeatherSettingsOverride != settings) {
+        activeSettings.primaryActivity
+    } else {
+        selectedActivity
+    }
+
+    val effectiveHourlyTimeline = remember(
+        hourlyWorkTimeline,
+        forecastBundle,
+        effectiveSelectedActivity,
+        activeSettings.contractSpec,
+        activeSettings.bituminousConfig,
+        siteMeasurements,
+        nowMs,
+        onUpdateWeatherSettings,
+        localWeatherSettingsOverride,
+        settings
+    ) {
+        if (onUpdateWeatherSettings == null && localWeatherSettingsOverride != settings && forecastBundle != null) {
+            IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(
+                activity = effectiveSelectedActivity,
+                hourlyPoints = forecastBundle.next24Hours(nowMs),
+                contractSpec = activeSettings.contractSpec,
+                siteMeasurements = siteMeasurements,
+                bituminousConfig = activeSettings.bituminousConfig
+            )
+        } else {
+            hourlyWorkTimeline
+        }
+    }
+
+    val filteredHourlyTimeline = remember(effectiveHourlyTimeline, activeSettings.predictionIntervalHours) {
         val step = activeSettings.predictionIntervalHours.coerceIn(1, 3)
-        if (step <= 1) hourlyWorkTimeline
-        else hourlyWorkTimeline.filterIndexed { idx, _ -> idx % step == 0 }
+        if (step <= 1) effectiveHourlyTimeline
+        else effectiveHourlyTimeline.filterIndexed { idx, _ -> idx % step == 0 }
     }
 
     val nextHours = remember(forecastBundle, nowMs, activeSettings.compactForecastLayout) {
@@ -323,33 +339,6 @@ fun WeatherDashboardScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (onNavigateToWorkPlanning != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(c.secondarySurface)
-                                .clickable(onClick = onNavigateToWorkPlanning)
-                                .padding(horizontal = 9.dp, vertical = 6.dp)
-                                .testTag("weather_open_work_planning_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Engineering,
-                                contentDescription = "Open Work Planning",
-                                tint = c.accent,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "Work Plan",
-                                color = c.textPrimary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1
-                            )
-                        }
-                    }
-
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -479,7 +468,7 @@ fun WeatherDashboardScreen(
                             if (activeSettings.activityPredictionEnabled) {
                                 item(key = "smart_hourly_prediction") {
                                     SmartHourlyHighwayPredictionSection(
-                                        selectedActivity = selectedActivity,
+                                        selectedActivity = effectiveSelectedActivity,
                                         assessments = assessments,
                                         hourlyWorkTimeline = filteredHourlyTimeline,
                                         contractSpec = activeSettings.contractSpec,
@@ -490,7 +479,12 @@ fun WeatherDashboardScreen(
                                         isCachedForecast = isOffline && activeObservation != null,
                                         isStaleForecast = isStale,
                                         lastUpdatedLabel = updatedLabel,
-                                        onSelectActivity = onSelectActivity
+                                        onSelectActivity = onSelectActivity,
+                                        bituminousConfig = activeSettings.bituminousConfig,
+                                        windSpeedUnit = activeSettings.windSpeedUnit,
+                                        showBestWorkingWindow = activeSettings.showBestWorkingWindow,
+                                        showSuitabilityIndicators = activeSettings.showSuitabilityIndicators,
+                                        siteMeasurements = siteMeasurements
                                     )
                                 }
                             }
@@ -523,7 +517,6 @@ fun WeatherDashboardScreen(
                     // 3. Essential Weather Details
                     // 4. Compact General Hourly Forecast
                     // 5. Seven-Day Forecast
-                    // (Work Planning lives on its own separate internal page!)
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
@@ -553,7 +546,7 @@ fun WeatherDashboardScreen(
                         if (activeSettings.activityPredictionEnabled) {
                             item(key = "smart_hourly_prediction") {
                                 SmartHourlyHighwayPredictionSection(
-                                    selectedActivity = selectedActivity,
+                                    selectedActivity = effectiveSelectedActivity,
                                     assessments = assessments,
                                     hourlyWorkTimeline = filteredHourlyTimeline,
                                     contractSpec = activeSettings.contractSpec,
@@ -564,7 +557,12 @@ fun WeatherDashboardScreen(
                                     isCachedForecast = isOffline && activeObservation != null,
                                     isStaleForecast = isStale,
                                     lastUpdatedLabel = updatedLabel,
-                                    onSelectActivity = onSelectActivity
+                                    onSelectActivity = onSelectActivity,
+                                    bituminousConfig = activeSettings.bituminousConfig,
+                                    windSpeedUnit = activeSettings.windSpeedUnit,
+                                    showBestWorkingWindow = activeSettings.showBestWorkingWindow,
+                                    showSuitabilityIndicators = activeSettings.showSuitabilityIndicators,
+                                    siteMeasurements = siteMeasurements
                                 )
                             }
                         }

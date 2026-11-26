@@ -80,11 +80,9 @@ object WeatherSectionKeys {
     const val BC_SUITABILITY = "bc_suitability"
     const val DBM_SUITABILITY = "dbm_suitability"
     const val OTHER_HIGHWAY_WORK = "other_highway_work"
-    const val WORK_PLANNING_TIMELINE = "work_planning_timeline"
     const val TARGET_PREDICTION = "target_prediction"
     const val WEATHER_DELAY_ESTIMATION = "weather_delay_estimation"
     const val IRC_MORTH_REFERENCES = "irc_morth_references"
-    const val HIGHWAY_WORK_PLANNING = "highway_work_planning"
 }
 
 /**

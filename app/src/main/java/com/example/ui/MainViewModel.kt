@@ -79,6 +79,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -93,7 +94,6 @@ enum class AppTab(val label: String) {
     HIGHWAY_TOOLS("Tools"),
     SMART_NOTES("Notes"),
     WEATHER("Weather"),
-    WORK_PLANNING("Work Plan"),
     SETTINGS("Settings")
 }
 
@@ -138,6 +138,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val surveyRepository = com.example.survey.data.SurveyRepository(db.surveyDao(), viewModelScope)
     val surveyManager = com.example.survey.engine.SurveyManager(application, surveyRepository, viewModelScope)
+    val donationRepository = com.example.donation.DonationRepository(
+        context = application,
+        donationDao = db.donationDao()
+    )
 
     // Interrupted Survey Launch Check
     private val _interruptedSurveySession = MutableStateFlow<com.example.survey.model.SurveySession?>(null)
@@ -261,39 +265,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _toastMessage.value = null
     }
 
-    // Page Loader State & Percentage Animations (instant cold launch; shown only for explicit heavy tasks)
-    private val _isPageLoading = MutableStateFlow(false)
-    val isPageLoading: StateFlow<Boolean> = _isPageLoading.asStateFlow()
+    // Automatic Settings Persistence & Animated Confirmation Coordinator
+    val settingsAutoSaveCoordinator = com.example.settings.SettingsAutoSaveCoordinator(viewModelScope)
 
-    private val _pageLoadingProgress = MutableStateFlow(1f)
-    val pageLoadingProgress: StateFlow<Float> = _pageLoadingProgress.asStateFlow()
+    // Minimalist Application Startup Loader Controller (runs ONCE per process/ViewModel lifecycle)
+    val startupInitializationController = com.example.ui.loader.StartupInitializationController(viewModelScope)
+    val startupLoaderState: StateFlow<com.example.ui.loader.StartupLoaderUiState> =
+        startupInitializationController.uiState
 
-    private val _pageLoadingStatus = MutableStateFlow("Ready")
-    val pageLoadingStatus: StateFlow<String> = _pageLoadingStatus.asStateFlow()
+    // Preserved compatibility StateFlow for HomeScreen screensaver gating
+    val isPageLoading: StateFlow<Boolean> = startupLoaderState
+        .map { it.isVisible }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = true
+        )
 
     @Volatile
     private var isAppForegrounded = false
 
-    fun showPageLoader(status: String = "Loading...", initialProgress: Float = 0f) {
-        _pageLoadingStatus.value = status
-        _pageLoadingProgress.value = initialProgress
-        _isPageLoading.value = true
-    }
-
-    fun updatePageLoader(progress: Float, status: String? = null) {
-        _pageLoadingProgress.value = progress.coerceIn(0f, 1f)
-        if (status != null) {
-            _pageLoadingStatus.value = status
-        }
-    }
-
-    fun hidePageLoader() {
-        _pageLoadingProgress.value = 1f
-        _pageLoadingStatus.value = "Ready"
-        viewModelScope.launch {
-            kotlinx.coroutines.delay(200)
-            _isPageLoading.value = false
-        }
+    fun retryStartupInitialization() {
+        startupInitializationController.retry()
     }
 
     // Location State
@@ -348,23 +341,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     fun updateGalleryPrefs(viewMode: String? = null, sortOption: String? = null, groupOption: String? = null) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateGalleryPreferences(viewMode, sortOption, groupOption)
+        val signature = listOf(
+            viewMode ?: galleryViewMode.value,
+            sortOption ?: gallerySortOption.value,
+            groupOption ?: galleryGroupOption.value
+        ).hashCode()
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "gallery_prefs",
+            sectionKey = "storage",
+            valueSignature = signature
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateGalleryPreferences(viewMode, sortOption, groupOption)
+            }
         }
     }
 
-    val themeMode: StateFlow<String> = preferencesManager.themeModeFlow.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.Eagerly,
-        initialValue = preferencesManager.getInitialThemeMode()
-    )
+    private val _themeMode = MutableStateFlow(preferencesManager.getInitialThemeMode())
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
+    init {
+        settingsAutoSaveCoordinator.seedPersistedSignature("theme_mode", _themeMode.value.trim().lowercase().hashCode())
+        viewModelScope.launch {
+            preferencesManager.themeModeFlow.collect { savedMode ->
+                _themeMode.value = savedMode
+            }
+        }
+    }
 
     fun setThemeMode(mode: String) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateThemeMode(mode)
+        val normalized = mode.trim().lowercase()
+        _themeMode.value = normalized
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "theme_mode",
+            sectionKey = "appearance",
+            valueSignature = normalized.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateThemeMode(normalized)
+            }
         }
         viewModelScope.launch {
-            _uiMessages.emit(UiMessage.Info("Theme updated to ${mode.replaceFirstChar { it.uppercase() }}"))
+            _uiMessages.emit(UiMessage.Info("Theme updated to ${normalized.replaceFirstChar { it.uppercase() }}"))
         }
     }
 
@@ -428,7 +446,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 observation = obs,
                 contractSpec = settings.contractSpec,
                 siteMeasurements = site,
-                staleThresholdMs = settings.staleDataThresholdMinutes.toLong() * 60_000L
+                staleThresholdMs = settings.staleDataThresholdMinutes.toLong() * 60_000L,
+                bituminousConfig = settings.bituminousConfig
             )
         }.stateIn(
             scope = viewModelScope,
@@ -436,7 +455,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = com.example.weather.IrcMorthWeatherRuleEngine.evaluateAllActivities(
                 observation = weatherRepository.latestObservation.value,
                 contractSpec = preferencesManager.getInitialWeatherIntelligenceSettings().contractSpec,
-                siteMeasurements = preferencesManager.getInitialActualSiteMeasurements()
+                siteMeasurements = preferencesManager.getInitialActualSiteMeasurements(),
+                bituminousConfig = preferencesManager.getInitialWeatherIntelligenceSettings().bituminousConfig
             )
         )
 
@@ -452,7 +472,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activity = activity,
                 hourlyPoints = hours,
                 contractSpec = settings.contractSpec,
-                siteMeasurements = site
+                siteMeasurements = site,
+                bituminousConfig = settings.bituminousConfig
             )
         }.stateIn(
             scope = viewModelScope,
@@ -475,7 +496,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     activity = input.activity,
                     hourlyPoints = bundle?.next24Hours().orEmpty(),
                     contractSpec = settings.contractSpec,
-                    siteMeasurements = site
+                    siteMeasurements = site,
+                    bituminousConfig = settings.bituminousConfig
                 )
             }
             com.example.weather.WorkTargetPredictionEngine.predictWorkTarget(
@@ -531,11 +553,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     fun selectWeatherWorkActivity(activity: com.example.model.HighwayWorkActivity) {
+        val current = weatherIntelligenceSettings.value
         if (_selectedWeatherWorkActivity.value == activity &&
-            weatherIntelligenceSettings.value.primaryActivity == activity
+            current.primaryActivity == activity &&
+            !current.bituminousConfig.usesExtendedBituminousProfile
         ) return
         _selectedWeatherWorkActivity.value = activity
-        val updated = weatherIntelligenceSettings.value.copy(primaryActivity = activity)
+        val syncedBituminous = when (activity) {
+            com.example.model.HighwayWorkActivity.BC_LAYING ->
+                current.bituminousConfig.withCategoryChanged(com.example.model.BituminousWorkCategory.BC)
+            com.example.model.HighwayWorkActivity.DBM_LAYING ->
+                current.bituminousConfig.withCategoryChanged(com.example.model.BituminousWorkCategory.DBM)
+            com.example.model.HighwayWorkActivity.TACK_COAT_APPLICATION ->
+                current.bituminousConfig.withOtherWorkTypeChanged(com.example.model.OtherBituminousWorkType.TACK_COAT)
+            com.example.model.HighwayWorkActivity.PRIME_COAT_APPLICATION ->
+                current.bituminousConfig.withOtherWorkTypeChanged(com.example.model.OtherBituminousWorkType.PRIME_COAT)
+            else -> current.bituminousConfig.copy(isCustomCategoryActive = false)
+        }
+        val updated = current.copy(
+            primaryActivity = activity,
+            bituminousConfig = syncedBituminous
+        )
         preferencesManager.launchSafeEdit {
             preferencesManager.updateWeatherIntelligenceSettings(updated)
         }
@@ -546,8 +584,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val updated = transform(weatherIntelligenceSettings.value)
         _selectedWeatherWorkActivity.value = updated.primaryActivity
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateWeatherIntelligenceSettings(updated)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "weather_intelligence",
+            sectionKey = "weather",
+            valueSignature = updated.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateWeatherIntelligenceSettings(updated)
+            }
         }
     }
 
@@ -581,290 +625,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updated = if (sectionKey in current) current - sectionKey else current + sectionKey
         preferencesManager.launchSafeEdit {
             preferencesManager.updateWeatherExpandedSections(updated)
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Separate Highway Work Planning, Auto-Save, Contextual Settings & Backup
-    // -------------------------------------------------------------------------
-    private val machineryCatalogRepository = com.example.weather.MachineryCatalogRepository(application)
-    val workPlanBackupManager = com.example.weather.WorkPlanBackupManager(application)
-
-    private val initialCatalogPair: Pair<List<com.example.model.MachineryCatalogEntry>, Long> =
-        machineryCatalogRepository.loadCatalog()
-
-    private val _machineryCatalog = MutableStateFlow(initialCatalogPair.first)
-    val machineryCatalog: StateFlow<List<com.example.model.MachineryCatalogEntry>> = _machineryCatalog.asStateFlow()
-
-    private val _machineryCatalogLastRefreshedMs = MutableStateFlow(initialCatalogPair.second)
-    val machineryCatalogLastRefreshedMs: StateFlow<Long> = _machineryCatalogLastRefreshedMs.asStateFlow()
-
-    private val _isRefreshingMachineryCatalog = MutableStateFlow(false)
-    val isRefreshingMachineryCatalog: StateFlow<Boolean> = _isRefreshingMachineryCatalog.asStateFlow()
-
-    val workPlanningSettings: StateFlow<com.example.model.WorkPlanningSettings> =
-        preferencesManager.workPlanningSettingsFlow.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = preferencesManager.getInitialWorkPlanningSettings()
-        )
-
-    private val _workPlanSaveStatus = MutableStateFlow(com.example.model.WorkPlanSaveStatus.SAVED)
-    val workPlanSaveStatus: StateFlow<com.example.model.WorkPlanSaveStatus> = _workPlanSaveStatus.asStateFlow()
-
-    private val _localWorkPlanBackups = MutableStateFlow(workPlanBackupManager.listLocalBackups())
-    val localWorkPlanBackups: StateFlow<List<com.example.weather.LocalBackupRecord>> =
-        _localWorkPlanBackups.asStateFlow()
-
-    fun updateWorkPlanningSettings(transform: (com.example.model.WorkPlanningSettings) -> com.example.model.WorkPlanningSettings) {
-        val updated = transform(workPlanningSettings.value)
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateWorkPlanningSettings(updated)
-        }
-    }
-
-    private fun buildDefaultHighwayWorkPlan(): com.example.model.HighwayWorkPlan {
-        val profile = preferencesManager.getInitialProjectProfile()
-        val wpSettings = workPlanningSettings.value
-        val todayIso = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-        val defaultSide = profile.roadSide.takeIf { it != com.example.model.RoadSide.NONE }?.label ?: "LHS"
-        val defaultProjectName = listOf(profile.highwayId.trim(), profile.packageSection.trim())
-            .filter { it.isNotBlank() }
-            .joinToString(" - ")
-        val isNight = wpSettings.defaultShift == com.example.model.WorkShiftType.NIGHT_SHIFT
-        return com.example.model.HighwayWorkPlan(
-            projectName = defaultProjectName,
-            roadOrHighwayName = profile.highwayId.trim(),
-            workDateIso = todayIso,
-            shiftStartDateIso = todayIso,
-            shiftEndDateIso = if (isNight) com.example.model.ShiftTimingCalculator.nextIsoDate(todayIso) else todayIso,
-            shiftType = wpSettings.defaultShift,
-            plannedStartHour24 = if (isNight) 20 else 8,
-            plannedEndHour24 = if (isNight) 6 else 17,
-            roadSide = defaultSide,
-            activity = wpSettings.defaultActivity,
-            layerThicknessMm = wpSettings.defaultActivity.defaultThicknessMm.takeIf { it > 0.0 },
-            materialDensityTPerM3 = null, // Never invent material density
-            morthRevision = wpSettings.morthRevision
-        )
-    }
-
-    private val _activeHighwayWorkPlan = MutableStateFlow(
-        preferencesManager.getInitialActiveHighwayWorkPlan() ?: buildDefaultHighwayWorkPlan()
-    )
-    val activeHighwayWorkPlan: StateFlow<com.example.model.HighwayWorkPlan> =
-        _activeHighwayWorkPlan.asStateFlow()
-
-    val savedHighwayWorkPlans: StateFlow<List<com.example.model.HighwayWorkPlan>> =
-        preferencesManager.savedHighwayWorkPlansFlow.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = preferencesManager.getInitialSavedHighwayWorkPlans()
-        )
-
-    fun updateHighwayWorkPlan(updated: com.example.model.HighwayWorkPlan) {
-        val stamped = updated.copy(updatedAtMs = System.currentTimeMillis())
-        _activeHighwayWorkPlan.value = stamped
-        if (!workPlanningSettings.value.autoSaveEnabled) return
-        _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVING
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                preferencesManager.updateActiveHighwayWorkPlan(stamped)
-                // Also keep saved entry in sync if already stored in Saved Plans
-                val existing = savedHighwayWorkPlans.value
-                if (existing.any { it.planId == stamped.planId }) {
-                    val synced = listOf(stamped) + existing.filterNot { it.planId == stamped.planId }
-                    preferencesManager.updateSavedHighwayWorkPlans(synced)
-                }
-            }.onSuccess {
-                val isOffline = weatherUiState.value is com.example.model.WeatherUiState.Unavailable
-                _workPlanSaveStatus.value = if (isOffline) {
-                    com.example.model.WorkPlanSaveStatus.OFFLINE_SAVED_LOCALLY
-                } else {
-                    com.example.model.WorkPlanSaveStatus.SAVED
-                }
-            }.onFailure {
-                _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVE_FAILED
-            }
-        }
-    }
-
-    fun retrySaveHighwayWorkPlan() {
-        updateHighwayWorkPlan(_activeHighwayWorkPlan.value)
-    }
-
-    fun saveCurrentHighwayWorkPlan() {
-        val current = _activeHighwayWorkPlan.value.copy(updatedAtMs = System.currentTimeMillis())
-        _activeHighwayWorkPlan.value = current
-        _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVING
-        val existing = savedHighwayWorkPlans.value.filterNot { it.planId == current.planId }
-        val updatedList = listOf(current) + existing
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                preferencesManager.updateActiveHighwayWorkPlan(current)
-                preferencesManager.updateSavedHighwayWorkPlans(updatedList)
-                workPlanBackupManager.runScheduledAutoBackupIfDue(
-                    frequency = workPlanningSettings.value.backupFrequency,
-                    plans = updatedList,
-                    settings = workPlanningSettings.value
-                )?.let {
-                    _localWorkPlanBackups.value = workPlanBackupManager.listLocalBackups()
-                }
-            }.onSuccess {
-                val isOffline = weatherUiState.value is com.example.model.WeatherUiState.Unavailable
-                _workPlanSaveStatus.value = if (isOffline) {
-                    com.example.model.WorkPlanSaveStatus.OFFLINE_SAVED_LOCALLY
-                } else {
-                    com.example.model.WorkPlanSaveStatus.SAVED
-                }
-            }.onFailure {
-                _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVE_FAILED
-            }
-        }
-        showToast("Work plan saved (${current.effectiveActivityName})", ToastType.SETTINGS_SAVED)
-    }
-
-    fun createNewHighwayWorkPlan() {
-        val fresh = buildDefaultHighwayWorkPlan()
-        _activeHighwayWorkPlan.value = fresh
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateActiveHighwayWorkPlan(fresh)
-        }
-        _workPlanSaveStatus.value = com.example.model.WorkPlanSaveStatus.SAVED
-        showToast("New work plan ready", ToastType.INFO)
-    }
-
-    fun duplicateHighwayWorkPlan(source: com.example.model.HighwayWorkPlan) {
-        val now = System.currentTimeMillis()
-        val copy = source.copy(
-            planId = java.util.UUID.randomUUID().toString(),
-            planTitle = "${source.effectivePlanTitle} (Copy)",
-            createdAtMs = now,
-            updatedAtMs = now
-        )
-        val updatedList = listOf(copy) + savedHighwayWorkPlans.value
-        _activeHighwayWorkPlan.value = copy
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateActiveHighwayWorkPlan(copy)
-            preferencesManager.updateSavedHighwayWorkPlans(updatedList)
-        }
-        showToast("Plan duplicated", ToastType.SETTINGS_SAVED)
-    }
-
-    fun renameHighwayWorkPlan(planId: String, newTitle: String) {
-        val clean = newTitle.trim()
-        if (clean.isEmpty()) return
-        val updatedList = savedHighwayWorkPlans.value.map { p ->
-            if (p.planId == planId) p.copy(planTitle = clean, updatedAtMs = System.currentTimeMillis()) else p
-        }
-        if (_activeHighwayWorkPlan.value.planId == planId) {
-            val activeUpdated = _activeHighwayWorkPlan.value.copy(planTitle = clean, updatedAtMs = System.currentTimeMillis())
-            _activeHighwayWorkPlan.value = activeUpdated
-            preferencesManager.launchSafeEdit {
-                preferencesManager.updateActiveHighwayWorkPlan(activeUpdated)
-                preferencesManager.updateSavedHighwayWorkPlans(updatedList)
-            }
-        } else {
-            preferencesManager.launchSafeEdit {
-                preferencesManager.updateSavedHighwayWorkPlans(updatedList)
-            }
-        }
-        showToast("Plan renamed", ToastType.SETTINGS_SAVED)
-    }
-
-    fun loadSavedHighwayWorkPlan(plan: com.example.model.HighwayWorkPlan) {
-        _activeHighwayWorkPlan.value = plan
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateActiveHighwayWorkPlan(plan)
-        }
-        showToast("Loaded plan: ${plan.effectiveActivityName}", ToastType.INFO)
-    }
-
-    fun deleteSavedHighwayWorkPlan(planId: String) {
-        val updatedList = savedHighwayWorkPlans.value.filterNot { it.planId == planId }
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateSavedHighwayWorkPlans(updatedList)
-        }
-    }
-
-    fun clearHighwayWorkPlan() {
-        createNewHighwayWorkPlan()
-    }
-
-    fun createWorkPlansBackupJson(): String {
-        val allPlans = (listOf(_activeHighwayWorkPlan.value) + savedHighwayWorkPlans.value)
-            .distinctBy { it.planId }
-        return workPlanBackupManager.createBackupJson(allPlans, workPlanningSettings.value)
-    }
-
-    fun inspectWorkPlansBackup(rawJson: String): com.example.weather.WorkPlanBackupInspection {
-        return workPlanBackupManager.inspectBackupJson(rawJson, savedHighwayWorkPlans.value)
-    }
-
-    fun applyWorkPlansImport(
-        inspection: com.example.weather.WorkPlanBackupInspection,
-        resolution: com.example.model.BackupDuplicateResolution
-    ) {
-        if (!inspection.isValid) {
-            showToast(inspection.errorMessage ?: "Invalid backup", ToastType.ERROR)
-            return
-        }
-        val result = workPlanBackupManager.applyImport(savedHighwayWorkPlans.value, inspection, resolution)
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateSavedHighwayWorkPlans(result.mergedPlans)
-            inspection.settings?.let { preferencesManager.updateWorkPlanningSettings(it) }
-        }
-        showToast("Imported ${result.importedCount}, replaced ${result.replacedCount}, skipped ${result.skippedCount}", ToastType.SETTINGS_SAVED)
-    }
-
-    fun saveLocalWorkPlanSnapshot() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val allPlans = (listOf(_activeHighwayWorkPlan.value) + savedHighwayWorkPlans.value).distinctBy { it.planId }
-            workPlanBackupManager.saveLocalBackupSnapshot(allPlans, workPlanningSettings.value, prefix = "manual_backup")
-            _localWorkPlanBackups.value = workPlanBackupManager.listLocalBackups()
-            showToast("Local backup snapshot saved", ToastType.SETTINGS_SAVED)
-        }
-    }
-
-    fun safeRestoreLocalWorkPlanBackup(record: com.example.weather.LocalBackupRecord) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val raw = workPlanBackupManager.readLocalBackup(record.filePath)
-            if (raw == null) {
-                showToast("Backup file unreadable", ToastType.ERROR)
-                return@launch
-            }
-            val result = workPlanBackupManager.safeRestoreBackup(
-                rawJson = raw,
-                existingPlans = savedHighwayWorkPlans.value,
-                existingSettings = workPlanningSettings.value
-            )
-            result.onSuccess { applied ->
-                preferencesManager.updateSavedHighwayWorkPlans(applied.mergedPlans)
-                applied.mergedPlans.firstOrNull()?.let { first ->
-                    _activeHighwayWorkPlan.value = first
-                    preferencesManager.updateActiveHighwayWorkPlan(first)
-                }
-                _localWorkPlanBackups.value = workPlanBackupManager.listLocalBackups()
-                showToast("Restored ${applied.importedCount} plan(s) safely", ToastType.SETTINGS_SAVED)
-            }.onFailure { err ->
-                showToast("Restore aborted: ${err.localizedMessage ?: "Invalid backup"}", ToastType.ERROR)
-            }
-        }
-    }
-
-    fun refreshMachineryCatalog() {
-        if (_isRefreshingMachineryCatalog.value) return
-        viewModelScope.launch(Dispatchers.IO) {
-            _isRefreshingMachineryCatalog.value = true
-            try {
-                // Never overwrites user-entered actual site machinery values in activeHighwayWorkPlan
-                val result = machineryCatalogRepository.refreshCatalogOnline(_machineryCatalog.value)
-                _machineryCatalog.value = result.entries
-                _machineryCatalogLastRefreshedMs.value = result.lastRefreshedMs
-                showToast(result.message, if (result.success) ToastType.SETTINGS_SAVED else ToastType.INFO)
-            } finally {
-                _isRefreshingMachineryCatalog.value = false
-            }
         }
     }
 
@@ -926,8 +686,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     fun setMapTheme(theme: String) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateMapTheme(theme)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "map_theme",
+            sectionKey = "offline_maps",
+            valueSignature = theme.lowercase().hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateMapTheme(theme)
+            }
         }
         viewModelScope.launch {
             val label = when (theme.lowercase()) {
@@ -946,8 +712,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     fun setMapType(type: String) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateMapType(type)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "map_type",
+            sectionKey = "offline_maps",
+            valueSignature = type.lowercase().hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateMapType(type)
+            }
         }
         viewModelScope.launch {
             val label = if (type.equals("satellite", ignoreCase = true)) "Satellite" else "Standard (Street)"
@@ -973,8 +745,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     fun setOfflineMapAutoPreload(enabled: Boolean) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateOfflineMapPreferences(autoPreload = enabled)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "offline_auto_preload",
+            sectionKey = "offline_maps",
+            valueSignature = enabled.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateOfflineMapPreferences(autoPreload = enabled)
+            }
         }
         offlineMapSyncManager.updatePreferences(
             context = getApplication(),
@@ -984,8 +762,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setOfflineMapWifiOnly(enabled: Boolean) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateOfflineMapPreferences(wifiOnly = enabled)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "offline_wifi_only",
+            sectionKey = "offline_maps",
+            valueSignature = enabled.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateOfflineMapPreferences(wifiOnly = enabled)
+            }
         }
         offlineMapSyncManager.updatePreferences(
             context = getApplication(),
@@ -1023,8 +807,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     fun setPreferredExternalNavAppId(appId: String?) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updatePreferredExternalNavAppId(appId)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "preferred_external_nav",
+            sectionKey = "chainage",
+            valueSignature = (appId ?: "").hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updatePreferredExternalNavAppId(appId)
+            }
         }
     }
 
@@ -1039,8 +829,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val updated = transform(_chainageVoiceAssistantSettings.value)
         _chainageVoiceAssistantSettings.value = updated
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateChainageVoiceAssistantSettings(updated)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "chainage_voice_assistant",
+            sectionKey = "chainage_voice_assistant",
+            valueSignature = updated.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateChainageVoiceAssistantSettings(updated)
+            }
         }
     }
 
@@ -1097,15 +893,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showMarkers: Boolean? = null,
         mapType: String? = null
     ) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateSurveyMapPreferences(
-                show200mLabels = show200mLabels,
-                showCentreline = showCentreline,
-                showGpsTrack = showGpsTrack,
-                showLaneTrack = showLaneTrack,
-                showMarkers = showMarkers,
-                mapType = mapType
-            )
+        val signature = listOf(
+            show200mLabels ?: surveyShow200mLabels.value,
+            showCentreline ?: surveyShowCentreline.value,
+            showGpsTrack ?: surveyShowGpsTrack.value,
+            showLaneTrack ?: surveyShowLaneTrack.value,
+            showMarkers ?: surveyShowMarkers.value,
+            mapType ?: surveyMapType.value
+        ).hashCode()
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "survey_map_prefs",
+            sectionKey = "offline_maps",
+            valueSignature = signature
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateSurveyMapPreferences(
+                    show200mLabels = show200mLabels,
+                    showCentreline = showCentreline,
+                    showGpsTrack = showGpsTrack,
+                    showLaneTrack = showLaneTrack,
+                    showMarkers = showMarkers,
+                    mapType = mapType
+                )
+            }
         }
     }
 
@@ -1165,15 +975,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         CtecsNavigationTelemetryHub.updateTelemetry(widgetSettings = snapshot)
         com.example.widget.CtecsWidgetUpdater.cacheWidgetSettings(getApplication(), snapshot)
         com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
-        preferencesManager.launchSafeEdit {
-            val (targetVersion, targetSnapshot) = synchronized(widgetSettingsMutationLock) {
-                if (widgetSettingsWriteVersion <= widgetSettingsFlushedVersion) return@launchSafeEdit
-                widgetSettingsWriteVersion to _widgetSettings.value
-            }
-            preferencesManager.updateWidgetSettings(targetSnapshot)
-            synchronized(widgetSettingsMutationLock) {
-                if (targetVersion > widgetSettingsFlushedVersion) {
-                    widgetSettingsFlushedVersion = targetVersion
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "widget_settings",
+            sectionKey = "widgets",
+            valueSignature = snapshot.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                val (targetVersion, targetSnapshot) = synchronized(widgetSettingsMutationLock) {
+                    if (widgetSettingsWriteVersion <= widgetSettingsFlushedVersion) return@executeSafeEdit
+                    widgetSettingsWriteVersion to _widgetSettings.value
+                }
+                preferencesManager.updateWidgetSettings(targetSnapshot)
+                synchronized(widgetSettingsMutationLock) {
+                    if (targetVersion > widgetSettingsFlushedVersion) {
+                        widgetSettingsFlushedVersion = targetVersion
+                    }
                 }
             }
         }
@@ -1219,15 +1035,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             kmStoneAlertWriteVersion to updated
         }
         CtecsNavigationTelemetryHub.updateTelemetry(kmStoneAlertSettings = snapshot)
-        preferencesManager.launchSafeEdit {
-            val (targetVersion, targetSnapshot) = synchronized(kmStoneAlertMutationLock) {
-                if (kmStoneAlertWriteVersion <= kmStoneAlertFlushedVersion) return@launchSafeEdit
-                kmStoneAlertWriteVersion to _kmStoneAlertSettings.value
-            }
-            preferencesManager.updateKmStoneAlertSettings(targetSnapshot)
-            synchronized(kmStoneAlertMutationLock) {
-                if (targetVersion > kmStoneAlertFlushedVersion) {
-                    kmStoneAlertFlushedVersion = targetVersion
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "km_stone_alerts",
+            sectionKey = "km_stone_alerts",
+            valueSignature = snapshot.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                val (targetVersion, targetSnapshot) = synchronized(kmStoneAlertMutationLock) {
+                    if (kmStoneAlertWriteVersion <= kmStoneAlertFlushedVersion) return@executeSafeEdit
+                    kmStoneAlertWriteVersion to _kmStoneAlertSettings.value
+                }
+                preferencesManager.updateKmStoneAlertSettings(targetSnapshot)
+                synchronized(kmStoneAlertMutationLock) {
+                    if (targetVersion > kmStoneAlertFlushedVersion) {
+                        kmStoneAlertFlushedVersion = targetVersion
+                    }
                 }
             }
         }
@@ -1260,15 +1082,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             homeScreensaverWriteVersion to updated
         }
         CtecsNavigationTelemetryHub.updateTelemetry(screensaverSettings = snapshot)
-        preferencesManager.launchSafeEdit {
-            val (targetVersion, targetSnapshot) = synchronized(homeScreensaverMutationLock) {
-                if (homeScreensaverWriteVersion <= homeScreensaverFlushedVersion) return@launchSafeEdit
-                homeScreensaverWriteVersion to _homeScreensaverSettings.value
-            }
-            preferencesManager.updateHomeScreensaverSettings(targetSnapshot)
-            synchronized(homeScreensaverMutationLock) {
-                if (targetVersion > homeScreensaverFlushedVersion) {
-                    homeScreensaverFlushedVersion = targetVersion
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "screensaver_settings",
+            sectionKey = "screensaver",
+            valueSignature = snapshot.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                val (targetVersion, targetSnapshot) = synchronized(homeScreensaverMutationLock) {
+                    if (homeScreensaverWriteVersion <= homeScreensaverFlushedVersion) return@executeSafeEdit
+                    homeScreensaverWriteVersion to _homeScreensaverSettings.value
+                }
+                preferencesManager.updateHomeScreensaverSettings(targetSnapshot)
+                synchronized(homeScreensaverMutationLock) {
+                    if (targetVersion > homeScreensaverFlushedVersion) {
+                        homeScreensaverFlushedVersion = targetVersion
+                    }
                 }
             }
         }
@@ -1433,8 +1261,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateMiniMapViewDistance(preference: com.example.ui.map.MiniMapViewDistancePreference) {
         val sanitized = preference.copy(customDistanceMetres = preference.validatedCustomMetres)
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateMiniMapViewDistance(sanitized)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "mini_map_view_distance",
+            sectionKey = "timestamp",
+            valueSignature = sanitized.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateMiniMapViewDistance(sanitized)
+            }
         }
         // Recenter Home/Screensaver Mini Map so the new distance applies smoothly right away
         recenterHomeMiniMap()
@@ -1481,15 +1315,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             navNotifWriteVersion to updated
         }
         CtecsNavigationTelemetryHub.updateTelemetry(navigationNotificationSettings = snapshot)
-        preferencesManager.launchSafeEdit {
-            val (targetVersion, targetSnapshot) = synchronized(navNotifMutationLock) {
-                if (navNotifWriteVersion <= navNotifFlushedVersion) return@launchSafeEdit
-                navNotifWriteVersion to _navigationNotificationSettings.value
-            }
-            preferencesManager.updateNavigationNotificationSettings(targetSnapshot)
-            synchronized(navNotifMutationLock) {
-                if (targetVersion > navNotifFlushedVersion) {
-                    navNotifFlushedVersion = targetVersion
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "navigation_notifications",
+            sectionKey = "navigation_notifications",
+            valueSignature = snapshot.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                val (targetVersion, targetSnapshot) = synchronized(navNotifMutationLock) {
+                    if (navNotifWriteVersion <= navNotifFlushedVersion) return@executeSafeEdit
+                    navNotifWriteVersion to _navigationNotificationSettings.value
+                }
+                preferencesManager.updateNavigationNotificationSettings(targetSnapshot)
+                synchronized(navNotifMutationLock) {
+                    if (targetVersion > navNotifFlushedVersion) {
+                        navNotifFlushedVersion = targetVersion
+                    }
                 }
             }
         }
@@ -2555,6 +2395,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             kotlinx.coroutines.delay(1_500L)
             photoRepository.syncMediaFilesFromStorage()
         }
+
+        // Seed initial persisted signatures so initial load/recomposition never triggers spurious save animations
+        settingsAutoSaveCoordinator.seedPersistedSignature("project_profile", _projectProfile.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("camera_settings", cameraSettings.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("overlay_config", overlayConfig.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("screensaver_settings", _homeScreensaverSettings.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("navigation_notifications", _navigationNotificationSettings.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("widget_settings", _widgetSettings.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("km_stone_alerts", _kmStoneAlertSettings.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("chainage_voice_assistant", _chainageVoiceAssistantSettings.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("offline_auto_preload", offlineMapAutoPreload.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("offline_wifi_only", offlineMapWifiOnly.value.hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("map_theme", mapThemePreference.value.lowercase().hashCode())
+        settingsAutoSaveCoordinator.seedPersistedSignature("map_type", mapTypePreference.value.lowercase().hashCode())
+
+        // Execute genuine weighted startup initialisation ONCE per process/ViewModel lifecycle
+        startupInitializationController.startIfNeeded(
+            listOf(
+                com.example.ui.loader.StartupTask(
+                    id = "preferences",
+                    statusLabel = "Loading preferences...",
+                    weight = 0.25f,
+                    isEssential = true
+                ) {
+                    preferencesManager.getInitialPreferences()
+                },
+                com.example.ui.loader.StartupTask(
+                    id = "database",
+                    statusLabel = "Initialising CTECS...",
+                    weight = 0.25f,
+                    isEssential = true
+                ) {
+                    db.openHelper.readableDatabase
+                },
+                com.example.ui.loader.StartupTask(
+                    id = "configuration",
+                    statusLabel = "Restoring application...",
+                    weight = 0.25f,
+                    isEssential = true
+                ) {
+                    _projectProfile.value
+                    overlayConfig.value
+                    cameraSettings.value
+                },
+                com.example.ui.loader.StartupTask(
+                    id = "services",
+                    statusLabel = "Preparing services...",
+                    weight = 0.25f,
+                    isEssential = true
+                ) {
+                    CtecsNavigationTelemetryHub.updateTelemetry(
+                        projectProfile = _projectProfile.value,
+                        screensaverSettings = _homeScreensaverSettings.value,
+                        navigationNotificationSettings = _navigationNotificationSettings.value,
+                        widgetSettings = _widgetSettings.value,
+                        kmStoneAlertSettings = _kmStoneAlertSettings.value
+                    )
+                }
+            )
+        )
     }
 
     fun checkForAppUpdate(isManual: Boolean = false) {
@@ -2859,8 +2759,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setRouteCorrectionsEnabled(enabled: Boolean) {
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "route_corrections_enabled",
+            sectionKey = "chainage",
+            valueSignature = enabled.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.setRouteCorrectionsEnabled(enabled)
+            }
+        }
         viewModelScope.launch {
-            preferencesManager.setRouteCorrectionsEnabled(enabled)
             _uiMessages.emit(UiMessage.Info(if (enabled) "Smart route corrections enabled" else "Smart route corrections disabled"))
         }
     }
@@ -3254,8 +3162,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updatedPrefs = _smartDirectionPreferences.value.copy(alignmentConvention = convention)
         _smartDirectionPreferences.value = updatedPrefs
         CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "alignment_direction_convention",
+            sectionKey = "chainage",
+            valueSignature = updatedPrefs.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+            }
         }
     }
 
@@ -3263,56 +3177,99 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updatedPrefs = _smartDirectionPreferences.value.copy(voiceDirectionAnnouncementsEnabled = enabled)
         _smartDirectionPreferences.value = updatedPrefs
         CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "voice_direction_announcements",
+            sectionKey = "chainage",
+            valueSignature = updatedPrefs.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+            }
         }
     }
 
     fun updateLane(lane: String) {
         val clean = lane.trim()
         _projectProfile.update { it.copy(lane = clean) }
-        preferencesManager.launchSafeEdit {
-            preferencesManager.editProjectProfile { it.copy(lane = clean) }
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "project_profile",
+            sectionKey = "project",
+            valueSignature = _projectProfile.value.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.editProjectProfile { it.copy(lane = clean) }
+            }
         }
     }
 
     fun updateActivity(activity: String) {
         val clean = activity.trim()
         _projectProfile.update { it.copy(activity = clean) }
-        preferencesManager.launchSafeEdit {
-            preferencesManager.editProjectProfile { it.copy(activity = clean) }
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "project_profile",
+            sectionKey = "project",
+            valueSignature = _projectProfile.value.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.editProjectProfile { it.copy(activity = clean) }
+            }
         }
     }
 
     fun updateSubActivity(subActivity: String) {
         val clean = subActivity.trim()
         _projectProfile.update { it.copy(subActivity = clean) }
-        preferencesManager.launchSafeEdit {
-            preferencesManager.editProjectProfile { it.copy(subActivity = clean) }
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "project_profile",
+            sectionKey = "project",
+            valueSignature = _projectProfile.value.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.editProjectProfile { it.copy(subActivity = clean) }
+            }
         }
     }
 
     fun updateCustomDescription(description: String) {
         val clean = description.trim()
         _projectProfile.update { it.copy(customDescription = clean) }
-        preferencesManager.launchSafeEdit {
-            preferencesManager.editProjectProfile { it.copy(customDescription = clean) }
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "project_profile",
+            sectionKey = "project",
+            valueSignature = _projectProfile.value.hashCode(),
+            debounceMs = com.example.settings.SettingsAutoSaveCoordinator.CONTINUOUS_INPUT_DEBOUNCE_MS
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.editProjectProfile { it.copy(customDescription = clean) }
+            }
         }
     }
 
     fun updateWorkType(workType: String) {
         val clean = workType.trim()
         _projectProfile.update { it.copy(workType = clean) }
-        preferencesManager.launchSafeEdit {
-            preferencesManager.editProjectProfile { it.copy(workType = clean) }
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "project_profile",
+            sectionKey = "project",
+            valueSignature = _projectProfile.value.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.editProjectProfile { it.copy(workType = clean) }
+            }
         }
     }
 
     fun saveProjectProfile(profile: ProjectProfile) {
         _projectProfile.value = profile
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateProjectProfile(profile)
-            syncProjectToRepository(profile)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "project_profile",
+            sectionKey = "project",
+            valueSignature = profile.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateProjectProfile(profile)
+                syncProjectToRepository(profile)
+            }
         }
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Success("Project profile saved"))
@@ -3321,9 +3278,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveProjectProfileSilent(profile: ProjectProfile) {
         _projectProfile.value = profile
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateProjectProfile(profile)
-            syncProjectToRepository(profile)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "project_profile",
+            sectionKey = "project",
+            valueSignature = profile.hashCode(),
+            debounceMs = com.example.settings.SettingsAutoSaveCoordinator.CONTINUOUS_INPUT_DEBOUNCE_MS
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateProjectProfile(profile)
+                syncProjectToRepository(profile)
+            }
         }
     }
 
@@ -3347,8 +3311,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveDefinedProjects(projects: List<DefinedProject>) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateDefinedProjects(projects)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "defined_projects",
+            sectionKey = "project",
+            valueSignature = projects.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateDefinedProjects(projects)
+            }
         }
     }
 
@@ -3393,8 +3363,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveOverlayConfig(config: OverlayConfig) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateOverlayConfig(config)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "overlay_config",
+            sectionKey = "timestamp",
+            valueSignature = config.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateOverlayConfig(config)
+            }
         }
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Success("Overlay configuration saved"))
@@ -3402,8 +3378,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveOverlayConfigSilent(config: OverlayConfig) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateOverlayConfig(config)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "overlay_config",
+            sectionKey = "timestamp",
+            valueSignature = config.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateOverlayConfig(config)
+            }
         }
     }
 
@@ -3427,8 +3409,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveCameraSettings(settings: com.example.model.CameraSettings) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateCameraSettings(settings)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "camera_settings",
+            sectionKey = "camera",
+            valueSignature = settings.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateCameraSettings(settings)
+            }
         }
         viewModelScope.launch {
             _uiMessages.emit(UiMessage.Success("Camera settings saved"))
@@ -3436,8 +3424,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveCameraSettingsSilent(settings: com.example.model.CameraSettings) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateCameraSettings(settings)
+        settingsAutoSaveCoordinator.saveSetting(
+            settingKey = "camera_settings",
+            sectionKey = "camera",
+            valueSignature = settings.hashCode()
+        ) {
+            preferencesManager.executeSafeEdit {
+                preferencesManager.updateCameraSettings(settings)
+            }
         }
     }
 

@@ -41,6 +41,22 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Restore persisted theme immediately before rendering startup loader to prevent light/dark flash
+        try {
+            val savedThemeMode = com.example.data.PreferencesManager(applicationContext)
+                .getInitialThemeMode()
+                .trim()
+                .lowercase()
+            val systemNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+            val startInDark = when (savedThemeMode) {
+                "dark", "amoled" -> true
+                "light" -> false
+                else -> systemNight
+            }
+            val launchBg = if (startInDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(launchBg))
+        } catch (_: Throwable) {}
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             try {
                 window.attributes = window.attributes.apply {

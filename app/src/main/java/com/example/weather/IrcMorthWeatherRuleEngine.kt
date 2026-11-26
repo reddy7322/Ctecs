@@ -3,12 +3,16 @@ package com.example.weather
 import com.example.model.ActivitySuitabilityAssessment
 import com.example.model.ActualSiteMeasurements
 import com.example.model.BitumenBinderType
+import com.example.model.BituminousBinderGrade
+import com.example.model.BituminousMaterialConfig
+import com.example.model.BituminousWorkCategory
 import com.example.model.ContractSpecificationConfig
 import com.example.model.ForecastConfidence
 import com.example.model.HighwayWorkActivity
 import com.example.model.HourlyWeatherPoint
 import com.example.model.HourlyWorkWindow
 import com.example.model.MoRTHRevision
+import com.example.model.OtherBituminousWorkType
 import com.example.model.SpecificationRuleCheck
 import com.example.model.SurfaceMoistureCondition
 import com.example.model.TackCoatCondition
@@ -53,7 +57,8 @@ object IrcMorthWeatherRuleEngine {
         contractSpec: ContractSpecificationConfig,
         siteMeasurements: ActualSiteMeasurements = ActualSiteMeasurements(),
         referenceTimeMs: Long = System.currentTimeMillis(),
-        staleThresholdMs: Long = WeatherForecastBundle.DEFAULT_FORECAST_STALE_MS
+        staleThresholdMs: Long = WeatherForecastBundle.DEFAULT_FORECAST_STALE_MS,
+        bituminousConfig: BituminousMaterialConfig? = null
     ): List<ActivitySuitabilityAssessment> {
         return HighwayWorkActivity.entries.map { activity ->
             evaluateActivity(
@@ -62,7 +67,8 @@ object IrcMorthWeatherRuleEngine {
                 contractSpec = contractSpec,
                 siteMeasurements = siteMeasurements,
                 referenceTimeMs = referenceTimeMs,
-                staleThresholdMs = staleThresholdMs
+                staleThresholdMs = staleThresholdMs,
+                bituminousConfig = bituminousConfig
             )
         }
     }
@@ -76,7 +82,8 @@ object IrcMorthWeatherRuleEngine {
         contractSpec: ContractSpecificationConfig,
         siteMeasurements: ActualSiteMeasurements = ActualSiteMeasurements(),
         referenceTimeMs: Long = System.currentTimeMillis(),
-        staleThresholdMs: Long = WeatherForecastBundle.DEFAULT_FORECAST_STALE_MS
+        staleThresholdMs: Long = WeatherForecastBundle.DEFAULT_FORECAST_STALE_MS,
+        bituminousConfig: BituminousMaterialConfig? = null
     ): ActivitySuitabilityAssessment {
         if (observation == null) {
             return ActivitySuitabilityAssessment(
@@ -146,7 +153,8 @@ object IrcMorthWeatherRuleEngine {
             weather = input,
             contractSpec = contractSpec,
             siteMeasurements = siteMeasurements,
-            includeSiteMeasurementChecks = true
+            includeSiteMeasurementChecks = true,
+            bituminousConfig = bituminousConfig
         )
         checks.addAll(evaluation.checks)
 
@@ -173,8 +181,20 @@ object IrcMorthWeatherRuleEngine {
         activity: HighwayWorkActivity,
         hourlyPoints: List<HourlyWeatherPoint>,
         contractSpec: ContractSpecificationConfig,
-        siteMeasurements: ActualSiteMeasurements = ActualSiteMeasurements()
+        siteMeasurements: ActualSiteMeasurements = ActualSiteMeasurements(),
+        bituminousConfig: BituminousMaterialConfig? = null
     ): List<HourlyWorkWindow> {
+        val isExtendedBituminous = bituminousConfig?.usesExtendedBituminousProfile == true
+        val resolvedCategoryLabel = when {
+            isExtendedBituminous -> bituminousConfig!!.resolvedWorkCategoryShortLabel
+            activity == HighwayWorkActivity.BC_LAYING -> "BC (Bituminous Concrete)"
+            activity == HighwayWorkActivity.DBM_LAYING -> "DBM (Dense Bituminous Macadam)"
+            activity == HighwayWorkActivity.TACK_COAT_APPLICATION -> "Tack Coat"
+            activity == HighwayWorkActivity.PRIME_COAT_APPLICATION -> "Prime Coat"
+            else -> activity.displayName
+        }
+        val resolvedBinderLabel = resolveBinderDisplayLabel(activity, contractSpec, bituminousConfig)
+
         return hourlyPoints.mapIndexed { index, pt ->
             val snapshot = WeatherSnapshotInput(
                 airTempC = pt.temperatureC,
@@ -204,20 +224,30 @@ object IrcMorthWeatherRuleEngine {
                     confidence = ForecastConfidence.LOW,
                     primaryReason = "Forecast data incomplete for this hour; verify site conditions.",
                     restrictions = listOf("Incomplete forecast telemetry"),
-                    isMandatoryViolation = false
+                    isMandatoryViolation = false,
+                    workCategoryLabel = resolvedCategoryLabel,
+                    binderGradeLabel = resolvedBinderLabel,
+                    measuredSurfaceTempC = null,
+                    insufficientSpecData = false
                 )
             }
 
             // Only apply live site measurements to the first 2 immediate hours; later hours rely on forecast
+            val hourSurfaceTemp = if (index <= 1) siteMeasurements.pavementSurfaceTempC else null
             val eval = evaluateSnapshotForActivity(
                 activity = activity,
                 weather = snapshot,
                 contractSpec = contractSpec,
                 siteMeasurements = if (index <= 1) siteMeasurements else ActualSiteMeasurements(),
-                includeSiteMeasurementChecks = index <= 1
+                includeSiteMeasurementChecks = index <= 1,
+                bituminousConfig = bituminousConfig
             )
             val restrictions = eval.checks
-                .filter { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED || it.status == WorkSuitabilityStatus.SUITABLE_WITH_CAUTION }
+                .filter {
+                    it.status == WorkSuitabilityStatus.NOT_RECOMMENDED ||
+                        it.status == WorkSuitabilityStatus.SUITABLE_WITH_CAUTION ||
+                        it.status == WorkSuitabilityStatus.INSUFFICIENT_DATA
+                }
                 .map { "${it.ruleName}: ${it.observedValue}" }
             val hasMandatoryViolation = eval.checks.any {
                 it.isMandatoryRestriction && it.status == WorkSuitabilityStatus.NOT_RECOMMENDED
@@ -231,7 +261,8 @@ object IrcMorthWeatherRuleEngine {
                 activity = activity,
                 weather = snapshot,
                 contractSpec = contractSpec,
-                eval = eval
+                eval = eval,
+                bituminousConfig = bituminousConfig
             )
 
             HourlyWorkWindow(
@@ -241,7 +272,11 @@ object IrcMorthWeatherRuleEngine {
                 confidence = confidence,
                 primaryReason = primaryReason,
                 restrictions = restrictions,
-                isMandatoryViolation = hasMandatoryViolation
+                isMandatoryViolation = hasMandatoryViolation,
+                workCategoryLabel = resolvedCategoryLabel,
+                binderGradeLabel = resolvedBinderLabel,
+                measuredSurfaceTempC = hourSurfaceTemp,
+                insufficientSpecData = eval.insufficientSpecData
             )
         }
     }
@@ -274,11 +309,16 @@ object IrcMorthWeatherRuleEngine {
         activityDisplayLabel: String = activity.displayName
     ): BestWorkingWindowSummary {
         if (timeline.isEmpty() || timeline.all { it.status == WorkSuitabilityStatus.INSUFFICIENT_DATA }) {
+            val isSpecMissing = timeline.isNotEmpty() && timeline.all { it.insufficientSpecData }
             return BestWorkingWindowSummary(
                 state = BestWindowState.INCOMPLETE_DATA,
                 timeRangeLabel = null,
                 activityLabel = activityDisplayLabel,
-                summaryText = "Working window cannot be reliably determined. Check site conditions."
+                summaryText = if (isSpecMissing) {
+                    "Insufficient Specification Data for $activityDisplayLabel — enter approved JMF limits or verify with Engineer-in-Charge."
+                } else {
+                    "Working window cannot be reliably determined. Check site conditions."
+                }
             )
         }
 
@@ -357,41 +397,89 @@ object IrcMorthWeatherRuleEngine {
      * Generates a concise (1–2 line), activity-specific, MoRTH/IRC-grounded engineering reason
      * for compact hourly prediction cards without mixing bituminous limits into non-bituminous works.
      */
+    private fun resolveBinderDisplayLabel(
+        activity: HighwayWorkActivity,
+        contractSpec: ContractSpecificationConfig,
+        bituminousConfig: BituminousMaterialConfig?
+    ): String {
+        if (bituminousConfig != null) {
+            if (bituminousConfig.usesExtendedBituminousProfile) {
+                return bituminousConfig.resolvedBinderLabel
+            }
+            if (activity == HighwayWorkActivity.BC_LAYING ||
+                activity == HighwayWorkActivity.DBM_LAYING ||
+                activity == HighwayWorkActivity.TACK_COAT_APPLICATION ||
+                activity == HighwayWorkActivity.PRIME_COAT_APPLICATION
+            ) {
+                val grade = bituminousConfig.binderForActivity(activity)
+                return if (grade == BituminousBinderGrade.OTHER_CUSTOM) {
+                    bituminousConfig.customBinderSpecification.trim().ifBlank { "Custom Spec" }
+                } else {
+                    grade.shortLabel
+                }
+            }
+            return ""
+        }
+        return when (activity) {
+            HighwayWorkActivity.BC_LAYING,
+            HighwayWorkActivity.DBM_LAYING -> contractSpec.binderFor(activity).displayName.substringBefore(" ")
+            HighwayWorkActivity.TACK_COAT_APPLICATION -> "Emulsion RS-1"
+            HighwayWorkActivity.PRIME_COAT_APPLICATION -> "Emulsion SS-1"
+            else -> ""
+        }
+    }
+
     private fun buildHourlyEngineeringReason(
         activity: HighwayWorkActivity,
         weather: WeatherSnapshotInput,
         contractSpec: ContractSpecificationConfig,
-        eval: SnapshotEvalResult
+        eval: SnapshotEvalResult,
+        bituminousConfig: BituminousMaterialConfig? = null
     ): String {
         val failingCheck = eval.checks.firstOrNull { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED }
         val cautionCheck = eval.checks.firstOrNull { it.status == WorkSuitabilityStatus.SUITABLE_WITH_CAUTION }
 
         if (eval.status == WorkSuitabilityStatus.INSUFFICIENT_DATA) {
+            if (eval.insufficientSpecData) {
+                val catLabel = bituminousConfig?.resolvedWorkCategoryShortLabel ?: activity.shortName
+                val binderLabel = resolveBinderDisplayLabel(activity, contractSpec, bituminousConfig).ifBlank { "Custom Spec" }
+                return "Insufficient Specification Data for $catLabel ($binderLabel); verify approved JMF & Engineer-in-Charge instructions."
+            }
             return "Insufficient forecast or site data; verify conditions at site."
         }
 
-        if (activity.isBituminousHotMix) {
-            val binder = contractSpec.binderFor(activity)
-            val minTemp = binder.minPavementSurfaceTempC.toInt()
+        val isExtendedBituminous = bituminousConfig?.usesExtendedBituminousProfile == true
+        if (activity.isBituminousHotMix || isExtendedBituminous) {
+            val catShort = if (isExtendedBituminous) bituminousConfig!!.resolvedWorkCategoryShortLabel else activity.shortName
+            val binderGrade = if (bituminousConfig != null) {
+                if (isExtendedBituminous) bituminousConfig.binderGrade else bituminousConfig.binderForActivity(activity)
+            } else {
+                BituminousBinderGrade.fromLegacy(contractSpec.binderFor(activity))
+            }
+            val binderLabel = resolveBinderDisplayLabel(activity, contractSpec, bituminousConfig).ifBlank { binderGrade.shortLabel }
+            val minTemp = (if (bituminousConfig != null &&
+                (binderGrade == BituminousBinderGrade.OTHER_CUSTOM || bituminousConfig.workCategory == BituminousWorkCategory.CUSTOM)
+            ) bituminousConfig.customMinSurfaceTempC else binderGrade.standardMinSurfaceTempC)?.toInt()
+
             return when (eval.status) {
                 WorkSuitabilityStatus.NOT_RECOMMENDED -> {
                     val rule = failingCheck?.ruleName.orEmpty()
                     when {
                         rule.contains("Standing Water", ignoreCase = true) ||
                             rule.contains("Damp Base", ignoreCase = true) ->
-                            "Wet/damp base; laying prohibited (MoRTH Cl. 501.5.1)."
+                            "Wet/damp base; $catShort ($binderLabel) prohibited (MoRTH Cl. 501.5.1)."
                         rule.contains("Active Rainfall", ignoreCase = true) ->
-                            "Rain forecast during proposed laying window (Cl. 501.5.1)."
+                            "Rain forecast during $catShort ($binderLabel) window (Cl. 501.5.1)."
                         rule.contains("Imminent Rain", ignoreCase = true) ->
-                            "Imminent rain (${weather.rainProbabilityPercent}%); do not lay ${activity.shortName} (IRC:105)."
+                            "Imminent rain (${weather.rainProbabilityPercent}%); do not lay $catShort ($binderLabel) (IRC:105)."
                         rule.contains("Fog", ignoreCase = true) || rule.contains("Dust", ignoreCase = true) ->
                             "Fog/dust storm restriction; laying prohibited (Cl. 501.5.1)."
                         rule.contains("Wind", ignoreCase = true) ->
-                            "Wind >40 km/h limit; rapid mat cooling risk (Cl. 501.5.1)."
-                        rule.contains("Surface Temp", ignoreCase = true) ->
-                            "Below ${minTemp}°C surface min for ${binder.displayName}; verify at site."
+                            "Wind >40 km/h limit; rapid mat cooling for $catShort ($binderLabel) (Cl. 501.5.1)."
+                        rule.contains("Surface Temp", ignoreCase = true) && minTemp != null ->
+                            "Below ${minTemp}°C surface min for $binderLabel ($catShort); verify at site."
                         rule.contains("Tack Coat", ignoreCase = true) ->
-                            "Tack coat must be clean & broken before ${activity.shortName} laying."
+                            "Tack coat must be clean & broken before $catShort laying."
                         else -> failingCheck?.detail ?: "Restricted under MoRTH Cl. 501.5.1 / IRC:105."
                     }
                 }
@@ -399,20 +487,32 @@ object IrcMorthWeatherRuleEngine {
                     val rule = cautionCheck?.ruleName.orEmpty()
                     when {
                         rule.contains("Rain", ignoreCase = true) ->
-                            "Rain probability rising (${weather.rainProbabilityPercent}%); monitor before paving."
+                            "Rain probability rising (${weather.rainProbabilityPercent}%); monitor $catShort ($binderLabel) closely."
+                        rule.contains("PMB VG-40", ignoreCase = true) ->
+                            "PMB VG-40 (modified, ≥${minTemp ?: 15}°C) differs from VG-40; verify JMF & site surface temp."
+                        rule.contains("Thin-Lift", ignoreCase = true) || rule.contains("VG-40", ignoreCase = true) ->
+                            "$catShort ($binderLabel) higher cooling sensitivity; verify wind & roll promptly."
+                        rule.contains("Humidity", ignoreCase = true) ->
+                            "High humidity (${weather.humidityPercent}%); check for surface dew/moisture before $catShort."
                         rule.contains("Wind", ignoreCase = true) ->
-                            "Wind near 40 km/h limit; verify 2m site wind before laying."
-                        rule.contains("Surface Temp", ignoreCase = true) && binder.isModified ->
-                            "Modified binder (≥${minTemp}°C); measure pavement surface temp at site."
+                            "Wind near 40 km/h limit; verify 2m site wind before $catShort ($binderLabel)."
+                        rule.contains("Surface Temp", ignoreCase = true) && binderGrade.isModified ->
+                            "$binderLabel (modified, ≥${minTemp ?: 15}°C); measure pavement surface temp at site."
                         rule.contains("Surface Temp", ignoreCase = true) ->
-                            "Verify pavement surface temp (≥${minTemp}°C) & dry base at site."
+                            "Verify pavement surface temp (≥${minTemp ?: 10}°C) & dry base for $catShort ($binderLabel)."
                         else -> cautionCheck?.detail ?: "Verify dry base & pavement surface temp at site."
                     }
                 }
-                WorkSuitabilityStatus.SUITABLE ->
-                    "No forecast rain; verify dry base & surface temp (≥${minTemp}°C) before laying."
+                WorkSuitabilityStatus.SUITABLE -> {
+                    val tempHint = minTemp?.let { "≥${it}°C" } ?: "approved JMF min"
+                    if (activity == HighwayWorkActivity.DBM_LAYING && !isExtendedBituminous) {
+                        "Dry window for DBM ($binderLabel, Cl. 505); verify dry base & surface temp ($tempHint)."
+                    } else {
+                        "Dry window for $catShort ($binderLabel); verify dry base & surface temp ($tempHint)."
+                    }
+                }
                 WorkSuitabilityStatus.INSUFFICIENT_DATA ->
-                    "Insufficient forecast or surface temp data; verify at site."
+                    "Insufficient Specification Data; verify approved JMF & site conditions."
             }
         }
 
@@ -555,7 +655,8 @@ object IrcMorthWeatherRuleEngine {
     private data class SnapshotEvalResult(
         val status: WorkSuitabilityStatus,
         val checks: List<SpecificationRuleCheck>,
-        val requiresSurfaceTempCheck: Boolean
+        val requiresSurfaceTempCheck: Boolean,
+        val insufficientSpecData: Boolean = false
     )
 
     private fun evaluateSnapshotForActivity(
@@ -563,8 +664,18 @@ object IrcMorthWeatherRuleEngine {
         weather: WeatherSnapshotInput,
         contractSpec: ContractSpecificationConfig,
         siteMeasurements: ActualSiteMeasurements,
-        includeSiteMeasurementChecks: Boolean
+        includeSiteMeasurementChecks: Boolean,
+        bituminousConfig: BituminousMaterialConfig? = null
     ): SnapshotEvalResult {
+        if (bituminousConfig?.usesExtendedBituminousProfile == true) {
+            return evaluateConfiguredExtendedBituminous(
+                config = bituminousConfig,
+                weather = weather,
+                contractSpec = contractSpec,
+                siteMeasurements = siteMeasurements,
+                includeSiteMeasurementChecks = includeSiteMeasurementChecks
+            )
+        }
         return when (activity) {
             HighwayWorkActivity.BC_LAYING,
             HighwayWorkActivity.DBM_LAYING -> evaluateBituminousHotMix(
@@ -572,21 +683,24 @@ object IrcMorthWeatherRuleEngine {
                 weather = weather,
                 contractSpec = contractSpec,
                 siteMeasurements = siteMeasurements,
-                includeSiteMeasurementChecks = includeSiteMeasurementChecks
+                includeSiteMeasurementChecks = includeSiteMeasurementChecks,
+                bituminousConfig = bituminousConfig
             )
 
             HighwayWorkActivity.TACK_COAT_APPLICATION -> evaluateTackOrPrimeCoat(
                 isTackCoat = true,
                 weather = weather,
                 siteMeasurements = siteMeasurements,
-                includeSiteMeasurementChecks = includeSiteMeasurementChecks
+                includeSiteMeasurementChecks = includeSiteMeasurementChecks,
+                bituminousConfig = bituminousConfig
             )
 
             HighwayWorkActivity.PRIME_COAT_APPLICATION -> evaluateTackOrPrimeCoat(
                 isTackCoat = false,
                 weather = weather,
                 siteMeasurements = siteMeasurements,
-                includeSiteMeasurementChecks = includeSiteMeasurementChecks
+                includeSiteMeasurementChecks = includeSiteMeasurementChecks,
+                bituminousConfig = bituminousConfig
             )
 
             HighwayWorkActivity.MILLING_OPERATIONS -> evaluateMilling(weather)
@@ -603,22 +717,188 @@ object IrcMorthWeatherRuleEngine {
     }
 
     /**
-     * Separate rule evaluation for BC Laying (Cl. 507.4.1 -> Cl. 501.5.1) and DBM Laying (Cl. 505 -> Cl. 501.5.1),
-     * enforcing all mandatory MoRTH Fifth Revision (2013) Cl. 501.5.1 and IRC:105-2019 Cl. 3.3.4 restrictions.
+     * Evaluates extended bituminous profiles selected from the Weather Settings popup:
+     * Other Bituminous Works (BM, SDBC, SMA, Surface Dressing, MSS/OGPC, Micro-Surfacing) and Custom.
+     * Strictly enforces Insufficient Specification Data whenever custom/JMF requirements are missing.
+     */
+    private fun evaluateConfiguredExtendedBituminous(
+        config: BituminousMaterialConfig,
+        weather: WeatherSnapshotInput,
+        contractSpec: ContractSpecificationConfig,
+        siteMeasurements: ActualSiteMeasurements,
+        includeSiteMeasurementChecks: Boolean
+    ): SnapshotEvalResult {
+        if (config.workCategory == BituminousWorkCategory.OTHER_BITUMINOUS &&
+            config.otherWorkType == OtherBituminousWorkType.MICRO_SURFACING
+        ) {
+            return evaluateMicroSurfacingOrSlurry(config, weather, siteMeasurements, includeSiteMeasurementChecks)
+        }
+        return evaluateBituminousHotMix(
+            activity = HighwayWorkActivity.BC_LAYING,
+            weather = weather,
+            contractSpec = contractSpec,
+            siteMeasurements = siteMeasurements,
+            includeSiteMeasurementChecks = includeSiteMeasurementChecks,
+            bituminousConfig = config,
+            overrideCategoryLabel = config.resolvedWorkCategoryShortLabel,
+            overrideClauseRef = if (config.workCategory == BituminousWorkCategory.OTHER_BITUMINOUS) {
+                config.otherWorkType.referenceLabel
+            } else {
+                "Approved Project JMF / Contract Specification & MoRTH Cl. 501.5.1"
+            }
+        )
+    }
+
+    private fun evaluateMicroSurfacingOrSlurry(
+        config: BituminousMaterialConfig,
+        weather: WeatherSnapshotInput,
+        siteMeasurements: ActualSiteMeasurements,
+        includeSiteMeasurementChecks: Boolean
+    ): SnapshotEvalResult {
+        val checks = mutableListOf<SpecificationRuleCheck>()
+        val ref = config.otherWorkType.referenceLabel
+        val binderLabel = config.resolvedBinderLabel
+
+        val isRain = weather.condition == WeatherConditionType.RAINY ||
+            weather.condition == WeatherConditionType.THUNDERSTORM ||
+            weather.precipitationMm >= 0.1 ||
+            weather.rainProbabilityPercent >= 50
+        if (isRain) {
+            checks += SpecificationRuleCheck(
+                ruleName = "Rain / Slurry Washout Prohibition",
+                clauseReference = ref,
+                isMandatoryRestriction = true,
+                status = WorkSuitabilityStatus.NOT_RECOMMENDED,
+                observedValue = "${weather.conditionLabel} (${weather.rainProbabilityPercent}% rain)",
+                detail = "Micro-Surfacing ($binderLabel) is prohibited during rain or imminent rain before curing."
+            )
+        }
+
+        if (config.hasInsufficientSpecificationData) {
+            val hasHardStop = checks.any { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED }
+            checks += SpecificationRuleCheck(
+                ruleName = "Insufficient Specification Data",
+                clauseReference = "Approved JMF / Manufacturer Spec",
+                isMandatoryRestriction = false,
+                status = WorkSuitabilityStatus.INSUFFICIENT_DATA,
+                observedValue = "No JMF min surface temp entered",
+                detail = "Insufficient Specification Data for Micro-Surfacing ($binderLabel). Enter approved JMF / manufacturer temperature limits or verify with Engineer-in-Charge.",
+                requiresSiteVerification = true
+            )
+            return SnapshotEvalResult(
+                status = if (hasHardStop) WorkSuitabilityStatus.NOT_RECOMMENDED else WorkSuitabilityStatus.INSUFFICIENT_DATA,
+                checks = checks,
+                requiresSurfaceTempCheck = true,
+                insufficientSpecData = !hasHardStop
+            )
+        }
+
+        val minTemp = config.effectiveMinSurfaceTempC ?: 10.0
+        val siteSurf = if (includeSiteMeasurementChecks) siteMeasurements.pavementSurfaceTempC else null
+        if (siteSurf != null && siteSurf < minTemp) {
+            checks += SpecificationRuleCheck(
+                ruleName = "Surface Temp Minimum",
+                clauseReference = ref,
+                isMandatoryRestriction = true,
+                status = WorkSuitabilityStatus.NOT_RECOMMENDED,
+                observedValue = String.format(Locale.US, "Site %.1f°C < %.0f°C", siteSurf, minTemp),
+                detail = "Measured pavement surface temperature is below ${minTemp.toInt()}°C minimum for Micro-Surfacing ($binderLabel)."
+            )
+        } else if (weather.airTempC < minTemp) {
+            checks += SpecificationRuleCheck(
+                ruleName = "Ambient / Surface Temp Check",
+                clauseReference = ref,
+                isMandatoryRestriction = true,
+                status = WorkSuitabilityStatus.NOT_RECOMMENDED,
+                observedValue = String.format(Locale.US, "Air %.1f°C < %.0f°C", weather.airTempC, minTemp),
+                detail = "Temperature below ${minTemp.toInt()}°C slows cationic emulsion breaking and curing."
+            )
+        }
+
+        if (weather.humidityPercent >= 85) {
+            checks += SpecificationRuleCheck(
+                ruleName = "High Humidity Curing Delay",
+                clauseReference = ref,
+                isMandatoryRestriction = false,
+                status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
+                observedValue = "${weather.humidityPercent}% RH",
+                detail = "High relative humidity (${weather.humidityPercent}%) delays micro-surfacing emulsion set and traffic opening time.",
+                requiresSiteVerification = true
+            )
+        }
+
+        if (checks.isEmpty()) {
+            checks += SpecificationRuleCheck(
+                ruleName = "Micro-Surfacing Weather Check",
+                clauseReference = ref,
+                isMandatoryRestriction = false,
+                status = WorkSuitabilityStatus.SUITABLE,
+                observedValue = String.format(Locale.US, "Air %.1f°C, RH %d%%, Rain %d%%", weather.airTempC, weather.humidityPercent, weather.rainProbabilityPercent),
+                detail = "Dry forecast suitable for Micro-Surfacing ($binderLabel); verify clean surface and mix break time."
+            )
+        }
+        return SnapshotEvalResult(aggregateStatus(checks, isStaleOnly = false), checks, requiresSurfaceTempCheck = siteSurf == null)
+    }
+
+    /**
+     * Separate rule evaluation for BC Laying (Cl. 507.4.1 -> Cl. 501.5.1), DBM Laying (Cl. 505 -> Cl. 501.5.1),
+     * and dynamically configured bituminous work categories & binder grades.
+     * Enforces all mandatory MoRTH Fifth Revision (2013) Cl. 501.5.1 and IRC:105-2019 Cl. 3.3.4 restrictions,
+     * never invents custom specification limits, and differentiates PMB VG-40 from conventional VG-40.
      */
     private fun evaluateBituminousHotMix(
         activity: HighwayWorkActivity,
         weather: WeatherSnapshotInput,
         contractSpec: ContractSpecificationConfig,
         siteMeasurements: ActualSiteMeasurements,
-        includeSiteMeasurementChecks: Boolean
+        includeSiteMeasurementChecks: Boolean,
+        bituminousConfig: BituminousMaterialConfig? = null,
+        overrideCategoryLabel: String? = null,
+        overrideClauseRef: String? = null
     ): SnapshotEvalResult {
         val checks = mutableListOf<SpecificationRuleCheck>()
-        val isBc = activity == HighwayWorkActivity.BC_LAYING
-        val binder = contractSpec.binderFor(activity)
-        val mixDesignation = if (isBc) contractSpec.bcMixDesignation else contractSpec.dbmMixDesignation
-        val clauseRef = if (isBc) MORTH_5TH_BC_REF else MORTH_5TH_DBM_REF
-        val minSurfaceTemp = binder.minPavementSurfaceTempC // 10°C conventional, 15°C modified
+        val isExtended = overrideCategoryLabel != null
+        val isBc = !isExtended && activity == HighwayWorkActivity.BC_LAYING
+        val isThinWearingCourse = isBc ||
+            (bituminousConfig?.workCategory == BituminousWorkCategory.OTHER_BITUMINOUS &&
+                bituminousConfig.otherWorkType in setOf(
+                    OtherBituminousWorkType.SMA,
+                    OtherBituminousWorkType.SDBC,
+                    OtherBituminousWorkType.MSS_OGPC,
+                    OtherBituminousWorkType.SURFACE_DRESSING
+                ))
+        val categoryLabel = overrideCategoryLabel ?: activity.shortName
+
+        val activeBinderGrade: BituminousBinderGrade = when {
+            bituminousConfig != null && isExtended -> bituminousConfig.binderGrade
+            bituminousConfig != null -> bituminousConfig.binderForActivity(activity)
+            else -> BituminousBinderGrade.fromLegacy(contractSpec.binderFor(activity))
+        }
+        val legacyBinder = activeBinderGrade.toLegacyBinderType()
+        val binderDisplayLabel = when {
+            activeBinderGrade == BituminousBinderGrade.OTHER_CUSTOM ->
+                bituminousConfig?.customBinderSpecification?.trim().orEmpty().ifBlank { "Custom Specification" }
+            bituminousConfig != null -> activeBinderGrade.displayName
+            else -> contractSpec.binderFor(activity).displayName
+        }
+        val mixDesignation = when {
+            isExtended -> "$categoryLabel ($binderDisplayLabel)"
+            isBc -> contractSpec.bcMixDesignation
+            else -> contractSpec.dbmMixDesignation
+        }
+        val clauseRef = overrideClauseRef ?: if (isBc) MORTH_5TH_BC_REF else MORTH_5TH_DBM_REF
+
+        val isCustomMissingSpec = bituminousConfig != null && (
+            (bituminousConfig.workCategory == BituminousWorkCategory.CUSTOM && bituminousConfig.customMinSurfaceTempC == null) ||
+                (activeBinderGrade == BituminousBinderGrade.OTHER_CUSTOM && bituminousConfig.customMinSurfaceTempC == null)
+            )
+        val minSurfaceTemp: Double? = when {
+            isCustomMissingSpec -> null
+            bituminousConfig?.customMinSurfaceTempC != null &&
+                (bituminousConfig.workCategory == BituminousWorkCategory.CUSTOM || activeBinderGrade == BituminousBinderGrade.OTHER_CUSTOM) ->
+                bituminousConfig.customMinSurfaceTempC
+            else -> activeBinderGrade.standardMinSurfaceTempC ?: legacyBinder.minPavementSurfaceTempC
+        }
 
         // 1. Standing water on surface (MANDATORY RESTRICTION)
         if (includeSiteMeasurementChecks && (siteMeasurements.hasStandingWater || siteMeasurements.baseMoistureCondition == SurfaceMoistureCondition.STANDING_WATER)) {
@@ -746,62 +1026,91 @@ object IrcMorthWeatherRuleEngine {
             )
         }
 
-        // 6. Pavement Surface Temperature (<10°C conventional / <15°C modified bitumen) (MANDATORY RESTRICTION)
+        // 6. Pavement Surface Temperature & Specification Availability Check
         // CRITICAL: Forecast Air Temperature != Measured Pavement Surface Temperature!
+        // CRITICAL: Never invent temperature limits when Custom / Other Spec has no JMF threshold.
         val measuredSurfaceTemp = if (includeSiteMeasurementChecks) siteMeasurements.pavementSurfaceTempC else null
         var requiresSurfaceTempVerification = false
+        if (minSurfaceTemp == null) {
+            val hasHardStop = checks.any { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED }
+            checks += SpecificationRuleCheck(
+                ruleName = "Insufficient Specification Data ($binderDisplayLabel)",
+                clauseReference = "Approved JMF / Project Specification & Manufacturer Requirements",
+                isMandatoryRestriction = false,
+                status = WorkSuitabilityStatus.INSUFFICIENT_DATA,
+                observedValue = "JMF min surface temp not specified",
+                detail = "Insufficient Specification Data: Exact weather/temperature limits for $categoryLabel ($binderDisplayLabel) are unavailable. Enter approved JMF limits or verify with Engineer-in-Charge.",
+                requiresSiteVerification = true
+            )
+            return SnapshotEvalResult(
+                status = if (hasHardStop) WorkSuitabilityStatus.NOT_RECOMMENDED else WorkSuitabilityStatus.INSUFFICIENT_DATA,
+                checks = checks,
+                requiresSurfaceTempCheck = true,
+                insufficientSpecData = !hasHardStop
+            )
+        }
+
         if (measuredSurfaceTemp != null) {
             checks += if (measuredSurfaceTemp < minSurfaceTemp) {
                 SpecificationRuleCheck(
-                    ruleName = "Pavement Surface Temp (${binder.displayName})",
+                    ruleName = "Pavement Surface Temp ($binderDisplayLabel)",
                     clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
                     isMandatoryRestriction = true,
                     status = WorkSuitabilityStatus.NOT_RECOMMENDED,
                     observedValue = String.format(Locale.US, "Site Surface %.1f°C (Min %.0f°C)", measuredSurfaceTemp, minSurfaceTemp),
-                    detail = "Mandatory restriction: Measured pavement surface temperature (${String.format(Locale.US, "%.1f°C", measuredSurfaceTemp)}) is below the required ${minSurfaceTemp.toInt()}°C minimum for ${binder.displayName}."
+                    detail = "Mandatory restriction: Measured pavement surface temperature (${String.format(Locale.US, "%.1f°C", measuredSurfaceTemp)}) is below the required ${minSurfaceTemp.toInt()}°C minimum for $binderDisplayLabel."
                 )
             } else {
                 SpecificationRuleCheck(
-                    ruleName = "Pavement Surface Temp (${binder.displayName})",
+                    ruleName = "Pavement Surface Temp ($binderDisplayLabel)",
                     clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
                     isMandatoryRestriction = true,
                     status = WorkSuitabilityStatus.SUITABLE,
                     observedValue = String.format(Locale.US, "Site Surface %.1f°C (Min %.0f°C)", measuredSurfaceTemp, minSurfaceTemp),
-                    detail = "Measured site pavement surface temperature satisfies the ${minSurfaceTemp.toInt()}°C minimum for ${binder.displayName}."
+                    detail = "Measured site pavement surface temperature satisfies the ${minSurfaceTemp.toInt()}°C minimum for $binderDisplayLabel."
                 )
             }
         } else {
             requiresSurfaceTempVerification = true
             checks += when {
                 weather.airTempC < minSurfaceTemp -> SpecificationRuleCheck(
-                    ruleName = "Pavement Surface Temp vs Forecast Air Temp (${binder.displayName})",
+                    ruleName = "Pavement Surface Temp vs Forecast Air Temp ($binderDisplayLabel)",
                     clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
                     isMandatoryRestriction = true,
                     status = WorkSuitabilityStatus.NOT_RECOMMENDED,
                     observedValue = String.format(Locale.US, "Forecast Air %.1f°C < %.0f°C Min (Surface Unmeasured)", weather.airTempC, minSurfaceTemp),
-                    detail = "Forecast air temperature is below the ${minSurfaceTemp.toInt()}°C pavement surface minimum for ${binder.displayName}. Measure actual pavement surface temperature on site; laying prohibited if surface is <${minSurfaceTemp.toInt()}°C.",
+                    detail = "Forecast air temperature is below the ${minSurfaceTemp.toInt()}°C pavement surface minimum for $binderDisplayLabel. Measure actual pavement surface temperature on site; laying prohibited if surface is <${minSurfaceTemp.toInt()}°C.",
                     requiresSiteVerification = true
                 )
-                binder.isModified -> SpecificationRuleCheck(
-                    ruleName = "Pavement Surface Temp Verification (${binder.displayName})",
+                activeBinderGrade == BituminousBinderGrade.PMB_VG_40 -> SpecificationRuleCheck(
+                    ruleName = "PMB VG-40 Polymer-Modified Surface Temp & JMF Verification",
+                    clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4 / IRC:SP:53",
+                    isMandatoryRestriction = false,
+                    status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
+                    observedValue = String.format(Locale.US, "Forecast Air %.1f°C (Surface Unmeasured; Min %.0f°C)", weather.airTempC, minSurfaceTemp),
+                    detail = "PMB VG-40 is a polymer-modified binder and does NOT share conventional VG-40 working limits. Measure actual pavement surface temp (≥${minSurfaceTemp.toInt()}°C) and verify approved JMF/manufacturer limits at site.",
+                    requiresSiteVerification = true
+                )
+                activeBinderGrade.isModified -> SpecificationRuleCheck(
+                    ruleName = "Pavement Surface Temp Verification ($binderDisplayLabel)",
                     clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
                     isMandatoryRestriction = false,
                     status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
                     observedValue = String.format(Locale.US, "Forecast Air %.1f°C (Surface Temp Unmeasured; Min %.0f°C)", weather.airTempC, minSurfaceTemp),
-                    detail = "Pavement surface temperature is unmeasured for ${binder.displayName} (min ${minSurfaceTemp.toInt()}°C). Measure actual pavement surface temperature at site before laying.",
+                    detail = "Pavement surface temperature is unmeasured for $binderDisplayLabel (min ${minSurfaceTemp.toInt()}°C). Measure actual pavement surface temperature at site before laying.",
                     requiresSiteVerification = true
                 )
                 weather.airTempC < minSurfaceTemp + 4.0 -> SpecificationRuleCheck(
-                    ruleName = "Pavement Surface Temp Verification (${binder.displayName})",
+                    ruleName = "Pavement Surface Temp Verification ($binderDisplayLabel)",
                     clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
                     isMandatoryRestriction = false,
                     status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
                     observedValue = String.format(Locale.US, "Forecast Air %.1f°C (Surface Temp Not Measured)", weather.airTempC),
-                    detail = "Forecast air temperature is NOT pavement surface temperature. Measure actual pavement surface temperature on site (must be ≥${minSurfaceTemp.toInt()}°C for ${binder.displayName}) before confirming laying.",
+                    detail = "Forecast air temperature is NOT pavement surface temperature. Measure actual pavement surface temperature on site (must be ≥${minSurfaceTemp.toInt()}°C for $binderDisplayLabel) before confirming laying.",
                     requiresSiteVerification = true
                 )
                 else -> SpecificationRuleCheck(
-                    ruleName = "Pavement Surface Temp Verification (${binder.displayName})",
+                    ruleName = "Pavement Surface Temp Verification ($binderDisplayLabel)",
                     clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
                     isMandatoryRestriction = false,
                     status = WorkSuitabilityStatus.SUITABLE,
@@ -815,28 +1124,28 @@ object IrcMorthWeatherRuleEngine {
         // 7. Activity-specific BC vs DBM mix, laying & rolling temperature + tack coat checks
         if (includeSiteMeasurementChecks) {
             val minLayingTemp = (if (isBc) contractSpec.bcLayingTempMinC else contractSpec.dbmLayingTempMinC)
-                ?: binder.defaultLayingTempMinC
+                ?: legacyBinder.defaultLayingTempMinC
             val minRollingTemp = (if (isBc) contractSpec.bcRollingTempMinC else contractSpec.dbmRollingTempMinC)
-                ?: binder.defaultRollingTempMinC
+                ?: legacyBinder.defaultRollingTempMinC
 
             siteMeasurements.layingTempC?.let { layingT ->
                 checks += if (layingT < minLayingTemp) {
                     SpecificationRuleCheck(
-                        ruleName = "${activity.shortName} Site Laying Temperature",
+                        ruleName = "$categoryLabel Site Laying Temperature",
                         clauseReference = clauseRef,
                         isMandatoryRestriction = true,
                         status = WorkSuitabilityStatus.NOT_RECOMMENDED,
                         observedValue = String.format(Locale.US, "%.1f°C (Min %.0f°C)", layingT, minLayingTemp),
-                        detail = "Measured laying temperature is below the required ${minLayingTemp.toInt()}°C for $mixDesignation (${binder.displayName})."
+                        detail = "Measured laying temperature is below the required ${minLayingTemp.toInt()}°C for $mixDesignation ($binderDisplayLabel)."
                     )
                 } else {
                     SpecificationRuleCheck(
-                        ruleName = "${activity.shortName} Site Laying Temperature",
+                        ruleName = "$categoryLabel Site Laying Temperature",
                         clauseReference = clauseRef,
                         isMandatoryRestriction = false,
                         status = WorkSuitabilityStatus.SUITABLE,
                         observedValue = String.format(Locale.US, "%.1f°C (Min %.0f°C)", layingT, minLayingTemp),
-                        detail = "Site laying temperature meets ${activity.shortName} target for $mixDesignation."
+                        detail = "Site laying temperature meets $categoryLabel target for $mixDesignation."
                     )
                 }
             }
@@ -844,7 +1153,7 @@ object IrcMorthWeatherRuleEngine {
             siteMeasurements.rollingTempC?.let { rollingT ->
                 checks += if (rollingT < minRollingTemp) {
                     SpecificationRuleCheck(
-                        ruleName = "${activity.shortName} Site Rolling Temperature",
+                        ruleName = "$categoryLabel Site Rolling Temperature",
                         clauseReference = clauseRef,
                         isMandatoryRestriction = true,
                         status = WorkSuitabilityStatus.NOT_RECOMMENDED,
@@ -853,12 +1162,12 @@ object IrcMorthWeatherRuleEngine {
                     )
                 } else {
                     SpecificationRuleCheck(
-                        ruleName = "${activity.shortName} Site Rolling Temperature",
+                        ruleName = "$categoryLabel Site Rolling Temperature",
                         clauseReference = clauseRef,
                         isMandatoryRestriction = false,
                         status = WorkSuitabilityStatus.SUITABLE,
                         observedValue = String.format(Locale.US, "%.1f°C (Min %.0f°C)", rollingT, minRollingTemp),
-                        detail = "Site rolling temperature is within ${activity.shortName} compaction window."
+                        detail = "Site rolling temperature is within $categoryLabel compaction window."
                     )
                 }
             }
@@ -868,25 +1177,46 @@ object IrcMorthWeatherRuleEngine {
                 siteMeasurements.tackCoatCondition == TackCoatCondition.FRESH_NOT_CURED
             ) {
                 checks += SpecificationRuleCheck(
-                    ruleName = if (isBc) "BC Underlying Tack Coat Condition" else "DBM Underlying Coat Condition",
+                    ruleName = if (isBc) "BC Underlying Tack Coat Condition" else "$categoryLabel Underlying Coat Condition",
                     clauseReference = "MoRTH 5th Rev Cl. 503.4 / ${if (isBc) "Cl. 507.4" else "Cl. 505.4"}",
                     isMandatoryRestriction = true,
                     status = WorkSuitabilityStatus.NOT_RECOMMENDED,
                     observedValue = siteMeasurements.tackCoatCondition.label,
-                    detail = "Underlying tack coat must be fully broken/cured, clean, and unwashed before commencing ${activity.shortName} laying."
+                    detail = "Underlying tack coat must be fully broken/cured, clean, and unwashed before commencing $categoryLabel laying."
                 )
             }
         }
 
-        // BC wearing course has stricter sensitivity to thin-lift rapid cooling in windy/cool conditions
-        if (isBc && weather.windSpeedKmh in 25.0..31.9 && weather.airTempC < 18.0) {
+        // 8. Category & Binder-Specific Thermal Loss / High-Viscosity / Dew-Humidity Advisories
+        if (isThinWearingCourse && weather.windSpeedKmh in 25.0..31.9 && weather.airTempC < 18.0) {
             checks += SpecificationRuleCheck(
-                ruleName = "BC Thin-Lift Thermal Loss Advisory",
-                clauseReference = MORTH_5TH_BC_REF,
+                ruleName = "$categoryLabel Thin-Lift Thermal Loss Advisory",
+                clauseReference = clauseRef,
                 isMandatoryRestriction = false,
                 status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
                 observedValue = String.format(Locale.US, "Air %.1f°C, Wind %.1f km/h", weather.airTempC, weather.windSpeedKmh),
-                detail = "BC wearing course cools faster than thicker DBM lifts under brisk wind. Keep breakdown roller directly behind paver."
+                detail = "$categoryLabel wearing course cools faster than thicker DBM lifts under brisk wind. Keep breakdown roller directly behind paver."
+            )
+        } else if (activeBinderGrade == BituminousBinderGrade.VG_40 && weather.windSpeedKmh >= 22.0 && weather.airTempC < 18.0) {
+            checks += SpecificationRuleCheck(
+                ruleName = "VG-40 High-Viscosity Cooling Advisory",
+                clauseReference = clauseRef,
+                isMandatoryRestriction = false,
+                status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
+                observedValue = String.format(Locale.US, "Air %.1f°C, Wind %.1f km/h", weather.airTempC, weather.windSpeedKmh),
+                detail = "VG-40 has higher viscosity than VG-30; monitor rapid mat cooling and maintain tight rolling sequence behind paver."
+            )
+        }
+
+        if (weather.humidityPercent >= 88 && weather.airTempC < 20.0) {
+            checks += SpecificationRuleCheck(
+                ruleName = "High Humidity & Surface Dew Check",
+                clauseReference = "$MORTH_5TH_CL_501_5_1 / $IRC_105_2019_CL_3_3_4",
+                isMandatoryRestriction = false,
+                status = WorkSuitabilityStatus.SUITABLE_WITH_CAUTION,
+                observedValue = "${weather.humidityPercent}% RH at ${String.format(Locale.US, "%.1f°C", weather.airTempC)}",
+                detail = "High relative humidity increases condensation/dew risk on pavement surface; confirm completely dry base before $categoryLabel laying.",
+                requiresSiteVerification = true
             )
         }
 
@@ -898,11 +1228,19 @@ object IrcMorthWeatherRuleEngine {
         isTackCoat: Boolean,
         weather: WeatherSnapshotInput,
         siteMeasurements: ActualSiteMeasurements,
-        includeSiteMeasurementChecks: Boolean
+        includeSiteMeasurementChecks: Boolean,
+        bituminousConfig: BituminousMaterialConfig? = null
     ): SnapshotEvalResult {
         val label = if (isTackCoat) "Tack Coat" else "Prime Coat"
         val ref = if (isTackCoat) "MoRTH 5th Rev Cl. 503.4 & Cl. 501.5.1" else "MoRTH 5th Rev Cl. 502.4 & Cl. 501.5.1"
         val checks = mutableListOf<SpecificationRuleCheck>()
+
+        val customBinderMissingSpec = bituminousConfig != null &&
+            bituminousConfig.workCategory == BituminousWorkCategory.OTHER_BITUMINOUS &&
+            ((isTackCoat && bituminousConfig.otherWorkType == OtherBituminousWorkType.TACK_COAT) ||
+                (!isTackCoat && bituminousConfig.otherWorkType == OtherBituminousWorkType.PRIME_COAT)) &&
+            bituminousConfig.binderGrade == BituminousBinderGrade.OTHER_CUSTOM &&
+            bituminousConfig.customMinSurfaceTempC == null
 
         val isRain = weather.condition == WeatherConditionType.RAINY ||
             weather.condition == WeatherConditionType.THUNDERSTORM ||
@@ -954,15 +1292,32 @@ object IrcMorthWeatherRuleEngine {
                 detail = "High wind causes uneven distributor spray fan and binder drift; verify uniform application rate."
             )
         }
-        if (weather.airTempC < 10.0) {
-            checks += SpecificationRuleCheck(
-                ruleName = "Low Temperature Breaking/Curing",
-                clauseReference = ref,
-                isMandatoryRestriction = true,
-                status = WorkSuitabilityStatus.NOT_RECOMMENDED,
-                observedValue = String.format(Locale.US, "Air %.1f°C (<10°C)", weather.airTempC),
-                detail = "Surface/ambient temperature below 10°C impairs emulsion breaking and curing (Cl. 501.5.1)."
-            )
+        val minSurfaceTemp = if (bituminousConfig != null &&
+            bituminousConfig.workCategory == BituminousWorkCategory.OTHER_BITUMINOUS &&
+            ((isTackCoat && bituminousConfig.otherWorkType == OtherBituminousWorkType.TACK_COAT) ||
+                (!isTackCoat && bituminousConfig.otherWorkType == OtherBituminousWorkType.PRIME_COAT))
+        ) {
+            bituminousConfig.effectiveMinSurfaceTempC
+        } else {
+            10.0
+        }
+
+        if (minSurfaceTemp != null) {
+            val effectiveTemp = if (includeSiteMeasurementChecks && siteMeasurements.pavementSurfaceTempC != null) {
+                siteMeasurements.pavementSurfaceTempC
+            } else {
+                weather.airTempC
+            }
+            if (effectiveTemp < minSurfaceTemp) {
+                checks += SpecificationRuleCheck(
+                    ruleName = "Low Temperature Breaking/Curing",
+                    clauseReference = ref,
+                    isMandatoryRestriction = true,
+                    status = WorkSuitabilityStatus.NOT_RECOMMENDED,
+                    observedValue = String.format(Locale.US, "%.1f°C (<%.0f°C)", effectiveTemp, minSurfaceTemp),
+                    detail = "Surface/ambient temperature below ${minSurfaceTemp.toInt()}°C impairs $label breaking and curing (Cl. 501.5.1)."
+                )
+            }
         }
         if (weather.humidityPercent >= 88 && checks.none { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED }) {
             checks += SpecificationRuleCheck(
@@ -974,14 +1329,36 @@ object IrcMorthWeatherRuleEngine {
                 detail = "High humidity slows emulsion breaking time; verify full break before paving or traffic."
             )
         }
+        if (customBinderMissingSpec && checks.none { it.status == WorkSuitabilityStatus.NOT_RECOMMENDED }) {
+            checks += SpecificationRuleCheck(
+                ruleName = "Insufficient Specification Data — Custom $label Binder",
+                clauseReference = "Approved JMF / Project Specification Required",
+                isMandatoryRestriction = false,
+                status = WorkSuitabilityStatus.INSUFFICIENT_DATA,
+                observedValue = bituminousConfig?.resolvedBinderLabel ?: "Custom Specification",
+                detail = "Insufficient Specification Data: enter the approved minimum surface/application temperature for custom $label binder or follow Engineer-in-Charge instructions.",
+                requiresSiteVerification = true
+            )
+            return SnapshotEvalResult(
+                status = WorkSuitabilityStatus.INSUFFICIENT_DATA,
+                checks = checks,
+                requiresSurfaceTempCheck = true,
+                insufficientSpecData = true
+            )
+        }
         if (checks.isEmpty()) {
+            val binderSuffix = bituminousConfig?.takeIf {
+                it.workCategory == BituminousWorkCategory.OTHER_BITUMINOUS &&
+                    ((isTackCoat && it.otherWorkType == OtherBituminousWorkType.TACK_COAT) ||
+                        (!isTackCoat && it.otherWorkType == OtherBituminousWorkType.PRIME_COAT))
+            }?.resolvedBinderLabel?.let { " ($it)" }.orEmpty()
             checks += SpecificationRuleCheck(
                 ruleName = "$label Weather Check",
                 clauseReference = ref,
                 isMandatoryRestriction = false,
                 status = WorkSuitabilityStatus.SUITABLE,
                 observedValue = String.format(Locale.US, "%.1f°C, Wind %.1f km/h, Rain %d%%", weather.airTempC, weather.windSpeedKmh, weather.rainProbabilityPercent),
-                detail = "Forecast conditions acceptable for $label. Confirm clean surface and calibrated distributor spray rate on site."
+                detail = "Forecast conditions acceptable for $label$binderSuffix. Confirm clean surface and calibrated distributor spray rate on site."
             )
         }
         return SnapshotEvalResult(aggregateStatus(checks, false), checks, requiresSurfaceTempCheck = false)

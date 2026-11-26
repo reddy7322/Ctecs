@@ -44,10 +44,13 @@ data class CtecsColorTokens(
     val warning: Color,
     val error: Color,
     val scrim: Color,
-    val subtleSeparator: Color
+    val subtleSeparator: Color,
+    val coffeeAccent: Color = DarkCoffeeAccent,
+    val coffeeSurface: Color = DarkCoffeeSurface,
+    val onCoffeeAccent: Color = DarkOnCoffeeAccent
 )
 
-/** Deep Charcoal Dark Mode — soft contrast & comfortable eye relief */
+/** Deep Charcoal Dark Mode — preserved for legacy callers */
 val CharcoalDarkCtecsColorTokens = CtecsColorTokens(
     isDark = true,
     isAmoled = false,
@@ -66,10 +69,13 @@ val CharcoalDarkCtecsColorTokens = CtecsColorTokens(
     warning = DarkWarning,
     error = DarkError,
     scrim = Color(0xBA0B0E14),
-    subtleSeparator = CharcoalDarkSeparator
+    subtleSeparator = CharcoalDarkSeparator,
+    coffeeAccent = DarkCoffeeAccent,
+    coffeeSurface = DarkCoffeeSurface,
+    onCoffeeAccent = DarkOnCoffeeAccent
 )
 
-/** True Black AMOLED Mode (#000000) — minimal bright pixels, high contrast, zero excessive glow */
+/** True Black AMOLED Dark Mode (#000000) — soft charcoal surfaces, crisp white text, subtle separators */
 val AmoledCtecsColorTokens = CtecsColorTokens(
     isDark = true,
     isAmoled = true,
@@ -88,13 +94,16 @@ val AmoledCtecsColorTokens = CtecsColorTokens(
     warning = DarkWarning,
     error = DarkError,
     scrim = Color(0xD6000000),
-    subtleSeparator = AmoledSeparator
+    subtleSeparator = AmoledSeparator,
+    coffeeAccent = DarkCoffeeAccent,
+    coffeeSurface = DarkCoffeeSurface,
+    onCoffeeAccent = DarkOnCoffeeAccent
 )
 
-// Alias preserved for any existing callers
-val DarkCtecsColorTokens = CharcoalDarkCtecsColorTokens
+// Alias preserved for any existing callers (now aligned with True Black AMOLED Dark Mode)
+val DarkCtecsColorTokens = AmoledCtecsColorTokens
 
-/** Clean White Light Mode — neutral surfaces & crisp typography */
+/** Clean White Light Mode — soft light grey surfaces & crisp dark typography */
 val LightCtecsColorTokens = CtecsColorTokens(
     isDark = false,
     isAmoled = false,
@@ -113,7 +122,10 @@ val LightCtecsColorTokens = CtecsColorTokens(
     warning = LightWarning,
     error = LightError,
     scrim = Color(0x70101828),
-    subtleSeparator = Color(0xFFEAF0F7)
+    subtleSeparator = LightSeparator,
+    coffeeAccent = LightCoffeeAccent,
+    coffeeSurface = LightCoffeeSurface,
+    onCoffeeAccent = LightOnCoffeeAccent
 )
 
 private val CharcoalDarkColorScheme = darkColorScheme(
@@ -250,10 +262,9 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 /**
  * Supports instant theme switching across:
- * - "light": Clean white Light Mode
- * - "dark": Deep charcoal Dark Mode
- * - "amoled": True black (#000000) AMOLED Mode
- * - "system": Follows OS dark/light preference (uses Deep Charcoal Dark when OS is dark)
+ * - "dark" / "amoled": True black (#000000) AMOLED-friendly Dark Mode with soft charcoal secondary surfaces
+ * - "light": Clean white Light Mode with soft light grey secondary surfaces
+ * - "system": Follows OS dark/light preference (uses True Black Dark Mode when OS is dark)
  */
 @Composable
 fun MyApplicationTheme(
@@ -262,23 +273,15 @@ fun MyApplicationTheme(
 ) {
     val normalized = themeMode.trim().lowercase()
     val systemDark = isSystemInDarkTheme()
-    val isAmoled = normalized == "amoled"
     val darkTheme = when (normalized) {
         "amoled", "dark" -> true
         "light" -> false
         else -> systemDark
     }
+    val isAmoled = darkTheme
 
-    val colorScheme = when {
-        isAmoled -> AmoledColorScheme
-        darkTheme -> CharcoalDarkColorScheme
-        else -> LightColorScheme
-    }
-    val ctecsColors = when {
-        isAmoled -> AmoledCtecsColorTokens
-        darkTheme -> CharcoalDarkCtecsColorTokens
-        else -> LightCtecsColorTokens
-    }
+    val colorScheme = if (darkTheme) AmoledColorScheme else LightColorScheme
+    val ctecsColors = if (darkTheme) AmoledCtecsColorTokens else LightCtecsColorTokens
 
     val view = LocalView.current
     if (!view.isInEditMode) {

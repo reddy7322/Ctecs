@@ -8,6 +8,9 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+import com.example.donation.DonationAuditLogEntity
+import com.example.donation.DonationDao
+import com.example.donation.DonationTransactionEntity
 import com.example.survey.data.SurveyCalibrationEntity
 import com.example.survey.data.SurveyDao
 import com.example.survey.data.SurveyMarkerEntity
@@ -25,9 +28,11 @@ import com.example.survey.data.SurveySessionEntity
         SurveySessionEntity::class,
         SurveyPointEntity::class,
         SurveyMarkerEntity::class,
-        SurveyCalibrationEntity::class
+        SurveyCalibrationEntity::class,
+        DonationTransactionEntity::class,
+        DonationAuditLogEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun qcRecordDao(): QcRecordDao
     abstract fun dailyReportRecordDao(): DailyReportRecordDao
     abstract fun surveyDao(): SurveyDao
+    abstract fun donationDao(): DonationDao
 
     companion object {
         @Volatile
@@ -240,6 +246,56 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Non-destructive migration adding CTECS Buy Me a Coffee donation history and immutable
+         * verification audit trail tables.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `donation_transactions` (
+                        `orderRef` TEXT NOT NULL PRIMARY KEY,
+                        `gatewayOrderId` TEXT NOT NULL,
+                        `idempotencyKey` TEXT NOT NULL,
+                        `ownerUserId` TEXT NOT NULL,
+                        `amountInr` REAL NOT NULL,
+                        `currency` TEXT NOT NULL,
+                        `upiId` TEXT NOT NULL,
+                        `recipientName` TEXT NOT NULL,
+                        `description` TEXT NOT NULL,
+                        `upiUri` TEXT NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `paymentMethod` TEXT NOT NULL,
+                        `utr` TEXT NOT NULL,
+                        `confirmationRef` TEXT NOT NULL,
+                        `backendSynced` INTEGER NOT NULL,
+                        `createdAtMs` INTEGER NOT NULL,
+                        `updatedAtMs` INTEGER NOT NULL,
+                        `verifiedAtMs` INTEGER DEFAULT NULL,
+                        `expiresAtMs` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_donation_transactions_idempotencyKey` ON `donation_transactions` (`idempotencyKey`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_donation_transactions_ownerUserId_createdAtMs` ON `donation_transactions` (`ownerUserId`, `createdAtMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_donation_transactions_status_createdAtMs` ON `donation_transactions` (`status`, `createdAtMs`)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `donation_audit_logs` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `orderRef` TEXT NOT NULL,
+                        `previousStatus` TEXT NOT NULL,
+                        `newStatus` TEXT NOT NULL,
+                        `actorRole` TEXT NOT NULL,
+                        `actorId` TEXT NOT NULL,
+                        `evidence` TEXT NOT NULL,
+                        `reason` TEXT NOT NULL,
+                        `timestampMs` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_donation_audit_logs_orderRef_timestampMs` ON `donation_audit_logs` (`orderRef`, `timestampMs`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -250,7 +306,7 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10, MIGRATION_10_11
                     )
                     .fallbackToDestructiveMigration()
                     .build()

@@ -23,9 +23,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Air
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material.icons.rounded.WaterDrop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -43,10 +45,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ActivitySuitabilityAssessment
+import com.example.model.ActualSiteMeasurements
+import com.example.model.BitumenBinderType
+import com.example.model.BituminousBinderGrade
+import com.example.model.BituminousMaterialConfig
 import com.example.model.ContractSpecificationConfig
 import com.example.model.HighwayWorkActivity
 import com.example.model.HourlyWorkWindow
 import com.example.model.TemperatureUnit
+import com.example.model.WindSpeedUnit
 import com.example.model.WorkSuitabilityStatus
 import com.example.ui.home.AnimatedWeatherIcon
 import com.example.ui.theme.CtecsTheme
@@ -110,19 +117,6 @@ internal fun formatHourlyTimeLabel(localHourOfDay: Int, is24HourFormat: Boolean)
 
 /**
  * Smart Hourly Highway Activity Prediction section placed immediately below the Main Weather Card.
- *
- * Includes:
- * 1. Compact horizontally scrollable Smart Activity Selector (BC Laying default, DBM Laying, Tack Coat,
- *    Prime Coat, Milling, Glass Grid, Crack Sealing, GSB, WMM, Earthwork, PQC / DLC, Road Marking, etc.)
- * 2. Best Available Working Window summary bar (handles suitable, caution, no suitable window, incomplete data)
- * 3. Horizontally scrollable Hourly Prediction Cards (next 12–24 hours) showing:
- *    - Hour & time
- *    - Selected activity
- *    - Suitability status badge (Suitable / Caution / Not Recommended / Insufficient Data)
- *    - Weather indicators (icon, condition, temperature, rain %, wind km/h)
- *    - Short MoRTH/IRC-based engineering reason directly below the weather indicators
- * 4. Clear cached/stale timestamp badge when live data is unavailable, never fabricating predictions
- * 5. Concise advisory disclaimer (never replaces site measurements or Engineer approval)
  */
 @Composable
 fun SmartHourlyHighwayPredictionSection(
@@ -138,11 +132,24 @@ fun SmartHourlyHighwayPredictionSection(
     isStaleForecast: Boolean,
     lastUpdatedLabel: String,
     onSelectActivity: (HighwayWorkActivity) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    bituminousConfig: BituminousMaterialConfig = BituminousMaterialConfig(),
+    windSpeedUnit: WindSpeedUnit = WindSpeedUnit.KMH,
+    showBestWorkingWindow: Boolean = true,
+    showSuitabilityIndicators: Boolean = true,
+    siteMeasurements: ActualSiteMeasurements = ActualSiteMeasurements()
 ) {
     val c = CtecsTheme.colors
-    val activityLabel = smartActivityLabel(selectedActivity)
-    val bestWindow = remember(selectedActivity, hourlyWorkTimeline, is24HourFormat) {
+    val isExtendedBituminous = bituminousConfig.usesExtendedBituminousProfile
+    val activityLabel = remember(selectedActivity, bituminousConfig) {
+        if (bituminousConfig.usesExtendedBituminousProfile) {
+            bituminousConfig.resolvedWorkCategoryShortLabel
+        } else {
+            smartActivityLabel(selectedActivity)
+        }
+    }
+
+    val bestWindow = remember(selectedActivity, hourlyWorkTimeline, is24HourFormat, activityLabel) {
         IrcMorthWeatherRuleEngine.summarizeBestWorkingWindow(
             activity = selectedActivity,
             timeline = hourlyWorkTimeline,
@@ -150,14 +157,83 @@ fun SmartHourlyHighwayPredictionSection(
             activityDisplayLabel = activityLabel
         )
     }
-    val binderHint = remember(selectedActivity, contractSpec) {
-        if (selectedActivity.isBituminousHotMix) {
-            val binder = contractSpec.binderFor(selectedActivity)
-            if (binder.isModified) "${binder.displayName.substringBefore(" ")} · ≥15°C"
-            else "${binder.displayName.substringBefore(" ")} · ≥10°C"
-        } else {
-            null
+
+    val defaultConfig = remember { BituminousMaterialConfig() }
+    val activeBinderDisplay = remember(selectedActivity, bituminousConfig, contractSpec) {
+        when {
+            bituminousConfig.usesExtendedBituminousProfile -> bituminousConfig.resolvedBinderLabel
+            selectedActivity == HighwayWorkActivity.BC_LAYING || selectedActivity == HighwayWorkActivity.DBM_LAYING -> {
+                val grade = bituminousConfig.binderForActivity(selectedActivity)
+                val legacyBinder = contractSpec.binderFor(selectedActivity)
+                if (bituminousConfig == defaultConfig && legacyBinder != BitumenBinderType.CONVENTIONAL_VG30) {
+                    legacyBinder.displayName.substringBefore(" ")
+                } else if (grade == BituminousBinderGrade.OTHER_CUSTOM) {
+                    bituminousConfig.customBinderSpecification.trim().ifBlank { "Custom Spec" }
+                } else {
+                    grade.shortLabel
+                }
+            }
+            selectedActivity == HighwayWorkActivity.TACK_COAT_APPLICATION ||
+                selectedActivity == HighwayWorkActivity.PRIME_COAT_APPLICATION -> {
+                val grade = bituminousConfig.binderForActivity(selectedActivity)
+                if (grade == BituminousBinderGrade.OTHER_CUSTOM) {
+                    bituminousConfig.customBinderSpecification.trim().ifBlank { "Custom Spec" }
+                } else {
+                    grade.shortLabel
+                }
+            }
+            else -> ""
         }
+    }
+
+    val binderHint = remember(selectedActivity, bituminousConfig, contractSpec, activeBinderDisplay) {
+        if (activeBinderDisplay.isBlank()) {
+            null
+        } else {
+            val minTemp = when {
+                bituminousConfig.usesExtendedBituminousProfile -> bituminousConfig.effectiveMinSurfaceTempC
+                selectedActivity == HighwayWorkActivity.BC_LAYING || selectedActivity == HighwayWorkActivity.DBM_LAYING -> {
+                    val grade = bituminousConfig.binderForActivity(selectedActivity)
+                    val legacyBinder = contractSpec.binderFor(selectedActivity)
+                    if (bituminousConfig == defaultConfig && legacyBinder != BitumenBinderType.CONVENTIONAL_VG30) {
+                        legacyBinder.minPavementSurfaceTempC
+                    } else if (grade == BituminousBinderGrade.OTHER_CUSTOM) {
+                        bituminousConfig.customMinSurfaceTempC
+                    } else {
+                        grade.standardMinSurfaceTempC
+                    }
+                }
+                else -> {
+                    val grade = bituminousConfig.binderForActivity(selectedActivity)
+                    if (grade == BituminousBinderGrade.OTHER_CUSTOM) bituminousConfig.customMinSurfaceTempC
+                    else grade.standardMinSurfaceTempC
+                }
+            }
+            if (minTemp != null) "$activeBinderDisplay · ≥${minTemp.toInt()}°C"
+            else "$activeBinderDisplay · Spec Needed"
+        }
+    }
+
+    val recommendedWindowEpochSet = remember(hourlyWorkTimeline, bestWindow.state) {
+        val targetStatus = when (bestWindow.state) {
+            IrcMorthWeatherRuleEngine.BestWindowState.SUITABLE_WINDOW -> WorkSuitabilityStatus.SUITABLE
+            IrcMorthWeatherRuleEngine.BestWindowState.CAUTION_WINDOW -> WorkSuitabilityStatus.SUITABLE_WITH_CAUTION
+            else -> null
+        } ?: return@remember emptySet()
+
+        var bestRun: List<Long> = emptyList()
+        var currentRun = mutableListOf<Long>()
+        hourlyWorkTimeline.forEach { window ->
+            if (window.status == targetStatus) {
+                currentRun.add(window.hourPoint.epochMs)
+                if (currentRun.size > bestRun.size) {
+                    bestRun = currentRun.toList()
+                }
+            } else {
+                currentRun = mutableListOf()
+            }
+        }
+        bestRun.toSet()
     }
 
     Column(
@@ -169,7 +245,7 @@ fun SmartHourlyHighwayPredictionSection(
             .testTag("highway_work_suitability_section"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Section Header + Optional Binder / Cached-Stale Badge
+        // Section Header + Active Binder / Cached-Stale Badge
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -204,15 +280,19 @@ fun SmartHourlyHighwayPredictionSection(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (binderHint != null) {
+                    val isSpecNeeded = binderHint.contains("Spec Needed")
                     Text(
                         text = binderHint,
-                        color = c.textSecondary,
+                        color = if (isSpecNeeded) c.warning else c.textSecondary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(c.secondarySurface)
+                            .background(
+                                if (isSpecNeeded) c.warning.copy(alpha = if (isDark) 0.16f else 0.11f)
+                                else c.secondarySurface
+                            )
                             .padding(horizontal = 7.dp, vertical = 3.dp)
                             .testTag("weather_prediction_binder_badge")
                     )
@@ -261,8 +341,39 @@ fun SmartHourlyHighwayPredictionSection(
                 .fillMaxWidth()
                 .testTag("smart_activity_selector_row")
         ) {
+            if (isExtendedBituminous) {
+                item(key = "configured_extended_bituminous") {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(c.accent.copy(alpha = if (isDark) 0.24f else 0.15f))
+                            .border(1.dp, c.accent.copy(alpha = 0.70f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 11.dp, vertical = 7.dp)
+                            .testTag("activity_chip_configured_bituminous")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    hourlyWorkTimeline.firstOrNull()?.status?.let { suitabilityColor(it) } ?: c.accent
+                                )
+                        )
+                        Text(
+                            text = bituminousConfig.resolvedWorkCategoryShortLabel,
+                            color = c.accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
             items(SMART_PREDICTION_ACTIVITIES, key = { it.name }) { activity ->
-                val isSelected = activity == selectedActivity
+                val isSelected = !isExtendedBituminous && activity == selectedActivity
                 val itemStatus = assessments.firstOrNull { it.activity == activity }?.status
                 val dotColor = itemStatus?.let { suitabilityColor(it) } ?: c.textMuted
                 val chipBg = if (isSelected) {
@@ -302,40 +413,42 @@ fun SmartHourlyHighwayPredictionSection(
         }
 
         // Compact Best Available Working Window Recommendation
-        val windowAccent = when (bestWindow.state) {
-            IrcMorthWeatherRuleEngine.BestWindowState.SUITABLE_WINDOW -> c.success
-            IrcMorthWeatherRuleEngine.BestWindowState.CAUTION_WINDOW -> c.warning
-            IrcMorthWeatherRuleEngine.BestWindowState.NO_SUITABLE_WINDOW -> c.error
-            IrcMorthWeatherRuleEngine.BestWindowState.INCOMPLETE_DATA -> c.textMuted
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp)
-                .clip(RoundedCornerShape(11.dp))
-                .background(windowAccent.copy(alpha = if (isDark) 0.13f else 0.08f))
-                .padding(horizontal = 10.dp, vertical = 8.dp)
-                .semantics(mergeDescendants = true) {}
-                .testTag("weather_best_working_window"),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Schedule,
-                contentDescription = "Best working window",
-                tint = windowAccent,
-                modifier = Modifier.size(15.dp)
-            )
-            Text(
-                text = bestWindow.summaryText,
-                color = c.textPrimary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                lineHeight = 16.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
+        if (showBestWorkingWindow) {
+            val windowAccent = when (bestWindow.state) {
+                IrcMorthWeatherRuleEngine.BestWindowState.SUITABLE_WINDOW -> c.success
+                IrcMorthWeatherRuleEngine.BestWindowState.CAUTION_WINDOW -> c.warning
+                IrcMorthWeatherRuleEngine.BestWindowState.NO_SUITABLE_WINDOW -> c.error
+                IrcMorthWeatherRuleEngine.BestWindowState.INCOMPLETE_DATA -> c.textMuted
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(windowAccent.copy(alpha = if (isDark) 0.13f else 0.08f))
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .semantics(mergeDescendants = true) {}
+                    .testTag("weather_best_working_window"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Schedule,
+                    contentDescription = "Best working window",
+                    tint = windowAccent,
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = bestWindow.summaryText,
+                    color = c.textPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 16.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
 
         // Hourly Activity Prediction Cards (Next 12–24 Hours) or Clean Unavailable State
@@ -378,16 +491,24 @@ fun SmartHourlyHighwayPredictionSection(
             ) {
                 itemsIndexed(
                     items = displayTimeline,
-                    key = { _, item -> "${item.activity.name}_${item.hourPoint.epochMs}" }
+                    key = { _, item -> "${item.activity.name}_${item.workCategoryLabel}_${item.binderGradeLabel}_${item.hourPoint.epochMs}" }
                 ) { index, window ->
+                    val cardSurfaceTemp = window.measuredSurfaceTempC
+                        ?: if (index == 0) siteMeasurements.pavementSurfaceTempC else null
                     SmartHourlyPredictionCard(
                         index = index,
                         window = window,
-                        activityLabel = activityLabel,
+                        activityLabel = window.workCategoryLabel.ifBlank { activityLabel },
+                        binderGradeLabel = window.binderGradeLabel.ifBlank { activeBinderDisplay },
+                        measuredSurfaceTempC = cardSurfaceTemp,
                         temperatureUnit = temperatureUnit,
+                        windSpeedUnit = windSpeedUnit,
                         is24HourFormat = is24HourFormat,
                         isDark = isDark,
-                        shouldAnimate = shouldAnimate && index == 0
+                        shouldAnimate = shouldAnimate && index == 0,
+                        showSuitabilityBadge = showSuitabilityIndicators,
+                        isInRecommendedWindow = showBestWorkingWindow &&
+                            window.hourPoint.epochMs in recommendedWindowEpochSet
                     )
                 }
             }
@@ -395,7 +516,7 @@ fun SmartHourlyHighwayPredictionSection(
 
         // Concise Advisory Disclaimer
         Text(
-            text = "Advisory only (MoRTH / IRC guidance) — verify dry surface, pavement temperature & Engineer approval at site.",
+            text = "Advisory only (MoRTH / IRC guidance) — verify actual site conditions, pavement temperature, approved JMF & Engineer-in-Charge instructions.",
             color = c.textMuted,
             fontSize = 10.5.sp,
             lineHeight = 14.sp,
@@ -411,15 +532,20 @@ private fun SmartHourlyPredictionCard(
     index: Int,
     window: HourlyWorkWindow,
     activityLabel: String,
+    binderGradeLabel: String,
+    measuredSurfaceTempC: Double?,
     temperatureUnit: TemperatureUnit,
+    windSpeedUnit: WindSpeedUnit,
     is24HourFormat: Boolean,
     isDark: Boolean,
-    shouldAnimate: Boolean
+    shouldAnimate: Boolean,
+    showSuitabilityBadge: Boolean,
+    isInRecommendedWindow: Boolean
 ) {
     val c = CtecsTheme.colors
     val pt = window.hourPoint
     val statusColor = suitabilityColor(window.status)
-    val statusLabel = suitabilityStatusLabel(window.status)
+    val statusLabel = if (window.insufficientSpecData) "Insufficient Spec" else suitabilityStatusLabel(window.status)
     val rainTint = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
 
     Surface(
@@ -430,14 +556,14 @@ private fun SmartHourlyPredictionCard(
             color = statusColor.copy(alpha = if (isDark) 0.34f else 0.28f)
         ),
         modifier = Modifier
-            .width(184.dp)
+            .width(198.dp)
             .testTag("hourly_prediction_card_$index")
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 11.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             // Row 1: Hour/Time + Status Badge
             Row(
@@ -454,44 +580,70 @@ private fun SmartHourlyPredictionCard(
                     modifier = Modifier.testTag("hourly_prediction_time_$index")
                 )
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(statusColor.copy(alpha = if (isDark) 0.18f else 0.12f))
-                        .padding(horizontal = 7.dp, vertical = 2.5.dp)
-                        .semantics(mergeDescendants = true) {}
-                        .testTag("hourly_prediction_status_$index")
-                ) {
-                    Box(
+                if (showSuitabilityBadge) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier
-                            .size(5.dp)
-                            .clip(CircleShape)
-                            .background(statusColor)
-                    )
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(statusColor.copy(alpha = if (isDark) 0.18f else 0.12f))
+                            .padding(horizontal = 7.dp, vertical = 2.5.dp)
+                            .semantics(mergeDescendants = true) {}
+                            .testTag("hourly_prediction_status_$index")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(statusColor)
+                        )
+                        Text(
+                            text = statusLabel,
+                            color = statusColor,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            // Row 2: Selected Work Category + Selected Binder Grade
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = activityLabel,
+                    color = c.accent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 4.dp)
+                        .testTag("hourly_prediction_activity_$index")
+                )
+                if (binderGradeLabel.isNotBlank()) {
                     Text(
-                        text = statusLabel,
-                        color = statusColor,
-                        fontSize = 10.sp,
+                        text = binderGradeLabel,
+                        color = c.textPrimary,
+                        fontSize = 9.5.sp,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(c.surface.copy(alpha = 0.85f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                            .testTag("hourly_prediction_binder_$index")
                     )
                 }
             }
 
-            // Row 2: Selected Activity Name
-            Text(
-                text = activityLabel,
-                color = c.accent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("hourly_prediction_activity_$index")
-            )
-
-            // Row 3: Weather Icon + Condition + Temperature
+            // Row 3: Weather Icon + Condition + Ambient Temperature
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -528,26 +680,53 @@ private fun SmartHourlyPredictionCard(
                 )
             }
 
-            // Row 4: Compact Weather Indicators (Rain % & Wind km/h)
+            // Optional Row 3b: Measured Surface Temperature (displayed ONLY when actually available)
+            if (measuredSurfaceTempC != null && measuredSurfaceTempC.isFinite()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(c.surface.copy(alpha = 0.75f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .testTag("hourly_prediction_surface_temp_$index")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Thermostat,
+                        contentDescription = "Measured pavement surface temperature",
+                        tint = c.accent,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Text(
+                        text = "Surface ${temperatureUnit.format(measuredSurfaceTempC)}",
+                        color = c.textSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            // Row 4: Compact Weather Indicators (Rain %, Wind speed, Humidity % when available)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.WaterDrop,
                         contentDescription = "Rain probability",
                         tint = if (pt.rainProbabilityPercent >= 35) rainTint else c.textMuted,
-                        modifier = Modifier.size(12.dp)
+                        modifier = Modifier.size(11.dp)
                     )
                     Text(
                         text = if (pt.rainProbabilityPercent in 0..100) "${pt.rainProbabilityPercent}%" else "—",
                         color = if (pt.rainProbabilityPercent >= 35) rainTint else c.textSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1
                     )
@@ -555,23 +734,60 @@ private fun SmartHourlyPredictionCard(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Air,
                         contentDescription = "Wind speed",
                         tint = if (pt.windSpeedKmh > 35.0) c.warning else c.textMuted,
-                        modifier = Modifier.size(12.dp)
+                        modifier = Modifier.size(11.dp)
                     )
                     Text(
                         text = if (pt.windSpeedKmh.isFinite() && pt.windSpeedKmh >= 0.0) {
-                            "${pt.windSpeedKmh.toInt()} km/h"
+                            windSpeedUnit.format(pt.windSpeedKmh)
                         } else {
                             "—"
                         },
                         color = if (pt.windSpeedKmh > 35.0) c.warning else c.textSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Medium,
+                        maxLines = 1
+                    )
+                }
+
+                if (pt.humidityPercent in 0..100) {
+                    Text(
+                        text = "${pt.humidityPercent}% RH",
+                        color = if (pt.humidityPercent >= 88) c.warning else c.textMuted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        modifier = Modifier.testTag("hourly_prediction_humidity_$index")
+                    )
+                }
+            }
+
+            if (isInRecommendedWindow) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(statusColor.copy(alpha = if (isDark) 0.14f else 0.09f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .testTag("hourly_prediction_best_window_badge_$index")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.CheckCircle,
+                        contentDescription = "Recommended working window",
+                        tint = statusColor,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Text(
+                        text = "Recommended Window",
+                        color = statusColor,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
                 }
@@ -581,7 +797,7 @@ private fun SmartHourlyPredictionCard(
                 color = if (isDark) c.elevatedSurface else c.subtleSeparator
             )
 
-            // Row 5: Concise MoRTH / IRC Engineering Reason directly inside the card
+            // Row 5: Concise Technical Explanation directly inside the card
             Text(
                 text = window.primaryReason,
                 color = c.textSecondary,

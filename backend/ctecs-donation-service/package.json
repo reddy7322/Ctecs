@@ -1,0 +1,20 @@
+{
+  "name": "ctecs-donation-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trusted server-side donation orchestration and webhook verification service for CTECS Buy Me a Coffee integrating self-hosted mynkdev-21/upi-gateway.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "pg": "^8.13.1"
+  }
+}

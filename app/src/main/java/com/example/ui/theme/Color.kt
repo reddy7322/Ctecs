@@ -17,20 +17,20 @@ val CharcoalDarkMutedText = Color(0xFF7D899E)
 val CharcoalDarkSeparator = Color(0xFF283040)
 
 // ============================================================================
-// PART 1.2 – TRUE BLACK AMOLED THEME PALETTE (#000000)
+// PART 1.2 – TRUE BLACK AMOLED DARK MODE PALETTE (#000000 + SOFT CHARCOAL)
 // ============================================================================
 val AmoledMainBackground = Color(0xFF000000)
-val AmoledSecondaryBackground = Color(0xFF06080D)
-val AmoledPrimarySurface = Color(0xFF0B0E16)
-val AmoledSecondarySurface = Color(0xFF111622)
-val AmoledElevatedSurface = Color(0xFF171E2B)
+val AmoledSecondaryBackground = Color(0xFF0A0B0E)
+val AmoledPrimarySurface = Color(0xFF121419)
+val AmoledSecondarySurface = Color(0xFF1A1D24)
+val AmoledElevatedSurface = Color(0xFF232732)
 
 val AmoledPrimaryText = Color(0xFFFFFFFF)
-val AmoledSecondaryText = Color(0xFFA1AAB9)
-val AmoledMutedText = Color(0xFF718096)
-val AmoledSeparator = Color(0xFF161D2A)
+val AmoledSecondaryText = Color(0xFF9CA3AF)
+val AmoledMutedText = Color(0xFF6B7280)
+val AmoledSeparator = Color(0xFF1E222B)
 
-// Backwards-compatible aliases used across legacy screens (mapped to AMOLED/Dark tokens)
+// Backwards-compatible aliases used across legacy screens (mapped to True Black Dark tokens)
 val DarkMainBackground = AmoledMainBackground
 val DarkSecondaryBackground = AmoledSecondaryBackground
 val DarkPrimarySurface = AmoledPrimarySurface
@@ -41,30 +41,41 @@ val DarkPrimaryText = AmoledPrimaryText
 val DarkSecondaryText = AmoledSecondaryText
 val DarkMutedText = AmoledMutedText
 
-val DarkPrimaryAccent = Color(0xFF1685FF)
+val DarkPrimaryAccent = Color(0xFF2589FF)
 val DarkSecondaryAccent = Color(0xFF20B8F0)
 val DarkSuccess = Color(0xFF20C997)
 val DarkWarning = Color(0xFFFFB52E)
 val DarkError = Color(0xFFFF5263)
 
+// Coffee-inspired warm accents (Dark Mode)
+val DarkCoffeeAccent = Color(0xFFD99B58)
+val DarkCoffeeSurface = Color(0xFF1D1610)
+val DarkOnCoffeeAccent = Color(0xFF1A0F07)
+
 // ============================================================================
 // PART 1.3 – PROFESSIONAL MINIMALIST LIGHT THEME PALETTE
 // ============================================================================
 val LightMainBackground = Color(0xFFFFFFFF)
-val LightSecondaryBackground = Color(0xFFF7F9FC)
-val LightPrimarySurface = Color(0xFFF1F4F8)
-val LightSecondarySurface = Color(0xFFEAF0F7)
+val LightSecondaryBackground = Color(0xFFF8F9FA)
+val LightPrimarySurface = Color(0xFFF3F4F6)
+val LightSecondarySurface = Color(0xFFEBECEF)
 val LightElevatedSurface = Color(0xFFFFFFFF)
 
-val LightPrimaryText = Color(0xFF101828)
-val LightSecondaryText = Color(0xFF526174)
-val LightMutedText = Color(0xFF8995A5)
+val LightPrimaryText = Color(0xFF111827)
+val LightSecondaryText = Color(0xFF6B7280)
+val LightMutedText = Color(0xFF9CA3AF)
+val LightSeparator = Color(0xFFE5E7EB)
 
 val LightPrimaryAccent = Color(0xFF1677F2)
 val LightSecondaryAccent = Color(0xFF159FD5)
 val LightSuccess = Color(0xFF159C72)
 val LightWarning = Color(0xFFD99A20)
 val LightError = Color(0xFFDC4455)
+
+// Coffee-inspired warm accents (Light Mode)
+val LightCoffeeAccent = Color(0xFF8C5629)
+val LightCoffeeSurface = Color(0xFFFBF5EE)
+val LightOnCoffeeAccent = Color(0xFFFFFFFF)
 
 // ============================================================================
 // COMPATIBILITY ALIASES

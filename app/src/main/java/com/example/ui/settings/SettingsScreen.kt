@@ -112,6 +112,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -219,6 +220,11 @@ fun SettingsScreen(
     val isDownloadingUpdate by viewModel.isDownloadingUpdate.collectAsStateWithLifecycle()
     val updateDownloadProgress by viewModel.updateDownloadProgress.collectAsStateWithLifecycle()
 
+    // Theme & Donation Popup States (retained across UPI app launch & lifecycle changes)
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    var showBuyMeACoffeeSheet by rememberSaveable { mutableStateOf(false) }
+    var activeCoffeeOrderRef by rememberSaveable { mutableStateOf<String?>(null) }
+
     var searchQuery by remember { mutableStateOf("") }
     var showRestoreDialog by remember { mutableStateOf(false) }
     var showKmlUrlImportDialog by remember { mutableStateOf(false) }
@@ -299,9 +305,9 @@ fun SettingsScreen(
     val allSectionKeys = remember {
         listOf(
             "project", "camera", "timestamp", "mini_map", "gps", "chainage",
-            "offline_maps", "logo", "storage", "display", "screensaver",
+            "offline_maps", "logo", "storage", "screensaver",
             "navigation_notifications", "widgets", "km_stone_alerts",
-            "chainage_voice_assistant", "backup_restore", "permissions_about"
+            "chainage_voice_assistant", "backup_restore"
         )
     }
 
@@ -675,6 +681,9 @@ fun SettingsScreen(
         }
     }
 
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalSettingsAutoSaveCoordinator provides viewModel.settingsAutoSaveCoordinator
+    ) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -725,44 +734,6 @@ fun SettingsScreen(
                     containerColor = c.background
                 )
             )
-        },
-        bottomBar = {
-            Surface(
-                color = c.secondaryBackground,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    SmartFadeDivider()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Preferences saved automatically",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = c.textSecondary,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Button(
-                            onClick = onNavigateBack,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = primaryAccent,
-                                contentColor = primaryAccentContent
-                            ),
-                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("settings_done_button")
-                        ) {
-                            Text("Done", color = primaryAccentContent, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
         },
         containerColor = c.background,
         modifier = modifier
@@ -824,6 +795,18 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            // Sleek Dark / Light Theme Selector (always accessible, borderless, instant switch)
+            if (matchesSearch("display appearance theme mode dark light amoled charcoal black system", searchQuery)) {
+                MinimalistThemeSelectorBar(
+                    themeMode = themeMode,
+                    isCurrentlyDark = isDark,
+                    onSelectThemeMode = { mode -> viewModel.setThemeMode(mode) }
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                SmartFadeDivider(color = c.subtleSeparator)
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
             // Expand / Collapse All Controls
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -878,6 +861,7 @@ fun SettingsScreen(
                     subtitle = "${currentProject.highwayId.ifBlank { "No Project Selected" }} • ${currentProject.packageSection.ifBlank { "No Stretch Set" }} (${currentProject.startChainage} - ${currentProject.endChainage}) • Work: ${if (currentProject.workType.isBlank() || currentProject.workType.equals("None", ignoreCase = true)) "None" else currentProject.workType}",
                     icon = Icons.Default.Engineering,
                     accentColor = primaryAccent,
+                    sectionKey = "project",
                     isExpanded = expandedSections["project"] ?: false,
                     onToggleExpand = { expandedSections["project"] = !(expandedSections["project"] ?: false) }
                 ) {
@@ -1300,6 +1284,7 @@ fun SettingsScreen(
                     subtitle = "Auto Max Quality • Frame: ${currentCameraSettings.cropMode.label} • Grid: ${currentCameraSettings.gridMode.label}",
                     icon = Icons.Default.CameraAlt,
                     accentColor = primaryAccent,
+                    sectionKey = "camera",
                     isExpanded = expandedSections["camera"] ?: false,
                     onToggleExpand = { expandedSections["camera"] = !(expandedSections["camera"] ?: false) }
                 ) {
@@ -1504,6 +1489,7 @@ fun SettingsScreen(
                     subtitle = "Mini Map ${if (currentOverlay.showMapInset) "ON" else "OFF"} • ${currentOverlay.timestampFormat} • ${currentOverlay.watermarkPosition} • ${currentOverlay.fontSizeSp.toInt()}sp",
                     icon = Icons.Default.BrandingWatermark,
                     accentColor = timestampAccent,
+                    sectionKey = "timestamp",
                     isExpanded = expandedSections["timestamp"] ?: false,
                     onToggleExpand = { expandedSections["timestamp"] = !(expandedSections["timestamp"] ?: false) }
                 ) {
@@ -2993,6 +2979,7 @@ fun SettingsScreen(
                     subtitle = "${currentCameraSettings.coordinateFormat.label} • Threshold ±${currentCameraSettings.gpsAccuracyThresholdMeters.toInt()}m",
                     icon = Icons.Default.MyLocation,
                     accentColor = gpsAccent,
+                    sectionKey = "gps",
                     isExpanded = expandedSections["gps"] ?: false,
                     onToggleExpand = { expandedSections["gps"] = !(expandedSections["gps"] ?: false) }
                 ) {
@@ -3054,6 +3041,7 @@ fun SettingsScreen(
                     subtitle = "Matching Radius: ${currentCameraSettings.routeMatchingRadiusMeters.toInt()}m",
                     icon = Icons.Default.LinearScale,
                     accentColor = primaryAccent,
+                    sectionKey = "chainage",
                     isExpanded = expandedSections["chainage"] ?: false,
                     onToggleExpand = { expandedSections["chainage"] = !(expandedSections["chainage"] ?: false) }
                 ) {
@@ -3304,6 +3292,7 @@ fun SettingsScreen(
                     subtitle = offlineSummary,
                     icon = Icons.Default.Map,
                     accentColor = primaryAccent,
+                    sectionKey = "offline_maps",
                     isExpanded = expandedSections["offline_maps"] ?: false,
                     onToggleExpand = {
                         expandedSections["offline_maps"] = !(expandedSections["offline_maps"] ?: false)
@@ -3380,6 +3369,7 @@ fun SettingsScreen(
                     subtitle = if (hasCustomLogo) "Custom Logo Active • ${currentOverlay.logoSizeDp}dp" else "No Logo Uploaded",
                     icon = Icons.Default.AddPhotoAlternate,
                     accentColor = primaryAccent,
+                    sectionKey = "logo",
                     isExpanded = expandedSections["logo"] ?: false,
                     onToggleExpand = { expandedSections["logo"] = !(expandedSections["logo"] ?: false) }
                 ) {
@@ -3877,6 +3867,7 @@ fun SettingsScreen(
                     subtitle = "Format: $dynamicPreview",
                     icon = Icons.Default.Storage,
                     accentColor = primaryAccent,
+                    sectionKey = "storage",
                     isExpanded = expandedSections["storage"] ?: false,
                     onToggleExpand = { expandedSections["storage"] = !(expandedSections["storage"] ?: false) }
                 ) {
@@ -4046,75 +4037,6 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(10.dp))
 
             // ====================================================
-            // 13. APPEARANCE (LIGHT / DARK / AMOLED / SYSTEM)
-            // ====================================================
-            if (matchesSearch("display appearance theme mode dark light amoled charcoal black system", searchQuery)) {
-                val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
-                val themeDisplayName = when (themeMode.lowercase()) {
-                    "light" -> "Light (Clean White)"
-                    "dark" -> "Dark (Deep Charcoal)"
-                    "amoled" -> "AMOLED (True Black)"
-                    else -> "System Default"
-                }
-                SmartDropdownSection(
-                    title = "Appearance & Theme",
-                    subtitle = "Theme: $themeDisplayName",
-                    icon = Icons.Default.Palette,
-                    accentColor = primaryAccent,
-                    isExpanded = expandedSections["display"] ?: false,
-                    onToggleExpand = { expandedSections["display"] = !(expandedSections["display"] ?: false) }
-                ) {
-                    Text(
-                        text = "App Theme Mode",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Switches instantaneously across all CTECS pages without restart.",
-                        fontSize = 11.sp,
-                        color = c.textMuted
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(
-                            "light" to "Light",
-                            "dark" to "Dark",
-                            "amoled" to "AMOLED",
-                            "system" to "System"
-                        ).forEach { (mode, label) ->
-                            FilterChip(
-                                selected = themeMode.equals(mode, ignoreCase = true),
-                                onClick = { viewModel.setThemeMode(mode) },
-                                label = {
-                                    Text(
-                                        text = label,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1
-                                    )
-                                },
-                                border = null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = primaryAccent,
-                                    selectedLabelColor = primaryAccentContent,
-                                    containerColor = c.secondarySurface,
-                                    labelColor = c.textSecondary
-                                ),
-                                modifier = Modifier.testTag("theme_mode_$mode")
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // ====================================================
             // 13b. SCREENSAVER
             // ====================================================
             if (matchesSearch("screensaver hud mirror portrait landscape speedometer chainage direction mini map amoled always on display aod burn-in dim", searchQuery)) {
@@ -4131,6 +4053,7 @@ fun SettingsScreen(
                     subtitle = screensaverSummary,
                     icon = Icons.Default.Bedtime,
                     accentColor = primaryAccent,
+                    sectionKey = "screensaver",
                     isExpanded = expandedSections["screensaver"] ?: false,
                     onToggleExpand = { expandedSections["screensaver"] = !(expandedSections["screensaver"] ?: false) }
                 ) {
@@ -4181,6 +4104,7 @@ fun SettingsScreen(
                     subtitle = navNotifSummary,
                     icon = Icons.Default.NotificationsActive,
                     accentColor = primaryAccent,
+                    sectionKey = "navigation_notifications",
                     isExpanded = expandedSections["navigation_notifications"] ?: false,
                     onToggleExpand = {
                         expandedSections["navigation_notifications"] = !(expandedSections["navigation_notifications"] ?: false)
@@ -4225,6 +4149,7 @@ fun SettingsScreen(
                     subtitle = widgetSummary,
                     icon = Icons.Default.Widgets,
                     accentColor = primaryAccent,
+                    sectionKey = "widgets",
                     isExpanded = expandedSections["widgets"] ?: false,
                     onToggleExpand = {
                         expandedSections["widgets"] = !(expandedSections["widgets"] ?: false)
@@ -4270,6 +4195,7 @@ fun SettingsScreen(
                     subtitle = kmAlertSummary,
                     icon = Icons.Default.Vibration,
                     accentColor = primaryAccent,
+                    sectionKey = "km_stone_alerts",
                     isExpanded = expandedSections["km_stone_alerts"] ?: false,
                     onToggleExpand = {
                         expandedSections["km_stone_alerts"] = !(expandedSections["km_stone_alerts"] ?: false)
@@ -4310,6 +4236,7 @@ fun SettingsScreen(
                     subtitle = voiceAssistantSummary,
                     icon = Icons.Default.Mic,
                     accentColor = primaryAccent,
+                    sectionKey = "chainage_voice_assistant",
                     isExpanded = expandedSections["chainage_voice_assistant"] ?: false,
                     onToggleExpand = {
                         expandedSections["chainage_voice_assistant"] = !(expandedSections["chainage_voice_assistant"] ?: false)
@@ -4327,8 +4254,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Weather & Work Planning settings now live exclusively inside their respective
-            // contextual animated Settings popups on the Weather Page and Work Planning Page.
+            // Weather settings live exclusively inside the contextual animated Settings popup on the Weather Page.
 
             // ====================================================
             // BACKUP & RESTORE
@@ -4347,6 +4273,7 @@ fun SettingsScreen(
                     },
                     icon = Icons.Default.Backup,
                     accentColor = primaryAccent,
+                    sectionKey = "backup_restore",
                     isExpanded = expandedSections["backup_restore"] ?: false,
                     onToggleExpand = { expandedSections["backup_restore"] = !(expandedSections["backup_restore"] ?: false) }
                 ) {
@@ -4358,196 +4285,42 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+            SmartFadeDivider(color = c.subtleSeparator)
+            Spacer(modifier = Modifier.height(14.dp))
 
             // ====================================================
-            // 14. PERMISSIONS AND APP INFORMATION
+            // 14. ALWAYS-VISIBLE APP INFORMATION & BUY ME A COFFEE
+            // (NO dropdown, NO expand/collapse, permanently visible)
             // ====================================================
-            if (matchesSearch("permissions app information version build update restore default", searchQuery)) {
-                SmartDropdownSection(
-                    title = "Permissions and App Information",
-                    subtitle = "Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
-                    icon = Icons.Default.Info,
-                    accentColor = primaryAccent,
-                    isExpanded = expandedSections["permissions_about"] ?: false,
-                    onToggleExpand = { expandedSections["permissions_about"] = !(expandedSections["permissions_about"] ?: false) }
-                ) {
-                    val currentChannel = com.example.update.AppReleaseChannel.current()
-                    val isBetaApp = currentChannel == com.example.update.AppReleaseChannel.BETA
-                    val channelColor = if (isBetaApp) (if (isDark) Color(0xFFA78BFA) else Color(0xFF7C3AED)) else primaryAccent
-                    val channelBg = channelColor.copy(alpha = 0.15f)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "App Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = channelBg
-                        ) {
-                            Text(
-                                text = if (isBetaApp) "BETA" else "STABLE",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Black,
-                                color = channelColor,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = if (isBetaApp) "Update Channel: Beta" else "Update Channel: Stable",
-                        fontSize = 11.sp,
-                        color = channelColor,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-
-                    // Available Update or Downloading Status Card
-                    availableUpdate?.let { updateInfo ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = c.secondarySurface,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = channelColor, modifier = Modifier.size(16.dp))
-                                        Text(
-                                            text = "Update Available: ${updateInfo.tagName}",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                    if (updateInfo.apkSize > 0) {
-                                        Text(
-                                            text = "%.1f MB".format(updateInfo.apkSize / (1024.0 * 1024.0)),
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-
-                                if (isDownloadingUpdate) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text("Downloading update...", fontSize = 11.sp, color = channelColor)
-                                        Text("${(updateDownloadProgress * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    LinearProgressIndicator(
-                                        progress = { updateDownloadProgress },
-                                        color = channelColor,
-                                        trackColor = c.elevatedSurface,
-                                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape)
-                                    )
-                                } else {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Button(
-                                        onClick = { viewModel.downloadAndInstallUpdate() },
-                                        colors = ButtonDefaults.buttonColors(containerColor = channelColor, contentColor = Color.White),
-                                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Download & Install Update", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    if (isCheckingUpdate) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = channelColor)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (isBetaApp) "Checking for Beta updates..." else "Checking for Stable updates...",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    } else {
-                        Button(
-                            onClick = { viewModel.checkForAppUpdate(isManual = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = if (isBetaApp) Color(0xFF7C3AED) else primaryAccent, contentColor = Color.White),
-                            elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                        ) {
-                            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isBetaApp) "Check for Beta Updates" else "Check for Stable Updates",
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Button(
-                        onClick = { showRestoreDialog = true },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = c.error.copy(alpha = 0.14f),
-                            contentColor = c.error
-                        ),
-                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Reset All Settings to Defaults", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    SmartFadeDivider(modifier = Modifier.padding(vertical = 10.dp))
-
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = c.secondarySurface,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp, horizontal = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Made with ❤️ madhureddyainala",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
+            if (matchesSearch("permissions app information version build update restore default developer madhureddyainala buy me a coffee support donate upi", searchQuery)) {
+                AlwaysVisibleAppInfoSection(
+                    isCheckingUpdate = isCheckingUpdate,
+                    availableUpdate = availableUpdate,
+                    isDownloadingUpdate = isDownloadingUpdate,
+                    updateDownloadProgress = updateDownloadProgress,
+                    onCheckForUpdate = { viewModel.checkForAppUpdate(isManual = true) },
+                    onDownloadAndInstallUpdate = { viewModel.downloadAndInstallUpdate() },
+                    onRequestResetDefaults = { showRestoreDialog = true },
+                    onOpenBuyMeACoffee = { showBuyMeACoffeeSheet = true }
+                )
             }
 
             Spacer(modifier = Modifier.height(72.dp))
         }
         }
+    }
+    }
+
+    // Compact Animated Buy Me a Coffee Popup (popup-only, keeps Settings visible underneath)
+    if (showBuyMeACoffeeSheet) {
+        BuyMeACoffeeBottomSheet(
+            repository = viewModel.donationRepository,
+            restoredOrderRef = activeCoffeeOrderRef,
+            onActiveOrderRefChange = { activeCoffeeOrderRef = it },
+            onDismiss = { showBuyMeACoffeeSheet = false },
+            onToast = { message -> viewModel.showToast(message) }
+        )
     }
 
     // Restore Defaults Dialog
@@ -4992,74 +4765,87 @@ private fun SmartDropdownSection(
     accentColor: Color,
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
+    sectionKey: String = "",
     content: @Composable () -> Unit
 ) {
     val c = CtecsTheme.colors
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = c.surface,
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(tween(220))
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalSettingsSectionKey provides sectionKey.takeIf { it.isNotBlank() }
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .defaultMinSize(minHeight = 48.dp)
-                    .clickable { onToggleExpand() }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = c.surface,
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize(tween(220))
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = accentColor.copy(alpha = 0.14f),
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = c.textPrimary
-                        )
-                        if (subtitle.isNotBlank()) {
-                            Text(
-                                text = subtitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = c.textSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (isExpanded) "Collapse" else "Expand",
-                    tint = if (isExpanded) accentColor else c.textSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            AnimatedVisibility(visible = isExpanded) {
-                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+                        .defaultMinSize(minHeight = 48.dp)
+                        .clickable { onToggleExpand() }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    SmartFadeDivider(modifier = Modifier.padding(bottom = 10.dp))
-                    content()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = accentColor.copy(alpha = 0.14f),
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = c.textPrimary
+                            )
+                            if (subtitle.isNotBlank()) {
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = c.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (sectionKey.isNotBlank()) {
+                            SectionSettingSaveBadge(sectionKey = sectionKey)
+                        }
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (isExpanded) "Collapse" else "Expand",
+                            tint = if (isExpanded) accentColor else c.textSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                AnimatedVisibility(visible = isExpanded) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+                    ) {
+                        SmartFadeDivider(modifier = Modifier.padding(bottom = 10.dp))
+                        content()
+                    }
                 }
             }
         }
@@ -5075,27 +4861,55 @@ private fun CompactSwitchRow(
     tag: String
 ) {
     val c = CtecsTheme.colors
+    val coordinator = LocalSettingsAutoSaveCoordinator.current
+    val sectionKey = LocalSettingsSectionKey.current
     val switchTrackColor = c.accent
     val switchThumbColor = c.onAccent
+
+    val dispatchChange: (Boolean) -> Unit = { newValue ->
+        if (coordinator != null) {
+            coordinator.withControlAction(
+                controlTag = tag,
+                sectionKeyOverride = sectionKey,
+                debounceMs = 0L
+            ) {
+                onCheckedChange(newValue)
+            }
+        } else {
+            onCheckedChange(newValue)
+        }
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
-            .clickable { onCheckedChange(!checked) }
+            .clickable { dispatchChange(!checked) }
             .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, color = c.textPrimary, fontWeight = FontWeight.Medium)
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                ScopedSettingSaveBadge(settingKey = tag, showLabel = false)
+            }
             if (!subtitle.isNullOrBlank()) {
                 Text(subtitle, style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
             }
         }
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = dispatchChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = switchThumbColor,
                 checkedTrackColor = switchTrackColor,
@@ -5116,7 +4930,13 @@ private fun SliderRow(
     valueText: String
 ) {
     val c = CtecsTheme.colors
+    val coordinator = LocalSettingsAutoSaveCoordinator.current
+    val sectionKey = LocalSettingsSectionKey.current
     val sliderAccent = c.accent
+    val sliderTag = remember(sectionKey, title) {
+        val cleanTitle = title.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+        "slider_${sectionKey.orEmpty()}_$cleanTitle"
+    }
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Row(
@@ -5124,12 +4944,37 @@ private fun SliderRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(title, style = MaterialTheme.typography.bodySmall, color = c.textPrimary, fontWeight = FontWeight.Medium)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textPrimary,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                ScopedSettingSaveBadge(settingKey = sliderTag, showLabel = false)
+            }
             Text(valueText, style = MaterialTheme.typography.labelSmall, color = sliderAccent, fontWeight = FontWeight.Bold)
         }
         Slider(
             value = value,
-            onValueChange = onValueChange,
+            onValueChange = { newVal ->
+                if (coordinator != null) {
+                    coordinator.withControlAction(
+                        controlTag = sliderTag,
+                        sectionKeyOverride = sectionKey,
+                        debounceMs = com.example.settings.SettingsAutoSaveCoordinator.CONTINUOUS_INPUT_DEBOUNCE_MS
+                    ) {
+                        onValueChange(newVal)
+                    }
+                } else {
+                    onValueChange(newVal)
+                }
+            },
             valueRange = valueRange,
             colors = SliderDefaults.colors(
                 thumbColor = sliderAccent,

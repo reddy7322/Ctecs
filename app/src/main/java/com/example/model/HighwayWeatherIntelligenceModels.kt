@@ -217,6 +217,508 @@ enum class BitumenBinderType(
     }
 }
 
+/**
+ * Top-level bituminous work category selectable in the Weather Page Settings popup.
+ */
+enum class BituminousWorkCategory(
+    val displayName: String,
+    val shortLabel: String
+) {
+    BC("BC (Bituminous Concrete)", "BC"),
+    DBM("DBM (Dense Bituminous Macadam)", "DBM"),
+    OTHER_BITUMINOUS("Other Bituminous Works", "Other Bituminous"),
+    CUSTOM("Custom", "Custom");
+
+    companion object {
+        fun fromName(raw: String?): BituminousWorkCategory =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: BC
+    }
+}
+
+/**
+ * Specific highway bituminous activity shown dynamically when [BituminousWorkCategory.OTHER_BITUMINOUS] is selected.
+ */
+enum class OtherBituminousWorkType(
+    val displayName: String,
+    val shortLabel: String,
+    val referenceLabel: String,
+    val isHotMix: Boolean,
+    val isEmulsionSprayOrSlurry: Boolean
+) {
+    BM(
+        displayName = "BM (Bituminous Macadam)",
+        shortLabel = "BM",
+        referenceLabel = "MoRTH 5th Rev Section 504 & Cl. 501.5.1 / IRC:105-2019 Cl. 3.3.4",
+        isHotMix = true,
+        isEmulsionSprayOrSlurry = false
+    ),
+    SDBC(
+        displayName = "SDBC (Semi-Dense Bituminous Concrete)",
+        shortLabel = "SDBC",
+        referenceLabel = "MoRTH / IRC:111-2009 & Cl. 501.5.1",
+        isHotMix = true,
+        isEmulsionSprayOrSlurry = false
+    ),
+    SMA(
+        displayName = "SMA (Stone Matrix Asphalt)",
+        shortLabel = "SMA",
+        referenceLabel = "MoRTH 5th Rev Section 515 & Cl. 501.5.1 / IRC:SP:79",
+        isHotMix = true,
+        isEmulsionSprayOrSlurry = false
+    ),
+    TACK_COAT(
+        displayName = "Tack Coat",
+        shortLabel = "Tack Coat",
+        referenceLabel = "MoRTH 5th Rev Cl. 503.4 & Cl. 501.5.1",
+        isHotMix = false,
+        isEmulsionSprayOrSlurry = true
+    ),
+    PRIME_COAT(
+        displayName = "Prime Coat",
+        shortLabel = "Prime Coat",
+        referenceLabel = "MoRTH 5th Rev Cl. 502.4 & Cl. 501.5.1",
+        isHotMix = false,
+        isEmulsionSprayOrSlurry = true
+    ),
+    SURFACE_DRESSING(
+        displayName = "Surface Dressing / Seal Coat",
+        shortLabel = "Surface Dressing",
+        referenceLabel = "MoRTH 5th Rev Cl. 509 / Cl. 511 & Cl. 501.5.1",
+        isHotMix = false,
+        isEmulsionSprayOrSlurry = false
+    ),
+    MSS_OGPC(
+        displayName = "MSS / OGPC (Thin Surfacing)",
+        shortLabel = "MSS / OGPC",
+        referenceLabel = "MoRTH 5th Rev Cl. 510 / Cl. 512 & Cl. 501.5.1",
+        isHotMix = true,
+        isEmulsionSprayOrSlurry = false
+    ),
+    MICRO_SURFACING(
+        displayName = "Micro-Surfacing / Slurry Seal",
+        shortLabel = "Micro-Surfacing",
+        referenceLabel = "MoRTH 5th Rev Cl. 514 / IRC:SP:81",
+        isHotMix = false,
+        isEmulsionSprayOrSlurry = true
+    );
+
+    companion object {
+        fun fromName(raw: String?): OtherBituminousWorkType =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: SMA
+    }
+}
+
+/**
+ * Specific binder / bitumen grade selectable dynamically per bituminous work category.
+ *
+ * Safeguard:
+ * - Never applies a universal threshold to every material.
+ * - Explicitly separates conventional VG-40 from modified PMB VG-40 (Polymer Modified Bitumen).
+ * - Never invents a temperature threshold for [OTHER_CUSTOM]; relies on user-entered JMF value
+ *   or reports Insufficient Specification Data.
+ */
+enum class BituminousBinderGrade(
+    val displayName: String,
+    val shortLabel: String,
+    val isModified: Boolean,
+    val isEmulsion: Boolean,
+    val standardMinSurfaceTempC: Double?,
+    val viscosityNote: String
+) {
+    VG_10(
+        displayName = "VG-10 (Paving Grade — Cold / Spray)",
+        shortLabel = "VG-10",
+        isModified = false,
+        isEmulsion = false,
+        standardMinSurfaceTempC = 10.0,
+        viscosityNote = "Lower-viscosity paving grade (IS 73); check ambient/surface temp per approved mix design."
+    ),
+    VG_20(
+        displayName = "VG-20 (Paving Grade — Cold Climate)",
+        shortLabel = "VG-20",
+        isModified = false,
+        isEmulsion = false,
+        standardMinSurfaceTempC = 10.0,
+        viscosityNote = "Cold-climate paving grade (IS 73); verify ≥10°C dry pavement surface per Cl. 501.5.1."
+    ),
+    VG_30(
+        displayName = "VG-30 (Conventional Paving Grade)",
+        shortLabel = "VG-30",
+        isModified = false,
+        isEmulsion = false,
+        standardMinSurfaceTempC = 10.0,
+        viscosityNote = "Conventional VG-30 (IS 73); ≥10°C dry pavement surface required (MoRTH Cl. 501.5.1)."
+    ),
+    VG_40(
+        displayName = "VG-40 (High-Viscosity Paving Grade)",
+        shortLabel = "VG-40",
+        isModified = false,
+        isEmulsion = false,
+        standardMinSurfaceTempC = 10.0,
+        viscosityNote = "High-viscosity conventional VG-40 (IS 73); higher mix stiffness demands tighter mat cooling & wind control."
+    ),
+    PMB(
+        displayName = "PMB (Polymer Modified Bitumen)",
+        shortLabel = "PMB",
+        isModified = true,
+        isEmulsion = false,
+        standardMinSurfaceTempC = 15.0,
+        viscosityNote = "Polymer Modified Bitumen (IRC:SP:53 / IS 15462); ≥15°C dry pavement surface & tighter compaction window."
+    ),
+    PMB_VG_40(
+        displayName = "PMB VG-40 (Polymer Modified — JMF Spec)",
+        shortLabel = "PMB VG-40",
+        isModified = true,
+        isEmulsion = false,
+        standardMinSurfaceTempC = 15.0,
+        viscosityNote = "Polymer-modified binder (NOT identical to conventional VG-40); ≥15°C surface min & strict JMF/manufacturer temp limits."
+    ),
+    CRMB(
+        displayName = "CRMB (Crumb Rubber Modified Bitumen)",
+        shortLabel = "CRMB",
+        isModified = true,
+        isEmulsion = false,
+        standardMinSurfaceTempC = 15.0,
+        viscosityNote = "Crumb Rubber Modified Bitumen (IRC:SP:53); ≥15°C dry surface min & rapid cooling sensitivity."
+    ),
+    EMULSION_RS1(
+        displayName = "Bitumen Emulsion RS-1 (Rapid Setting)",
+        shortLabel = "Emulsion RS-1",
+        isModified = false,
+        isEmulsion = true,
+        standardMinSurfaceTempC = 10.0,
+        viscosityNote = "Rapid-setting cationic emulsion (IS 8887); dry clean surface & complete breaking required before overlay."
+    ),
+    EMULSION_SS1(
+        displayName = "Bitumen Emulsion SS-1 (Slow Setting)",
+        shortLabel = "Emulsion SS-1",
+        isModified = false,
+        isEmulsion = true,
+        standardMinSurfaceTempC = 10.0,
+        viscosityNote = "Slow-setting priming emulsion (IS 8887); verify penetration, curing time, and rain-free window."
+    ),
+    EMULSION_CSS_MODIFIED(
+        displayName = "Modified Cationic Emulsion (Micro-Surfacing)",
+        shortLabel = "Modified Emulsion",
+        isModified = true,
+        isEmulsion = true,
+        standardMinSurfaceTempC = 10.0,
+        viscosityNote = "Polymer-modified cationic emulsion (IRC:SP:81); verify ambient/pavement temp, humidity curing, and rain-free window."
+    ),
+    OTHER_CUSTOM(
+        displayName = "Other / Custom Specification",
+        shortLabel = "Custom Spec",
+        isModified = false,
+        isEmulsion = false,
+        standardMinSurfaceTempC = null,
+        viscosityNote = "Custom project/manufacturer specification — follow approved JMF and Engineer-in-Charge requirements."
+    );
+
+    fun toLegacyBinderType(): BitumenBinderType = when (this) {
+        VG_10, VG_20, VG_30 -> BitumenBinderType.CONVENTIONAL_VG30
+        VG_40 -> BitumenBinderType.CONVENTIONAL_VG40
+        PMB, PMB_VG_40 -> BitumenBinderType.MODIFIED_PMB
+        CRMB -> BitumenBinderType.MODIFIED_CRMB
+        EMULSION_RS1 -> BitumenBinderType.EMULSION_RS1
+        EMULSION_SS1, EMULSION_CSS_MODIFIED -> BitumenBinderType.EMULSION_SS1
+        OTHER_CUSTOM -> BitumenBinderType.CONVENTIONAL_VG30
+    }
+
+    companion object {
+        fun fromName(raw: String?): BituminousBinderGrade =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: VG_30
+
+        fun fromLegacy(legacy: BitumenBinderType): BituminousBinderGrade = when (legacy) {
+            BitumenBinderType.CONVENTIONAL_VG30 -> VG_30
+            BitumenBinderType.CONVENTIONAL_VG40 -> VG_40
+            BitumenBinderType.MODIFIED_PMB -> PMB
+            BitumenBinderType.MODIFIED_CRMB -> CRMB
+            BitumenBinderType.EMULSION_RS1 -> EMULSION_RS1
+            BitumenBinderType.EMULSION_SS1 -> EMULSION_SS1
+        }
+    }
+}
+
+/**
+ * Dynamic Bituminous Material & Binder Configuration persisted locally in Weather Page settings.
+ */
+data class BituminousMaterialConfig(
+    val workCategory: BituminousWorkCategory = BituminousWorkCategory.BC,
+    val otherWorkType: OtherBituminousWorkType = OtherBituminousWorkType.SMA,
+    val customWorkCategoryName: String = "",
+    val binderGrade: BituminousBinderGrade = BituminousBinderGrade.VG_30,
+    val bcBinderGrade: BituminousBinderGrade = BituminousBinderGrade.VG_30,
+    val dbmBinderGrade: BituminousBinderGrade = BituminousBinderGrade.VG_30,
+    val customBinderSpecification: String = "",
+    val customMinSurfaceTempC: Double? = null,
+    val customSpecificationNotes: String = "",
+    val isCustomCategoryActive: Boolean = false
+) {
+    val resolvedWorkCategoryLabel: String
+        get() = when (workCategory) {
+            BituminousWorkCategory.BC -> "BC (Bituminous Concrete)"
+            BituminousWorkCategory.DBM -> "DBM (Dense Bituminous Macadam)"
+            BituminousWorkCategory.OTHER_BITUMINOUS -> otherWorkType.displayName
+            BituminousWorkCategory.CUSTOM -> customWorkCategoryName.trim().ifBlank { "Custom Bituminous Work" }
+        }
+
+    val resolvedWorkCategoryShortLabel: String
+        get() = when (workCategory) {
+            BituminousWorkCategory.BC -> "BC Laying"
+            BituminousWorkCategory.DBM -> "DBM Laying"
+            BituminousWorkCategory.OTHER_BITUMINOUS -> otherWorkType.shortLabel
+            BituminousWorkCategory.CUSTOM -> customWorkCategoryName.trim().ifBlank { "Custom Bituminous" }
+        }
+
+    val resolvedBinderLabel: String
+        get() = if (binderGrade == BituminousBinderGrade.OTHER_CUSTOM) {
+            customBinderSpecification.trim().ifBlank { "Custom Specification" }
+        } else {
+            binderGrade.shortLabel
+        }
+
+    /**
+     * Returns the verified minimum pavement surface temperature (°C) if available from MoRTH/IRC
+     * standards or explicitly entered from the approved JMF. Returns null when exact specification
+     * requirements are unavailable (so the rule engine emits Insufficient Specification Data).
+     */
+    val effectiveMinSurfaceTempC: Double?
+        get() = when {
+            customMinSurfaceTempC != null && customMinSurfaceTempC.isFinite() -> customMinSurfaceTempC
+            workCategory == BituminousWorkCategory.CUSTOM -> null
+            binderGrade == BituminousBinderGrade.OTHER_CUSTOM -> null
+            else -> binderGrade.standardMinSurfaceTempC
+        }
+
+    /**
+     * True when exact specification temperature requirements are missing for Custom category or
+     * Other/Custom binder without an approved JMF minimum surface temperature.
+     */
+    val hasInsufficientSpecificationData: Boolean
+        get() = effectiveMinSurfaceTempC == null
+
+    fun binderForActivity(activity: HighwayWorkActivity): BituminousBinderGrade = when (activity) {
+        HighwayWorkActivity.BC_LAYING -> if (workCategory == BituminousWorkCategory.BC) binderGrade else bcBinderGrade
+        HighwayWorkActivity.DBM_LAYING -> if (workCategory == BituminousWorkCategory.DBM) binderGrade else dbmBinderGrade
+        HighwayWorkActivity.TACK_COAT_APPLICATION ->
+            if (workCategory == BituminousWorkCategory.OTHER_BITUMINOUS && otherWorkType == OtherBituminousWorkType.TACK_COAT) {
+                binderGrade
+            } else {
+                BituminousBinderGrade.EMULSION_RS1
+            }
+        HighwayWorkActivity.PRIME_COAT_APPLICATION ->
+            if (workCategory == BituminousWorkCategory.OTHER_BITUMINOUS && otherWorkType == OtherBituminousWorkType.PRIME_COAT) {
+                binderGrade
+            } else {
+                BituminousBinderGrade.EMULSION_SS1
+            }
+        else -> binderGrade
+    }
+
+    fun mappedHighwayActivity(): HighwayWorkActivity = when (workCategory) {
+        BituminousWorkCategory.BC -> HighwayWorkActivity.BC_LAYING
+        BituminousWorkCategory.DBM -> HighwayWorkActivity.DBM_LAYING
+        BituminousWorkCategory.OTHER_BITUMINOUS -> when (otherWorkType) {
+            OtherBituminousWorkType.TACK_COAT -> HighwayWorkActivity.TACK_COAT_APPLICATION
+            OtherBituminousWorkType.PRIME_COAT -> HighwayWorkActivity.PRIME_COAT_APPLICATION
+            else -> HighwayWorkActivity.BC_LAYING
+        }
+        BituminousWorkCategory.CUSTOM -> HighwayWorkActivity.BC_LAYING
+    }
+
+    /**
+     * True when this configuration represents an extended bituminous work (e.g. SMA, SDBC, BM,
+     * Surface Dressing, MSS/OGPC, Micro-Surfacing, or Custom) that overrides the standard 14-chip activity.
+     */
+    val usesExtendedBituminousProfile: Boolean
+        get() = isCustomCategoryActive && (
+            workCategory == BituminousWorkCategory.CUSTOM ||
+                (workCategory == BituminousWorkCategory.OTHER_BITUMINOUS &&
+                    otherWorkType != OtherBituminousWorkType.TACK_COAT &&
+                    otherWorkType != OtherBituminousWorkType.PRIME_COAT)
+            )
+
+    fun withCategoryChanged(newCategory: BituminousWorkCategory): BituminousMaterialConfig {
+        val targetBinder = when (newCategory) {
+            BituminousWorkCategory.BC -> bcBinderGrade
+            BituminousWorkCategory.DBM -> dbmBinderGrade
+            BituminousWorkCategory.OTHER_BITUMINOUS ->
+                defaultBinderFor(newCategory, otherWorkType)
+            BituminousWorkCategory.CUSTOM -> binderGrade
+        }
+        val applicable = applicableBindersFor(newCategory, otherWorkType)
+        val safeBinder = if (targetBinder in applicable) targetBinder else defaultBinderFor(newCategory, otherWorkType)
+        val extendedActive = newCategory == BituminousWorkCategory.CUSTOM ||
+            (newCategory == BituminousWorkCategory.OTHER_BITUMINOUS &&
+                otherWorkType != OtherBituminousWorkType.TACK_COAT &&
+                otherWorkType != OtherBituminousWorkType.PRIME_COAT)
+        return copy(
+            workCategory = newCategory,
+            binderGrade = safeBinder,
+            isCustomCategoryActive = extendedActive
+        )
+    }
+
+    fun withOtherWorkTypeChanged(newOther: OtherBituminousWorkType): BituminousMaterialConfig {
+        val applicable = applicableBindersFor(BituminousWorkCategory.OTHER_BITUMINOUS, newOther)
+        val safeBinder = if (binderGrade in applicable) binderGrade else defaultBinderFor(BituminousWorkCategory.OTHER_BITUMINOUS, newOther)
+        val extendedActive = newOther != OtherBituminousWorkType.TACK_COAT &&
+            newOther != OtherBituminousWorkType.PRIME_COAT
+        return copy(
+            workCategory = BituminousWorkCategory.OTHER_BITUMINOUS,
+            otherWorkType = newOther,
+            binderGrade = safeBinder,
+            isCustomCategoryActive = extendedActive
+        )
+    }
+
+    fun withBinderChanged(newBinder: BituminousBinderGrade): BituminousMaterialConfig {
+        return copy(
+            binderGrade = newBinder,
+            bcBinderGrade = if (workCategory == BituminousWorkCategory.BC) newBinder else bcBinderGrade,
+            dbmBinderGrade = if (workCategory == BituminousWorkCategory.DBM) newBinder else dbmBinderGrade
+        )
+    }
+
+    fun toJsonObject(): JSONObject = JSONObject().apply {
+        put("workCategory", workCategory.name)
+        put("otherWorkType", otherWorkType.name)
+        put("customWorkCategoryName", customWorkCategoryName)
+        put("binderGrade", binderGrade.name)
+        put("bcBinderGrade", bcBinderGrade.name)
+        put("dbmBinderGrade", dbmBinderGrade.name)
+        put("customBinderSpecification", customBinderSpecification)
+        customMinSurfaceTempC?.let { put("customMinSurfaceTempC", it) }
+        put("customSpecificationNotes", customSpecificationNotes)
+        put("isCustomCategoryActive", isCustomCategoryActive)
+    }
+
+    companion object {
+        /**
+         * Returns ONLY applicable binder grades for the selected bituminous work category.
+         * Does NOT assume every binder grade suits every bituminous layer.
+         */
+        fun applicableBindersFor(
+            category: BituminousWorkCategory,
+            otherWorkType: OtherBituminousWorkType = OtherBituminousWorkType.SMA
+        ): List<BituminousBinderGrade> = when (category) {
+            BituminousWorkCategory.BC -> listOf(
+                BituminousBinderGrade.VG_30,
+                BituminousBinderGrade.VG_40,
+                BituminousBinderGrade.PMB,
+                BituminousBinderGrade.PMB_VG_40,
+                BituminousBinderGrade.CRMB,
+                BituminousBinderGrade.OTHER_CUSTOM
+            )
+            BituminousWorkCategory.DBM -> listOf(
+                BituminousBinderGrade.VG_30,
+                BituminousBinderGrade.VG_40,
+                BituminousBinderGrade.PMB,
+                BituminousBinderGrade.PMB_VG_40,
+                BituminousBinderGrade.CRMB,
+                BituminousBinderGrade.OTHER_CUSTOM
+            )
+            BituminousWorkCategory.OTHER_BITUMINOUS -> when (otherWorkType) {
+                OtherBituminousWorkType.BM -> listOf(
+                    BituminousBinderGrade.VG_20,
+                    BituminousBinderGrade.VG_30,
+                    BituminousBinderGrade.VG_40,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+                OtherBituminousWorkType.SDBC -> listOf(
+                    BituminousBinderGrade.VG_20,
+                    BituminousBinderGrade.VG_30,
+                    BituminousBinderGrade.VG_40,
+                    BituminousBinderGrade.PMB,
+                    BituminousBinderGrade.CRMB,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+                OtherBituminousWorkType.SMA -> listOf(
+                    BituminousBinderGrade.PMB,
+                    BituminousBinderGrade.PMB_VG_40,
+                    BituminousBinderGrade.VG_40,
+                    BituminousBinderGrade.CRMB,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+                OtherBituminousWorkType.TACK_COAT -> listOf(
+                    BituminousBinderGrade.EMULSION_RS1,
+                    BituminousBinderGrade.VG_10,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+                OtherBituminousWorkType.PRIME_COAT -> listOf(
+                    BituminousBinderGrade.EMULSION_SS1,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+                OtherBituminousWorkType.SURFACE_DRESSING -> listOf(
+                    BituminousBinderGrade.VG_10,
+                    BituminousBinderGrade.VG_20,
+                    BituminousBinderGrade.VG_30,
+                    BituminousBinderGrade.CRMB,
+                    BituminousBinderGrade.EMULSION_RS1,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+                OtherBituminousWorkType.MSS_OGPC -> listOf(
+                    BituminousBinderGrade.VG_10,
+                    BituminousBinderGrade.VG_20,
+                    BituminousBinderGrade.VG_30,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+                OtherBituminousWorkType.MICRO_SURFACING -> listOf(
+                    BituminousBinderGrade.EMULSION_CSS_MODIFIED,
+                    BituminousBinderGrade.OTHER_CUSTOM
+                )
+            }
+            BituminousWorkCategory.CUSTOM -> listOf(
+                BituminousBinderGrade.VG_10,
+                BituminousBinderGrade.VG_20,
+                BituminousBinderGrade.VG_30,
+                BituminousBinderGrade.VG_40,
+                BituminousBinderGrade.PMB,
+                BituminousBinderGrade.PMB_VG_40,
+                BituminousBinderGrade.CRMB,
+                BituminousBinderGrade.OTHER_CUSTOM
+            )
+        }
+
+        fun defaultBinderFor(
+            category: BituminousWorkCategory,
+            otherWorkType: OtherBituminousWorkType = OtherBituminousWorkType.SMA
+        ): BituminousBinderGrade = when (category) {
+            BituminousWorkCategory.BC -> BituminousBinderGrade.VG_30
+            BituminousWorkCategory.DBM -> BituminousBinderGrade.VG_30
+            BituminousWorkCategory.OTHER_BITUMINOUS -> when (otherWorkType) {
+                OtherBituminousWorkType.SMA -> BituminousBinderGrade.PMB
+                OtherBituminousWorkType.TACK_COAT -> BituminousBinderGrade.EMULSION_RS1
+                OtherBituminousWorkType.PRIME_COAT -> BituminousBinderGrade.EMULSION_SS1
+                OtherBituminousWorkType.MICRO_SURFACING -> BituminousBinderGrade.EMULSION_CSS_MODIFIED
+                else -> BituminousBinderGrade.VG_30
+            }
+            BituminousWorkCategory.CUSTOM -> BituminousBinderGrade.OTHER_CUSTOM
+        }
+
+        fun fromJsonObject(obj: JSONObject?): BituminousMaterialConfig {
+            if (obj == null) return BituminousMaterialConfig()
+            val cat = BituminousWorkCategory.fromName(obj.optString("workCategory", ""))
+            val other = OtherBituminousWorkType.fromName(obj.optString("otherWorkType", ""))
+            val binder = BituminousBinderGrade.fromName(obj.optString("binderGrade", ""))
+            return BituminousMaterialConfig(
+                workCategory = cat,
+                otherWorkType = other,
+                customWorkCategoryName = obj.optString("customWorkCategoryName", ""),
+                binderGrade = binder,
+                bcBinderGrade = BituminousBinderGrade.fromName(obj.optString("bcBinderGrade", BituminousBinderGrade.VG_30.name)),
+                dbmBinderGrade = BituminousBinderGrade.fromName(obj.optString("dbmBinderGrade", BituminousBinderGrade.VG_30.name)),
+                customBinderSpecification = obj.optString("customBinderSpecification", ""),
+                customMinSurfaceTempC = if (obj.has("customMinSurfaceTempC") && !obj.isNull("customMinSurfaceTempC")) {
+                    obj.optDouble("customMinSurfaceTempC").takeIf { it.isFinite() }
+                } else null,
+                customSpecificationNotes = obj.optString("customSpecificationNotes", ""),
+                isCustomCategoryActive = obj.optBoolean("isCustomCategoryActive", false)
+            )
+        }
+    }
+}
+
 enum class SurfaceMoistureCondition(val label: String) {
     UNKNOWN("Not Verified on Site"),
     DRY("Dry & Clean"),
@@ -436,7 +938,11 @@ data class HourlyWorkWindow(
     val confidence: ForecastConfidence,
     val primaryReason: String,
     val restrictions: List<String>,
-    val isMandatoryViolation: Boolean
+    val isMandatoryViolation: Boolean,
+    val workCategoryLabel: String = "",
+    val binderGradeLabel: String = "",
+    val measuredSurfaceTempC: Double? = null,
+    val insufficientSpecData: Boolean = false
 )
 
 /**
@@ -661,6 +1167,8 @@ data class WeatherIntelligenceSettings(
     ),
     // 6. Contract Specification & IRC/MoRTH References
     val contractSpec: ContractSpecificationConfig = ContractSpecificationConfig(),
+    // 6b. Dynamic Bituminous Material & Binder Configuration (Weather Settings Popup)
+    val bituminousConfig: BituminousMaterialConfig = BituminousMaterialConfig(),
     // 7. Project Work Targets & Production Rates
     val savedProductionRatesByActivity: Map<HighwayWorkActivity, Double> = emptyMap(),
     val defaultProductionRateSource: ValueSourceTag = ValueSourceTag.USER_ENTERED,
@@ -702,6 +1210,7 @@ data class WeatherIntelligenceSettings(
         put("primaryActivity", primaryActivity.name)
         put("enabledAlertActivities", JSONArray().apply { enabledAlertActivities.forEach { put(it.name) } })
         put("contractSpec", contractSpec.toJsonObject())
+        put("bituminousConfig", bituminousConfig.toJsonObject())
         put("savedProductionRatesByActivity", JSONObject().apply {
             savedProductionRatesByActivity.forEach { (act, rate) -> put(act.name, rate) }
         })
@@ -772,6 +1281,7 @@ data class WeatherIntelligenceSettings(
                     primaryActivity = HighwayWorkActivity.fromName(obj.optString("primaryActivity", "")),
                     enabledAlertActivities = actSet,
                     contractSpec = ContractSpecificationConfig.fromJsonObject(obj.optJSONObject("contractSpec")),
+                    bituminousConfig = BituminousMaterialConfig.fromJsonObject(obj.optJSONObject("bituminousConfig")),
                     savedProductionRatesByActivity = rateMap,
                     defaultProductionRateSource = ValueSourceTag.fromName(obj.optString("defaultProductionRateSource", "")),
                     autoRefreshEnabled = obj.optBoolean("autoRefreshEnabled", true),

@@ -58,7 +58,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [33])
 class SettingsCleanupAndScreensaverOrientationTest {
 
     @get:Rule
@@ -112,20 +112,21 @@ class SettingsCleanupAndScreensaverOrientationTest {
         }
         composeTestRule.waitForIdle()
 
-        // Expand Permissions and App Information section
-        composeTestRule.onNodeWithText("Permissions and App Information").performScrollTo().performClick()
-        composeTestRule.waitForIdle()
+        // App Information is ALWAYS visible directly on SettingsScreen (no dropdown click required!)
+        composeTestRule.onNodeWithTag("settings_app_info_section").performScrollTo().assertIsDisplayed()
 
         // Package string and app package identifier must NOT be displayed anywhere
         composeTestRule.onAllNodesWithText("Package", substring = true, ignoreCase = true).assertCountEquals(0)
         composeTestRule.onAllNodesWithText(app.packageName, substring = true).assertCountEquals(0)
         composeTestRule.onAllNodesWithText("9 Categories", substring = true).assertCountEquals(0)
 
-        // Preserved App Info details: version, release channel, update check, reset button, and developer credit
-        composeTestRule.onNodeWithText("App Version:", substring = true).performScrollTo().assertIsDisplayed()
+        // Preserved App Info details: version, release channel, developer credit, and Buy Me a Coffee button
+        composeTestRule.onNodeWithTag("app_info_version").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Update Channel:", substring = true).performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Made with ❤️ madhureddyainala").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("settings_done_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("buy_me_a_coffee_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_done_button").assertDoesNotExist()
+        composeTestRule.onAllNodesWithText("Preferences saved automatically", substring = true, ignoreCase = true).assertCountEquals(0)
     }
 
     // =========================================================================

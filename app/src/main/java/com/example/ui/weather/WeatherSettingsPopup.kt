@@ -47,7 +47,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.model.BituminousMaterialConfig
+import com.example.model.BituminousWorkCategory
 import com.example.model.HighwayWorkActivity
+import com.example.model.OtherBituminousWorkType
 import com.example.model.TemperatureUnit
 import com.example.model.WeatherIntelligenceSettings
 import com.example.model.WindSpeedUnit
@@ -55,8 +58,8 @@ import com.example.ui.theme.CtecsTheme
 
 /**
  * Contextual animated Settings popup exclusively for the WEATHER page.
- * Contains ONLY Weather Display, Activity Prediction, Weather Alerts, and Weather Data controls.
- * Never embeds Work Planning form inputs.
+ * Contains ONLY Weather Display, Bituminous Material Configuration, Activity Prediction,
+ * Weather Alerts, and Weather Data controls.
  */
 @Composable
 fun WeatherSettingsPopup(
@@ -94,7 +97,7 @@ fun WeatherSettingsPopup(
                     shadowElevation = 12.dp,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 640.dp)
+                        .heightIn(max = 660.dp)
                         .testTag("weather_settings_popup")
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
@@ -113,7 +116,7 @@ fun WeatherSettingsPopup(
                                 Icon(Icons.Rounded.Tune, contentDescription = null, tint = c.accent, modifier = Modifier.size(19.dp))
                                 Column {
                                     Text("Weather Settings", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                    Text("Display, activity prediction, alerts & data", color = c.textMuted, fontSize = 11.sp)
+                                    Text("Bituminous material, display, alerts & data", color = c.textMuted, fontSize = 11.sp)
                                 }
                             }
                             IconButton(
@@ -133,7 +136,25 @@ fun WeatherSettingsPopup(
                                 .padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            // 1. Weather Display
+                            // 1. Bituminous Material Configuration (Dynamic Work Category & Binder Grade)
+                            BituminousMaterialConfigSection(
+                                config = settings.bituminousConfig,
+                                animationsEnabled = settings.animationsEnabled,
+                                onConfigChange = { updatedCfg ->
+                                    onUpdateSettings { current ->
+                                        applyBituminousConfigUpdate(current, updatedCfg)
+                                    }
+                                },
+                                onResetDefault = {
+                                    onUpdateSettings { current ->
+                                        applyBituminousConfigUpdate(current, BituminousMaterialConfig())
+                                    }
+                                }
+                            )
+
+                            HorizontalDivider(color = c.subtleSeparator, thickness = 0.7.dp)
+
+                            // 2. Weather Display
                             PopupSectionHeader("WEATHER DISPLAY")
                             SegmentedOptionRow(
                                 label = "Temperature Unit",
@@ -180,7 +201,7 @@ fun WeatherSettingsPopup(
 
                             HorizontalDivider(color = c.subtleSeparator, thickness = 0.7.dp)
 
-                            // 2. Activity Prediction
+                            // 3. Activity Prediction
                             PopupSectionHeader("ACTIVITY PREDICTION")
                             PopupSwitchRow(
                                 title = "Enable Activity Prediction",
@@ -199,7 +220,20 @@ fun WeatherSettingsPopup(
                                     ),
                                     selected = settings.primaryActivity,
                                     tagPrefix = "ws_default_act",
-                                    onSelect = { act -> onUpdateSettings { it.copy(primaryActivity = act) } }
+                                    onSelect = { act ->
+                                        onUpdateSettings { current ->
+                                            val syncedBituminous = when (act) {
+                                                HighwayWorkActivity.BC_LAYING -> current.bituminousConfig.withCategoryChanged(BituminousWorkCategory.BC)
+                                                HighwayWorkActivity.DBM_LAYING -> current.bituminousConfig.withCategoryChanged(BituminousWorkCategory.DBM)
+                                                HighwayWorkActivity.TACK_COAT_APPLICATION -> current.bituminousConfig.withOtherWorkTypeChanged(OtherBituminousWorkType.TACK_COAT)
+                                                else -> current.bituminousConfig.copy(isCustomCategoryActive = false)
+                                            }
+                                            current.copy(
+                                                primaryActivity = act,
+                                                bituminousConfig = syncedBituminous
+                                            )
+                                        }
+                                    }
                                 )
                                 SegmentedOptionRow(
                                     label = "Prediction Interval",
@@ -224,7 +258,7 @@ fun WeatherSettingsPopup(
 
                             HorizontalDivider(color = c.subtleSeparator, thickness = 0.7.dp)
 
-                            // 3. Weather Alerts
+                            // 4. Weather Alerts
                             PopupSectionHeader("WEATHER ALERTS")
                             PopupSwitchRow(
                                 title = "Rain Alerts",
