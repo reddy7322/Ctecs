@@ -87,18 +87,124 @@ object DonationConfig {
     }
 
     /**
-     * Builds the canonical NPCI UPI payment URI carrying exact recipient details,
-     * dynamic amount, unique transaction reference, and description.
+     * Builds the canonical, standard NPCI UPI payment Android [Uri] using [Uri.Builder].
+     *
+     * Produces:
+     * `upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support`
+     *
+     * Key correctness guarantees:
+     * - Encodes each query parameter exactly once (never double-encoding `%40` as `%2540`).
+     * - Keeps internal recipient VPA (`tvtelugu@ptyes`) and name (`madhu`) intact in the payload.
+     * - Omits merchant-only P2M parameters (`tr`, `mc`, `orgid`, `mode`) that cause BHIM and
+     *   other UPI apps to reject personal VPAs with "This request type is not supported".
      */
-    fun buildUpiPaymentUri(amountInr: Double, orderRef: String): String {
+    fun buildUpiPaymentAndroidUri(amountInr: Double): Uri {
         require(amountInr.isFinite() && amountInr > 0.0) { "Amount must be positive" }
-        require(orderRef.isNotBlank()) { "Order reference is required" }
-        val encodedPa = Uri.encode(UPI_ID)
-        val encodedPn = Uri.encode(RECIPIENT_NAME)
-        val encodedTr = Uri.encode(orderRef.trim())
-        val encodedTn = Uri.encode(DESCRIPTION)
         val amountStr = formatUpiAmountParam(amountInr)
-        return "upi://pay?pa=$encodedPa&pn=$encodedPn&tr=$encodedTr&tn=$encodedTn&am=$amountStr&cu=$CURRENCY"
+        return Uri.Builder()
+            .scheme("upi")
+            .authority("pay")
+            .appendQueryParameter("pa", UPI_ID)
+            .appendQueryParameter("pn", RECIPIENT_NAME)
+            .appendQueryParameter("am", amountStr)
+            .appendQueryParameter("cu", CURRENCY)
+            .appendQueryParameter("tn", DESCRIPTION)
+            .build()
+    }
+
+    /**
+     * String form of the validated standard UPI payment URI.
+     * [orderRef] is retained as an optional parameter for signature compatibility and local
+     * tracking, but is intentionally NOT appended as a P2M `tr` parameter on personal VPAs.
+     */
+    fun buildUpiPaymentUri(amountInr: Double, @Suppress("UNUSED_PARAMETER") orderRef: String? = null): String {
+        return buildUpiPaymentAndroidUri(amountInr).toString()
+    }
+
+    /**
+     * Minimal probe URI built via [Uri.Builder] for detecting installed UPI handler apps.
+     */
+    fun buildUpiProbeUri(): Uri {
+        return Uri.Builder()
+            .scheme("upi")
+            .authority("pay")
+            .appendQueryParameter("pa", UPI_ID)
+            .appendQueryParameter("pn", RECIPIENT_NAME)
+            .appendQueryParameter("cu", CURRENCY)
+            .build()
+    }
+
+    /**
+     * Strictly validates a UPI payment URI before launching any external UPI application or
+     * rendering a QR code. Rejects non-UPI schemes, double-encoded parameters (`%2540`),
+     * mismatched recipient/currency/amount, and unsigned merchant-only P2M parameters.
+     */
+    fun validateUpiPaymentUri(rawUri: String?, expectedAmountInr: Double): UpiUriValidationResult {
+        val candidate = rawUri?.trim().orEmpty()
+        if (candidate.isEmpty()) {
+            return UpiUriValidationResult.Invalid("Empty payment URI.")
+        }
+        if (candidate.contains("%25", ignoreCase = true)) {
+            return UpiUriValidationResult.Invalid("Double-encoded payment parameter detected.")
+        }
+        val parsed = try {
+            Uri.parse(candidate)
+        } catch (_: Exception) {
+            return UpiUriValidationResult.Invalid("Malformed payment URI.")
+        }
+        if (!parsed.scheme.equals("upi", ignoreCase = true) ||
+            !parsed.authority.equals("pay", ignoreCase = true)
+        ) {
+            return UpiUriValidationResult.Invalid("Unsupported payment URI scheme or host.")
+        }
+
+        val pa = parsed.getQueryParameter("pa")?.trim().orEmpty()
+        if (!pa.equals(UPI_ID, ignoreCase = true) || pa.contains("%40", ignoreCase = true) || !pa.contains("@")) {
+            return UpiUriValidationResult.Invalid("Invalid payee address parameter.")
+        }
+        val pn = parsed.getQueryParameter("pn")?.trim().orEmpty()
+        if (!pn.equals(RECIPIENT_NAME, ignoreCase = true)) {
+            return UpiUriValidationResult.Invalid("Invalid payee name parameter.")
+        }
+        val cu = parsed.getQueryParameter("cu")?.trim().orEmpty()
+        if (!cu.equals(CURRENCY, ignoreCase = true)) {
+            return UpiUriValidationResult.Invalid("Unsupported currency parameter.")
+        }
+        val amStr = parsed.getQueryParameter("am")?.trim().orEmpty()
+        val parsedAmount = amStr.toDoubleOrNull()
+        if (parsedAmount == null || !parsedAmount.isFinite() || parsedAmount <= 0.0 ||
+            kotlin.math.abs(parsedAmount - expectedAmountInr) > 0.009
+        ) {
+            return UpiUriValidationResult.Invalid("Invalid or mismatched amount parameter.")
+        }
+        val tn = parsed.getQueryParameter("tn")?.trim().orEmpty()
+        if (tn.isEmpty()) {
+            return UpiUriValidationResult.Invalid("Missing transaction note parameter.")
+        }
+
+        // Prevent unsigned P2M-only parameters (tr, mc, orgid) that trigger
+        // "This request type is not supported" on personal UPI VPAs in BHIM / UPI apps.
+        val hasMerchantSignature = !parsed.getQueryParameter("sign").isNullOrBlank()
+        if (!hasMerchantSignature) {
+            val unsupportedP2mKeys = listOf("tr", "mc", "orgid")
+            if (unsupportedP2mKeys.any { !parsed.getQueryParameter(it).isNullOrBlank() }) {
+                return UpiUriValidationResult.Invalid("Unsupported merchant-only parameter for personal VPA.")
+            }
+        }
+
+        return UpiUriValidationResult.Valid(parsed)
+    }
+
+    /**
+     * Strips any recipient identifiers or raw UPI query strings from technical error/audit notes.
+     */
+    fun sanitizeForLog(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        return raw
+            .replace(UPI_ID, "[redacted]", ignoreCase = true)
+            .replace(Uri.encode(UPI_ID), "[redacted]", ignoreCase = true)
+            .replace(Regex("upi://pay\\S*", RegexOption.IGNORE_CASE), "upi://pay?[redacted]")
+            .replace(Regex("\\b${Regex.escape(RECIPIENT_NAME)}\\b", RegexOption.IGNORE_CASE), "[redacted]")
     }
 
     fun generateOrderRef(nowMs: Long = System.currentTimeMillis()): String {
@@ -136,6 +242,11 @@ data class DonationPreset(
 sealed class AmountValidationResult {
     data class Valid(val amountInr: Double) : AmountValidationResult()
     data class Invalid(val message: String) : AmountValidationResult()
+}
+
+sealed class UpiUriValidationResult {
+    data class Valid(val uri: Uri) : UpiUriValidationResult()
+    data class Invalid(val reason: String) : UpiUriValidationResult()
 }
 
 /**

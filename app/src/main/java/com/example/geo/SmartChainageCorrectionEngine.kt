@@ -1029,15 +1029,26 @@ object SmartChainageCorrectionEngine {
             val conflictReport = detectReferenceConflicts(sortedPoints, routeData)
             val currentKmzMetres = rawChainage.metres
 
-            val currentRouteDist = if (distanceAlongAlignmentMetres > 0.01) {
+            val hasValidDistAlong = distanceAlongAlignmentMetres.isFinite() && distanceAlongAlignmentMetres >= 0.0
+            val currentRouteDist = if (hasValidDistAlong && distanceAlongAlignmentMetres > 0.0) {
                 distanceAlongAlignmentMetres
+            } else if (hasValidDistAlong && gpsPoint != null) {
+                // Distinguish genuine 0.0m alignment start from omitted default parameter (0.0)
+                val resolvedDist = resolveRoutePositionForChainage(routeData, currentKmzMetres, gpsPoint).routeDistanceMetres
+                if (resolvedDist <= 2.0) 0.0 else resolvedDist
             } else {
                 resolveRoutePositionForChainage(routeData, currentKmzMetres, gpsPoint).routeDistanceMetres
             }
 
+            val activeAlignment = routeData.activeAlignment ?: routeData.alignments.firstOrNull()
             val firstM = routeData.markers.firstOrNull()?.chainage?.metres ?: 0L
             val lastM = routeData.markers.lastOrNull()?.chainage?.metres ?: 0L
-            val isRouteDecreasing = firstM > lastM && routeData.markers.size >= 2
+            val isRouteDecreasing = when {
+                activeAlignment?.direction.equals("DECREASING", ignoreCase = true) -> true
+                activeAlignment?.direction.equals("INCREASING", ignoreCase = true) && routeData.markers.size < 2 -> false
+                routeData.markers.size >= 2 -> firstM > lastM
+                else -> false
+            }
             val routeDirectionSign = if (isRouteDecreasing) -1L else 1L
 
             val baseValidationStatus = when {
@@ -1049,7 +1060,9 @@ object SmartChainageCorrectionEngine {
 
             // Tier 1 check: Are we directly at a verified control point (within 1.5m along alignment)?
             val exactControlPt = sortedPoints.firstOrNull { pt ->
-                (currentRouteDist > 0.01 && pt.routeDistanceMetres > 0.01 && abs(currentRouteDist - pt.routeDistanceMetres) <= 1.5) ||
+                (currentRouteDist >= 0.0 && pt.routeDistanceMetres >= 0.0 &&
+                    (currentRouteDist > 0.0 || pt.routeDistanceMetres > 0.0) &&
+                    abs(currentRouteDist - pt.routeDistanceMetres) <= 1.5) ||
                     abs(currentKmzMetres - pt.originalKmzMetres) <= 1L
             }
             if (exactControlPt != null && !conflictReport.hasConflict) {
@@ -1100,7 +1113,8 @@ object SmartChainageCorrectionEngine {
             var beforeIdx = -1
             var afterIdx = -1
 
-            val useRouteDist = currentRouteDist > 0.01 && sortedPoints.all { it.routeDistanceMetres > 0.01 }
+            val useRouteDist = (currentRouteDist > 0.01 || (hasValidDistAlong && gpsPoint != null)) &&
+                sortedPoints.all { it.routeDistanceMetres > 0.01 }
 
             if (useRouteDist) {
                 for (i in sortedPoints.indices) {

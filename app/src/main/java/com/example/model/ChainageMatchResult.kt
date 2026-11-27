@@ -37,7 +37,12 @@ data class ChainageMatchResult(
     val bracketingMarkersInfo: String? = null,
     val sourceKmzReferenceStatus: String = "Valid",
     val customChainageText: String? = null,
-    val smartDirectionState: SmartDirectionState? = null
+    val smartDirectionState: SmartDirectionState? = null,
+    val manualChainageMode: ManualChainageMode? = null,
+    val travelDirection: TravelChainageDirection = TravelChainageDirection.UNKNOWN,
+    val manualCalibrationAnchorMetres: Long? = null,
+    val manualCalibrationOffsetMetres: Long? = null,
+    val isManualCalibrationPendingGps: Boolean = false
 ) {
     val displayChainage: String
         get() = customChainageText?.takeIf { it.isNotBlank() }

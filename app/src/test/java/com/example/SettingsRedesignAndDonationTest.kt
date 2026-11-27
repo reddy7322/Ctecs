@@ -26,8 +26,17 @@ import com.example.donation.DonationConfig
 import com.example.donation.DonationRepository
 import com.example.donation.DonationStatus
 import com.example.donation.DonationTransactionEntity
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ActivityInfo
+import android.content.pm.ResolveInfo
+import android.net.Uri
 import com.example.donation.DonationWebhookVerifier
+import com.example.donation.UpiIntentResolution
 import com.example.donation.UpiQrGenerator
+import com.example.donation.UpiUriValidationResult
 import com.example.ui.MainViewModel
 import com.example.ui.settings.SettingsScreen
 import com.example.ui.theme.AmoledCtecsColorTokens
@@ -148,14 +157,37 @@ class SettingsRedesignAndDonationTest {
         assertEquals("CTECS Coffee Support", DonationConfig.DESCRIPTION)
 
         val upiUri = DonationConfig.buildUpiPaymentUri(50.0, "CTECS998877")
-        val parsedUri = android.net.Uri.parse(upiUri)
-        assertTrue(upiUri.startsWith("upi://pay?"))
+        val parsedUri = Uri.parse(upiUri)
+        assertEquals(
+            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            upiUri
+        )
+        assertFalse("Must NEVER double-encode %40 as %2540", upiUri.contains("%25", ignoreCase = true))
         assertEquals("tvtelugu@ptyes", parsedUri.getQueryParameter("pa"))
         assertEquals("madhu", parsedUri.getQueryParameter("pn"))
         assertFalse("Recipient name must NEVER be TVTelugu", parsedUri.getQueryParameter("pn").equals("TVTelugu", ignoreCase = true))
         assertEquals("50.00", parsedUri.getQueryParameter("am"))
         assertEquals("INR", parsedUri.getQueryParameter("cu"))
-        assertEquals("CTECS998877", parsedUri.getQueryParameter("tr"))
+        assertEquals("CTECS Coffee Support", parsedUri.getQueryParameter("tn"))
+        assertEquals("Standard personal VPA URI must omit unsupported P2M tr parameter", null, parsedUri.getQueryParameter("tr"))
+        assertTrue(DonationConfig.validateUpiPaymentUri(upiUri, 50.0) is UpiUriValidationResult.Valid)
+
+        // Strict URI validator rejects double-encoded VPA, non-UPI schemes, and unsigned P2M tr
+        assertTrue(
+            DonationConfig.validateUpiPaymentUri(
+                "upi://pay?pa=tvtelugu%2540ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+                20.0
+            ) is UpiUriValidationResult.Invalid
+        )
+        assertTrue(
+            DonationConfig.validateUpiPaymentUri(
+                "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&tr=CTECS123&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+                20.0
+            ) is UpiUriValidationResult.Invalid
+        )
+        assertTrue(
+            DonationConfig.validateUpiPaymentUri("https://evil.example/pay", 20.0) is UpiUriValidationResult.Invalid
+        )
 
         // Strict validation: rejects empty, 0, negative, non-numeric, out-of-range
         assertTrue(DonationConfig.validateAmount("") is AmountValidationResult.Invalid)
@@ -420,10 +452,11 @@ class SettingsRedesignAndDonationTest {
         composeRule.onNodeWithTag("coffee_preset_custom").assertIsDisplayed()
         composeRule.onNodeWithTag("coffee_amount_selected_indicator", useUnmergedTree = true).assertIsDisplayed()
 
-        // 4. All 6 icon-based payment buttons are visible with zero scrolling
+        // 4. All 7 icon-based payment buttons (incl. BHIM) are visible with zero scrolling
         composeRule.onNodeWithTag("coffee_pay_gpay_btn").assertIsDisplayed()
         composeRule.onNodeWithTag("coffee_pay_phonepe_btn").assertIsDisplayed()
         composeRule.onNodeWithTag("coffee_pay_paytm_btn").assertIsDisplayed()
+        composeRule.onNodeWithTag("coffee_pay_bhim_btn").assertIsDisplayed()
         composeRule.onNodeWithTag("coffee_pay_upi_app_btn").assertIsDisplayed()
         composeRule.onNodeWithTag("coffee_pay_qr_btn").assertIsDisplayed()
         composeRule.onNodeWithTag("coffee_copy_upi_btn").assertIsDisplayed()
@@ -444,19 +477,28 @@ class SettingsRedesignAndDonationTest {
         }
         composeRule.onNodeWithTag("coffee_dynamic_qr_image").assertIsDisplayed()
 
-        // 7. Must NEVER show verified checkmark for an unverified/PENDING order
+        // 7. Must NEVER show verified checkmark for an unverified/PENDING order, and NEVER expose recipient details
         composeRule.onAllNodesWithTag("coffee_verified_checkmark").assertCountEquals(0)
+        composeRule.onAllNodesWithText("tvtelugu", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("ptyes", substring = true, ignoreCase = true).assertCountEquals(0)
         val createdOrder = runBlocking { vm.donationRepository.getOwnDonations().firstOrNull() }
         assertTrue(createdOrder != null)
         assertEquals(DonationConfig.UPI_ID, createdOrder!!.upiId)
         assertEquals(DonationConfig.RECIPIENT_NAME, createdOrder.recipientName)
         assertEquals(DonationConfig.CURRENCY, createdOrder.currency)
         assertEquals(50.0, createdOrder.amountInr, 0.001)
+        assertEquals(
+            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            createdOrder.upiUri
+        )
         assertNotEquals(DonationStatus.PAID, createdOrder.parsedStatus)
 
-        // 8. Copy UPI icon copies immutable UPI ID
+        // 8. Copy Payment Link copies validated standard upi://pay link without showing UPI ID toast
         composeRule.onNodeWithTag("coffee_copy_upi_btn").performClick()
         composeRule.waitForIdle()
+        val clipboard = app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val copiedText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        assertEquals(createdOrder.upiUri, copiedText)
 
         // 9. Closing popup via tiny × icon dismisses cleanly WITHOUT deleting or cancelling transaction
         composeRule.onNodeWithTag("coffee_sheet_close_btn").performClick()
@@ -525,5 +567,186 @@ class SettingsRedesignAndDonationTest {
         }
         composeRule.onNodeWithTag("coffee_verified_checkmark").assertIsDisplayed()
         composeRule.onNodeWithTag("donation_status_paid").assertIsDisplayed()
+    }
+
+    // =========================================================================
+    // PART F: PRIVACY ACCEPTANCE, NATIVE UPI APP COMPATIBILITY & RETRY FLOWS
+    // =========================================================================
+
+    @Test
+    fun upiPaymentCompatibility_supportsAllAmountsMajorAppsBhimBrowserExclusionAndNetworkFallback() = runBlocking {
+        // 1. Validate exact standard URI for ₹10, ₹20, ₹50, ₹100, and custom ₹75.50
+        val expectedByAmount = mapOf(
+            10.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=10.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            20.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            50.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            100.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=100.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            75.5 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=75.50&cu=INR&tn=CTECS%20Coffee%20Support"
+        )
+        expectedByAmount.forEach { (amount, expectedUri) ->
+            val built = DonationConfig.buildUpiPaymentUri(amount)
+            assertEquals(expectedUri, built)
+            assertTrue(DonationConfig.validateUpiPaymentUri(built, amount) is UpiUriValidationResult.Valid)
+        }
+
+        val order = (donationRepo.createOrReuseDonationOrder(20.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+
+        // 2. When NO UPI app is installed -> cleanly resolves to NoUpiAppInstalled (QR fallback, never crashes)
+        val noApps = donationRepo.buildCompatibleUpiIntent(order, targetPackage = "in.org.npci.upiapp")
+        assertTrue(noApps is UpiIntentResolution.NoUpiAppInstalled)
+
+        // 3. Register Google Pay, PhonePe, Paytm, BHIM, another UPI app, AND Chrome browser on ShadowPackageManager
+        val shadowPm = shadowOf(app.packageManager)
+        val upiPackages = listOf(
+            "com.google.android.apps.nbu.paisa.user" to "Google Pay",
+            "com.phonepe.app" to "PhonePe",
+            "net.one97.paytm" to "Paytm",
+            "in.org.npci.upiapp" to "BHIM",
+            "in.amazon.mShop.android.shopping" to "Amazon Pay",
+            "com.android.chrome" to "Chrome"
+        )
+        val upiFilter = IntentFilter(Intent.ACTION_VIEW).apply {
+            addCategory(Intent.CATEGORY_DEFAULT)
+            addDataScheme("upi")
+        }
+        upiPackages.forEach { (pkg, label) ->
+            val comp = android.content.ComponentName(pkg, "$pkg.UpiPayActivity")
+            val resolveInfo = ResolveInfo().apply {
+                activityInfo = ActivityInfo().apply {
+                    packageName = pkg
+                    name = comp.className
+                    exported = true
+                }
+                nonLocalizedLabel = label
+            }
+            @Suppress("DEPRECATION")
+            shadowPm.addActivityIfNotPresent(comp)
+            @Suppress("DEPRECATION")
+            shadowPm.addIntentFilterForActivity(comp, upiFilter)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, DonationConfig.buildUpiPaymentAndroidUri(20.0)), resolveInfo)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, DonationConfig.buildUpiPaymentAndroidUri(20.0)).setPackage(pkg), resolveInfo)
+        }
+
+        // Verify ordinary browser (Chrome) is NEVER included in compatible UPI apps
+        val compatible = donationRepo.getCompatibleUpiApps(DonationConfig.buildUpiPaymentAndroidUri(20.0))
+        assertFalse("Browser must never be offered as a UPI app", compatible.any { it.packageName == "com.android.chrome" })
+        assertTrue(compatible.any { it.packageName == "com.google.android.apps.nbu.paisa.user" })
+        assertTrue(compatible.any { it.packageName == "com.phonepe.app" })
+        assertTrue(compatible.any { it.packageName == "net.one97.paytm" })
+        assertTrue(compatible.any { it.packageName == "in.org.npci.upiapp" })
+        assertTrue(compatible.any { it.packageName == "in.amazon.mShop.android.shopping" })
+
+        // Verify targeted launch for Google Pay, PhonePe, Paytm, BHIM, and chooser for Other UPI
+        listOf(
+            "com.google.android.apps.nbu.paisa.user" to "Google Pay",
+            "com.phonepe.app" to "PhonePe",
+            "net.one97.paytm" to "Paytm",
+            "in.org.npci.upiapp" to "BHIM"
+        ).forEach { (pkg, label) ->
+            val resolved = donationRepo.buildCompatibleUpiIntent(order, targetPackage = pkg, targetDisplayName = label)
+            assertTrue("Expected LaunchReady for $label", resolved is UpiIntentResolution.LaunchReady)
+            val ready = resolved as UpiIntentResolution.LaunchReady
+            assertEquals(Intent.ACTION_VIEW, ready.intent.action)
+            assertEquals(pkg, ready.intent.`package`)
+            assertEquals(null, ready.intent.type) // Never sets unsupported MIME type
+            assertEquals(
+                "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+                ready.intent.dataString
+            )
+        }
+
+        val otherResolved = donationRepo.buildCompatibleUpiIntent(order, targetPackage = null)
+        assertTrue(otherResolved is UpiIntentResolution.LaunchReady)
+        assertEquals(Intent.ACTION_CHOOSER, (otherResolved as UpiIntentResolution.LaunchReady).intent.action)
+
+        // Unavailable target app returns TargetAppUnavailable instead of forcing launch
+        val missingApp = donationRepo.buildCompatibleUpiIntent(order, targetPackage = "com.nonexistent.upi")
+        assertTrue(missingApp is UpiIntentResolution.TargetAppUnavailable)
+
+        // 4. Legacy persisted URI with unsupported `&tr=...` is automatically repaired to valid standard URI
+        val legacyOrder = order.copy(
+            upiUri = "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&tr=OLD123&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support"
+        )
+        val repaired = donationRepo.resolveValidatedPaymentUri(legacyOrder).toString()
+        assertEquals(
+            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            repaired
+        )
+
+        // 5. Network interruption when backend URL is unreachable still safely creates local order & retains record
+        val offlineBackendRepo = DonationRepository(
+            context = app,
+            donationDao = inMemoryDb.donationDao(),
+            backendBaseUrl = "https://127.0.0.1:1" // guaranteed connection refused / unreachable
+        )
+        val createdOffline = offlineBackendRepo.createOrReuseDonationOrder(10.0, DonationConfig.generateIdempotencyKey())
+        assertTrue(createdOffline is DonationActionResult.Success)
+        val offlineOrder = (createdOffline as DonationActionResult.Success).data
+        assertFalse(offlineOrder.backendSynced)
+        assertEquals(
+            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=10.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            offlineOrder.upiUri
+        )
+
+        // 6. Sanitized log helper strips recipient VPA, encoded VPA, name, and UPI query string
+        val redacted = DonationConfig.sanitizeForLog("Failed to open upi://pay?pa=tvtelugu%40ptyes&pn=madhu for tvtelugu@ptyes (madhu)")
+        assertFalse(redacted.contains("tvtelugu", ignoreCase = true))
+        assertFalse(redacted.contains("madhu", ignoreCase = true))
+    }
+
+    @Test
+    fun strictPrivacyAcceptanceTest_neverExposesRecipientNameOrUpiIdInDonationUiQrFailedOrAdmin() {
+        val toastedMessages = mutableListOf<String>()
+        val failedOrder = runBlocking {
+            val created = (donationRepo.createOrReuseDonationOrder(50.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+            donationRepo.recordPaymentLaunchFailure(created.orderRef, "BHIM", "ActivityNotFoundException for tvtelugu@ptyes")
+            created
+        }
+
+        // Verify audit log itself never leaked recipient details
+        val auditLogs = runBlocking { donationRepo.getAuditLogsForOrder(failedOrder.orderRef) }
+        assertTrue(auditLogs.none { it.reason.contains("tvtelugu", ignoreCase = true) || it.reason.contains("madhu", ignoreCase = true) })
+
+        composeRule.setContent {
+            MyApplicationTheme(themeMode = "dark") {
+                com.example.ui.settings.BuyMeACoffeeBottomSheet(
+                    repository = donationRepo,
+                    restoredOrderRef = failedOrder.orderRef,
+                    onDismiss = {},
+                    onToast = { toastedMessages += it }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Failed state shows compact error + retry icon button while preserving selected amount
+        composeRule.onNodeWithTag("donation_status_failed").assertIsDisplayed()
+        composeRule.onNodeWithTag("coffee_retry_payment_btn").assertIsDisplayed()
+
+        // Open Dynamic QR and tap Copy Payment Link
+        composeRule.onNodeWithTag("coffee_pay_qr_btn").performClick()
+        composeRule.waitUntil(4000L) {
+            composeRule.onAllNodesWithTag("coffee_dynamic_qr_image").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("coffee_copy_upi_btn").performClick()
+        composeRule.waitForIdle()
+
+        // STRICT PRIVACY ACCEPTANCE ASSERTIONS on the visible donation popup + QR view + toasts
+        composeRule.onAllNodesWithText("tvtelugu@ptyes", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("tvtelugu%40ptyes", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("tvtelugu", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("madhu", substring = true, ignoreCase = true).assertCountEquals(0)
+        assertTrue(
+            "Toast messages must never expose recipient UPI ID or name",
+            toastedMessages.none { it.contains("tvtelugu", ignoreCase = true) || it.contains("madhu", ignoreCase = true) }
+        )
+
+        // Internal payment payload MUST still contain exact recipient details for valid UPI processing
+        val internalUri = DonationConfig.buildUpiPaymentAndroidUri(50.0)
+        assertEquals("tvtelugu@ptyes", internalUri.getQueryParameter("pa"))
+        assertEquals("madhu", internalUri.getQueryParameter("pn"))
+        assertEquals("INR", internalUri.getQueryParameter("cu"))
     }
 }

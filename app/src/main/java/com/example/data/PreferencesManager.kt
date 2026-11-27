@@ -306,6 +306,7 @@ class PreferencesManager(context: Context) {
         val KEY_ROUTE_CORRECTIONS_ENABLED = booleanPreferencesKey("route_chainage_corrections_enabled")
         val KEY_MANUAL_CHAINAGE_OVERRIDE = stringPreferencesKey("manual_chainage_override")
         val KEY_MANUAL_CHAINAGE_CUSTOM_TEXT = stringPreferencesKey("manual_chainage_custom_text")
+        val KEY_MANUAL_CHAINAGE_CALIBRATION_JSON = stringPreferencesKey("manual_chainage_calibration_json")
         val KEY_SAVED_CUSTOM_CHAINAGES = stringPreferencesKey("saved_custom_chainages")
         val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
         val KEY_CALIBRATION_PROFILES_JSON = stringPreferencesKey("permanent_calibration_profiles_json")
@@ -505,6 +506,31 @@ class PreferencesManager(context: Context) {
             !custom.isNullOrBlank() -> custom
             !raw.isNullOrBlank() -> raw
             else -> null
+        }
+    }
+
+    fun getInitialManualChainageCalibration(): com.example.model.ManualChainageCalibrationState {
+        return parseManualChainageCalibration(getInitialPreferences())
+    }
+
+    private fun parseManualChainageCalibration(prefs: Preferences): com.example.model.ManualChainageCalibrationState {
+        val json = prefs[KEY_MANUAL_CHAINAGE_CALIBRATION_JSON]
+        if (!json.isNullOrBlank()) {
+            return com.example.model.ManualChainageCalibrationState.fromJsonString(json)
+        }
+        val legacyText = prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT]?.takeIf { it.isNotBlank() }
+            ?: prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]?.takeIf { it.isNotBlank() }
+        val legacyParsed = legacyText?.let { Chainage.parse(it) }
+        return if (legacyParsed != null) {
+            com.example.model.ManualChainageCalibrationState(
+                isActive = true,
+                mode = com.example.model.ManualChainageMode.CONTINUE_STABLE,
+                anchorChainageMetres = legacyParsed.metres,
+                anchorFormattedText = legacyParsed.format(),
+                currentChainageMetres = legacyParsed.metres
+            )
+        } else {
+            com.example.model.ManualChainageCalibrationState()
         }
     }
 
@@ -1459,6 +1485,11 @@ class PreferencesManager(context: Context) {
         }
     }.distinctUntilChanged()
 
+    val manualChainageCalibrationFlow: Flow<com.example.model.ManualChainageCalibrationState> =
+        observedDataFlow.map { prefs ->
+            parseManualChainageCalibration(prefs)
+        }.distinctUntilChanged()
+
     val savedCustomChainagesFlow: Flow<List<String>> = observedDataFlow.map { prefs ->
         prefs[KEY_SAVED_CUSTOM_CHAINAGES].orEmpty()
     }.distinctUntilChanged().map { raw ->
@@ -1528,6 +1559,25 @@ class PreferencesManager(context: Context) {
                     prefs[KEY_MANUAL_CHAINAGE_OVERRIDE] = chainage.format()
                 } else {
                     prefs.remove(KEY_MANUAL_CHAINAGE_OVERRIDE)
+                }
+            } else {
+                prefs.remove(KEY_MANUAL_CHAINAGE_CUSTOM_TEXT)
+                prefs.remove(KEY_MANUAL_CHAINAGE_OVERRIDE)
+            }
+        }
+    }
+
+    suspend fun updateManualChainageCalibration(state: com.example.model.ManualChainageCalibrationState) {
+        safeEdit { prefs ->
+            prefs[KEY_MANUAL_CHAINAGE_CALIBRATION_JSON] = state.toJsonString()
+            if (state.isActive) {
+                val formatted = state.effectiveDisplayChainage
+                if (!formatted.isNullOrBlank()) {
+                    prefs[KEY_MANUAL_CHAINAGE_CUSTOM_TEXT] = formatted
+                    val ch = state.effectiveCurrentMetres?.let { Chainage(it) } ?: Chainage.parse(formatted)
+                    if (ch != null) {
+                        prefs[KEY_MANUAL_CHAINAGE_OVERRIDE] = ch.format()
+                    }
                 }
             } else {
                 prefs.remove(KEY_MANUAL_CHAINAGE_CUSTOM_TEXT)

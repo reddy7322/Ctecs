@@ -26,17 +26,17 @@ import kotlin.math.sqrt
 /**
  * Single Centralized Global LHS/RHS Direction Control Engine for CTECS.
  *
- * Strict priority order:
- * 1. Valid manual selection (LHS, RHS, BOTH/BHS, MEDIAN, NONE) remains active until either
- *    10 continuous minutes pass without a photograph capture (paused while recording video)
- *    or reliable vehicle speed reaches >= 5 km/h.
- * 2. Reliable consecutive GPS speed >= 5 km/h immediately activates AUTO mode, removing any
- *    active manual override, and stays in AUTO even when speed later drops below 5 km/h.
- * 3. AUTO mode determines LHS or RHS exclusively from the signed lateral offset between the
- *    current GPS position and the actual loaded KMZ/KML road alignment geometry (including
- *    curves, bends, irregular routes, and dual-carriageway LHS/RHS alignments).
- * 4. If valid KMZ/KML alignment or reliable GPS is unavailable, retains the last reliable
- *    direction on the active route or reports an unavailable state without inventing LHS/RHS.
+ * Strict Manual Override Priority:
+ * 1. User manually selects LHS (or RHS, BHS, MEDIAN, NONE) -> selection stays strictly locked
+ *    indefinitely ("MANUAL_LHS" / "MANUAL_RHS"). GPS fluctuations, vehicle speed, inactivity,
+ *    temporary GPS loss, chainage updates, or camera recomposition NEVER overwrite or auto-switch
+ *    the manual selection to AUTO.
+ * 2. AUTO activates ONLY when the user explicitly selects the AUTO option.
+ * 3. In AUTO mode, LHS or RHS is determined from the signed lateral offset between the current
+ *    GPS position and the loaded KMZ/KML road alignment geometry (including curves, bends,
+ *    irregular routes, and dual-carriageway LHS/RHS alignments).
+ * 4. If valid KMZ/KML alignment or reliable GPS is unavailable in AUTO mode, retains the last
+ *    reliable direction on the active route or reports an unavailable state without inventing LHS/RHS.
  */
 class SmartDirectionManager {
 
@@ -178,24 +178,14 @@ class SmartDirectionManager {
     }
 
     /**
-     * Returns remaining milliseconds before an active manual override expires due to photo inactivity,
-     * or null when not in manual mode or while video recording is actively suspending expiry.
+     * Manual direction lock NEVER expires automatically due to inactivity or GPS movement.
+     * Always returns null so callers never schedule automatic fallback to AUTO.
      */
     @Synchronized
     fun remainingManualInactivityMs(
         preferences: SmartDirectionPreferences,
         nowMs: Long = System.currentTimeMillis()
-    ): Long? {
-        if (preferences.controlMode != DirectionControlMode.MANUAL_OVERRIDE || manualExpiredToAuto) {
-            return null
-        }
-        if (isVideoRecordingActive) {
-            return MANUAL_INACTIVITY_TIMEOUT_MS
-        }
-        val anchor = resolveManualAnchorMs(preferences, nowMs)
-        val elapsed = (nowMs - anchor).coerceAtLeast(0L)
-        return (MANUAL_INACTIVITY_TIMEOUT_MS - elapsed).coerceAtLeast(0L)
-    }
+    ): Long? = null
 
     /**
      * Centralized evaluation entry point shared across Camera, Home, Survey, Routes,
@@ -257,27 +247,11 @@ class SmartDirectionManager {
             }
         }
 
-        val isManualCurrentlyActive = requestedManualSide != null && !manualExpiredToAuto
-        var autoReactivatedReason: DirectionAutoReactivationReason? = null
-
-        // Priority 2 check (overrides Manual immediately): Reliable consecutive GPS speed >= 5 km/h
-        val speedTriggerConfirmed = updateAndCheckSpeedTrigger(locationState, nowMs)
-        if (isManualCurrentlyActive && speedTriggerConfirmed) {
-            manualExpiredToAuto = true
-            autoReactivatedReason = DirectionAutoReactivationReason.VEHICLE_SPEED_TRIGGER
-        }
-
-        // Priority 1 timeout check: 10 continuous minutes without photo capture (suspended during active video recording)
-        if (requestedManualSide != null && !manualExpiredToAuto && !isVideoRecordingActive) {
-            val anchor = resolveManualAnchorMs(preferences, nowMs)
-            if (nowMs - anchor >= MANUAL_INACTIVITY_TIMEOUT_MS) {
-                manualExpiredToAuto = true
-                autoReactivatedReason = DirectionAutoReactivationReason.PHOTO_INACTIVITY_TIMEOUT
-            }
-        }
-
-        // Priority 1: Valid manual override remains active and is NEVER overwritten by GPS updates
-        if (requestedManualSide != null && !manualExpiredToAuto) {
+        // Priority 1 (Strict Lock): Manual selection ALWAYS takes priority over background GPS,
+        // vehicle speed, inactivity, temporary GPS loss, or alignment updates until the user
+        // explicitly selects AUTO. Never auto-switch manual LHS/RHS to AUTO.
+        if (requestedManualSide != null) {
+            manualExpiredToAuto = false
             val manualState = buildManualState(
                 manualSide = requestedManualSide,
                 routeId = routeId,
@@ -289,7 +263,7 @@ class SmartDirectionManager {
             return manualState
         }
 
-        // Priority 3 & 4: AUTO mode — KMZ/KML offset-based LHS/RHS detection ONLY
+        // Priority 2 (Explicit AUTO Mode): KMZ/KML offset-based LHS/RHS detection ONLY
         val autoState = evaluateKmzOffsetAutoDirection(
             locationState = locationState,
             matchResult = matchResult,
@@ -297,7 +271,7 @@ class SmartDirectionManager {
             activeAlignment = activeAlignment,
             convention = effectiveConvention,
             nowMs = nowMs,
-            autoReactivatedReason = autoReactivatedReason
+            autoReactivatedReason = null
         )
         latestState = autoState
         return autoState
@@ -884,11 +858,7 @@ class SmartDirectionManager {
             false -> "↓"
             null -> ""
         }
-        val detail = if (isVideoRecordingActive) {
-            "Manual override: $manualSide (timeout paused during recording)"
-        } else {
-            "Manual override: $manualSide (auto resumes after 10 min inactivity or >= 5 km/h)"
-        }
+        val detail = "Manual direction locked: $manualSide (stays active until AUTO selected)"
         return SmartDirectionState(
             detectionState = detState,
             confirmedSide = manualSide,

@@ -109,6 +109,7 @@ import com.example.donation.DonationConfig
 import com.example.donation.DonationRepository
 import com.example.donation.DonationStatus
 import com.example.donation.DonationTransactionEntity
+import com.example.donation.UpiIntentResolution
 import com.example.donation.UpiQrGenerator
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.SmartFadeDivider
@@ -122,8 +123,10 @@ private enum class PaymentActionSlot {
     GOOGLE_PAY,
     PHONE_PE,
     PAYTM,
+    BHIM,
     OTHER_UPI,
-    QR
+    QR,
+    COPY_LINK
 }
 
 private val COMPACT_PRESET_AMOUNTS = listOf(10.0, 20.0, 50.0, 100.0)
@@ -269,7 +272,9 @@ fun BuyMeACoffeeBottomSheet(
     var loadingSlot by remember { mutableStateOf<PaymentActionSlot?>(null) }
     var isRefreshingStatus by remember { mutableStateOf(false) }
     var showInvalidAmountHighlight by remember { mutableStateOf(false) }
-    var justCopiedUpi by remember { mutableStateOf(false) }
+    var justCopiedPaymentLink by remember { mutableStateOf(false) }
+    var lastFailedBrand by remember { mutableStateOf<UpiAppBrand?>(null) }
+    var hasLaunchError by remember { mutableStateOf(false) }
     var latestCreatedOrder by remember { mutableStateOf<DonationTransactionEntity?>(null) }
     var hydratedAmountFromOrderRef by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -277,10 +282,10 @@ fun BuyMeACoffeeBottomSheet(
         onActiveOrderRefChange(activeOrderRef)
     }
 
-    LaunchedEffect(justCopiedUpi) {
-        if (justCopiedUpi) {
+    LaunchedEffect(justCopiedPaymentLink) {
+        if (justCopiedPaymentLink) {
             delay(1400L)
-            justCopiedUpi = false
+            justCopiedPaymentLink = false
         }
     }
 
@@ -335,16 +340,17 @@ fun BuyMeACoffeeBottomSheet(
         }
     }
 
-    // Generate dynamic UPI QR off the main thread whenever QR panel is open for the active order
+    // Generate dynamic UPI QR off the main thread using the exact validated UPI payment URI
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(showQrPanel, activeOrder?.upiUri) {
-        val uri = activeOrder?.upiUri
-        if (!showQrPanel || uri.isNullOrBlank()) {
+    LaunchedEffect(showQrPanel, activeOrder?.orderRef, activeOrder?.upiUri, activeOrder?.amountInr) {
+        val currentOrder = activeOrder
+        if (!showQrPanel || currentOrder == null) {
             qrBitmap = null
             return@LaunchedEffect
         }
+        val validatedQrUri = repository.resolveValidatedPaymentUri(currentOrder).toString()
         qrBitmap = withContext(Dispatchers.IO) {
-            runCatching { UpiQrGenerator.generateBitmap(uri, targetSizePx = 440) }.getOrNull()
+            runCatching { UpiQrGenerator.generateBitmap(validatedQrUri, targetSizePx = 440) }.getOrNull()
         }
     }
 
@@ -443,42 +449,108 @@ fun BuyMeACoffeeBottomSheet(
         val amount = resolveValidatedAmount() ?: return
         if (loadingSlot != null) return
         loadingSlot = slot
+        hasLaunchError = false
+        lastFailedBrand = null
 
         scope.launch {
             try {
                 val order = ensureOrderForAmount(amount) ?: return@launch
-                val installedApps = withContext(Dispatchers.IO) { repository.getInstalledUpiApps() }
-                val targetInstalled = targetBrand != null && installedApps.any { it.packageName == targetBrand.packageName }
+                val resolution = withContext(Dispatchers.IO) {
+                    repository.buildCompatibleUpiIntent(
+                        order = order,
+                        targetPackage = targetBrand?.packageName,
+                        targetDisplayName = targetBrand?.displayName
+                    )
+                }
 
-                if (installedApps.isEmpty()) {
-                    val res = repository.markPaymentInitiated(order.orderRef, paymentMethod = "UPI QR Fallback")
-                    if (res is DonationActionResult.Success) {
-                        latestCreatedOrder = res.data
+                when (resolution) {
+                    is UpiIntentResolution.LaunchReady -> {
+                        val initRes = repository.markPaymentInitiated(
+                            orderRef = order.orderRef,
+                            paymentMethod = resolution.paymentMethodLabel
+                        )
+                        if (initRes is DonationActionResult.Success) {
+                            latestCreatedOrder = initRes.data
+                        }
+                        runCatching {
+                            upiLauncher.launch(resolution.intent)
+                        }.onFailure { err ->
+                            hasLaunchError = true
+                            lastFailedBrand = targetBrand
+                            val failRes = repository.recordPaymentLaunchFailure(
+                                orderRef = order.orderRef,
+                                paymentMethod = resolution.paymentMethodLabel,
+                                technicalReason = err.javaClass.simpleName
+                            )
+                            if (failRes is DonationActionResult.Success) {
+                                latestCreatedOrder = failRes.data
+                            }
+                            showQrPanel = true
+                        }
                     }
-                    showQrPanel = true
-                    return@launch
-                }
 
-                val methodLabel = when {
-                    targetInstalled && targetBrand != null -> targetBrand.displayName
-                    else -> "UPI Intent"
-                }
-                val initRes = repository.markPaymentInitiated(order.orderRef, paymentMethod = methodLabel)
-                if (initRes is DonationActionResult.Success) {
-                    latestCreatedOrder = initRes.data
-                }
+                    is UpiIntentResolution.TargetAppUnavailable -> {
+                        // Selected UPI app is not installed or cannot handle this URI:
+                        // never force an incompatible app; try chooser if other UPI apps exist,
+                        // otherwise seamlessly reveal Dynamic QR while keeping selected amount.
+                        val fallbackResolution = withContext(Dispatchers.IO) {
+                            repository.buildCompatibleUpiIntent(order = order, targetPackage = null)
+                        }
+                        if (fallbackResolution is UpiIntentResolution.LaunchReady) {
+                            val initRes = repository.markPaymentInitiated(
+                                orderRef = order.orderRef,
+                                paymentMethod = fallbackResolution.paymentMethodLabel
+                            )
+                            if (initRes is DonationActionResult.Success) {
+                                latestCreatedOrder = initRes.data
+                            }
+                            runCatching {
+                                upiLauncher.launch(fallbackResolution.intent)
+                            }.onFailure { err ->
+                                hasLaunchError = true
+                                lastFailedBrand = targetBrand
+                                val failRes = repository.recordPaymentLaunchFailure(
+                                    orderRef = order.orderRef,
+                                    paymentMethod = fallbackResolution.paymentMethodLabel,
+                                    technicalReason = err.javaClass.simpleName
+                                )
+                                if (failRes is DonationActionResult.Success) {
+                                    latestCreatedOrder = failRes.data
+                                }
+                                showQrPanel = true
+                            }
+                        } else {
+                            hasLaunchError = true
+                            lastFailedBrand = targetBrand
+                            val res = repository.markPaymentInitiated(order.orderRef, paymentMethod = "UPI QR Fallback")
+                            if (res is DonationActionResult.Success) {
+                                latestCreatedOrder = res.data
+                            }
+                            showQrPanel = true
+                        }
+                    }
 
-                val baseIntent = Intent(Intent.ACTION_VIEW, Uri.parse(order.upiUri))
-                val launchIntent = if (targetInstalled && targetBrand != null) {
-                    baseIntent.setPackage(targetBrand.packageName)
-                } else {
-                    Intent.createChooser(baseIntent, null)
-                }
+                    is UpiIntentResolution.NoUpiAppInstalled -> {
+                        // No compatible UPI app on device — fall back cleanly to Dynamic QR
+                        val res = repository.markPaymentInitiated(order.orderRef, paymentMethod = "UPI QR Fallback")
+                        if (res is DonationActionResult.Success) {
+                            latestCreatedOrder = res.data
+                        }
+                        showQrPanel = true
+                    }
 
-                runCatching {
-                    upiLauncher.launch(launchIntent)
-                }.onFailure {
-                    showQrPanel = true
+                    is UpiIntentResolution.InvalidPaymentUri -> {
+                        hasLaunchError = true
+                        lastFailedBrand = targetBrand
+                        val failRes = repository.recordPaymentLaunchFailure(
+                            orderRef = order.orderRef,
+                            paymentMethod = targetBrand?.displayName ?: "UPI Intent",
+                            technicalReason = resolution.reason
+                        )
+                        if (failRes is DonationActionResult.Success) {
+                            latestCreatedOrder = failRes.data
+                        }
+                    }
                 }
             } finally {
                 loadingSlot = null
@@ -496,6 +568,7 @@ fun BuyMeACoffeeBottomSheet(
         val amount = resolveValidatedAmount() ?: return
         if (loadingSlot != null) return
         loadingSlot = PaymentActionSlot.QR
+        hasLaunchError = false
 
         scope.launch {
             try {
@@ -511,17 +584,47 @@ fun BuyMeACoffeeBottomSheet(
         }
     }
 
-    fun copyUpiId() {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        clipboard?.setPrimaryClip(ClipData.newPlainText("UPI", DonationConfig.UPI_ID))
-        justCopiedUpi = true
-        onToast(DonationConfig.UPI_ID)
+    /**
+     * Copies the validated standard UPI payment link for the selected amount to the clipboard
+     * without ever displaying recipient details in any toast or UI text.
+     */
+    fun copyPaymentLink() {
+        val amount = resolveValidatedAmount() ?: return
+        if (loadingSlot != null) return
+        loadingSlot = PaymentActionSlot.COPY_LINK
+
+        scope.launch {
+            try {
+                val order = ensureOrderForAmount(amount) ?: return@launch
+                val validatedLink = repository.resolveValidatedPaymentUri(order).toString()
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                clipboard?.setPrimaryClip(ClipData.newPlainText("Payment Link", validatedLink))
+                justCopiedPaymentLink = true
+            } finally {
+                loadingSlot = null
+            }
+        }
+    }
+
+    fun retryCurrentPayment() {
+        hasLaunchError = false
+        val brandToRetry = lastFailedBrand
+        lastFailedBrand = null
+        val slot = when (brandToRetry) {
+            UpiAppBrand.GOOGLE_PAY -> PaymentActionSlot.GOOGLE_PAY
+            UpiAppBrand.PHONE_PE -> PaymentActionSlot.PHONE_PE
+            UpiAppBrand.PAYTM -> PaymentActionSlot.PAYTM
+            UpiAppBrand.BHIM -> PaymentActionSlot.BHIM
+            null -> PaymentActionSlot.OTHER_UPI
+        }
+        initiateUpiAppPayment(slot = slot, targetBrand = brandToRetry)
     }
 
     fun shareActiveQr(order: DonationTransactionEntity) {
         scope.launch {
+            val validatedQrUri = repository.resolveValidatedPaymentUri(order).toString()
             val uri = withContext(Dispatchers.IO) {
-                UpiQrGenerator.saveShareableQrPng(context, order.upiUri, order.orderRef)
+                UpiQrGenerator.saveShareableQrPng(context, validatedQrUri, order.orderRef)
             } ?: return@launch
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "image/png"
@@ -549,11 +652,13 @@ fun BuyMeACoffeeBottomSheet(
         }
     }
 
-    // Deep AMOLED black glass in dark theme; clean frosted white in light theme
-    val glassSurfaceColor = if (c.isDark) Color(0xF2060606) else Color(0xFAFFFFFF)
-    val glassBorderColor = if (c.isDark) Color.White.copy(alpha = 0.09f) else Color.Black.copy(alpha = 0.07f)
-    val buttonSurfaceColor = if (c.isDark) Color(0xFF141416) else Color(0xFFF3F4F6)
+    // Deep AMOLED true black in dark theme; clean minimalist white in light theme
+    val glassSurfaceColor = if (c.isDark) Color(0xF7000000) else Color(0xFAFFFFFF)
+    val glassBorderColor = if (c.isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.07f)
+    val buttonSurfaceColor = if (c.isDark) Color(0xFF111113) else Color(0xFFF3F4F6)
     val selectedSurfaceColor = if (c.isDark) c.coffeeAccent.copy(alpha = 0.18f) else c.coffeeAccent.copy(alpha = 0.13f)
+    @Suppress("UNUSED_EXPRESSION")
+    onToast // Retained for caller compatibility; never displays recipient details.
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -590,13 +695,15 @@ fun BuyMeACoffeeBottomSheet(
                             .fillMaxWidth()
                             .height(48.dp)
                     ) {
-                        // Top-left: tiny transaction status indicator (only when an order exists)
+                        // Top-left: tiny transaction status / compact retry indicator (only when an order exists)
                         if (activeOrder != null) {
                             CompactTransactionStatusControl(
                                 order = activeOrder,
                                 isRefreshing = isRefreshingStatus,
+                                hasLaunchError = hasLaunchError,
                                 reducedMotion = reducedMotion,
                                 onRefresh = { refreshOrderStatus(activeOrder) },
+                                onRetry = ::retryCurrentPayment,
                                 modifier = Modifier.align(Alignment.CenterStart)
                             )
                         }
@@ -744,9 +851,9 @@ fun BuyMeACoffeeBottomSheet(
 
                     SmartFadeDivider(color = c.subtleSeparator)
 
-                    // Compact 3×2 Icon-Only Payment Grid:
-                    // Row 1: Google Pay | PhonePe | Paytm
-                    // Row 2: Other UPI  | QR      | Copy UPI
+                    // Compact Icon-Only Payment Grid (zero text labels, zero recipient details):
+                    // Row 1: Google Pay | PhonePe | Paytm | BHIM
+                    // Row 2: Other UPI  | QR      | Copy Payment Link
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -768,7 +875,7 @@ fun BuyMeACoffeeBottomSheet(
                                 AuthenticUpiBrandIcon(
                                     brand = UpiAppBrand.GOOGLE_PAY,
                                     installedIcon = installedUpiIcons.iconFor(UpiAppBrand.GOOGLE_PAY),
-                                    size = 24.dp
+                                    size = 22.dp
                                 )
                             }
 
@@ -785,7 +892,7 @@ fun BuyMeACoffeeBottomSheet(
                                 AuthenticUpiBrandIcon(
                                     brand = UpiAppBrand.PHONE_PE,
                                     installedIcon = installedUpiIcons.iconFor(UpiAppBrand.PHONE_PE),
-                                    size = 24.dp
+                                    size = 22.dp
                                 )
                             }
 
@@ -802,7 +909,24 @@ fun BuyMeACoffeeBottomSheet(
                                 AuthenticUpiBrandIcon(
                                     brand = UpiAppBrand.PAYTM,
                                     installedIcon = installedUpiIcons.iconFor(UpiAppBrand.PAYTM),
-                                    size = 24.dp
+                                    size = 22.dp
+                                )
+                            }
+
+                            PaymentIconButton(
+                                contentDesc = "BHIM",
+                                isLoading = loadingSlot == PaymentActionSlot.BHIM,
+                                enabled = loadingSlot == null,
+                                containerColor = buttonSurfaceColor,
+                                onClick = { initiateUpiAppPayment(PaymentActionSlot.BHIM, UpiAppBrand.BHIM) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("coffee_pay_bhim_btn")
+                            ) {
+                                AuthenticUpiBrandIcon(
+                                    brand = UpiAppBrand.BHIM,
+                                    installedIcon = installedUpiIcons.iconFor(UpiAppBrand.BHIM),
+                                    size = 22.dp
                                 )
                             }
                         }
@@ -821,7 +945,7 @@ fun BuyMeACoffeeBottomSheet(
                                     .weight(1f)
                                     .testTag("coffee_pay_upi_app_btn")
                             ) {
-                                OtherUpiVectorMark(size = 24.dp)
+                                OtherUpiVectorMark(size = 22.dp)
                             }
 
                             PaymentIconButton(
@@ -843,21 +967,21 @@ fun BuyMeACoffeeBottomSheet(
                             }
 
                             PaymentIconButton(
-                                contentDesc = "Copy UPI ID",
-                                isLoading = false,
-                                enabled = true,
-                                containerColor = if (justCopiedUpi) {
+                                contentDesc = "Copy payment link",
+                                isLoading = loadingSlot == PaymentActionSlot.COPY_LINK,
+                                enabled = loadingSlot == null,
+                                containerColor = if (justCopiedPaymentLink) {
                                     c.success.copy(alpha = if (c.isDark) 0.16f else 0.12f)
                                 } else {
                                     buttonSurfaceColor
                                 },
-                                onClick = ::copyUpiId,
+                                onClick = ::copyPaymentLink,
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("coffee_copy_upi_btn")
                             ) {
                                 AnimatedContent(
-                                    targetState = justCopiedUpi,
+                                    targetState = justCopiedPaymentLink,
                                     transitionSpec = {
                                         if (reducedMotion) {
                                             fadeIn(tween(0)) togetherWith fadeOut(tween(0))
@@ -866,7 +990,7 @@ fun BuyMeACoffeeBottomSheet(
                                                 .togetherWith(fadeOut(tween(100)))
                                         }
                                     },
-                                    label = "copy_upi_icon_morph"
+                                    label = "copy_link_icon_morph"
                                 ) { copied ->
                                     Icon(
                                         imageVector = if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
@@ -1213,12 +1337,18 @@ private fun PaymentIconButton(
 private fun CompactTransactionStatusControl(
     order: DonationTransactionEntity,
     isRefreshing: Boolean,
+    hasLaunchError: Boolean,
     reducedMotion: Boolean,
     onRefresh: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val c = CtecsTheme.colors
     val status = order.parsedStatus
+    val showFailureRetry = hasLaunchError ||
+        status == DonationStatus.FAILED ||
+        status == DonationStatus.CANCELLED ||
+        status == DonationStatus.EXPIRED
 
     val dotColor = when (status) {
         DonationStatus.PAID -> c.success
@@ -1228,7 +1358,7 @@ private fun CompactTransactionStatusControl(
         DonationStatus.CANCELLED, DonationStatus.EXPIRED -> c.textMuted
     }
 
-    val isPulsing = !reducedMotion && (
+    val isPulsing = !reducedMotion && !showFailureRetry && (
         status == DonationStatus.CREATED ||
             status == DonationStatus.PENDING ||
             status == DonationStatus.UNDER_REVIEW
@@ -1247,6 +1377,36 @@ private fun CompactTransactionStatusControl(
         animated
     } else {
         1f
+    }
+
+    if (showFailureRetry) {
+        Row(
+            modifier = modifier
+                .testTag("donation_status_${status.name.lowercase(Locale.US)}"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.ErrorOutline,
+                contentDescription = status.displayLabel,
+                tint = if (status == DonationStatus.FAILED || hasLaunchError) c.error else c.textMuted,
+                modifier = Modifier.size(15.dp)
+            )
+            IconButton(
+                onClick = onRetry,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("coffee_retry_payment_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Refresh,
+                    contentDescription = "Retry payment",
+                    tint = c.coffeeAccent,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+        return
     }
 
     IconButton(
@@ -1269,14 +1429,6 @@ private fun CompactTransactionStatusControl(
                     imageVector = Icons.Rounded.CheckCircle,
                     contentDescription = "Verified",
                     tint = c.success,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            status == DonationStatus.FAILED -> {
-                Icon(
-                    imageVector = Icons.Rounded.ErrorOutline,
-                    contentDescription = "Failed",
-                    tint = c.error,
                     modifier = Modifier.size(16.dp)
                 )
             }

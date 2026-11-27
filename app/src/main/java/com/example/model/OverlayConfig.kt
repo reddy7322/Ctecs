@@ -215,7 +215,8 @@ data class CaptureSnapshot(
     val videoOutputSizeOptimization: Boolean = false,
     val targetVideoFps: Int = 30,
     val cropMode: CameraCropMode = CameraCropMode.FULL,
-    val cameraExifMetadata: Map<String, String> = emptyMap()
+    val cameraExifMetadata: Map<String, String> = emptyMap(),
+    val videoElapsedMs: Long? = null
 ) {
     val displayChainage: String
         get() = matchResult.displayChainage

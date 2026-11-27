@@ -643,117 +643,96 @@ object VideoOverlayProcessor {
         val baseTimestamp = baseSnapshot.timestamp
         val frameTimestamp = baseTimestamp + msFromStart
 
-        if (timeline.isEmpty()) {
-            val loc = defaultSnapshot.location
-            val chainage = defaultSnapshot.matchResult.chainage
-            val speed = defaultSnapshot.speedMps ?: 0f
-
-            val newLoc = if (loc != null && speed > 0f) {
-                val distMetres = (msFromStart / 1000.0) * speed
-                val bRad = Math.toRadians((defaultSnapshot.bearing ?: defaultSnapshot.compassAzimuth).toDouble())
-                val dLat = (distMetres * Math.cos(bRad)) / com.example.geo.GeoUtils.EARTH_RADIUS_METRES
-                val dLng = (distMetres * Math.sin(bRad)) / (com.example.geo.GeoUtils.EARTH_RADIUS_METRES * Math.cos(Math.toRadians(loc.latitude)))
-                com.example.model.GeoPoint(loc.latitude + Math.toDegrees(dLat), loc.longitude + Math.toDegrees(dLng), loc.altitude)
-            } else loc
-
-            val newMetres = if (chainage != null && speed > 0f) {
-                chainage.metres + ((msFromStart / 1000.0) * speed).toLong()
-            } else chainage?.metres
-
-            val newMatch = if (newMetres != null) {
-                defaultSnapshot.matchResult.copy(chainage = com.example.model.Chainage(newMetres))
-            } else defaultSnapshot.matchResult
-
-            return defaultSnapshot.copy(
-                timestamp = frameTimestamp,
-                location = newLoc,
-                matchResult = newMatch
+        fun withUpdatedChainage(
+            base: com.example.model.ChainageMatchResult,
+            newMetres: Long
+        ): com.example.model.ChainageMatchResult {
+            val ch = com.example.model.Chainage(newMetres.coerceAtLeast(0L))
+            return base.copy(
+                chainage = ch,
+                customChainageText = if (base.isManual || !base.customChainageText.isNullOrBlank()) {
+                    ch.format()
+                } else {
+                    base.customChainageText
+                }
             )
         }
 
-        if (timeline.size == 1) {
-            val snap = timeline[0]
+        fun extrapolateSingle(snap: CaptureSnapshot, extraMs: Long, outTimestamp: Long): CaptureSnapshot {
             val loc = snap.location
             val chainage = snap.matchResult.chainage
             val speed = snap.speedMps ?: 0f
+            val canExtrapolate = loc != null && !snap.isGpsRetained && !snap.matchResult.isUncertain && speed > 0.5f
 
-            val newLoc = if (loc != null && speed > 0f) {
-                val distMetres = (msFromStart / 1000.0) * speed
+            val newLoc = if (canExtrapolate && loc != null) {
+                val distMetres = (extraMs / 1000.0) * speed
                 val bRad = Math.toRadians((snap.bearing ?: snap.compassAzimuth).toDouble())
                 val dLat = (distMetres * Math.cos(bRad)) / com.example.geo.GeoUtils.EARTH_RADIUS_METRES
                 val dLng = (distMetres * Math.sin(bRad)) / (com.example.geo.GeoUtils.EARTH_RADIUS_METRES * Math.cos(Math.toRadians(loc.latitude)))
                 com.example.model.GeoPoint(loc.latitude + Math.toDegrees(dLat), loc.longitude + Math.toDegrees(dLng), loc.altitude)
             } else loc
 
-            val newMetres = if (chainage != null && speed > 0f) {
-                chainage.metres + ((msFromStart / 1000.0) * speed).toLong()
-            } else chainage?.metres
+            val dirSign = when (snap.matchResult.travelDirection) {
+                com.example.model.TravelChainageDirection.FORWARD -> 1L
+                com.example.model.TravelChainageDirection.REVERSE -> -1L
+                com.example.model.TravelChainageDirection.STATIONARY -> 0L
+                com.example.model.TravelChainageDirection.UNKNOWN -> if (canExtrapolate) 1L else 0L
+            }
 
-            val newMatch = if (newMetres != null) {
-                snap.matchResult.copy(chainage = com.example.model.Chainage(newMetres))
+            val newMatch = if (chainage != null && canExtrapolate && dirSign != 0L) {
+                val delta = ((extraMs / 1000.0) * speed).toLong()
+                withUpdatedChainage(snap.matchResult, chainage.metres + dirSign * delta)
             } else snap.matchResult
 
             return snap.copy(
-                timestamp = frameTimestamp,
+                timestamp = outTimestamp,
                 location = newLoc,
                 matchResult = newMatch
             )
         }
 
-        val startTime = timeline[0].timestamp
-        val targetEpoch = startTime + msFromStart
+        if (timeline.isEmpty()) {
+            return extrapolateSingle(defaultSnapshot, msFromStart, frameTimestamp)
+        }
 
-        // Find snapA (last snapshot with timestamp <= targetEpoch) and snapB
+        if (timeline.size == 1) {
+            return extrapolateSingle(timeline[0], msFromStart, frameTimestamp)
+        }
+
+        // Use pause-safe active recording elapsed time when present on snapshots so pause/resume
+        // never introduces timeline drift between video playback time and chainage updates.
+        val useElapsedClock = timeline.all { it.videoElapsedMs != null }
+        val startClock = if (useElapsedClock) timeline[0].videoElapsedMs!! else timeline[0].timestamp
+        val targetClock = startClock + msFromStart
+
         var snapA = timeline[0]
         var snapB = timeline.last()
         var idxA = 0
 
         for (i in 0 until timeline.size - 1) {
-            if (timeline[i].timestamp <= targetEpoch) {
+            val snapClock = if (useElapsedClock) timeline[i].videoElapsedMs!! else timeline[i].timestamp
+            if (snapClock <= targetClock) {
                 idxA = i
                 snapA = timeline[i]
                 snapB = timeline[i + 1]
             }
         }
 
-        val timeA = snapA.timestamp
-        val timeB = snapB.timestamp
+        val timeA = if (useElapsedClock) snapA.videoElapsedMs!! else snapA.timestamp
+        val timeB = if (useElapsedClock) snapB.videoElapsedMs!! else snapB.timestamp
         val durationMs = timeB - timeA
 
-        if (durationMs <= 0L || targetEpoch < timeA) {
-            return snapA.copy(timestamp = frameTimestamp)
+        if (durationMs <= 0L || targetClock < timeA) {
+            return snapA.copy(timestamp = snapA.timestamp)
         }
 
-        if (targetEpoch >= timeB && idxA == timeline.size - 2) {
-            val speed = snapB.speedMps ?: 0f
-            val extraMs = targetEpoch - timeB
-            val loc = snapB.location
-            val chainage = snapB.matchResult.chainage
-
-            val newLoc = if (loc != null && speed > 0f) {
-                val distMetres = (extraMs / 1000.0) * speed
-                val bRad = Math.toRadians((snapB.bearing ?: snapB.compassAzimuth).toDouble())
-                val dLat = (distMetres * Math.cos(bRad)) / com.example.geo.GeoUtils.EARTH_RADIUS_METRES
-                val dLng = (distMetres * Math.sin(bRad)) / (com.example.geo.GeoUtils.EARTH_RADIUS_METRES * Math.cos(Math.toRadians(loc.latitude)))
-                com.example.model.GeoPoint(loc.latitude + Math.toDegrees(dLat), loc.longitude + Math.toDegrees(dLng), loc.altitude)
-            } else loc
-
-            val newMetres = if (chainage != null && speed > 0f) {
-                chainage.metres + ((extraMs / 1000.0) * speed).toLong()
-            } else chainage?.metres
-
-            val newMatch = if (newMetres != null) {
-                snapB.matchResult.copy(chainage = com.example.model.Chainage(newMetres))
-            } else snapB.matchResult
-
-            return snapB.copy(
-                timestamp = frameTimestamp,
-                location = newLoc,
-                matchResult = newMatch
-            )
+        if (targetClock >= timeB && idxA == timeline.size - 2) {
+            val extraMs = targetClock - timeB
+            return extrapolateSingle(snapB, extraMs, snapB.timestamp + extraMs)
         }
 
-        val t = ((targetEpoch - timeA).toDouble() / durationMs.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        val t = ((targetClock - timeA).toDouble() / durationMs.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        val interpolatedWallTs = snapA.timestamp + ((snapB.timestamp - snapA.timestamp) * t).toLong()
 
         // Interpolate Location (Lat, Lng, Alt)
         val locA = snapA.location
@@ -784,27 +763,40 @@ object VideoOverlayProcessor {
         val interpAzimuth = lerpAngle(snapA.compassAzimuth, snapB.compassAzimuth, t)
         val interpHeading = formatHeading(interpAzimuth)
 
-        // Interpolate Chainage Metres
+        // Interpolate Chainage Metres (respects forward, reverse, GPS retention, and manual modes!)
         val cA = snapA.matchResult.chainage?.metres
         val cB = snapB.matchResult.chainage?.metres
+        val anchorMatch = if (t >= 0.5f) snapB.matchResult else snapA.matchResult
         val interpMatch = if (cA != null && cB != null) {
-            val m = (cA + t * (cB - cA)).toLong()
-            snapA.matchResult.copy(chainage = com.example.model.Chainage(m))
-        } else if (cA != null && interpSpeed > 0f) {
-            val elapsedSec = (targetEpoch - timeA) / 1000.0
-            val m = cA + (elapsedSec * interpSpeed).toLong()
-            snapA.matchResult.copy(chainage = com.example.model.Chainage(m))
-        } else snapA.matchResult
+            val m = Math.round(cA + t.toDouble() * (cB - cA))
+            withUpdatedChainage(anchorMatch, m)
+        } else if (cA != null && !snapA.isGpsRetained && !snapA.matchResult.isUncertain && interpSpeed > 0.5f) {
+            val dirSign = when (snapA.matchResult.travelDirection) {
+                com.example.model.TravelChainageDirection.FORWARD -> 1L
+                com.example.model.TravelChainageDirection.REVERSE -> -1L
+                else -> 0L
+            }
+            if (dirSign != 0L) {
+                val elapsedSec = (targetClock - timeA) / 1000.0
+                val m = cA + dirSign * (elapsedSec * interpSpeed).toLong()
+                withUpdatedChainage(snapA.matchResult, m)
+            } else {
+                snapA.matchResult
+            }
+        } else {
+            anchorMatch
+        }
 
         return snapA.copy(
-            timestamp = frameTimestamp,
+            timestamp = interpolatedWallTs,
             location = interpLoc,
             gpsAccuracy = interpAcc,
             bearing = interpBearing,
             matchResult = interpMatch,
             compassHeading = interpHeading,
             compassAzimuth = interpAzimuth,
-            speedMps = interpSpeed
+            speedMps = interpSpeed,
+            videoElapsedMs = msFromStart
         )
     }
 

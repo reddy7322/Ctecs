@@ -112,9 +112,30 @@ data class SmartDirectionPreferences(
             else -> null
         }
 
+    /**
+     * Authoritative internal direction lock mode string:
+     * - "MANUAL_LHS" when user manually locked LHS
+     * - "MANUAL_RHS" when user manually locked RHS
+     * - "MANUAL_BHS" / "MANUAL_MEDIAN" / "MANUAL_NONE" for other explicit manual selections
+     * - "AUTO" ONLY when user explicitly selected AUTO mode
+     */
+    val internalDirectionMode: String
+        get() {
+            if (controlMode != DirectionControlMode.MANUAL_OVERRIDE) return MODE_AUTO
+            return when (normalizedManualSide) {
+                "LHS" -> MODE_MANUAL_LHS
+                "RHS" -> MODE_MANUAL_RHS
+                "BHS" -> MODE_MANUAL_BHS
+                "MEDIAN" -> MODE_MANUAL_MEDIAN
+                "NONE" -> MODE_MANUAL_NONE
+                else -> MODE_AUTO
+            }
+        }
+
     fun toJsonString(): String {
         return JSONObject().apply {
             put("controlMode", controlMode.id)
+            put("internalDirectionMode", internalDirectionMode)
             put("manualOverrideSide", normalizedManualSide ?: "")
             put("alignmentConvention", alignmentConvention.id)
             put("voiceDirectionAnnouncementsEnabled", voiceDirectionAnnouncementsEnabled)
@@ -123,21 +144,39 @@ data class SmartDirectionPreferences(
     }
 
     companion object {
+        const val MODE_MANUAL_LHS = "MANUAL_LHS"
+        const val MODE_MANUAL_RHS = "MANUAL_RHS"
+        const val MODE_MANUAL_BHS = "MANUAL_BHS"
+        const val MODE_MANUAL_MEDIAN = "MANUAL_MEDIAN"
+        const val MODE_MANUAL_NONE = "MANUAL_NONE"
+        const val MODE_AUTO = "AUTO"
+
         fun fromJsonString(raw: String?): SmartDirectionPreferences {
             if (raw.isNullOrBlank()) return SmartDirectionPreferences()
             return try {
                 val obj = JSONObject(raw)
-                val mode = DirectionControlMode.fromId(obj.optString("controlMode", DirectionControlMode.AUTO.id))
-                val rawManual = obj.optString("manualOverrideSide", "").trim().takeIf { it.isNotBlank() }
-                val effectiveMode = if (mode == DirectionControlMode.MANUAL_OVERRIDE && rawManual != null) {
-                    DirectionControlMode.MANUAL_OVERRIDE
-                } else {
-                    DirectionControlMode.AUTO
+                val storedInternalMode = obj.optString("internalDirectionMode", "").trim().uppercase(Locale.ROOT)
+                val (effectiveMode, effectiveManualSide) = when (storedInternalMode) {
+                    MODE_MANUAL_LHS -> DirectionControlMode.MANUAL_OVERRIDE to "LHS"
+                    MODE_MANUAL_RHS -> DirectionControlMode.MANUAL_OVERRIDE to "RHS"
+                    MODE_MANUAL_BHS -> DirectionControlMode.MANUAL_OVERRIDE to "BHS"
+                    MODE_MANUAL_MEDIAN -> DirectionControlMode.MANUAL_OVERRIDE to "MEDIAN"
+                    MODE_MANUAL_NONE -> DirectionControlMode.MANUAL_OVERRIDE to "NONE"
+                    MODE_AUTO -> DirectionControlMode.AUTO to null
+                    else -> {
+                        val mode = DirectionControlMode.fromId(obj.optString("controlMode", DirectionControlMode.AUTO.id))
+                        val rawManual = obj.optString("manualOverrideSide", "").trim().takeIf { it.isNotBlank() }
+                        if (mode == DirectionControlMode.MANUAL_OVERRIDE && rawManual != null) {
+                            DirectionControlMode.MANUAL_OVERRIDE to rawManual
+                        } else {
+                            DirectionControlMode.AUTO to null
+                        }
+                    }
                 }
                 val selectedAt = obj.optLong("manualSelectedAtMs", 0L).coerceAtLeast(0L)
                 SmartDirectionPreferences(
                     controlMode = effectiveMode,
-                    manualOverrideSide = if (effectiveMode == DirectionControlMode.MANUAL_OVERRIDE) rawManual else null,
+                    manualOverrideSide = effectiveManualSide,
                     alignmentConvention = AlignmentDirectionConvention.fromId(
                         obj.optString("alignmentConvention", AlignmentDirectionConvention.AUTO_FROM_ALIGNMENT.id)
                     ),
@@ -186,6 +225,22 @@ data class SmartDirectionState(
      */
     val confirmedBinarySide: String?
         get() = confirmedSide?.trim()?.uppercase(Locale.ROOT)?.takeIf { it == "LHS" || it == "RHS" }
+
+    /**
+     * Authoritative internal direction lock mode string ("MANUAL_LHS", "MANUAL_RHS", "AUTO", etc.).
+     */
+    val internalDirectionMode: String
+        get() {
+            if (!isManualOverride) return SmartDirectionPreferences.MODE_AUTO
+            return when (confirmedSide?.trim()?.uppercase(Locale.ROOT)) {
+                "LHS" -> SmartDirectionPreferences.MODE_MANUAL_LHS
+                "RHS" -> SmartDirectionPreferences.MODE_MANUAL_RHS
+                "BHS", "BOTH" -> SmartDirectionPreferences.MODE_MANUAL_BHS
+                "MEDIAN" -> SmartDirectionPreferences.MODE_MANUAL_MEDIAN
+                "NONE" -> SmartDirectionPreferences.MODE_MANUAL_NONE
+                else -> SmartDirectionPreferences.MODE_AUTO
+            }
+        }
 
     val hasConfirmedDirection: Boolean
         get() = confirmedBinarySide != null || (isManualOverride && !confirmedSide.isNullOrBlank())

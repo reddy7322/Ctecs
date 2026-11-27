@@ -97,10 +97,12 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
@@ -189,6 +191,7 @@ import com.example.model.Chainage
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.LogoPosition
+import com.example.model.ManualChainageMode
 import com.example.model.MatchConfidence
 import com.example.model.MiniMapPosition
 import com.example.model.OverlayConfig
@@ -196,6 +199,7 @@ import com.example.model.OverlayTemplate
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.SpeedUnit
+import com.example.model.TravelChainageDirection
 import com.example.overlay.LogoProvider
 import com.example.ui.AppTab
 import com.example.ui.MainViewModel
@@ -563,6 +567,7 @@ fun CameraScreen(
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val matchResult by viewModel.cameraMatchResult.collectAsStateWithLifecycle()
     val manualChainageText by viewModel.manualChainageText.collectAsStateWithLifecycle()
+    val manualChainageCalibration by viewModel.manualChainageCalibration.collectAsStateWithLifecycle()
     val savedCustomChainages by viewModel.savedCustomChainages.collectAsStateWithLifecycle()
     val isRouteCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
@@ -1549,8 +1554,11 @@ fun CameraScreen(
                 val chainagePillContent: @Composable () -> Unit = {
                     // Control 5: Always-visible Chainage Adjustment Pill (Value + Animated Status Bulbs Only)
                     val isManualSource = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
+                    val isDynamicManualSource = isManualSource &&
+                        manualChainageCalibration.mode == ManualChainageMode.DYNAMIC_CORRECTION
                     val isCustomCorrectionSource = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
                     val sourceBgColor = when {
+                        isDynamicManualSource -> Color(0x4006B6D4)
                         isManualSource -> Color(0x40FFB52E)
                         isCustomCorrectionSource -> Color(0x40A855F7)
                         chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0x40F59E0B)
@@ -2744,14 +2752,18 @@ fun CameraScreen(
 
                         // Always-visible Chainage quick edit button (Value + Animated Status Bulbs Only)
                         val isManualActive = chainageIndicators.manualStatus == ChainageBubbleStatus.ACTIVE
+                        val isDynamicManualActive = isManualActive &&
+                            manualChainageCalibration.mode == ManualChainageMode.DYNAMIC_CORRECTION
                         val isCustomActive = chainageIndicators.customStatus == ChainageBubbleStatus.ACTIVE
                         val chipBg = when {
+                            isDynamicManualActive -> Color(0x2806B6D4)
                             isManualActive -> Color(0x25FACC15)
                             isCustomActive -> Color(0x259333EA)
                             chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0x25F59E0B)
                             else -> Color(0x1A101726)
                         }
                         val chipBorder = when {
+                            isDynamicManualActive -> Color(0xFF22D3EE)
                             isManualActive -> HighlightYellow
                             isCustomActive -> Color(0xFFA855F7)
                             chainageIndicators.kmzStatus == ChainageBubbleStatus.WARNING -> Color(0xFFF59E0B)
@@ -3145,25 +3157,48 @@ fun CameraScreen(
             )
         }
 
-        // Minimal Smart Chainage Edit Dialog
+        // Compact Direction-Aware Manual Chainage Panel (Stable Progression & Dynamic Correction)
         if (showManualDialog) {
             val dialogColors = com.example.ui.theme.rememberDialogColors()
             val keyboardController = LocalSoftwareKeyboardController.current
             val focusManager = LocalFocusManager.current
             val primaryAccent = CtecsTheme.colors.accent
             val onAccent = CtecsTheme.colors.onAccent
+            val dynamicAccent = Color(0xFF06B6D4)
+            val stableAccent = Color(0xFFF59E0B)
 
-            // Lock initial input on dialog open so background KMZ updates never overwrite user input
+            // Lock initial input on dialog open so background GPS updates never overwrite user edits
             var chainageInput by remember(showManualDialog) {
                 val initVal = when {
+                    manualChainageCalibration.isActive && chainageIndicators.displayChainage != "---" ->
+                        chainageIndicators.displayChainage
                     !manualChainageText.isNullOrBlank() -> manualChainageText!!
-                    matchResult.displayChainage != "---" && matchResult.displayChainage != "Manual" -> matchResult.displayChainage
+                    matchResult.displayChainage != "---" && matchResult.displayChainage != "Manual" ->
+                        matchResult.displayChainage
                     else -> ""
                 }
                 mutableStateOf(initVal)
             }
+            var selectedMode by remember(showManualDialog) {
+                mutableStateOf(manualChainageCalibration.mode)
+            }
+            LaunchedEffect(manualChainageCalibration.mode) {
+                selectedMode = manualChainageCalibration.mode
+            }
             var editingItemOriginal by remember(showManualDialog) { mutableStateOf<String?>(null) }
             var validationError by remember(showManualDialog) { mutableStateOf<String?>(null) }
+
+            val activeDirectionBadge = when (matchResult.travelDirection) {
+                TravelChainageDirection.FORWARD -> "↑ FWD"
+                TravelChainageDirection.REVERSE -> "↓ REV"
+                TravelChainageDirection.STATIONARY -> "• HOLD"
+                TravelChainageDirection.UNKNOWN -> null
+            }
+            val activeModeColor = if (selectedMode == ManualChainageMode.DYNAMIC_CORRECTION) {
+                dynamicAccent
+            } else {
+                stableAccent
+            }
 
             AlertDialog(
                 onDismissRequest = { viewModel.closeManualChainageDialog() },
@@ -3171,44 +3206,216 @@ fun CameraScreen(
                 containerColor = dialogColors.containerColor,
                 tonalElevation = 0.dp,
                 modifier = Modifier
-                    .widthIn(min = 270.dp, max = if (isLandscape) 370.dp else 330.dp)
+                    .widthIn(min = 284.dp, max = if (isLandscape) 390.dp else 348.dp)
                     .testTag("manual_chainage_dialog"),
                 title = {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Main visual focus: Active Chainage Value
-                        Text(
-                            text = chainageIndicators.displayChainage,
-                            color = dialogColors.titleColor,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 19.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                Text(
+                                    text = chainageIndicators.displayChainage,
+                                    color = dialogColors.titleColor,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 19.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("chainage_edit_primary_value")
+                                )
+                                if (activeDirectionBadge != null && manualChainageCalibration.isActive) {
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = activeModeColor.copy(alpha = 0.16f)
+                                    ) {
+                                        Text(
+                                            text = activeDirectionBadge,
+                                            color = activeModeColor,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .testTag("manual_chainage_direction_badge")
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            ChainageStatusBubblesRow(
+                                state = chainageIndicators,
+                                isDarkTheme = dialogColors.isDark,
+                                isScreenVisible = isCameraScreenVisible,
+                                showInactiveBubbles = true,
+                                showLabels = true,
+                                tagPrefix = ""
+                            )
+                        }
+
+                        // Compact Active Mode & Calibration Status Strip
+                        Row(
                             modifier = Modifier
-                                .weight(1f, fill = false)
-                                .testTag("chainage_edit_primary_value")
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        // Secondary compact rounded status bubbles in edit dialog
-                        ChainageStatusBubblesRow(
-                            state = chainageIndicators,
-                            isDarkTheme = dialogColors.isDark,
-                            isScreenVisible = isCameraScreenVisible,
-                            showInactiveBubbles = true,
-                            showLabels = true,
-                            tagPrefix = ""
-                        )
+                                .fillMaxWidth()
+                                .testTag("manual_chainage_mode_indicator"),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val anchorLabel = manualChainageCalibration.anchorFormattedText
+                                ?: manualChainageCalibration.anchorChainageMetres?.let { Chainage(it).format() }
+                                ?: "---"
+                            val statusText = when {
+                                !manualChainageCalibration.isActive -> "Auto KMZ / GPS"
+                                selectedMode == ManualChainageMode.CONTINUE_STABLE ->
+                                    "Stable • Ref $anchorLabel"
+                                manualChainageCalibration.isDynamicAnchorCalibrated -> {
+                                    val badge = manualChainageCalibration.formattedOffsetBadge ?: "Locked"
+                                    "Dynamic • $badge"
+                                }
+                                else -> "Dynamic • Waiting GPS lock"
+                            }
+                            Text(
+                                text = statusText,
+                                color = if (manualChainageCalibration.isActive) activeModeColor else dialogColors.textSecondaryColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (manualChainageCalibration.isActive) {
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = activeModeColor.copy(alpha = 0.15f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable {
+                                            val candidate = chainageInput.trim().ifBlank {
+                                                chainageIndicators.displayChainage
+                                            }
+                                            val parsed = Chainage.parse(candidate)
+                                            if (parsed != null) {
+                                                val formatted = parsed.format()
+                                                chainageInput = formatted
+                                                validationError = null
+                                                viewModel.recalibrateManualChainage(formatted, selectedMode)
+                                            } else {
+                                                validationError = "Invalid format (e.g. 174+250)"
+                                            }
+                                        }
+                                        .testTag("recalibrate_manual_chainage_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MyLocation,
+                                            contentDescription = "Recalibrate chainage at current GPS",
+                                            tint = activeModeColor,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Text(
+                                            text = "Calibrate",
+                                            color = activeModeColor,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 text = {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // Two-Option Segmented Toggle Switch:
+                        // Continue Stable Chainage | Dynamic Chainage Correction
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = dialogColors.surfaceColor,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("manual_chainage_mode_toggle")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf(
+                                    ManualChainageMode.CONTINUE_STABLE to "manual_mode_stable_button",
+                                    ManualChainageMode.DYNAMIC_CORRECTION to "manual_mode_dynamic_button"
+                                ).forEach { (modeOption, tag) ->
+                                    val isModeSelected = selectedMode == modeOption
+                                    val modeTint = if (modeOption == ManualChainageMode.DYNAMIC_CORRECTION) {
+                                        dynamicAccent
+                                    } else {
+                                        stableAccent
+                                    }
+                                    val containerBg by animateColorAsState(
+                                        targetValue = if (isModeSelected) modeTint.copy(alpha = 0.20f) else Color.Transparent,
+                                        animationSpec = tween(180),
+                                        label = "manual_mode_bg"
+                                    )
+                                    val borderStroke = if (isModeSelected) {
+                                        BorderStroke(1.dp, modeTint.copy(alpha = 0.7f))
+                                    } else {
+                                        null
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(9.dp),
+                                        color = containerBg,
+                                        border = borderStroke,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .clip(RoundedCornerShape(9.dp))
+                                            .semantics {
+                                                stateDescription = if (isModeSelected) "Selected" else "Not selected"
+                                            }
+                                            .clickable {
+                                                selectedMode = modeOption
+                                                if (manualChainageCalibration.isActive) {
+                                                    viewModel.setManualChainageMode(modeOption)
+                                                }
+                                            }
+                                            .testTag(tag)
+                                    ) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = modeOption.displayLabel,
+                                                color = if (isModeSelected) modeTint else dialogColors.textSecondaryColor,
+                                                fontSize = 10.5.sp,
+                                                lineHeight = 13.sp,
+                                                fontWeight = if (isModeSelected) FontWeight.Bold else FontWeight.Medium,
+                                                textAlign = TextAlign.Center,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -3222,7 +3429,7 @@ fun CameraScreen(
                                 },
                                 placeholder = {
                                     Text(
-                                        "0+000",
+                                        "174+250",
                                         color = dialogColors.textSecondaryColor.copy(alpha = 0.55f),
                                         fontSize = 13.sp
                                     )
@@ -3260,15 +3467,15 @@ fun CameraScreen(
                                                 viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
                                                 editingItemOriginal = null
                                             }
-                                            viewModel.setManualChainage(formatted)
+                                            viewModel.setManualChainage(formatted, selectedMode)
                                         } else {
-                                            validationError = "Invalid format (e.g. 198+880)"
+                                            validationError = "Invalid format (e.g. 174+250)"
                                         }
                                     }
                                 ),
                                 colors = ctecsBorderlessInputColors(
                                     containerColor = dialogColors.inputBackground,
-                                    accentColor = primaryAccent
+                                    accentColor = activeModeColor
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
@@ -3295,7 +3502,7 @@ fun CameraScreen(
                                                 viewModel.addCustomChainagePreset(formatted)
                                             }
                                         } else {
-                                            validationError = "Invalid format (e.g. 198+880)"
+                                            validationError = "Invalid format (e.g. 174+250)"
                                         }
                                     }
                                     .testTag("add_custom_chainage_button")
@@ -3331,7 +3538,7 @@ fun CameraScreen(
                                     color = dialogColors.surfaceColor,
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(28.dp)
+                                        .height(30.dp)
                                         .clip(RoundedCornerShape(50))
                                         .clickable {
                                             val baseMetres = Chainage.parse(chainageInput)?.metres
@@ -3357,7 +3564,7 @@ fun CameraScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = if (isLandscape) 105.dp else 135.dp)
+                                    .heightIn(max = if (isLandscape) 95.dp else 120.dp)
                                     .verticalScroll(rememberScrollState()),
                                 verticalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
@@ -3376,7 +3583,7 @@ fun CameraScreen(
                                             .clip(RoundedCornerShape(50))
                                             .clickable {
                                                 chainageInput = savedItem
-                                                viewModel.setManualChainage(savedItem)
+                                                viewModel.setManualChainage(savedItem, selectedMode)
                                             }
                                     ) {
                                         Row(
@@ -3466,9 +3673,9 @@ fun CameraScreen(
                                     viewModel.updateCustomChainagePreset(editingItemOriginal!!, formatted)
                                     editingItemOriginal = null
                                 }
-                                viewModel.setManualChainage(formatted)
+                                viewModel.setManualChainage(formatted, selectedMode)
                             } else {
-                                validationError = "Invalid format (e.g. 198+880)"
+                                validationError = "Invalid format (e.g. 174+250)"
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = primaryAccent, contentColor = onAccent),
@@ -4527,7 +4734,14 @@ internal fun resolveChainageIndicatorsState(
         matchResult.source == ChainageSource.MANUAL
 
     if (isManualActive) {
-        val manualDisplay = cleanManual
+        val liveManualDisplay = if (matchResult.isManual) {
+            matchResult.chainage?.format()
+                ?: matchResult.customChainageText?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+        val manualDisplay = liveManualDisplay
+            ?: cleanManual
             ?: matchResult.customChainageText?.takeIf { it.isNotBlank() }
             ?: matchResult.chainage?.format()
             ?: matchResult.displayChainage

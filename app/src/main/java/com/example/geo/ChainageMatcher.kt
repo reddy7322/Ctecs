@@ -322,15 +322,28 @@ object ChainageMatcher {
         routeData: RouteData?,
         previousResult: ChainageMatchResult? = null,
         maxMatchOffsetMetres: Double = DEFAULT_MAX_MATCH_OFFSET_METRES,
-        highConfidenceOffsetMetres: Double = DEFAULT_HIGH_CONFIDENCE_OFFSET_METRES
+        highConfidenceOffsetMetres: Double = DEFAULT_HIGH_CONFIDENCE_OFFSET_METRES,
+        fixTimeMs: Long = System.currentTimeMillis()
     ): ChainageMatchResult {
         val startNs = System.nanoTime()
+        val effectiveFixTimeMs = if (fixTimeMs > 0L) fixTimeMs else System.currentTimeMillis()
         try {
+            if (gpsPoint.latitude.isNaN() || gpsPoint.longitude.isNaN() ||
+                gpsPoint.latitude.isInfinite() || gpsPoint.longitude.isInfinite() ||
+                (gpsPoint.latitude == 0.0 && gpsPoint.longitude == 0.0)
+            ) {
+                return ChainageMatchResult.noRoute(gpsAccuracy).copy(
+                    statusMessage = "Invalid GPS coordinates",
+                    timestamp = effectiveFixTimeMs
+                )
+            }
             if (routeData == null || (routeData.markers.isEmpty() && routeData.alignments.isEmpty())) {
-                return ChainageMatchResult.noRoute(gpsAccuracy)
+                return ChainageMatchResult.noRoute(gpsAccuracy).copy(timestamp = effectiveFixTimeMs)
             }
 
             val prevAlignmentName = previousResult?.matchedAlignmentName.orEmpty()
+            val prevDistAlongM = previousResult?.distanceAlongAlignmentMetres
+                ?.takeIf { previousResult.matchedSegmentIndex >= 0 && it.isFinite() }
 
             // 1. Determine candidate alignments to match against
             val alignments = if (routeData.selectedAlignmentId != null) {
@@ -342,6 +355,7 @@ object ChainageMatcher {
 
             if (alignments.isEmpty()) {
                 return matchToMarkersDirectly(gpsPoint, gpsAccuracy, routeData.markers)
+                    .copy(timestamp = effectiveFixTimeMs)
             }
 
             // 2. Perform O(1) spatial-grid nearest-segment projection across alignments
@@ -354,7 +368,7 @@ object ChainageMatcher {
             val queryCellLat = latToCell(gpsPoint.latitude)
             val queryCellLng = lngToCell(gpsPoint.longitude)
             val hasMultiAlignments = alignments.size > 1
-            val validBearing = bearing?.takeIf { !it.isNaN() }?.toDouble()
+            val validBearing = bearing?.takeIf { !it.isNaN() && it.isFinite() }?.toDouble()
             val seenSegments = HashSet<Int>(32)
 
             fun evaluateSegment(
@@ -365,31 +379,50 @@ object ChainageMatcher {
                 val p1 = cached.points[segIdx]
                 val p2 = cached.points[segIdx + 1]
                 val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
+                val distAlong = cached.cumulativeDistances[segIdx] + proj.t * cached.segmentLengths[segIdx]
 
                 // Parallel carriageway continuity hysteresis (5.0m advantage for previously matched alignment)
                 val isPrevAlignment = prevAlignmentName.isNotBlank() && alignName == prevAlignmentName
-                val continuityBonus = if (isPrevAlignment) 5.0 else 0.0
+                val alignmentContinuityBonus = if (isPrevAlignment) 5.0 else 0.0
 
-                // Parallel carriageway travel-bearing tie-breaker when multiple directional carriageways exist
+                // Longitudinal segment continuity tie-breaker: prevents snapping onto an unrelated
+                // branch at tight curves, loops, cloverleafs, or crossing intersections when perpendicular
+                // distances are similar, while still allowing forward OR reverse motion smoothly.
+                var longitudinalBonus = 0.0
+                if (isPrevAlignment && prevDistAlongM != null) {
+                    val deltaAlong = abs(distAlong - prevDistAlongM)
+                    longitudinalBonus = when {
+                        deltaAlong <= 80.0 -> 4.0 * (1.0 - deltaAlong / 80.0)
+                        deltaAlong > 300.0 && proj.perpendicularDistance <= 35.0 -> -3.5
+                        else -> 0.0
+                    }
+                }
+
+                // Parallel carriageway travel-bearing tie-breaker ONLY when multiple explicit
+                // directional carriageways compete (never penalizes reverse driving on single/main alignment).
                 var bearingBonus = 0.0
-                if (hasMultiAlignments && validBearing != null && segIdx in cached.segmentBearingsDeg.indices) {
+                val isExplicitDirectionalCarriageway = cached.carriagewayType.equals("LHS", ignoreCase = true) ||
+                    cached.carriagewayType.equals("RHS", ignoreCase = true)
+                if (hasMultiAlignments && isExplicitDirectionalCarriageway && validBearing != null &&
+                    segIdx in cached.segmentBearingsDeg.indices
+                ) {
                     val segBearing = cached.segmentBearingsDeg[segIdx]
                     val diff = abs(((validBearing - segBearing + 540.0) % 360.0) - 180.0)
                     val cosAlign = cos(Math.toRadians(diff))
                     if (cosAlign >= 0.5) {
-                        bearingBonus = 4.5
+                        bearingBonus = 3.5
                     } else if (cosAlign <= -0.5) {
-                        bearingBonus = -4.5
+                        bearingBonus = -3.5
                     }
                 }
 
-                val score = proj.perpendicularDistance - continuityBonus - bearingBonus
+                val score = proj.perpendicularDistance - alignmentContinuityBonus - longitudinalBonus - bearingBonus
                 if (score < minScore) {
                     minScore = score
                     bestProj = proj
                     bestAlignment = cached
                     bestSegIdx = segIdx
-                    bestDistanceAlongM = cached.cumulativeDistances[segIdx] + proj.t * cached.segmentLengths[segIdx]
+                    bestDistanceAlongM = distAlong
                 }
             }
 
@@ -509,7 +542,8 @@ object ChainageMatcher {
                 }
             }
 
-            // 4. Continuity check: Detect single-spike chainage jumps without ever locking permanently.
+            // 4. Continuity check: Detect single-spike chainage jumps, implausible speeds,
+            // and poor-accuracy noise spikes without ever locking permanently.
             // CRITICAL: Always compare against the UNCALIBRATED baseline chainage of previousResult
             // so that a calibration shift > 250m never triggers a false jump lock!
             var isUncertain = false
@@ -518,16 +552,21 @@ object ChainageMatcher {
 
             if (previousResult != null && prevBaselineChainage != null && previousResult.confidence != MatchConfidence.NO_MATCH) {
                 val chainageJump = abs(estimatedChainageMetres - prevBaselineChainage.metres)
-                if (chainageJump > SUDDEN_JUMP_THRESHOLD_METRES) {
-                    val elapsedMs = abs(System.currentTimeMillis() - previousResult.timestamp)
-                    if (previousResult.isUncertain || elapsedMs > MAX_SPIKE_HOLD_WINDOW_MS) {
-                        // Previous reading already held a spike once, or > 8s elapsed:
+                val elapsedMs = abs(effectiveFixTimeMs - previousResult.timestamp)
+                val dtSec = (elapsedMs / 1000.0).coerceAtLeast(0.0)
+                val isPoorAccuracySpike = gpsAccuracy > 35.0f && chainageJump > 25L
+                val isImplausibleSpeed = dtSec in 0.1..6.0 && chainageJump > maxOf(65.0, dtSec * 55.0 + 35.0)
+                val isLargeJump = chainageJump > SUDDEN_JUMP_THRESHOLD_METRES
+
+                if (isLargeJump || isPoorAccuracySpike || isImplausibleSpeed) {
+                    if (!isPoorAccuracySpike && (previousResult.isUncertain || elapsedMs > MAX_SPIKE_HOLD_WINDOW_MS)) {
+                        // Previous reading already held a spike once, or > 8s elapsed with acceptable GPS:
                         // Automatically recover and snap to the new position so chainage never freezes!
                         isUncertain = false
                         lastReliableChainage = Chainage(estimatedChainageMetres)
                         automaticJumpRecoveries.incrementAndGet()
                     } else {
-                        // Single transient GPS spike: hold previous baseline chainage for this 1 reading
+                        // Transient GPS spike or poor-accuracy jump: hold previous reliable baseline chainage
                         isUncertain = true
                         lastReliableChainage = prevBaselineChainage
                     }
@@ -594,6 +633,7 @@ object ChainageMatcher {
                 isManual = false,
                 matchedAlignmentName = bestAlignment.alignmentName,
                 detectedSide = detectedSide,
+                timestamp = effectiveFixTimeMs,
                 matchedSegmentIndex = bestSegIdx,
                 matchedSegmentLengthM = segLength,
                 segmentProjectionT = bestProj.t,

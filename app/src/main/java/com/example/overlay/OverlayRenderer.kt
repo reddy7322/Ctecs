@@ -755,21 +755,43 @@ object OverlayRenderer {
                         "Weather: ${w.formatTemperature()} ${w.conditionLabel}, Humidity: ${w.formatHumidity()}, Wind: ${w.formatWindSpeed()} ${w.windDirectionCompass} (${w.source} @ $obsTimeStr)"
                     }
 
-                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true) || weatherSummary != null) {
-                        val descParts = mutableListOf<String>()
-                        if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
-                            descParts.add(locName)
+                    val match = snapshot.matchResult
+                    val calibrationSummary = if (match.isManual && match.manualChainageMode != null) {
+                        val parts = mutableListOf<String>()
+                        parts.add("Mode: ${match.manualChainageMode.displayLabel}")
+                        match.manualCalibrationAnchorMetres?.let {
+                            parts.add("Ref: ${com.example.model.Chainage(it).format()}")
                         }
-                        descParts.add("Chainage: ${snapshot.displayChainage}")
-                        resolvedExifSide
-                            ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
-                            ?.let { descParts.add("Side: $it") }
-                        if (snapshot.projectProfile.highwayId.isNotBlank()) {
-                            descParts.add("Project: ${snapshot.projectProfile.highwayId}")
+                        match.manualCalibrationOffsetMetres?.let { offset ->
+                            val sign = if (offset >= 0L) "+${offset}m" else "${offset}m"
+                            parts.add("Offset: $sign")
                         }
-                        if (weatherSummary != null) {
-                            descParts.add(weatherSummary)
+                        if (match.travelDirection == com.example.model.TravelChainageDirection.FORWARD ||
+                            match.travelDirection == com.example.model.TravelChainageDirection.REVERSE
+                        ) {
+                            parts.add("Travel: ${match.travelDirection.label}")
                         }
+                        parts.joinToString(", ")
+                    } else null
+
+                    val descParts = mutableListOf<String>()
+                    if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {
+                        descParts.add(locName)
+                    }
+                    descParts.add("Chainage: ${snapshot.displayChainage}")
+                    resolvedExifSide
+                        ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
+                        ?.let { descParts.add("Side: $it") }
+                    if (snapshot.projectProfile.highwayId.isNotBlank()) {
+                        descParts.add("Project: ${snapshot.projectProfile.highwayId}")
+                    }
+                    if (calibrationSummary != null) {
+                        descParts.add(calibrationSummary)
+                    }
+                    if (weatherSummary != null) {
+                        descParts.add(weatherSummary)
+                    }
+                    if (descParts.isNotEmpty()) {
                         exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, descParts.joinToString(" | "))
                     }
 
@@ -781,6 +803,7 @@ object OverlayRenderer {
                         snapshot.projectProfile.lane.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                         snapshot.projectProfile.activity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
                         snapshot.projectProfile.subActivity.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }?.let { "($it)" },
+                        calibrationSummary,
                         if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) locName else null,
                         weatherSummary
                     ).joinToString(" | ")

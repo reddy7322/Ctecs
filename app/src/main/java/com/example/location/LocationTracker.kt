@@ -499,15 +499,26 @@ class LocationTracker(private val context: Context) {
     /**
      * Injects synthetic location (used for testing or emulator field simulation).
      */
-    fun injectLocation(lat: Double, lng: Double, accuracy: Float = 2.5f, altitude: Double = 270.0) {
-        val now = System.currentTimeMillis()
+    fun injectLocation(
+        lat: Double,
+        lng: Double,
+        accuracy: Float = 2.5f,
+        altitude: Double = 270.0,
+        bearing: Float? = null,
+        speed: Float? = null,
+        fixTimeMs: Long = System.currentTimeMillis()
+    ) {
+        val now = if (fixTimeMs > 0L) fixTimeMs else System.currentTimeMillis()
         lastCallbackMillis.set(now)
         val point = GeoPoint(lat, lng, altitude)
+        val status = if (accuracy <= 15.0f) LocationStatus.READY else LocationStatus.POOR_ACCURACY
         _locationState.value = LocationState(
             point = point,
             accuracy = accuracy,
+            bearing = bearing,
+            speed = speed,
             altitude = altitude,
-            status = LocationStatus.READY,
+            status = status,
             lastFixTime = now
         )
     }

@@ -294,7 +294,7 @@ fun SmartDirectionModePickerMenu(
             DropdownMenuItem(
                 text = {
                     Text(
-                        text = "Manual: ${side.label}",
+                        text = side.label,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                     )
                 },

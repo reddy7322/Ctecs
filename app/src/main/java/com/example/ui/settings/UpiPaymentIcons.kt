@@ -46,7 +46,8 @@ internal enum class UpiAppBrand(
 ) {
     GOOGLE_PAY("com.google.android.apps.nbu.paisa.user", "Google Pay"),
     PHONE_PE("com.phonepe.app", "PhonePe"),
-    PAYTM("net.one97.paytm", "Paytm")
+    PAYTM("net.one97.paytm", "Paytm"),
+    BHIM("in.org.npci.upiapp", "BHIM")
 }
 
 internal data class LoadedUpiAppIcons(
@@ -126,6 +127,7 @@ internal fun AuthenticUpiBrandIcon(
         UpiAppBrand.GOOGLE_PAY -> GooglePayVectorMark(size = size)
         UpiAppBrand.PHONE_PE -> PhonePeVectorMark(size = size)
         UpiAppBrand.PAYTM -> PaytmVectorMark(size = size)
+        UpiAppBrand.BHIM -> BhimVectorMark(size = size)
     }
 }
 
@@ -246,6 +248,41 @@ private fun PaytmVectorMark(size: Dp) {
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1
         )
+    }
+}
+
+@Composable
+private fun BhimVectorMark(size: Dp) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Color.White),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(size * 0.72f)) {
+            val w = this.size.width
+            val h = this.size.height
+
+            // Authentic BHIM twin angled saffron + emerald directional blades
+            val saffronBlade = Path().apply {
+                moveTo(w * 0.24f, h * 0.14f)
+                lineTo(w * 0.60f, h * 0.50f)
+                lineTo(w * 0.16f, h * 0.86f)
+                lineTo(w * 0.36f, h * 0.50f)
+                close()
+            }
+            drawPath(path = saffronBlade, color = Color(0xFFF47920))
+
+            val greenBlade = Path().apply {
+                moveTo(w * 0.50f, h * 0.14f)
+                lineTo(w * 0.86f, h * 0.50f)
+                lineTo(w * 0.42f, h * 0.86f)
+                lineTo(w * 0.62f, h * 0.50f)
+                close()
+            }
+            drawPath(path = greenBlade, color = Color(0xFF098A42))
+        }
     }
 }
 

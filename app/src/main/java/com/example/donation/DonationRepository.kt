@@ -48,6 +48,13 @@ sealed class DonationActionResult<out T> {
     data class Error(val message: String) : DonationActionResult<Nothing>()
 }
 
+sealed class UpiIntentResolution {
+    data class LaunchReady(val intent: Intent, val paymentMethodLabel: String, val validatedUri: Uri) : UpiIntentResolution()
+    data class TargetAppUnavailable(val requestedPackage: String) : UpiIntentResolution()
+    data object NoUpiAppInstalled : UpiIntentResolution()
+    data class InvalidPaymentUri(val reason: String) : UpiIntentResolution()
+}
+
 /**
  * Coordinates CTECS Buy Me a Coffee donations, local Room transaction storage,
  * HTTPS communication with the trusted CTECS backend (never embedding gateway secrets
@@ -105,29 +112,114 @@ class DonationRepository(
         donationDao.getAuditLogsForOrder(orderRef)
 
     /**
-     * Queries Android PackageManager for compatible installed UPI apps without
-     * forcing a single payment provider.
+     * Queries Android PackageManager for compatible installed UPI handler apps for [upiUri],
+     * explicitly excluding ordinary web browsers so a browser or WebView is never launched.
      */
-    fun getInstalledUpiApps(): List<InstalledUpiApp> {
+    fun getCompatibleUpiApps(upiUri: Uri = DonationConfig.buildUpiProbeUri()): List<InstalledUpiApp> {
         return try {
-            val probeIntent = Intent(
-                Intent.ACTION_VIEW,
-                Uri.parse("upi://pay?pa=${DonationConfig.UPI_ID}&pn=${DonationConfig.RECIPIENT_NAME}&cu=INR")
-            )
+            val probeIntent = Intent(Intent.ACTION_VIEW, upiUri)
             val pm = context.packageManager
             val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.queryIntentActivities(probeIntent, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()))
+                pm.queryIntentActivities(
+                    probeIntent,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
             } else {
                 @Suppress("DEPRECATION")
                 pm.queryIntentActivities(probeIntent, PackageManager.MATCH_DEFAULT_ONLY)
             }
             resolved.mapNotNull { info ->
                 val pkg = info.activityInfo?.packageName ?: return@mapNotNull null
+                if (isOrdinaryBrowserPackage(pkg)) return@mapNotNull null
                 val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: pkg
                 InstalledUpiApp(pkg, label)
             }.distinctBy { it.packageName }
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    /**
+     * Queries Android PackageManager for compatible installed UPI apps without
+     * forcing a single payment provider.
+     */
+    fun getInstalledUpiApps(): List<InstalledUpiApp> = getCompatibleUpiApps(DonationConfig.buildUpiProbeUri())
+
+    /**
+     * Resolves and validates the UPI payment [Uri] for [order]. If a persisted legacy order
+     * carries an older unsupported or malformed URI, safely regenerates the standard validated URI.
+     */
+    fun resolveValidatedPaymentUri(order: DonationTransactionEntity): Uri {
+        return when (val checked = DonationConfig.validateUpiPaymentUri(order.upiUri, order.amountInr)) {
+            is UpiUriValidationResult.Valid -> checked.uri
+            is UpiUriValidationResult.Invalid -> DonationConfig.buildUpiPaymentAndroidUri(order.amountInr)
+        }
+    }
+
+    /**
+     * Builds a validated, compatible native Android `ACTION_VIEW` UPI payment [Intent]
+     * without setting any unsupported MIME type and without forcing incompatible apps or browsers.
+     */
+    fun buildCompatibleUpiIntent(
+        order: DonationTransactionEntity,
+        targetPackage: String? = null,
+        targetDisplayName: String? = null
+    ): UpiIntentResolution {
+        val validatedUri = resolveValidatedPaymentUri(order)
+        val recheck = DonationConfig.validateUpiPaymentUri(validatedUri.toString(), order.amountInr)
+        if (recheck is UpiUriValidationResult.Invalid) {
+            return UpiIntentResolution.InvalidPaymentUri(recheck.reason)
+        }
+
+        val compatibleApps = getCompatibleUpiApps(validatedUri)
+        if (compatibleApps.isEmpty()) {
+            return UpiIntentResolution.NoUpiAppInstalled
+        }
+
+        if (!targetPackage.isNullOrBlank()) {
+            val exactMatch = compatibleApps.firstOrNull { it.packageName == targetPackage }
+                ?: return UpiIntentResolution.TargetAppUnavailable(targetPackage)
+            val targetedIntent = Intent(Intent.ACTION_VIEW, validatedUri).apply {
+                setPackage(exactMatch.packageName)
+            }
+            val resolvesDirectly = canResolveIntent(targetedIntent)
+            if (!resolvesDirectly) {
+                return UpiIntentResolution.TargetAppUnavailable(targetPackage)
+            }
+            return UpiIntentResolution.LaunchReady(
+                intent = targetedIntent,
+                paymentMethodLabel = targetDisplayName ?: exactMatch.displayName,
+                validatedUri = validatedUri
+            )
+        }
+
+        val baseIntent = Intent(Intent.ACTION_VIEW, validatedUri)
+        val chooserIntent = Intent.createChooser(baseIntent, null)
+        return UpiIntentResolution.LaunchReady(
+            intent = chooserIntent,
+            paymentMethodLabel = "UPI Intent",
+            validatedUri = validatedUri
+        )
+    }
+
+    private fun canResolveIntent(intent: Intent): Boolean {
+        return try {
+            val pm = context.packageManager
+            val matches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(
+                    intent,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            }
+            matches.any { info ->
+                val pkg = info.activityInfo?.packageName
+                !pkg.isNullOrBlank() && !isOrdinaryBrowserPackage(pkg)
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -153,16 +245,23 @@ class DonationRepository(
             // 1. Idempotent lookup: return existing non-expired order for this attempt
             val existing = donationDao.getByIdempotencyKey(cleanKey)
             if (existing != null) {
+                val repairedUri = resolveValidatedPaymentUri(existing).toString()
+                if (repairedUri != existing.upiUri) {
+                    val normalized = existing.copy(upiUri = repairedUri, updatedAtMs = nowMs)
+                    donationDao.updateTransaction(normalized)
+                    return@withLock DonationActionResult.Success(normalized, "Reused existing donation order.")
+                }
                 return@withLock DonationActionResult.Success(existing, "Reused existing donation order.")
             }
 
             val orderRef = DonationConfig.generateOrderRef(nowMs)
-            val canonicalUpiUri = DonationConfig.buildUpiPaymentUri(amountInr, orderRef)
+            val canonicalUpiUri = DonationConfig.buildUpiPaymentUri(amountInr)
             var gatewayOrderId = ""
             var resolvedUpiUri = canonicalUpiUri
             var synced = false
 
-            // 2. If trusted CTECS backend HTTPS URL is configured, create order server-side
+            // 2. If trusted CTECS backend HTTPS URL is configured (wrapping mynkdev-21/upi-gateway
+            // server-side with credentials kept exclusively on backend), create order server-side
             if (isBackendConfigured) {
                 val remoteResult = createOrderOnTrustedBackend(
                     orderRef = orderRef,
@@ -171,10 +270,9 @@ class DonationRepository(
                 )
                 if (remoteResult != null) {
                     gatewayOrderId = remoteResult.gatewayOrderId
-                    if (remoteResult.upiUri.startsWith("upi://pay", ignoreCase = true) &&
-                        remoteResult.upiUri.contains(DonationConfig.UPI_ID, ignoreCase = true)
-                    ) {
-                        resolvedUpiUri = remoteResult.upiUri
+                    val validatedRemote = DonationConfig.validateUpiPaymentUri(remoteResult.upiUri, amountInr)
+                    if (validatedRemote is UpiUriValidationResult.Valid) {
+                        resolvedUpiUri = validatedRemote.uri.toString()
                     }
                     synced = true
                 }
@@ -251,6 +349,43 @@ class DonationRepository(
             )
         )
         DonationActionResult.Success(updated, "Payment pending verification.")
+    }
+
+    /**
+     * Records a sanitized payment launch failure while preserving the transaction record so
+     * the user can immediately select another compatible UPI app or scan Dynamic QR.
+     */
+    suspend fun recordPaymentLaunchFailure(
+        orderRef: String,
+        paymentMethod: String,
+        technicalReason: String,
+        nowMs: Long = System.currentTimeMillis()
+    ): DonationActionResult<DonationTransactionEntity> = withContext(Dispatchers.IO) {
+        val current = donationDao.getByOrderRef(orderRef)
+            ?: return@withContext DonationActionResult.Error("Donation order not found.")
+        if (current.parsedStatus == DonationStatus.PAID) {
+            return@withContext DonationActionResult.Success(current)
+        }
+        val safeReason = DonationConfig.sanitizeForLog(technicalReason).ifBlank { "UPI app launch unavailable" }
+        val updated = current.copy(
+            status = DonationStatus.FAILED.name,
+            paymentMethod = paymentMethod,
+            updatedAtMs = nowMs
+        )
+        donationDao.updateTransaction(updated)
+        donationDao.insertAuditLog(
+            DonationAuditLogEntity(
+                orderRef = orderRef,
+                previousStatus = current.status,
+                newStatus = DonationStatus.FAILED.name,
+                actorRole = "CLIENT_INTENT",
+                actorId = currentOwnerUserId,
+                evidence = paymentMethod,
+                reason = safeReason,
+                timestampMs = nowMs
+            )
+        )
+        DonationActionResult.Success(updated, "Unable to open payment app.")
     }
 
     /**
@@ -798,6 +933,29 @@ class DonationRepository(
         private const val KEY_ADMIN_PASS_SALT = "admin_pass_salt"
         private const val KEY_ADMIN_PASS_HASH = "admin_pass_hash"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        private val ORDINARY_BROWSER_PACKAGES = setOf(
+            "com.android.chrome",
+            "com.chrome.beta",
+            "com.chrome.dev",
+            "com.chrome.canary",
+            "org.mozilla.firefox",
+            "org.mozilla.firefox_beta",
+            "com.opera.browser",
+            "com.opera.mini.native",
+            "com.brave.browser",
+            "com.microsoft.emmx",
+            "com.sec.android.app.sbrowser",
+            "com.duckduckgo.mobile.android",
+            "com.android.browser"
+        )
+
+        fun isOrdinaryBrowserPackage(packageName: String): Boolean {
+            val lower = packageName.trim().lowercase(Locale.US)
+            return lower in ORDINARY_BROWSER_PACKAGES ||
+                lower.contains(".browser") ||
+                lower.contains("webview")
+        }
 
         fun isValidTrustedBackendUrl(url: String): Boolean {
             val trimmed = url.trim()

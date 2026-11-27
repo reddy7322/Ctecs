@@ -1431,12 +1431,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _captureExposureHardwareSupported = MutableStateFlow(true)
     val captureExposureHardwareSupported: StateFlow<Boolean> = _captureExposureHardwareSupported.asStateFlow()
 
-    // Manual chainage override state (Camera Screen simple custom chainage, independent of Chainage Control System)
-    private val _manualChainage = MutableStateFlow<Chainage?>(preferencesManager.getInitialManualChainageOverride())
+    // Manual chainage override & calibration state (Single Centralized Engine: Stable & Dynamic modes)
+    private val initialManualCalibration = preferencesManager.getInitialManualChainageCalibration()
+
+    private val _manualCalibrationCommand = MutableStateFlow(initialManualCalibration)
+    private val _liveManualCalibration = MutableStateFlow(initialManualCalibration)
+    val manualChainageCalibration: StateFlow<com.example.model.ManualChainageCalibrationState> =
+        _liveManualCalibration.asStateFlow()
+
+    private val _manualChainage = MutableStateFlow<Chainage?>(
+        initialManualCalibration.effectiveCurrentMetres?.takeIf { initialManualCalibration.isActive }?.let { Chainage(it) }
+            ?: preferencesManager.getInitialManualChainageOverride()
+    )
     val manualChainage: StateFlow<Chainage?> = _manualChainage.asStateFlow()
 
-    private val _manualChainageText = MutableStateFlow<String?>(preferencesManager.getInitialManualChainageText())
+    private val _manualChainageText = MutableStateFlow<String?>(
+        initialManualCalibration.effectiveDisplayChainage?.takeIf { initialManualCalibration.isActive }
+            ?: preferencesManager.getInitialManualChainageText()
+    )
     val manualChainageText: StateFlow<String?> = _manualChainageText.asStateFlow()
+
+    @Volatile
+    private var lastPersistedManualMetres: Long? = initialManualCalibration.currentChainageMetres
+    @Volatile
+    private var lastPersistedManualCalibrated: Boolean = initialManualCalibration.isDynamicAnchorCalibrated
 
     val savedCustomChainages: StateFlow<List<String>> = preferencesManager.savedCustomChainagesFlow.stateIn(
         scope = viewModelScope,
@@ -1487,9 +1505,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = preferencesManager.getInitialChainageAuditLog()
     )
 
+    private val smartDirectionMutationLock = Any()
+    private var smartDirectionWriteVersion: Long = 0L
+    private var smartDirectionFlushedVersion: Long = 0L
+
     private val _smartDirectionPreferences = MutableStateFlow(preferencesManager.getInitialSmartDirectionPreferences())
     val smartDirectionPreferences: StateFlow<com.example.model.SmartDirectionPreferences> =
         _smartDirectionPreferences.asStateFlow()
+
+    val directionLockMode: StateFlow<String> = _smartDirectionPreferences
+        .map { it.internalDirectionMode }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = _smartDirectionPreferences.value.internalDirectionMode
+        )
 
     val smartDirectionState: StateFlow<com.example.model.SmartDirectionState> =
         CtecsNavigationTelemetryHub.directionState
@@ -1551,7 +1581,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): ChainageMatchResult {
         // Tier 4 fallback if no GPS fix
         if (loc.point == null) {
-            val baseNoGps = ChainageMatchResult.noRoute(loc.accuracy).copy(source = ChainageSource.GPS)
+            val baseNoGps = ChainageMatchResult.noRoute(loc.accuracy).copy(
+                source = ChainageSource.GPS,
+                timestamp = if (loc.lastFixTime > 0L) loc.lastFixTime else System.currentTimeMillis()
+            )
             val dirState = evaluateAndPublishSmartDirection(loc, baseNoGps, route)
             return baseNoGps.copy(
                 detectedSide = dirState.confirmedSide ?: "Unknown",
@@ -1562,9 +1595,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Tier 4 fallback if no route loaded
         if (route == null || (route.markers.isEmpty() && route.alignments.isEmpty())) {
             val baseNoRoute = ChainageMatchResult(
+                projectedPoint = loc.point,
                 confidence = com.example.model.MatchConfidence.NO_MATCH,
                 gpsAccuracy = loc.accuracy,
                 statusMessage = "No route loaded (GPS Active)",
+                timestamp = if (loc.lastFixTime > 0L) loc.lastFixTime else System.currentTimeMillis(),
                 source = ChainageSource.GPS
             )
             val dirState = evaluateAndPublishSmartDirection(loc, baseNoRoute, null)
@@ -1588,7 +1623,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             gpsAccuracy = loc.accuracy,
             bearing = loc.bearing,
             routeData = route,
-            previousResult = lastCalculatedMatchResult
+            previousResult = lastCalculatedMatchResult,
+            fixTimeMs = loc.lastFixTime
         )
 
         val rawKmzChainage = kmzMatch.chainage
@@ -1671,7 +1707,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 gpsAccuracy = loc.accuracy,
                 bearing = loc.bearing,
                 routeData = route,
-                previousResult = null
+                previousResult = null,
+                fixTimeMs = loc.lastFixTime
             )
             val recoveredRaw = recoveredKmz.chainage
             val recoveredSmart = if (isCorrectionsEnabled && routeCorrections.isNotEmpty() &&
@@ -1752,9 +1789,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Runs the single shared [com.example.navigation.SmartDirectionManager], publishes the result
-     * to [CtecsNavigationTelemetryHub], synchronizes auto-reactivation (10-min photo inactivity or
-     * reliable >= 5 km/h speed), updates in-memory profile & active survey road side, and announces
-     * confirmed direction changes via TTS.
+     * to [CtecsNavigationTelemetryHub], updates in-memory profile & active survey road side ONLY
+     * when explicit AUTO mode is active (never overwriting a locked manual LHS/RHS override),
+     * and announces confirmed AUTO direction changes via TTS.
      */
     private fun evaluateAndPublishSmartDirection(
         loc: LocationState,
@@ -1770,31 +1807,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         CtecsNavigationTelemetryHub.updateTelemetry(directionState = dirState)
 
-        // If centralized engine expired manual override (10-min photo inactivity OR >= 5 km/h vehicle speed),
-        // immediately synchronize AUTO mode into app preferences, telemetry hub, and widgets.
-        if (dirState.autoReactivatedReason != null ||
-            (!dirState.isManualOverride && prefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE)
-        ) {
-            val autoPrefs = prefs.copy(
-                controlMode = com.example.model.DirectionControlMode.AUTO,
-                manualOverrideSide = null,
-                manualSelectedAtMs = 0L
-            )
-            manualDirectionInactivityJob?.cancel()
-            manualDirectionInactivityJob = null
-            progressionTracker.clearManualSide()
-            _smartDirectionPreferences.value = autoPrefs
-            CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = autoPrefs)
-            preferencesManager.launchSafeEdit {
-                preferencesManager.updateSmartDirectionPreferences(autoPrefs)
-            }
-            com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
-        }
+        // Strict Manual Override Lock: NEVER auto-switch manual LHS/RHS back to AUTO and
+        // NEVER overwrite ProjectProfile roadSide while manual override is locked.
+        val isManualLocked = prefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE ||
+            dirState.isManualOverride
 
-        // Sync in-memory ProjectProfile roadSide ONLY when AUTO direction is confirmed
-        // (manual overrides update ProjectProfile directly via updateSide and are never overwritten by GPS).
         val confirmedBinary = dirState.confirmedBinarySide
-        if (!dirState.isManualOverride && confirmedBinary != null) {
+        if (!isManualLocked && confirmedBinary != null) {
             val detectedEnum = RoadSide.fromString(confirmedBinary)
             if (_projectProfile.value.roadSide != detectedEnum) {
                 _projectProfile.update { it.copy(roadSide = detectedEnum) }
@@ -1815,8 +1834,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Announce ONLY genuinely confirmed LHS <-> RHS direction transitions via shared Android TTS
-        if (dirState.directionChangedFrom != null && !dirState.isManualOverride) {
+        // Announce ONLY genuinely confirmed LHS <-> RHS direction transitions in explicit AUTO mode
+        if (dirState.directionChangedFrom != null && !isManualLocked) {
             com.example.navigation.KmStoneVoiceAnnouncementManager.announceDirectionChange(
                 context = getApplication(),
                 directionState = dirState,
@@ -1830,36 +1849,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Lightweight centralized watcher that runs ONLY while a manual direction override is active,
-     * ensuring the 10-minute photo-inactivity timeout fires reliably even if no GPS updates arrive.
+     * Manual direction lock never expires automatically; ensure no legacy inactivity job runs.
      */
     private fun scheduleManualDirectionInactivityWatcher() {
         manualDirectionInactivityJob?.cancel()
-        if (_smartDirectionPreferences.value.controlMode != com.example.model.DirectionControlMode.MANUAL_OVERRIDE) {
-            manualDirectionInactivityJob = null
-            return
-        }
-        manualDirectionInactivityJob = viewModelScope.launch(Dispatchers.Default) {
-            while (_smartDirectionPreferences.value.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE) {
-                val remainingMs = CtecsNavigationTelemetryHub.sharedDirectionManager
-                    .remainingManualInactivityMs(_smartDirectionPreferences.value)
-                    ?: break
-                if (remainingMs <= 0L) {
-                    val loc = locationTracker.locationState.value
-                    val currentMatch = _autoMatchStateFlow.value
-                    val route = activeRouteData.value
-                    val refreshedDir = evaluateAndPublishSmartDirection(loc, currentMatch, route)
-                    _autoMatchStateFlow.update { current ->
-                        current.copy(
-                            detectedSide = refreshedDir.confirmedSide ?: "Unknown",
-                            smartDirectionState = refreshedDir
-                        )
-                    }
-                    break
-                }
-                kotlinx.coroutines.delay(minOf(remainingMs.coerceAtLeast(1_000L), 15_000L))
-            }
-        }
+        manualDirectionInactivityJob = null
     }
 
     /**
@@ -1891,38 +1885,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Unified live match result with strict 4-tier priority across Home Page, Camera, and Media Watermarks:
-    // 1. MANUAL override (highest priority, preserving LHS/RHS detection & underlying KMZ reference)
+    // 1. MANUAL (Direction-aware Continue Stable Chainage OR Dynamic Chainage Correction)
     // 2. CUSTOM CORRECTION (within valid KMZ correction coverage)
     // 3. KMZ (original imported KMZ chainage)
     // 4. GPS (unmatched fallback)
     val liveMatchResult: StateFlow<ChainageMatchResult> = combine(
         _autoMatchStateFlow,
-        manualChainage,
-        manualChainageText
-    ) { autoResult, manual, manualText ->
-        if (manual != null || !manualText.isNullOrBlank()) {
-            val formattedManual = manual?.format() ?: manualText.orEmpty()
-            val preservedSide = autoResult.smartDirectionState?.confirmedSide
-                ?.takeIf { it.isNotBlank() }
-                ?: autoResult.detectedSide.takeIf { it.isNotBlank() }
-                ?: "Unknown"
-            autoResult.copy(
-                chainage = manual ?: autoResult.chainage,
-                customChainageText = formattedManual,
-                confidence = com.example.model.MatchConfidence.HIGH,
-                isManual = true,
-                detectedSide = preservedSide,
-                source = ChainageSource.MANUAL,
-                rawUncorrectedChainage = autoResult.rawUncorrectedChainage ?: autoResult.chainage,
-                statusMessage = "Manual Chainage Active ($formattedManual)"
+        _manualCalibrationCommand
+    ) { autoResult, calCommand ->
+        if (calCommand.isActive && calCommand.effectiveCurrentMetres != null) {
+            val currentLive = _liveManualCalibration.value
+            val sameAnchorSession = currentLive.isActive &&
+                currentLive.mode == calCommand.mode &&
+                currentLive.anchorChainageMetres == calCommand.anchorChainageMetres &&
+                currentLive.anchorTimestampMs == calCommand.anchorTimestampMs
+            val workingCal = if (sameAnchorSession) currentLive else calCommand
+            val nowMs = System.currentTimeMillis()
+            val resolution = progressionTracker.processWithManualCalibration(
+                autoResult = autoResult,
+                locationState = locationTracker.locationState.value,
+                routeData = activeRouteData.value,
+                calibration = workingCal,
+                nowMs = nowMs
             )
+            _liveManualCalibration.value = resolution.updatedCalibration
+            val activeChainage = resolution.matchResult.chainage
+            if (activeChainage != null) {
+                _manualChainage.value = activeChainage
+                _manualChainageText.value = activeChainage.format()
+            }
+            val newMetres = resolution.updatedCalibration.currentChainageMetres
+            val newCalibrated = resolution.updatedCalibration.isDynamicAnchorCalibrated
+            val shouldPersist = resolution.calibrationChangedSignificantly && (
+                newCalibrated != lastPersistedManualCalibrated ||
+                    lastPersistedManualMetres == null ||
+                    (newMetres != null && kotlin.math.abs(newMetres - (lastPersistedManualMetres ?: newMetres)) >= 5L)
+                )
+            if (shouldPersist) {
+                lastPersistedManualMetres = newMetres
+                lastPersistedManualCalibrated = newCalibrated
+                val snapshotToPersist = resolution.updatedCalibration
+                preferencesManager.launchSafeEdit {
+                    preferencesManager.updateManualChainageCalibration(snapshotToPersist)
+                }
+            }
+            resolution.matchResult
         } else {
             autoResult
         }
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = ChainageMatchResult.noRoute()
+        started = SharingStarted.Eagerly,
+        initialValue = if (initialManualCalibration.isActive && initialManualCalibration.effectiveCurrentMetres != null) {
+            val initCh = Chainage(initialManualCalibration.effectiveCurrentMetres!!)
+            ChainageMatchResult.manual(
+                chainage = initCh,
+                customText = initCh.format()
+            ).copy(
+                manualChainageMode = initialManualCalibration.mode,
+                travelDirection = initialManualCalibration.travelDirection,
+                manualCalibrationAnchorMetres = initialManualCalibration.anchorChainageMetres,
+                manualCalibrationOffsetMetres = initialManualCalibration.computedOffsetMetres,
+                isManualCalibrationPendingGps = initialManualCalibration.mode == com.example.model.ManualChainageMode.DYNAMIC_CORRECTION &&
+                    !initialManualCalibration.isDynamicAnchorCalibrated
+            )
+        } else {
+            ChainageMatchResult.noRoute()
+        }
     )
 
     val cameraMatchResult: StateFlow<ChainageMatchResult> = liveMatchResult
@@ -2080,17 +2109,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.widget.CtecsWidgetUpdater.updateAllWidgets(getApplication())
             }
         }
+        // Immediately synchronize persisted manual direction lock (or AUTO) on ViewModel startup
+        // so reopening the Camera or recreating Activity restores the exact mode before any GPS fix arrives.
+        run {
+            val initialDirPrefs = _smartDirectionPreferences.value
+            CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = initialDirPrefs)
+            if (initialDirPrefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE &&
+                !initialDirPrefs.normalizedManualSide.isNullOrBlank()
+            ) {
+                val restoredSide = initialDirPrefs.normalizedManualSide!!
+                CtecsNavigationTelemetryHub.sharedDirectionManager.onManualDirectionSelected(
+                    restoredSide,
+                    initialDirPrefs.manualSelectedAtMs.takeIf { it > 0L } ?: System.currentTimeMillis()
+                )
+                progressionTracker.setManualSide(restoredSide)
+                val restoredEnum = RoadSide.fromString(restoredSide)
+                if (_projectProfile.value.roadSide != restoredEnum) {
+                    _projectProfile.update { it.copy(roadSide = restoredEnum) }
+                }
+            } else {
+                CtecsNavigationTelemetryHub.sharedDirectionManager.onAutoModeSelected()
+                progressionTracker.clearManualSide()
+            }
+            val initialDirState = evaluateAndPublishSmartDirection(
+                loc = locationTracker.locationState.value,
+                matchResult = _autoMatchStateFlow.value,
+                route = activeRouteData.value
+            )
+            _autoMatchStateFlow.update { current ->
+                current.copy(
+                    detectedSide = initialDirState.confirmedSide ?: current.detectedSide,
+                    smartDirectionState = initialDirState
+                )
+            }
+        }
+
         viewModelScope.launch {
             preferencesManager.smartDirectionPreferencesFlow.collect { prefs ->
-                _smartDirectionPreferences.value = prefs
-                CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = prefs)
-                if (prefs.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE &&
-                    !prefs.normalizedManualSide.isNullOrBlank()
-                ) {
-                    progressionTracker.setManualSide(prefs.normalizedManualSide!!)
-                    scheduleManualDirectionInactivityWatcher()
-                } else {
-                    progressionTracker.clearManualSide()
+                var applied: com.example.model.SmartDirectionPreferences? = null
+                synchronized(smartDirectionMutationLock) {
+                    if (smartDirectionFlushedVersion == smartDirectionWriteVersion) {
+                        _smartDirectionPreferences.value = prefs
+                        applied = prefs
+                    }
+                }
+                applied?.let { resolved ->
+                    CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = resolved)
+                    if (resolved.controlMode == com.example.model.DirectionControlMode.MANUAL_OVERRIDE &&
+                        !resolved.normalizedManualSide.isNullOrBlank()
+                    ) {
+                        val sideLabel = resolved.normalizedManualSide!!
+                        CtecsNavigationTelemetryHub.sharedDirectionManager.onManualDirectionSelected(
+                            sideLabel,
+                            resolved.manualSelectedAtMs.takeIf { it > 0L } ?: System.currentTimeMillis()
+                        )
+                        progressionTracker.setManualSide(sideLabel)
+                    } else {
+                        CtecsNavigationTelemetryHub.sharedDirectionManager.onAutoModeSelected()
+                        progressionTracker.clearManualSide()
+                    }
                     manualDirectionInactivityJob?.cancel()
                     manualDirectionInactivityJob = null
                 }
@@ -2239,11 +2316,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Restore saved manual chainage override
+        // Restore saved manual chainage calibration state cleanly on startup / backup restore
         viewModelScope.launch {
-            preferencesManager.manualChainageTextFlow.collect { savedText ->
-                _manualChainageText.value = savedText
-                _manualChainage.value = if (!savedText.isNullOrBlank()) Chainage.parse(savedText) else null
+            preferencesManager.manualChainageCalibrationFlow.collect { savedCal ->
+                val live = _liveManualCalibration.value
+                val sameLiveSession = savedCal.isActive == live.isActive &&
+                    savedCal.mode == live.mode &&
+                    savedCal.anchorChainageMetres == live.anchorChainageMetres &&
+                    savedCal.anchorTimestampMs == live.anchorTimestampMs
+                if (!sameLiveSession) {
+                    _liveManualCalibration.value = savedCal
+                    _manualCalibrationCommand.value = savedCal
+                    lastPersistedManualMetres = savedCal.currentChainageMetres
+                    lastPersistedManualCalibrated = savedCal.isDynamicAnchorCalibrated
+                    val ch = savedCal.effectiveCurrentMetres?.takeIf { savedCal.isActive }?.let { Chainage(it) }
+                    _manualChainage.value = ch
+                    _manualChainageText.value = ch?.format()
+                }
             }
         }
 
@@ -2556,7 +2645,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _showManualChainageDialog.value = false
     }
 
-    fun setManualChainage(input: String) {
+    fun setManualChainage(
+        input: String,
+        mode: com.example.model.ManualChainageMode = _liveManualCalibration.value.mode,
+        closeDialog: Boolean = true
+    ) {
         val trimmed = input.trim()
         if (trimmed.isBlank()) {
             clearManualChainage()
@@ -2565,17 +2658,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val parsed = Chainage.parse(trimmed)
         if (parsed == null) {
             viewModelScope.launch {
-                _uiMessages.emit(UiMessage.Error("Invalid chainage format. Use e.g. 198+880, 198880, or 200+000"))
-                showToast("Invalid chainage format (e.g. 198+880 or 198880)", ToastType.ERROR)
+                _uiMessages.emit(UiMessage.Error("Invalid chainage format. Use e.g. 174+250, 198+880, or 200000"))
+                showToast("Invalid chainage format (e.g. 174+250 or 198+880)", ToastType.ERROR)
             }
             return
         }
         val formatted = parsed.format()
+        val nowMs = System.currentTimeMillis()
+        val newCal = progressionTracker.establishManualCalibration(
+            enteredChainage = parsed,
+            mode = mode,
+            currentAutoResult = _autoMatchStateFlow.value,
+            locationState = locationTracker.locationState.value,
+            routeId = activeRouteData.value?.id,
+            nowMs = nowMs
+        )
         _manualChainage.value = parsed
         _manualChainageText.value = formatted
-        _showManualChainageDialog.value = false
+        _liveManualCalibration.value = newCal
+        _manualCalibrationCommand.value = newCal
+        lastPersistedManualMetres = newCal.currentChainageMetres
+        lastPersistedManualCalibrated = newCal.isDynamicAnchorCalibrated
+        if (closeDialog) {
+            _showManualChainageDialog.value = false
+        }
+        val modeDetail = if (mode == com.example.model.ManualChainageMode.DYNAMIC_CORRECTION) {
+            val off = newCal.formattedOffsetBadge
+            if (newCal.isDynamicAnchorCalibrated && off != null) {
+                "Dynamic calibrated ($off)"
+            } else {
+                "Dynamic mode (awaiting reliable GPS)"
+            }
+        } else {
+            "Continue Stable Chainage"
+        }
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateManualChainageCalibration(newCal)
+        }
         viewModelScope.launch {
-            preferencesManager.setManualChainageOverride(parsed, formatted)
             val currentList = savedCustomChainages.value.toMutableList()
             if (currentList.none { it.equals(formatted, ignoreCase = true) }) {
                 currentList.add(0, formatted)
@@ -2586,21 +2706,96 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     actionType = "MANUAL_OVERRIDE",
                     routeId = activeRouteData.value?.id ?: "",
                     routeName = activeRouteData.value?.name ?: "No Route",
-                    summary = "Manual Chainage: $formatted",
-                    details = "Manual override active"
+                    summary = "Manual Chainage: $formatted (${mode.shortLabel})",
+                    details = modeDetail
                 )
             )
-            _uiMessages.emit(UiMessage.Success("Manual chainage active: $formatted"))
-            showToast("Manual chainage active: $formatted", ToastType.SUCCESS)
+            _uiMessages.emit(UiMessage.Success("Manual chainage ($modeDetail): $formatted"))
+            showToast("$formatted • ${mode.shortLabel}", ToastType.SUCCESS)
         }
     }
 
+    /**
+     * Switches cleanly between [com.example.model.ManualChainageMode.CONTINUE_STABLE] and
+     * [com.example.model.ManualChainageMode.DYNAMIC_CORRECTION] while strictly preserving
+     * the current displayed chainage without unexpected jumps.
+     */
+    fun setManualChainageMode(targetMode: com.example.model.ManualChainageMode) {
+        val currentLive = _liveManualCalibration.value
+        val nowMs = System.currentTimeMillis()
+        if (!currentLive.isActive) {
+            val updatedInactive = currentLive.copy(mode = targetMode, lastUpdatedTimestampMs = nowMs)
+            _liveManualCalibration.value = updatedInactive
+            _manualCalibrationCommand.value = updatedInactive
+            preferencesManager.launchSafeEdit {
+                preferencesManager.updateManualChainageCalibration(updatedInactive)
+            }
+            return
+        }
+        if (currentLive.mode == targetMode) return
+
+        val switched = progressionTracker.switchManualMode(
+            currentCalibration = currentLive,
+            targetMode = targetMode,
+            currentAutoResult = _autoMatchStateFlow.value,
+            locationState = locationTracker.locationState.value,
+            routeId = activeRouteData.value?.id,
+            nowMs = nowMs
+        )
+        _liveManualCalibration.value = switched
+        _manualCalibrationCommand.value = switched
+        switched.effectiveCurrentMetres?.let { metres ->
+            val ch = Chainage(metres)
+            _manualChainage.value = ch
+            _manualChainageText.value = ch.format()
+        }
+        lastPersistedManualMetres = switched.currentChainageMetres
+        lastPersistedManualCalibrated = switched.isDynamicAnchorCalibrated
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateManualChainageCalibration(switched)
+        }
+        val msg = if (targetMode == com.example.model.ManualChainageMode.DYNAMIC_CORRECTION) {
+            val off = switched.formattedOffsetBadge
+            if (switched.isDynamicAnchorCalibrated && off != null) {
+                "Dynamic Correction active ($off)"
+            } else {
+                "Dynamic Correction active (waiting GPS lock)"
+            }
+        } else {
+            "Continue Stable Chainage active"
+        }
+        showToast(msg, ToastType.INFO)
+    }
+
+    /**
+     * Explicit user-controlled recalibration at current GPS position (preserves active mode or uses target mode).
+     */
+    fun recalibrateManualChainage(
+        input: String? = null,
+        mode: com.example.model.ManualChainageMode = _liveManualCalibration.value.mode
+    ) {
+        val effectiveInput = input?.trim()?.takeIf { it.isNotBlank() }
+            ?: _liveManualCalibration.value.effectiveDisplayChainage
+            ?: liveMatchResult.value.chainage?.format()
+            ?: return
+        setManualChainage(input = effectiveInput, mode = mode, closeDialog = false)
+    }
+
     fun clearManualChainage() {
+        val preservedMode = _liveManualCalibration.value.mode
+        val cleared = com.example.model.ManualChainageCalibrationState.inactive(preservedMode)
         _manualChainage.value = null
         _manualChainageText.value = null
+        _liveManualCalibration.value = cleared
+        _manualCalibrationCommand.value = cleared
+        lastPersistedManualMetres = null
+        lastPersistedManualCalibrated = false
+        progressionTracker.resetManualProgressionSession()
         _showManualChainageDialog.value = false
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateManualChainageCalibration(cleared)
+        }
         viewModelScope.launch {
-            preferencesManager.setManualChainageOverride(null, null)
             preferencesManager.addChainageLogEntry(
                 ChainageLogEntry(
                     actionType = "MANUAL_RESET",
@@ -2640,9 +2835,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             preferencesManager.saveCustomChainagesList(currentList)
             if (_manualChainageText.value.equals(oldValue, ignoreCase = true)) {
-                _manualChainage.value = parsed
-                _manualChainageText.value = displayStr
-                preferencesManager.setManualChainageOverride(parsed, displayStr)
+                setManualChainage(displayStr, _liveManualCalibration.value.mode, closeDialog = false)
             }
             showToast("Updated chainage: $displayStr", ToastType.SUCCESS)
         }
@@ -3087,27 +3280,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSide(side: RoadSide) {
         val nowMs = System.currentTimeMillis()
-        val updatedPrefs = _smartDirectionPreferences.value.copy(
-            controlMode = com.example.model.DirectionControlMode.MANUAL_OVERRIDE,
-            manualOverrideSide = side.label,
-            manualSelectedAtMs = nowMs
-        )
+        val writeVersion: Long
+        val updatedPrefs: com.example.model.SmartDirectionPreferences
+        synchronized(smartDirectionMutationLock) {
+            updatedPrefs = _smartDirectionPreferences.value.copy(
+                controlMode = com.example.model.DirectionControlMode.MANUAL_OVERRIDE,
+                manualOverrideSide = side.label,
+                manualSelectedAtMs = nowMs
+            )
+            smartDirectionWriteVersion += 1L
+            writeVersion = smartDirectionWriteVersion
+            _smartDirectionPreferences.value = updatedPrefs
+        }
         val normalizedLabel = updatedPrefs.normalizedManualSide ?: side.label
+        manualDirectionInactivityJob?.cancel()
+        manualDirectionInactivityJob = null
         CtecsNavigationTelemetryHub.sharedDirectionManager.onManualDirectionSelected(normalizedLabel, nowMs)
         progressionTracker.setManualSide(normalizedLabel)
-        _smartDirectionPreferences.value = updatedPrefs
         CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
         _projectProfile.update { it.copy(roadSide = side) }
-        scheduleManualDirectionInactivityWatcher()
 
-        // Synchronously publish authoritative direction state so Camera preview, immediate captures,
-        // Home, Screensaver, Survey, and Notifications stay 100% consistent without async lag.
+        // Synchronously publish authoritative locked manual direction state so Camera preview,
+        // immediate photo/video captures, Home, Screensaver, Survey, and Notifications stay 100% consistent.
         val loc = locationTracker.locationState.value
         val currentMatch = _autoMatchStateFlow.value
         val route = activeRouteData.value
         val dirState = evaluateAndPublishSmartDirection(loc, currentMatch, route)
         _autoMatchStateFlow.value = currentMatch.copy(
-            detectedSide = dirState.confirmedSide ?: "Unknown",
+            detectedSide = dirState.confirmedSide ?: normalizedLabel,
             smartDirectionState = dirState
         )
 
@@ -3126,34 +3326,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         preferencesManager.launchSafeEdit {
-            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
-            preferencesManager.editProjectProfile { it.copy(roadSide = side) }
+            try {
+                preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+                preferencesManager.editProjectProfile { it.copy(roadSide = side) }
+            } finally {
+                synchronized(smartDirectionMutationLock) {
+                    if (writeVersion > smartDirectionFlushedVersion) {
+                        smartDirectionFlushedVersion = writeVersion
+                    }
+                }
+            }
         }
     }
 
     fun resetSideToAuto() {
-        viewModelScope.launch {
-            manualDirectionInactivityJob?.cancel()
-            manualDirectionInactivityJob = null
-            CtecsNavigationTelemetryHub.sharedDirectionManager.onAutoModeSelected()
-            progressionTracker.clearManualSide()
-            val updatedPrefs = _smartDirectionPreferences.value.copy(
+        val writeVersion: Long
+        val updatedPrefs: com.example.model.SmartDirectionPreferences
+        synchronized(smartDirectionMutationLock) {
+            updatedPrefs = _smartDirectionPreferences.value.copy(
                 controlMode = com.example.model.DirectionControlMode.AUTO,
                 manualOverrideSide = null,
                 manualSelectedAtMs = 0L
             )
+            smartDirectionWriteVersion += 1L
+            writeVersion = smartDirectionWriteVersion
             _smartDirectionPreferences.value = updatedPrefs
-            CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
-            preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
-            // Recalculate immediately from live GPS + KMZ/KML alignment offset
-            val loc = locationTracker.locationState.value
-            val currentMatch = _autoMatchStateFlow.value
-            val route = activeRouteData.value
-            val dirState = evaluateAndPublishSmartDirection(loc, currentMatch, route)
-            _autoMatchStateFlow.value = currentMatch.copy(
-                detectedSide = dirState.confirmedSide ?: "Unknown",
-                smartDirectionState = dirState
-            )
+        }
+        manualDirectionInactivityJob?.cancel()
+        manualDirectionInactivityJob = null
+        CtecsNavigationTelemetryHub.sharedDirectionManager.onAutoModeSelected()
+        progressionTracker.clearManualSide()
+        CtecsNavigationTelemetryHub.updateTelemetry(directionPreferences = updatedPrefs)
+
+        // Synchronously hand control back to automatic GPS + KMZ/KML road-alignment detection
+        val loc = locationTracker.locationState.value
+        val currentMatch = _autoMatchStateFlow.value
+        val route = activeRouteData.value
+        val dirState = evaluateAndPublishSmartDirection(loc, currentMatch, route)
+        _autoMatchStateFlow.value = currentMatch.copy(
+            detectedSide = dirState.confirmedSide ?: "Unknown",
+            smartDirectionState = dirState
+        )
+
+        preferencesManager.launchSafeEdit {
+            try {
+                preferencesManager.updateSmartDirectionPreferences(updatedPrefs)
+            } finally {
+                synchronized(smartDirectionMutationLock) {
+                    if (writeVersion > smartDirectionFlushedVersion) {
+                        smartDirectionFlushedVersion = writeVersion
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
             _uiMessages.emit(UiMessage.Info("Direction set to Auto (KMZ/KML Offset)"))
         }
     }
@@ -3610,7 +3836,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val videoSnapshotsTimeline = mutableListOf<CaptureSnapshot>()
+    private val videoChainageHistory = mutableListOf<com.example.model.VideoChainageHistorySample>()
     private var videoTickerJob: kotlinx.coroutines.Job? = null
+    private var videoChainageCollectorJob: kotlinx.coroutines.Job? = null
+    @Volatile
+    private var videoRecordingActiveElapsedMs: Long = 0L
+    @Volatile
+    private var videoSegmentStartWallMs: Long = 0L
+
+    fun getVideoChainageHistorySnapshot(): List<com.example.model.VideoChainageHistorySample> =
+        synchronized(videoChainageHistory) { videoChainageHistory.toList() }
+
+    fun getVideoSnapshotsTimelineCopy(): List<CaptureSnapshot> =
+        synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
+
+    private fun computeCurrentVideoElapsedMs(nowMs: Long = System.currentTimeMillis()): Long {
+        return if (_isRecording.value && !_isRecordingPaused.value && videoSegmentStartWallMs > 0L) {
+            videoRecordingActiveElapsedMs + (nowMs - videoSegmentStartWallMs).coerceAtLeast(0L)
+        } else {
+            videoRecordingActiveElapsedMs
+        }
+    }
+
+    private fun recordVideoTimelineSample(nowMs: Long = System.currentTimeMillis()) {
+        val elapsedMs = computeCurrentVideoElapsedMs(nowMs)
+        val snap = createCurrentSnapshot().copy(
+            timestamp = nowMs,
+            videoElapsedMs = elapsedMs
+        )
+        synchronized(videoSnapshotsTimeline) {
+            videoSnapshotsTimeline.add(snap)
+        }
+        synchronized(videoChainageHistory) {
+            val match = snap.matchResult
+            videoChainageHistory.add(
+                com.example.model.VideoChainageHistorySample(
+                    wallTimestampMs = nowMs,
+                    recordingElapsedMs = elapsedMs,
+                    chainageMetres = match.chainage?.metres,
+                    chainageLabel = snap.displayChainage,
+                    source = match.source,
+                    manualMode = match.manualChainageMode,
+                    travelDirection = match.travelDirection,
+                    roadSide = match.detectedSide,
+                    latitude = snap.location?.latitude,
+                    longitude = snap.location?.longitude,
+                    gpsAccuracy = snap.gpsAccuracy,
+                    isGpsRetained = snap.isGpsRetained || match.isUncertain
+                )
+            )
+        }
+    }
 
     fun createCurrentSnapshot(forcedRotation: Int? = null): CaptureSnapshot {
         val nowMs = System.currentTimeMillis()
@@ -3626,6 +3902,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else ""
         val liveLoc = locationState.value.point
         val liveBearing = locationState.value.bearing
+        val liveSpeed = locationState.value.speed
         if (liveLoc != null) {
             _lastValidLocation.value = liveLoc
         }
@@ -3639,19 +3916,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             captureTimeMs = nowMs,
             omitIfStale = currentOverlayCfg.weatherOmitIfStale
         )
+        val latestDir = smartDirectionState.value
+        val synchronizedMatch = cameraMatchResult.value.let { current ->
+            if (current.smartDirectionState == latestDir) {
+                current
+            } else {
+                current.copy(
+                    detectedSide = latestDir.confirmedSide ?: current.detectedSide,
+                    smartDirectionState = latestDir
+                )
+            }
+        }
         return CaptureSnapshot(
             timestamp = nowMs,
             location = liveLoc,
             locationName = locName,
             gpsAccuracy = locationState.value.accuracy,
             bearing = liveBearing,
-            matchResult = cameraMatchResult.value,
+            matchResult = synchronizedMatch,
             projectProfile = projectProfile.value,
             overlayConfig = currentOverlayCfg,
             activeRoute = activeRouteData.value,
             deviceRotationDegrees = rot,
             compassHeading = compassState.value.displayHeading,
             compassAzimuth = compassState.value.azimuthDegrees,
+            speedMps = liveSpeed,
             filenameFormatPreset = currentCamCfg.filenameFormatPreset,
             customFilenamePrefix = currentCamCfg.customFilenamePrefix,
             isDarkTheme = themeMode.value != "light",
@@ -3668,27 +3957,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             videoQualityPreset = com.example.model.OutputQualityPreset.MAXIMUM,
             videoOutputSizeOptimization = false,
             targetVideoFps = currentCamCfg.videoFps,
-            cropMode = currentCamCfg.cropMode
+            cropMode = currentCamCfg.cropMode,
+            videoElapsedMs = if (_isRecording.value) computeCurrentVideoElapsedMs(nowMs) else null
         )
     }
 
-    fun onVideoRecordingStarted() {
+    fun onVideoRecordingStarted(nowMs: Long = System.currentTimeMillis()) {
         _isRecording.value = true
         _isRecordingPaused.value = false
         _recordingDurationSeconds.value = 0
+        videoRecordingActiveElapsedMs = 0L
+        videoSegmentStartWallMs = nowMs
         CtecsNavigationTelemetryHub.sharedDirectionManager.onVideoRecordingStateChanged(true)
         synchronized(videoSnapshotsTimeline) {
             videoSnapshotsTimeline.clear()
-            videoSnapshotsTimeline.add(createCurrentSnapshot())
         }
+        synchronized(videoChainageHistory) {
+            videoChainageHistory.clear()
+        }
+        recordVideoTimelineSample(nowMs)
         videoTickerJob?.cancel()
         videoTickerJob = viewModelScope.launch {
             while (_isRecording.value) {
                 kotlinx.coroutines.delay(1000L)
                 if (_isRecording.value && !_isRecordingPaused.value) {
                     _recordingDurationSeconds.value += 1
-                    synchronized(videoSnapshotsTimeline) {
-                        videoSnapshotsTimeline.add(createCurrentSnapshot())
+                    recordVideoTimelineSample()
+                }
+            }
+        }
+        videoChainageCollectorJob?.cancel()
+        videoChainageCollectorJob = viewModelScope.launch {
+            var lastRecordedChainage: Long? = cameraMatchResult.value.chainage?.metres
+            var lastRecordedMs = nowMs
+            cameraMatchResult.collect { match ->
+                if (_isRecording.value && !_isRecordingPaused.value) {
+                    val m = match.chainage?.metres
+                    val t = System.currentTimeMillis()
+                    if (m != lastRecordedChainage && (t - lastRecordedMs) >= 300L) {
+                        lastRecordedChainage = m
+                        lastRecordedMs = t
+                        recordVideoTimelineSample(t)
                     }
                 }
             }
@@ -3699,15 +4008,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _recordingDurationSeconds.value = seconds
     }
 
-    fun onVideoRecordingPaused(paused: Boolean) {
-        _isRecordingPaused.value = paused
+    fun onVideoRecordingPaused(paused: Boolean, nowMs: Long = System.currentTimeMillis()) {
+        val wasPaused = _isRecordingPaused.value
+        if (paused == wasPaused) return
+        if (paused) {
+            if (_isRecording.value && videoSegmentStartWallMs > 0L) {
+                videoRecordingActiveElapsedMs += (nowMs - videoSegmentStartWallMs).coerceAtLeast(0L)
+                recordVideoTimelineSample(nowMs)
+            }
+            _isRecordingPaused.value = true
+        } else {
+            _isRecordingPaused.value = false
+            if (_isRecording.value) {
+                videoSegmentStartWallMs = nowMs
+                recordVideoTimelineSample(nowMs)
+            }
+        }
     }
 
-    fun onVideoRecordingStopped() {
+    fun onVideoRecordingStopped(nowMs: Long = System.currentTimeMillis()) {
+        if (_isRecording.value && !_isRecordingPaused.value && videoSegmentStartWallMs > 0L) {
+            videoRecordingActiveElapsedMs += (nowMs - videoSegmentStartWallMs).coerceAtLeast(0L)
+            recordVideoTimelineSample(nowMs)
+        }
         _isRecording.value = false
         _isRecordingPaused.value = false
         _recordingDurationSeconds.value = 0
         videoTickerJob?.cancel()
+        videoChainageCollectorJob?.cancel()
         CtecsNavigationTelemetryHub.sharedDirectionManager.onVideoRecordingStateChanged(false)
     }
 
@@ -3719,6 +4047,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val appContext = context.applicationContext
         val timelineCopy = synchronized(videoSnapshotsTimeline) { videoSnapshotsTimeline.toList() }
+        val historyCopy = synchronized(videoChainageHistory) { videoChainageHistory.toList() }
         val defaultSnapshot = createCurrentSnapshot(forcedRotation)
 
         val addrText = if (defaultSnapshot.locationName.isNotBlank() && !defaultSnapshot.locationName.equals("None", ignoreCase = true)) {
@@ -3773,6 +4102,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     if (success && finalFile.exists() && finalFile.length() > 0L) {
                         try {
+                            val startSample = historyCopy.firstOrNull()
+                            val endSample = historyCopy.lastOrNull()
+                            val chainageRangeSummary = if (startSample != null && endSample != null &&
+                                startSample.chainageLabel != endSample.chainageLabel
+                            ) {
+                                "Video Chainage: ${startSample.chainageLabel} → ${endSample.chainageLabel} (${historyCopy.size} pts)"
+                            } else if (startSample != null) {
+                                "Video Chainage: ${startSample.chainageLabel} (${historyCopy.size} pts)"
+                            } else null
+                            val calDesc = _liveManualCalibration.value.formatExifSummary()
+                            val videoDesc = listOfNotNull(
+                                defaultSnapshot.projectProfile.customDescription.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) },
+                                chainageRangeSummary,
+                                calDesc
+                            ).joinToString(" | ")
                             val record = com.example.data.PhotoRecordEntity(
                                 filePath = finalFile.absolutePath,
                                 fileName = fileName,
@@ -3792,7 +4136,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 lane = defaultSnapshot.projectProfile.lane,
                                 activity = defaultSnapshot.projectProfile.activity,
                                 subActivity = defaultSnapshot.projectProfile.subActivity,
-                                customDescription = defaultSnapshot.projectProfile.customDescription,
+                                customDescription = videoDesc,
                                 inspectorName = defaultSnapshot.projectProfile.inspectorName,
                                 formattedOverlayText = defaultSnapshot.projectProfile.buildHighwayText(defaultSnapshot.displayChainage)
                             )
@@ -3904,6 +4248,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _kmStoneAlertSettings.value = com.example.model.KmStoneAlertSettings()
             _manualChainage.value = null
             _manualChainageText.value = null
+            _liveManualCalibration.value = com.example.model.ManualChainageCalibrationState()
+            _manualCalibrationCommand.value = com.example.model.ManualChainageCalibrationState()
+            lastPersistedManualMetres = null
+            lastPersistedManualCalibrated = false
+            progressionTracker.resetManualProgressionSession()
             selectedAlignmentId.value = null
             _isFlashOn.value = false
             _isFrontCamera.value = false
@@ -3997,10 +4346,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     preferencesManager.updateSelectedAlignmentId(null)
                     lastCalculatedMatchResult = null
                     progressionTracker.resetChainageFilter()
-                    if (_manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()) {
+                    if (_manualChainage.value != null || !_manualChainageText.value.isNullOrBlank() || _liveManualCalibration.value.isActive) {
+                        val cleared = com.example.model.ManualChainageCalibrationState.inactive(_liveManualCalibration.value.mode)
                         _manualChainage.value = null
                         _manualChainageText.value = null
-                        preferencesManager.setManualChainageOverride(null, null)
+                        _liveManualCalibration.value = cleared
+                        _manualCalibrationCommand.value = cleared
+                        lastPersistedManualMetres = null
+                        lastPersistedManualCalibrated = false
+                        preferencesManager.updateManualChainageCalibration(cleared)
                     }
                     val rangeStr = if (data?.startChainage != null && data.endChainage != null) {
                         " • ${data.startChainage.format()} → ${data.endChainage.format()}"
@@ -4054,10 +4408,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     selectedAlignmentId.value = null
                     lastCalculatedMatchResult = null
                     progressionTracker.resetChainageFilter()
-                    if (_manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()) {
+                    if (_manualChainage.value != null || !_manualChainageText.value.isNullOrBlank() || _liveManualCalibration.value.isActive) {
+                        val cleared = com.example.model.ManualChainageCalibrationState.inactive(_liveManualCalibration.value.mode)
                         _manualChainage.value = null
                         _manualChainageText.value = null
-                        preferencesManager.setManualChainageOverride(null, null)
+                        _liveManualCalibration.value = cleared
+                        _manualCalibrationCommand.value = cleared
+                        lastPersistedManualMetres = null
+                        lastPersistedManualCalibrated = false
+                        preferencesManager.updateManualChainageCalibration(cleared)
                     }
                     val rangeStr = if (data?.startChainage != null && data.endChainage != null) {
                         " • ${data.startChainage.format()} → ${data.endChainage.format()}"

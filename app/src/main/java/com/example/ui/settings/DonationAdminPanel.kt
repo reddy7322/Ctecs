@@ -132,7 +132,7 @@ internal fun DonationAdminPanel(
             MinimalAdminInput(
                 label = "Administrator ID",
                 value = adminIdInput,
-                placeholder = "e.g. madhu_admin",
+                placeholder = "e.g. admin_id",
                 tag = "admin_login_id_input",
                 onValueChange = { adminIdInput = it; authError = null }
             )
@@ -355,7 +355,7 @@ internal fun DonationAdminPanel(
                         DonationStatusBadge(tx.parsedStatus)
                     }
                     Text(
-                        text = "${timeFmt.format(Date(tx.createdAtMs))} · To: ${tx.recipientName} (${tx.upiId})",
+                        text = "${timeFmt.format(Date(tx.createdAtMs))} · ${tx.paymentMethod}",
                         color = c.textSecondary,
                         fontSize = 11.sp
                     )
