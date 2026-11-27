@@ -572,6 +572,7 @@ class ChainageAccuracyRefreshCoordinator {
 
         // Apply calibrated correction if enabled
         val enabledPoints = calibrationSync.syncedPoints.filter { it.isEnabled }
+        val isGpsUsable = gpsValidation.isValid && locationState.point != null
         val smartCorrected = if (isCorrectionsEnabled && enabledPoints.isNotEmpty()) {
             SmartChainageCorrectionEngine.applyCorrection(
                 rawChainage = rawKmz,
@@ -581,22 +582,42 @@ class ChainageAccuracyRefreshCoordinator {
                 gpsAccuracy = locationState.accuracy,
                 confidence = kmzMatch.confidence,
                 distanceAlongAlignmentMetres = kmzMatch.distanceAlongAlignmentMetres,
-                isUncertainJump = kmzMatch.isUncertain
+                isUncertainJump = kmzMatch.isUncertain,
+                preferredAlignmentName = kmzMatch.matchedAlignmentName,
+                isGpsAvailable = isGpsUsable
             )
         } else null
 
-        val preStabilized = if (smartCorrected != null) {
-            kmzMatch.copy(
+        val isSmartInvalid = smartCorrected != null &&
+            (smartCorrected.hasConflict || smartCorrected.validationStatus == CalibrationValidationStatus.INVALID)
+
+        val preStabilized = when {
+            smartCorrected != null && isSmartInvalid -> kmzMatch.copy(
+                chainage = rawKmz,
+                source = ChainageSource.CUSTOM_CORRECTION,
+                rawUncorrectedChainage = rawKmz,
+                confidence = MatchConfidence.LOW,
+                isUncertain = true,
+                correctionPointInfo = smartCorrected.infoMessage,
+                statusMessage = "Calibration Invalid (${smartCorrected.infoMessage})",
+                calibrationValidationStatus = CalibrationValidationStatus.INVALID,
+                calibrationValidationReason = smartCorrected.infoMessage,
+                calibrationAttemptedOffsetMetres = smartCorrected.attemptedOffsetMetres
+            )
+            smartCorrected != null -> kmzMatch.copy(
                 chainage = smartCorrected.correctedChainage,
                 source = ChainageSource.CUSTOM_CORRECTION,
                 rawUncorrectedChainage = rawKmz,
                 correctionPointInfo = smartCorrected.infoMessage,
-                statusMessage = "Custom Correction (${smartCorrected.infoMessage})"
+                statusMessage = "Custom Correction (${smartCorrected.infoMessage})",
+                calibrationValidationStatus = smartCorrected.validationStatus,
+                calibrationValidationReason = smartCorrected.infoMessage,
+                calibrationAttemptedOffsetMetres = smartCorrected.appliedOffsetMetres
             )
-        } else {
-            kmzMatch.copy(
+            else -> kmzMatch.copy(
                 source = ChainageSource.KMZ,
-                rawUncorrectedChainage = rawKmz
+                rawUncorrectedChainage = rawKmz,
+                calibrationValidationStatus = if (!isGpsUsable) CalibrationValidationStatus.GPS_UNAVAILABLE else null
             )
         }
 
@@ -605,8 +626,10 @@ class ChainageAccuracyRefreshCoordinator {
         // Evaluate all 9 validation rules strictly
         val hasControlPointConflict = calibrationSync.conflictReport.hasConflict ||
             calibrationSync.hasDuplicates ||
-            (smartCorrected?.hasConflict == true) ||
-            calibrationSync.conflictReport.validationStatus == CalibrationValidationStatus.NEEDS_REVIEW
+            isSmartInvalid ||
+            calibrationSync.conflictReport.validationStatus == CalibrationValidationStatus.NEEDS_REVIEW ||
+            calibrationSync.conflictReport.validationStatus == CalibrationValidationStatus.PENDING ||
+            calibrationSync.conflictReport.validationStatus == CalibrationValidationStatus.INVALID
         val isProfileValid = calibrationSync.compatibility?.let {
             it.isCompatible && (it.isExactGeometryMatch || enabledPoints.isEmpty())
         } ?: true
@@ -640,7 +663,7 @@ class ChainageAccuracyRefreshCoordinator {
         }
 
         notes += "Alignment: Matched ${stabilized.matchedAlignmentName.ifBlank { route.name }} (±${stabilized.offsetMetres.toInt()}m)"
-        notes += "Calibration: ${if (smartCorrected != null) smartCorrected.infoMessage else "Original KMZ Baseline"}"
+        notes += "Calibration: ${if (smartCorrected != null) "${CalibrationValidationStatus.displayLabel(smartCorrected.validationStatus)} — ${smartCorrected.infoMessage}" else "Original KMZ Baseline"}"
         notes += "Side: ${stabilized.detectedSide} • Manual: ${if (isManualActive) "Active (${manualChainage?.format() ?: manualChainageText})" else "Off"}"
 
         val summary = when (finalStatus) {
@@ -656,7 +679,9 @@ class ChainageAccuracyRefreshCoordinator {
             ChainageAccuracyStatus.ALIGNMENT_MISMATCH ->
                 "Alignment Mismatch • Check active KMZ/KML route"
             ChainageAccuracyStatus.CALIBRATION_NEEDS_REVIEW -> {
-                val conflictMsg = calibrationSync.conflictReport.conflicts.firstOrNull()
+                val conflictMsg = smartCorrected?.infoMessage?.takeIf { isSmartInvalid }
+                    ?: calibrationSync.conflictReport.conflicts.firstOrNull()
+                    ?: calibrationSync.conflictReport.warnings.firstOrNull()
                     ?: calibrationSync.duplicateDetails.firstOrNull()
                     ?: calibrationSync.compatibility?.statusMessage
                     ?: "Review control points"

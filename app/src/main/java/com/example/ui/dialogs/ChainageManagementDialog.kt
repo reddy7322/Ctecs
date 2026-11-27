@@ -9,15 +9,19 @@ import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -176,6 +180,17 @@ fun ChainageManagementDialog(
     val calibrationDiagnostics by viewModel.calibrationDiagnostics.collectAsStateWithLifecycle()
     val isRefreshingAccuracy by viewModel.isRefreshingChainageAccuracy.collectAsStateWithLifecycle()
     val accuracyReport by viewModel.chainageAccuracyReport.collectAsStateWithLifecycle()
+    val selectedAlignmentId by viewModel.selectedAlignmentId.collectAsStateWithLifecycle()
+
+    val resolvedRoute = remember(activeRoute, selectedAlignmentId) {
+        if (activeRoute != null && selectedAlignmentId != null &&
+            activeRoute.alignments.any { it.id == selectedAlignmentId }
+        ) {
+            activeRoute.copy(selectedAlignmentId = selectedAlignmentId)
+        } else {
+            activeRoute
+        }
+    }
 
     var showResetCalibrationConfirm by remember { mutableStateOf(false) }
     var showRemoveAlignmentConfirm by remember { mutableStateOf(false) }
@@ -285,12 +300,13 @@ fun ChainageManagementDialog(
                     ) {
                         ChainageSourceBadge(
                             source = matchResult.source,
-                            isDark = dialogColors.isDark
+                            isDark = dialogColors.isDark,
+                            validationStatus = matchResult.calibrationValidationStatus
                         )
                         IconButton(
                             onClick = onDismiss,
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(48.dp)
                                 .testTag("close_chainage_dialog_button")
                         ) {
                             Icon(
@@ -317,7 +333,7 @@ fun ChainageManagementDialog(
                 ) {
                     // 1. KMZ / KML FILE & URL IMPORT & ALIGNMENT STATUS SECTION
                     KmzAlignmentFileSection(
-                        activeRoute = activeRoute,
+                        activeRoute = resolvedRoute,
                         isImporting = isImportingRoute,
                         importStatusMessage = routeImportStatus,
                         importErrorMessage = routeImportError,
@@ -338,7 +354,7 @@ fun ChainageManagementDialog(
 
                     // 2. LIVE CHAINAGE & CALIBRATION STATUS SECTION
                     LiveCalibrationStatusSection(
-                        activeRoute = activeRoute,
+                        activeRoute = resolvedRoute,
                         matchResult = matchResult,
                         correctionPoints = correctionPoints,
                         isCorrectionsEnabled = isCorrectionsEnabled,
@@ -360,7 +376,7 @@ fun ChainageManagementDialog(
                     // 3. UNIFIED KMZ CHAINAGE CORRECTION & CALIBRATION INPUT CARD
                     KmzChainageCalibrationSection(
                         viewModel = viewModel,
-                        activeRoute = activeRoute,
+                        activeRoute = resolvedRoute,
                         matchResult = matchResult,
                         currentGpsPoint = currentGpsPoint,
                         currentGpsAccuracy = currentGpsAccuracy,
@@ -382,8 +398,8 @@ fun ChainageManagementDialog(
                             }
                         },
                         onTogglePoint = { pt, enabled ->
-                            if (activeRoute != null) {
-                                viewModel.toggleCorrectionPoint(activeRoute.id, pt.id, enabled)
+                            if (resolvedRoute != null) {
+                                viewModel.toggleCorrectionPoint(resolvedRoute.id, pt.id, enabled)
                             }
                         },
                         onDeletePoint = { pt ->
@@ -422,23 +438,39 @@ fun ChainageManagementDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val activeValidCalibrations = correctionPoints.count {
+                        it.isEnabled && it.verificationStatus != CalibrationValidationStatus.INVALID
+                    }
+                    val invalidCount = correctionPoints.count {
+                        it.isEnabled && it.verificationStatus == CalibrationValidationStatus.INVALID
+                    }
                     Text(
-                        text = if (activeRoute != null) {
-                            "${activeRoute.markers.size} refs • ${correctionPoints.count { it.isEnabled }} active calibration(s)"
+                        text = if (resolvedRoute != null) {
+                            buildString {
+                                append("${resolvedRoute.markers.size} refs • $activeValidCalibrations valid calibration(s)")
+                                if (invalidCount > 0) append(" • $invalidCount invalid")
+                            }
                         } else {
                             "No KMZ/KML alignment loaded"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = dialogColors.textSecondaryColor
+                        color = if (invalidCount > 0) redAccent else dialogColors.textSecondaryColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
                     )
 
                     TextButton(
                         onClick = onDismiss,
-                        modifier = Modifier.testTag("done_chainage_dialog_button")
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = 64.dp, minHeight = 48.dp)
+                            .testTag("done_chainage_dialog_button")
                     ) {
                         Text(
                             text = "Done",
@@ -867,37 +899,101 @@ private fun KmzAlignmentFileSection(
 
                 // Multi-Alignment / Carriageway selector if route has > 1 alignment
                 if (activeRoute.alignments.size > 1) {
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Alignment Selection (${activeRoute.alignments.size} paths)",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = dialogColors.textSecondaryColor
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val primaryId = activeRoute.alignments.firstOrNull()?.id
                     LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("alignment_selection_row")
                     ) {
                         item {
+                            val isAutoSelected = activeRoute.selectedAlignmentId == null
                             FilterChip(
-                                selected = activeRoute.selectedAlignmentId == null,
+                                selected = isAutoSelected,
                                 onClick = { onSelectAlignment(null) },
-                                label = { Text("Auto (All)", fontSize = 10.5.sp) },
+                                leadingIcon = if (isAutoSelected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                } else null,
+                                label = {
+                                    Text(
+                                        text = "Auto (All)",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isAutoSelected) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                },
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isAutoSelected,
+                                    borderColor = dialogColors.borderColor.copy(alpha = 0.6f),
+                                    selectedBorderColor = primaryAccent
+                                ),
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = primaryAccent.copy(alpha = 0.2f),
-                                    selectedLabelColor = primaryAccent
+                                    selectedLabelColor = primaryAccent,
+                                    selectedLeadingIconColor = primaryAccent
                                 )
                             )
                         }
                         items(activeRoute.alignments, key = { it.id }) { align ->
                             val isSelected = activeRoute.selectedAlignmentId == align.id
+                            val isPrimary = align.id == primaryId
+                            val labelStr = buildString {
+                                append(align.name.ifBlank { "Alignment" })
+                                if (align.carriagewayType.isNotBlank()) {
+                                    append(" • ")
+                                    append(align.carriagewayType)
+                                }
+                                if (isPrimary) {
+                                    append(" (Primary)")
+                                }
+                            }
                             FilterChip(
                                 selected = isSelected,
                                 onClick = { onSelectAlignment(align.id) },
+                                leadingIcon = if (isSelected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                } else null,
                                 label = {
                                     Text(
-                                        text = "${align.name} (${align.carriagewayType})",
-                                        fontSize = 10.5.sp,
-                                        maxLines = 1
+                                        text = labelStr,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 },
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = dialogColors.borderColor.copy(alpha = 0.6f),
+                                    selectedBorderColor = primaryAccent
+                                ),
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = primaryAccent.copy(alpha = 0.2f),
-                                    selectedLabelColor = primaryAccent
+                                    selectedLabelColor = primaryAccent,
+                                    selectedLeadingIconColor = primaryAccent
                                 )
                             )
                         }
@@ -999,6 +1095,7 @@ private fun KmzAlignmentFileSection(
 // -----------------------------------------------------------------------------
 // SECTION 2: LIVE CHAINAGE & CALIBRATION STATUS
 // -----------------------------------------------------------------------------
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LiveCalibrationStatusSection(
     activeRoute: RouteData?,
@@ -1016,23 +1113,106 @@ internal fun LiveCalibrationStatusSection(
     onForceRefreshAll: () -> Unit
 ) {
     val rawKmzChainage = matchResult.rawUncorrectedChainage ?: matchResult.chainage
-    val calibratedChainage = matchResult.chainage
-    val activeDeltaMetres = if (rawKmzChainage != null && calibratedChainage != null) {
-        calibratedChainage.metres - rawKmzChainage.metres
-    } else 0L
+    val enabledPoints = remember(correctionPoints) { correctionPoints.filter { it.isEnabled } }
+    val conflictReport = remember(activeRoute, enabledPoints) {
+        if (activeRoute != null && enabledPoints.isNotEmpty()) {
+            SmartChainageCorrectionEngine.detectReferenceConflicts(enabledPoints, activeRoute)
+        } else null
+    }
 
-    val (confBg, confText, confLabel) = when (matchResult.confidence) {
-        MatchConfidence.HIGH -> Triple(Color(0xFF065F46), Color(0xFF34D399), "High Confidence")
-        MatchConfidence.MEDIUM -> Triple(Color(0xFF78350F), Color(0xFFFBBF24), "Medium Confidence")
-        MatchConfidence.LOW -> Triple(Color(0xFF7F1D1D), Color(0xFFF87171), "Low Confidence")
-        MatchConfidence.NO_MATCH -> Triple(Color(0xFF374151), Color(0xFF9CA3AF), if (activeRoute == null) "Awaiting KMZ" else "Off Route / No GPS")
+    val liveValidationStatus = matchResult.calibrationValidationStatus
+    val hasInvalidCalibration = isCorrectionsEnabled && enabledPoints.isNotEmpty() && (
+        liveValidationStatus == CalibrationValidationStatus.INVALID ||
+            conflictReport?.hasConflict == true
+        )
+    val hasPendingCalibration = !hasInvalidCalibration && isCorrectionsEnabled && enabledPoints.isNotEmpty() && (
+        liveValidationStatus == CalibrationValidationStatus.PENDING ||
+            liveValidationStatus == CalibrationValidationStatus.NEEDS_REVIEW ||
+            conflictReport?.validationStatus == CalibrationValidationStatus.PENDING ||
+            conflictReport?.validationStatus == CalibrationValidationStatus.NEEDS_REVIEW
+        )
+    val isGpsUnavailable = matchResult.confidence == MatchConfidence.NO_MATCH &&
+        (matchResult.gpsAccuracy <= 0f || liveValidationStatus == CalibrationValidationStatus.GPS_UNAVAILABLE)
+
+    val calibratedChainage = if (hasInvalidCalibration) rawKmzChainage else matchResult.chainage
+    val displayedOffsetMetres: Long? = when {
+        hasInvalidCalibration -> matchResult.calibrationAttemptedOffsetMetres
+            ?: enabledPoints.firstOrNull()?.offsetMetres
+        rawKmzChainage != null && calibratedChainage != null ->
+            calibratedChainage.metres - rawKmzChainage.metres
+        else -> null
+    }
+
+    // Genuine 6-state status badge: never emit High Confidence / Verified / green ON when invalid
+    val (statusBg, statusColor, statusLabel) = when {
+        activeRoute == null -> Triple(
+            dialogColors.borderColor.copy(alpha = 0.25f),
+            dialogColors.textSecondaryColor,
+            "Awaiting KMZ"
+        )
+        isGpsUnavailable -> Triple(
+            amberAccent.copy(alpha = 0.16f),
+            amberAccent,
+            "GPS Unavailable"
+        )
+        hasInvalidCalibration -> Triple(
+            redAccent.copy(alpha = 0.18f),
+            redAccent,
+            "Invalid"
+        )
+        hasPendingCalibration -> Triple(
+            amberAccent.copy(alpha = 0.18f),
+            amberAccent,
+            "Pending Review"
+        )
+        matchResult.confidence == MatchConfidence.NO_MATCH -> Triple(
+            redAccent.copy(alpha = 0.15f),
+            redAccent,
+            "Off Route"
+        )
+        matchResult.isUncertain || matchResult.confidence == MatchConfidence.LOW ||
+            liveValidationStatus == CalibrationValidationStatus.LOW_CONFIDENCE -> Triple(
+            amberAccent.copy(alpha = 0.18f),
+            amberAccent,
+            "Low Confidence"
+        )
+        isCorrectionsEnabled && enabledPoints.isNotEmpty() &&
+            liveValidationStatus == CalibrationValidationStatus.CALIBRATED -> Triple(
+            primaryAccent.copy(alpha = 0.16f),
+            primaryAccent,
+            "Calibrated"
+        )
+        isCorrectionsEnabled && enabledPoints.isNotEmpty() &&
+            (liveValidationStatus == CalibrationValidationStatus.VERIFIED ||
+                matchResult.confidence == MatchConfidence.HIGH) -> Triple(
+            greenAccent.copy(alpha = 0.16f),
+            greenAccent,
+            "Verified"
+        )
+        matchResult.confidence == MatchConfidence.HIGH -> Triple(
+            greenAccent.copy(alpha = 0.16f),
+            greenAccent,
+            "High Confidence"
+        )
+        else -> Triple(
+            amberAccent.copy(alpha = 0.16f),
+            amberAccent,
+            "Medium Confidence"
+        )
     }
 
     val c = CtecsTheme.colors
+    val tabularStyle = MaterialTheme.typography.titleMedium.copy(
+        fontFamily = FontFamily.Monospace,
+        fontFeatureSettings = "tnum"
+    )
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = c.surface,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("live_calibration_status_section")
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -1040,43 +1220,70 @@ internal fun LiveCalibrationStatusSection(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = statusBg,
+                        modifier = Modifier.testTag("calibration_validation_status_pill")
+                    ) {
+                        Text(
+                            text = statusLabel,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = statusColor,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = c.secondarySurface
+                    ) {
+                        Text(
+                            text = "Side: ${matchResult.detectedSide.ifBlank { "RHS" }}",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = dialogColors.textSecondaryColor,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Surface(shape = RoundedCornerShape(4.dp), color = confBg) {
-                        Text(
-                            text = if (matchResult.isUncertain) "Uncertain Jump" else confLabel,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = confText,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                    val calToggleLabel = when {
+                        !isCorrectionsEnabled -> "Calibration OFF"
+                        hasInvalidCalibration -> "Calibration Invalid"
+                        hasPendingCalibration -> "Calibration Pending"
+                        else -> "Calibration ON"
+                    }
+                    val calToggleColor = when {
+                        !isCorrectionsEnabled -> dialogColors.textSecondaryColor
+                        hasInvalidCalibration -> redAccent
+                        hasPendingCalibration -> amberAccent
+                        else -> greenAccent
                     }
                     Text(
-                        text = "Side: ${matchResult.detectedSide.ifBlank { "RHS" }}",
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = dialogColors.textSecondaryColor
-                    )
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = if (isCorrectionsEnabled) "Calibration ON" else "Calibration OFF",
+                        text = calToggleLabel,
                         fontSize = 10.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (isCorrectionsEnabled) greenAccent else dialogColors.textSecondaryColor
+                        color = calToggleColor
                     )
                     Switch(
                         checked = isCorrectionsEnabled,
                         onCheckedChange = onToggleEnabled,
-                        colors = SwitchDefaults.colors(checkedThumbColor = primaryAccent),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = if (hasInvalidCalibration) redAccent else primaryAccent
+                        ),
                         modifier = Modifier
-                            .height(26.dp)
+                            .defaultMinSize(minHeight = 40.dp)
                             .testTag("toggle_smart_corrections")
                     )
                 }
@@ -1084,73 +1291,148 @@ internal fun LiveCalibrationStatusSection(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Original KMZ Chainage vs Calibrated Chainage Box
+            // Visual Calculation Flow Card: Original KMZ -> Correction Offset -> Calibrated Output
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = c.secondarySurface,
+                border = if (hasInvalidCalibration) {
+                    BorderStroke(1.dp, redAccent.copy(alpha = 0.45f))
+                } else null,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Original KMZ Chainage",
                             fontSize = 10.sp,
-                            color = dialogColors.textSecondaryColor
+                            color = dialogColors.textSecondaryColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = rawKmzChainage?.format() ?: "---",
+                            style = tabularStyle,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
                             color = dialogColors.titleColor
                         )
                     }
 
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(horizontal = 6.dp)
+                    ) {
+                        val offsetVal = displayedOffsetMetres ?: 0L
                         val deltaStr = when {
-                            activeDeltaMetres > 0 -> "+${activeDeltaMetres}m"
-                            activeDeltaMetres < 0 -> "${activeDeltaMetres}m"
+                            hasInvalidCalibration ->
+                                "Blocked (${if (offsetVal >= 0) "+${offsetVal}m" else "${offsetVal}m"})"
+                            offsetVal > 0L -> "+${offsetVal}m"
+                            offsetVal < 0L -> "${offsetVal}m"
                             else -> "0m"
                         }
+                        val deltaBg = when {
+                            hasInvalidCalibration -> redAccent.copy(alpha = 0.16f)
+                            hasPendingCalibration -> amberAccent.copy(alpha = 0.16f)
+                            offsetVal != 0L -> greenAccent.copy(alpha = 0.16f)
+                            else -> dialogColors.borderColor.copy(alpha = 0.3f)
+                        }
+                        val deltaColor = when {
+                            hasInvalidCalibration -> redAccent
+                            hasPendingCalibration -> amberAccent
+                            offsetVal != 0L -> greenAccent
+                            else -> dialogColors.textSecondaryColor
+                        }
                         Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = if (activeDeltaMetres != 0L) greenAccent.copy(alpha = 0.15f) else dialogColors.borderColor.copy(alpha = 0.3f)
+                            shape = RoundedCornerShape(6.dp),
+                            color = deltaBg
                         ) {
                             Text(
                                 text = deltaStr,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (activeDeltaMetres != 0L) greenAccent else dialogColors.textSecondaryColor,
+                                fontFamily = FontFamily.Monospace,
+                                color = deltaColor,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
-                            tint = primaryAccent,
+                            tint = if (hasInvalidCalibration) redAccent else primaryAccent,
                             modifier = Modifier.size(14.dp)
                         )
                     }
 
-                    Column(horizontalAlignment = Alignment.End) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Text(
-                            text = "Calibrated Output",
+                            text = if (hasInvalidCalibration) "Output (Rejected)" else "Calibrated Output",
                             fontSize = 10.sp,
-                            color = primaryAccent,
-                            fontWeight = FontWeight.SemiBold
+                            color = if (hasInvalidCalibration) redAccent else primaryAccent,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = calibratedChainage?.format() ?: "---",
-                            fontSize = 16.sp,
+                            style = tabularStyle,
+                            fontSize = 19.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.Monospace,
-                            color = primaryAccent
+                            color = if (hasInvalidCalibration) redAccent else primaryAccent
+                        )
+                    }
+                }
+            }
+
+            // Inline error / explanation banner when validation fails or is pending
+            val inlineReason = when {
+                hasInvalidCalibration -> matchResult.calibrationValidationReason
+                    ?: conflictReport?.conflicts?.firstOrNull()
+                    ?: "Calibration offset failed validation — check anchor chainage or alignment."
+                hasPendingCalibration -> matchResult.calibrationValidationReason
+                    ?: conflictReport?.warnings?.firstOrNull()
+                    ?: "Calibration exceeds typical shift (>2 km) — review reference marker."
+                isGpsUnavailable -> "GPS location unavailable — calibrated output cannot be live-verified."
+                else -> null
+            }
+            if (!inlineReason.isNullOrBlank()) {
+                val reasonColor = if (hasInvalidCalibration) redAccent else amberAccent
+                Spacer(modifier = Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = reasonColor.copy(alpha = 0.12f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("calibration_validation_reason_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (hasInvalidCalibration) Icons.Default.ErrorOutline else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = reasonColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = inlineReason,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (dialogColors.isDark) dialogColors.titleColor else reasonColor,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -1165,12 +1447,16 @@ internal fun LiveCalibrationStatusSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = String.format(
-                        Locale.US,
-                        "GPS: ±%.1fm • Offset: %.1fm",
-                        matchResult.gpsAccuracy,
-                        matchResult.offsetMetres
-                    ),
+                    text = if (isGpsUnavailable) {
+                        "GPS: Unavailable • Offset: ---"
+                    } else {
+                        String.format(
+                            Locale.US,
+                            "GPS: ±%.1fm • Offset: %.1fm",
+                            matchResult.gpsAccuracy,
+                            matchResult.offsetMetres
+                        )
+                    },
                     fontSize = 10.5.sp,
                     color = dialogColors.textSecondaryColor,
                     modifier = Modifier.weight(1f),
@@ -1197,7 +1483,7 @@ internal fun LiveCalibrationStatusSection(
                     ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     modifier = Modifier
-                        .height(34.dp)
+                        .height(36.dp)
                         .testTag("force_refresh_all_chainage_button")
                 ) {
                     if (isRefreshingAccuracy) {
@@ -1292,6 +1578,7 @@ internal fun LiveCalibrationStatusSection(
 // -----------------------------------------------------------------------------
 // SECTION 3: UNIFIED KMZ CHAINAGE CORRECTION & CALIBRATION WORKFLOW
 // -----------------------------------------------------------------------------
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun KmzChainageCalibrationSection(
     viewModel: MainViewModel,
@@ -1391,7 +1678,7 @@ private fun KmzChainageCalibrationSection(
             isEnabled = editingPoint?.isEnabled ?: true,
             referenceSource = editingPoint?.referenceSource ?: selectedSourceType,
             gpsAccuracyAtCapture = if (selectedSourceType == ReferencePointSource.GPS_VERIFIED) currentGpsAccuracy else editingPoint?.gpsAccuracyAtCapture,
-            verificationStatus = CalibrationValidationStatus.VERIFIED
+            verificationStatus = CalibrationValidationStatus.CALIBRATED
         )
     }
 
@@ -1408,20 +1695,24 @@ private fun KmzChainageCalibrationSection(
     }
 
     // ---------------------------------------------------------
-    //CALIBRATION VALIDATION STATUS & CONFLICT BANNER
+    // CALIBRATION VALIDATION STATUS & CONFLICT BANNER
     // ---------------------------------------------------------
     if (activeRoute != null && (conflictReport != null || profileCompatibility != null)) {
         val statusStr = conflictReport?.validationStatus ?: profileCompatibility?.validationStatus ?: CalibrationValidationStatus.VERIFIED
         val (statusBg, statusColor) = when (statusStr) {
             CalibrationValidationStatus.VERIFIED -> Pair(greenAccent.copy(alpha = 0.14f), greenAccent)
-            CalibrationValidationStatus.NEEDS_REVIEW -> Pair(amberAccent.copy(alpha = 0.15f), amberAccent)
-            CalibrationValidationStatus.LOW_CONFIDENCE -> Pair(amberAccent.copy(alpha = 0.12f), amberAccent)
+            CalibrationValidationStatus.CALIBRATED -> Pair(primaryAccent.copy(alpha = 0.14f), primaryAccent)
+            CalibrationValidationStatus.PENDING,
+            CalibrationValidationStatus.NEEDS_REVIEW,
+            CalibrationValidationStatus.LOW_CONFIDENCE -> Pair(amberAccent.copy(alpha = 0.15f), amberAccent)
             else -> Pair(redAccent.copy(alpha = 0.15f), redAccent)
         }
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = statusBg,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("engine_validation_status_banner")
         ) {
             Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                 Row(
@@ -1441,22 +1732,33 @@ private fun KmzChainageCalibrationSection(
                             fontSize = 10.sp,
                             color = dialogColors.textSecondaryColor,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 8.dp)
                         )
                     }
                 }
                 conflictReport?.conflicts?.forEach { conflict ->
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "⚠ $conflict",
+                        text = "• $conflict",
                         fontSize = 10.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = redAccent
                     )
                 }
+                if (conflictReport?.hasConflict == false) {
+                    conflictReport.warnings.forEach { warn ->
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "• $warn",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = amberAccent
+                        )
+                    }
+                }
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
     }
 
     // ---------------------------------------------------------
@@ -1472,35 +1774,52 @@ private fun KmzChainageCalibrationSection(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = null,
-                        tint = primaryAccent,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = if (editingPoint != null) {
-                            "Edit Calibration Point (${editingPoint?.originalKmzChainage?.format()})"
-                        } else {
-                            "KMZ Chainage Calibration Input"
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = null,
+                    tint = primaryAccent,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = if (editingPoint != null) {
+                        "Edit Calibration Point (${editingPoint?.originalKmzChainage?.format()})"
+                    } else {
+                        "KMZ Chainage Calibration Input"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = dialogColors.titleColor,
+                    modifier = Modifier.weight(1f)
+                )
+                if (editingPoint != null) {
+                    TextButton(
+                        onClick = {
+                            editingPoint = null
+                            descriptionInput = ""
+                            selectedSourceType = ReferencePointSource.MANUAL
                         },
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = dialogColors.titleColor
-                    )
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.defaultMinSize(minHeight = 36.dp)
+                    ) {
+                        Text("Cancel Edit", fontSize = 11.sp, color = redAccent)
+                    }
                 }
+            }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Wrapping Quick Action Chips (Use GPS + Pick KMZ Marker) — never squeezed or clipped on narrow screens
+            if (liveRawChainage != null || (activeRoute != null && activeRoute.markers.isNotEmpty())) {
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     if (liveRawChainage != null) {
-                        TextButton(
+                        Button(
                             onClick = {
                                 originalKmzInput = liveRawChainage.format()
                                 if (correctedInput.isBlank()) {
@@ -1508,107 +1827,107 @@ private fun KmzChainageCalibrationSection(
                                 }
                                 selectedSourceType = ReferencePointSource.GPS_VERIFIED
                             },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                            modifier = Modifier.height(26.dp)
-                        ) {
-                            Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(12.dp), tint = primaryAccent)
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("Use GPS (${liveRawChainage.format()})", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = primaryAccent)
-                        }
-                    }
-
-                    if (editingPoint != null) {
-                        TextButton(
-                            onClick = {
-                                editingPoint = null
-                                descriptionInput = ""
-                                selectedSourceType = ReferencePointSource.MANUAL
-                            },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                            modifier = Modifier.height(26.dp)
-                        ) {
-                            Text("Cancel Edit", fontSize = 10.sp, color = redAccent)
-                        }
-                    }
-                }
-            }
-
-            // Reference Marker Quick Selector (when KMZ has markers)
-            if (activeRoute != null && activeRoute.markers.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Range: ${activeRoute.startChainage?.format() ?: "0+000"} → ${activeRoute.endChainage?.format() ?: "---"}",
-                        fontSize = 10.5.sp,
-                        color = dialogColors.textSecondaryColor
-                    )
-
-                    Box {
-                        Button(
-                            onClick = { showMarkerDropdown = true },
                             elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = primaryAccent.copy(alpha = 0.14f),
                                 contentColor = primaryAccent
                             ),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
-                                .height(28.dp)
-                                .testTag("pick_reference_marker_button")
+                                .defaultMinSize(minHeight = 38.dp)
+                                .testTag("use_gps_reference_button")
                         ) {
-                            Icon(Icons.Default.GpsFixed, contentDescription = null, modifier = Modifier.size(12.dp), tint = primaryAccent)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pick KMZ Marker (${activeRoute.markers.size})", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = primaryAccent)
+                            Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(14.dp), tint = primaryAccent)
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Use GPS (${liveRawChainage.format()})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
                         }
+                    }
 
-                        DropdownMenu(
-                            expanded = showMarkerDropdown,
-                            onDismissRequest = { showMarkerDropdown = false },
-                            modifier = Modifier.heightIn(max = 260.dp)
-                        ) {
-                            // Sample up to 60 evenly spaced + boundary markers so dropdown stays fast even with 1,599 markers
-                            val markers = activeRoute.markers
-                            val sampledIndices = remember(markers.size) {
-                                if (markers.size <= 60) {
-                                    markers.indices.toList()
-                                } else {
-                                    val step = (markers.size - 1).toDouble() / 58.0
-                                    val set = LinkedHashSet<Int>()
-                                    set.add(0)
-                                    for (k in 1..57) {
-                                        set.add((k * step).toInt().coerceIn(0, markers.lastIndex))
-                                    }
-                                    if (markers.size >= 2) set.add(markers.lastIndex - 1)
-                                    set.add(markers.lastIndex)
-                                    set.toList()
-                                }
-                            }
-                            sampledIndices.forEach { idx ->
-                                val m = markers[idx]
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = "${m.chainage.format()} (${m.label})",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    },
-                                    onClick = {
-                                        originalKmzInput = m.chainage.format()
-                                        correctedInput = m.chainage.format()
-                                        selectedSourceType = ReferencePointSource.ALIGNMENT_PICK
-                                        showMarkerDropdown = false
-                                    }
+                    if (activeRoute != null && activeRoute.markers.isNotEmpty()) {
+                        Box {
+                            Button(
+                                onClick = { showMarkerDropdown = true },
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = primaryAccent.copy(alpha = 0.14f),
+                                    contentColor = primaryAccent
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 38.dp)
+                                    .testTag("pick_reference_marker_button")
+                            ) {
+                                Icon(Icons.Default.GpsFixed, contentDescription = null, modifier = Modifier.size(14.dp), tint = primaryAccent)
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Pick KMZ Marker (${activeRoute.markers.size})",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = primaryAccent,
+                                    maxLines = 1
                                 )
+                            }
+
+                            DropdownMenu(
+                                expanded = showMarkerDropdown,
+                                onDismissRequest = { showMarkerDropdown = false },
+                                modifier = Modifier.heightIn(max = 260.dp)
+                            ) {
+                                // Sample up to 60 evenly spaced + boundary markers so dropdown stays fast even with 1,599 markers
+                                val markers = activeRoute.markers
+                                val sampledIndices = remember(markers.size) {
+                                    if (markers.size <= 60) {
+                                        markers.indices.toList()
+                                    } else {
+                                        val step = (markers.size - 1).toDouble() / 58.0
+                                        val set = LinkedHashSet<Int>()
+                                        set.add(0)
+                                        for (k in 1..57) {
+                                            set.add((k * step).toInt().coerceIn(0, markers.lastIndex))
+                                        }
+                                        if (markers.size >= 2) set.add(markers.lastIndex - 1)
+                                        set.add(markers.lastIndex)
+                                        set.toList()
+                                    }
+                                }
+                                sampledIndices.forEach { idx ->
+                                    val m = markers[idx]
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "${m.chainage.format()} (${m.label})",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        },
+                                        onClick = {
+                                            originalKmzInput = m.chainage.format()
+                                            correctedInput = m.chainage.format()
+                                            selectedSourceType = ReferencePointSource.ALIGNMENT_PICK
+                                            showMarkerDropdown = false
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            if (activeRoute != null && activeRoute.markers.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Alignment Range: ${activeRoute.startChainage?.format() ?: "0+000"} → ${activeRoute.endChainage?.format() ?: "---"}",
+                    fontSize = 10.5.sp,
+                    color = dialogColors.textSecondaryColor
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1621,8 +1940,8 @@ private fun KmzChainageCalibrationSection(
                 placeholder = { Text("e.g. 130+000, 196+040, or 209+883") },
                 trailingIcon = {
                     if (originalKmzInput.isNotBlank()) {
-                        IconButton(onClick = { originalKmzInput = "" }, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear original chainage", tint = dialogColors.textSecondaryColor, modifier = Modifier.size(14.dp))
+                        IconButton(onClick = { originalKmzInput = "" }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear original chainage", tint = dialogColors.textSecondaryColor, modifier = Modifier.size(16.dp))
                         }
                     }
                 },
@@ -1645,8 +1964,8 @@ private fun KmzChainageCalibrationSection(
                 placeholder = { Text("e.g. 130+050 or 196+100") },
                 trailingIcon = {
                     if (correctedInput.isNotBlank()) {
-                        IconButton(onClick = { correctedInput = "" }, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear calibrated chainage", tint = dialogColors.textSecondaryColor, modifier = Modifier.size(14.dp))
+                        IconButton(onClick = { correctedInput = "" }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear calibrated chainage", tint = dialogColors.textSecondaryColor, modifier = Modifier.size(16.dp))
                         }
                     }
                 },
@@ -1659,25 +1978,42 @@ private fun KmzChainageCalibrationSection(
                     .testTag("corrected_kmz_input")
             )
 
-            // Live Calibration Offset Preview
+            // Live Calibration Offset & Validation Preview
+            val isTentativeInvalid = validation?.isValid == false
+            val hasTentativeWarnings = validation?.warnings?.isNotEmpty() == true && !isTentativeInvalid
+            val previewBgColor = when {
+                isTentativeInvalid -> redAccent.copy(alpha = 0.16f)
+                hasTentativeWarnings -> amberAccent.copy(alpha = 0.16f)
+                calculatedOffset > 0L -> greenAccent.copy(alpha = 0.14f)
+                calculatedOffset < 0L -> primaryAccent.copy(alpha = 0.14f)
+                else -> c.secondarySurface
+            }
+            val previewTextColor = when {
+                isTentativeInvalid -> redAccent
+                hasTentativeWarnings -> amberAccent
+                calculatedOffset > 0L -> greenAccent
+                calculatedOffset < 0L -> primaryAccent
+                else -> dialogColors.textSecondaryColor
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = when {
-                    calculatedOffset > 0L -> greenAccent.copy(alpha = 0.14f)
-                    calculatedOffset < 0L -> redAccent.copy(alpha = 0.14f)
-                    else -> c.secondarySurface
-                },
-                modifier = Modifier.fillMaxWidth()
+                color = previewBgColor,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("live_calibration_offset_preview")
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val shiftText = if (parsedOriginal != null && parsedCorrected != null) {
                         val sign = if (calculatedOffset >= 0) "+$calculatedOffset" else "$calculatedOffset"
                         val dirDesc = when {
+                            isTentativeInvalid -> "(Invalid Offset)"
+                            hasTentativeWarnings -> "(Needs Review)"
                             calculatedOffset > 0 -> "(Forward Shift)"
                             calculatedOffset < 0 -> "(Backward Shift)"
                             else -> "(Zero Shift)"
@@ -1691,15 +2027,19 @@ private fun KmzChainageCalibrationSection(
                         text = shiftText,
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (calculatedOffset >= 0) greenAccent else redAccent
+                        fontFamily = FontFamily.Monospace,
+                        color = previewTextColor,
+                        modifier = Modifier.weight(1f)
                     )
 
                     if (parsedCorrected != null) {
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "KM ${parsedCorrected.format()}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = primaryAccent
+                            fontFamily = FontFamily.Monospace,
+                            color = if (isTentativeInvalid) redAccent else primaryAccent
                         )
                     }
                 }
@@ -1717,20 +2057,22 @@ private fun KmzChainageCalibrationSection(
                         color = c.secondarySurface,
                         modifier = Modifier
                             .weight(1f)
+                            .defaultMinSize(minHeight = 36.dp)
                             .clickable {
                                 val base = parsedCorrected?.metres ?: parsedOriginal?.metres ?: 0L
                                 val newM = (base + delta).coerceAtLeast(0L)
                                 correctedInput = Chainage(newM).format()
                             }
                     ) {
-                        Text(
-                            text = if (delta > 0) "+${delta}m" else "${delta}m",
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center,
-                            color = dialogColors.textColor,
-                            modifier = Modifier.padding(vertical = 6.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 8.dp)) {
+                            Text(
+                                text = if (delta > 0) "+${delta}m" else "${delta}m",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                color = dialogColors.textColor
+                            )
+                        }
                     }
                 }
             }
@@ -1749,22 +2091,38 @@ private fun KmzChainageCalibrationSection(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Validation Warnings Banner
+            // Validation Warnings / Errors Banner (theme-safe contrast in both AMOLED Dark and Light themes)
             if (validation != null && validation.warnings.isNotEmpty()) {
+                val bannerAccent = if (!validation.isValid) redAccent else amberAccent
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = amberAccent.copy(alpha = 0.14f),
-                    modifier = Modifier.fillMaxWidth()
+                    color = bannerAccent.copy(alpha = 0.14f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("calibration_input_validation_banner")
                 ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
+                    Column(
+                        modifier = Modifier.padding(9.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         validation.warnings.forEach { warn ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(13.dp))
-                                Text(warn, fontSize = 10.5.sp, color = Color(0xFF92400E))
+                                Icon(
+                                    imageVector = if (!validation.isValid) Icons.Default.ErrorOutline else Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = bannerAccent,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = warn,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (dialogColors.isDark) dialogColors.titleColor else bannerAccent
+                                )
                             }
                         }
                     }
@@ -1781,7 +2139,7 @@ private fun KmzChainageCalibrationSection(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(42.dp)
+                        .height(44.dp)
                         .testTag("save_calibration_button")
                 ) {
                     Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1789,6 +2147,7 @@ private fun KmzChainageCalibrationSection(
                     Text("Import KMZ / KML First to Apply Calibration", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             } else {
+                val canSaveCandidate = parsedOriginal != null && parsedCorrected != null && (validation?.isValid != false)
                 Button(
                     onClick = {
                         keyboardController?.hide()
@@ -1797,22 +2156,34 @@ private fun KmzChainageCalibrationSection(
                         editingPoint = null
                         descriptionInput = ""
                     },
-                    enabled = parsedOriginal != null && parsedCorrected != null,
-                    colors = ButtonDefaults.buttonColors(containerColor = primaryAccent),
+                    enabled = canSaveCandidate,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = primaryAccent,
+                        disabledContainerColor = if (isTentativeInvalid) redAccent.copy(alpha = 0.25f) else dialogColors.borderColor.copy(alpha = 0.25f),
+                        disabledContentColor = if (isTentativeInvalid) redAccent else dialogColors.textSecondaryColor
+                    ),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(42.dp)
+                        .height(44.dp)
                         .testTag("save_calibration_button")
                 ) {
                     Icon(
-                        imageVector = if (editingPoint != null) Icons.Default.Check else Icons.Default.Add,
+                        imageVector = when {
+                            isTentativeInvalid -> Icons.Default.ErrorOutline
+                            editingPoint != null -> Icons.Default.Check
+                            else -> Icons.Default.Add
+                        },
                         contentDescription = null,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (editingPoint != null) "Update Calibration Point" else "Apply & Save Calibration Point",
+                        text = when {
+                            isTentativeInvalid -> "Fix Invalid Calibration Before Saving"
+                            editingPoint != null -> "Update Calibration Point"
+                            else -> "Apply & Save Calibration Point"
+                        },
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -2185,6 +2556,20 @@ private fun CorrectionPointCard(
     onDelete: () -> Unit
 ) {
     val c = CtecsTheme.colors
+    val statusBadgeText = if (!point.isEnabled) {
+        "Disabled"
+    } else {
+        CalibrationValidationStatus.displayLabel(point.verificationStatus)
+    }
+    val statusBadgeColor = when {
+        !point.isEnabled -> dialogColors.textSecondaryColor
+        point.verificationStatus == CalibrationValidationStatus.INVALID -> c.error
+        point.verificationStatus == CalibrationValidationStatus.PENDING ||
+            point.verificationStatus == CalibrationValidationStatus.NEEDS_REVIEW ||
+            point.verificationStatus == CalibrationValidationStatus.LOW_CONFIDENCE -> c.warning
+        point.verificationStatus == CalibrationValidationStatus.VERIFIED -> c.success
+        else -> primaryAccent
+    }
     Card(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = c.surface),
@@ -2212,32 +2597,57 @@ private fun CorrectionPointCard(
                     Text(
                         text = "${point.originalKmzChainage.format()} → ${point.correctedChainage.format()}",
                         style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
                         color = if (point.isEnabled) dialogColors.titleColor else dialogColors.textSecondaryColor
                     )
+                    val offsetCol = when {
+                        point.verificationStatus == CalibrationValidationStatus.INVALID -> c.error
+                        point.offsetMetres >= 0 -> c.success
+                        else -> primaryAccent
+                    }
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = if (point.offsetMetres >= 0) Color(0x3310B981) else Color(0x33EF4444)
+                        color = offsetCol.copy(alpha = 0.16f)
                     ) {
                         Text(
                             text = point.displayOffset,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (point.offsetMetres >= 0) Color(0xFF10B981) else Color(0xFFEF4444),
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            fontFamily = FontFamily.Monospace,
+                            color = offsetCol,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(2.dp))
-                val desc = point.description.ifBlank { "Point at ${point.originalKmzChainage.format()}" }
-                Text(
-                    text = desc,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = dialogColors.textSecondaryColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = statusBadgeColor.copy(alpha = 0.14f)
+                    ) {
+                        Text(
+                            text = statusBadgeText,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = statusBadgeColor,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                    val desc = point.description.ifBlank { "Point at ${point.originalKmzChainage.format()}" }
+                    Text(
+                        text = desc,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = dialogColors.textSecondaryColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
 
                 val distStr = if (distFromPrevMetres != null) "Span from prev: ${distFromPrevMetres}m" else "Anchor Point"
                 Text(
@@ -2249,17 +2659,16 @@ private fun CorrectionPointCard(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Default.Edit, contentDescription = "Edit calibration point", tint = primaryAccent, modifier = Modifier.size(16.dp))
                 }
-                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete calibration point", tint = Color(0xFFEF4444), modifier = Modifier.size(16.dp))
+                IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete calibration point", tint = c.error, modifier = Modifier.size(16.dp))
                 }
                 Switch(
                     checked = point.isEnabled,
                     onCheckedChange = onToggle,
-                    colors = SwitchDefaults.colors(checkedThumbColor = primaryAccent),
-                    modifier = Modifier.size(36.dp)
+                    colors = SwitchDefaults.colors(checkedThumbColor = primaryAccent)
                 )
             }
         }
@@ -2341,26 +2750,43 @@ private fun exportCalibratedKmzFile(
 fun ChainageSourceBadge(
     source: ChainageSource,
     isDark: Boolean = isAppDarkTheme(),
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    validationStatus: String? = null
 ) {
     val c = CtecsTheme.colors
-    val (bgColor, textColor, label) = when (source) {
-        ChainageSource.MANUAL -> Triple(
+    val (bgColor, textColor, label) = when {
+        source == ChainageSource.MANUAL -> Triple(
             c.warning.copy(alpha = 0.16f),
             c.warning,
             "MANUAL"
         )
-        ChainageSource.CUSTOM_CORRECTION -> Triple(
+        source == ChainageSource.CUSTOM_CORRECTION && validationStatus == CalibrationValidationStatus.INVALID -> Triple(
+            c.error.copy(alpha = 0.16f),
+            c.error,
+            "INVALID"
+        )
+        source == ChainageSource.CUSTOM_CORRECTION &&
+            (validationStatus == CalibrationValidationStatus.PENDING || validationStatus == CalibrationValidationStatus.NEEDS_REVIEW) -> Triple(
+            c.warning.copy(alpha = 0.16f),
+            c.warning,
+            "PENDING"
+        )
+        source == ChainageSource.CUSTOM_CORRECTION && validationStatus == CalibrationValidationStatus.VERIFIED -> Triple(
+            c.success.copy(alpha = 0.16f),
+            c.success,
+            "VERIFIED"
+        )
+        source == ChainageSource.CUSTOM_CORRECTION -> Triple(
             c.accent.copy(alpha = 0.16f),
             c.accent,
             "CALIBRATED"
         )
-        ChainageSource.KMZ -> Triple(
+        source == ChainageSource.KMZ -> Triple(
             c.accentSecondary.copy(alpha = 0.16f),
             c.accentSecondary,
             "KMZ"
         )
-        ChainageSource.GPS -> Triple(
+        else -> Triple(
             c.secondarySurface,
             c.textSecondary,
             "GPS"

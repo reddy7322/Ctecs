@@ -589,6 +589,7 @@ fun HomeScreen(
                 hasActiveRoute = activeRoute != null,
                 source = matchResult.source,
                 rawChainage = matchResult.rawUncorrectedChainage?.format(),
+                calibrationValidationStatus = matchResult.calibrationValidationStatus,
                 smartDirectionState = smartDirectionState,
                 cardBgColor = cardBgColor,
                 cardBorderColor = cardBorderColor,
@@ -1054,6 +1055,7 @@ fun CentralChainageDisplay(
     hasActiveRoute: Boolean,
     source: ChainageSource = ChainageSource.GPS,
     rawChainage: String? = null,
+    calibrationValidationStatus: String? = null,
     smartDirectionState: SmartDirectionState? = null,
     cardBgColor: Color,
     cardBorderColor: Color,
@@ -1098,9 +1100,10 @@ fun CentralChainageDisplay(
 
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
 
-    val subtleGlowAccent = when (source) {
-        ChainageSource.MANUAL -> c.error
-        ChainageSource.CUSTOM_CORRECTION -> c.accentSecondary
+    val subtleGlowAccent = when {
+        calibrationValidationStatus == com.example.model.CalibrationValidationStatus.INVALID -> c.error
+        source == ChainageSource.MANUAL -> c.error
+        source == ChainageSource.CUSTOM_CORRECTION -> c.accentSecondary
         else -> Color.Transparent
     }
 
@@ -1360,14 +1363,25 @@ fun CentralChainageDisplay(
                 Spacer(modifier = Modifier.height(if (isCompact) 3.dp else 5.dp))
 
                 // Responsive Telemetry Metadata Strip
+                val calValStatus = calibrationValidationStatus
                 val sourceLabel = when (source) {
                     ChainageSource.MANUAL -> "MANUAL"
-                    ChainageSource.CUSTOM_CORRECTION -> if (rawChainage != null) "CUSTOM CORRECTION ($rawChainage)" else "CUSTOM CORRECTION"
+                    ChainageSource.CUSTOM_CORRECTION -> when (calValStatus) {
+                        com.example.model.CalibrationValidationStatus.INVALID ->
+                            "CALIBRATION INVALID"
+                        com.example.model.CalibrationValidationStatus.PENDING,
+                        com.example.model.CalibrationValidationStatus.NEEDS_REVIEW ->
+                            "CALIBRATION PENDING REVIEW"
+                        com.example.model.CalibrationValidationStatus.GPS_UNAVAILABLE ->
+                            "GPS UNAVAILABLE"
+                        else -> if (rawChainage != null) "CUSTOM CORRECTION ($rawChainage)" else "CUSTOM CORRECTION"
+                    }
                     ChainageSource.KMZ -> "KMZ"
                     ChainageSource.GPS -> "GPS"
                 }
 
                 val (confText, confCol) = when {
+                    calValStatus == com.example.model.CalibrationValidationStatus.INVALID -> "Invalid Cal" to c.error
                     isAwaitingReliableFix -> "Awaiting GPS" to c.error
                     confidence == MatchConfidence.HIGH -> "Good" to c.success
                     confidence == MatchConfidence.MEDIUM -> "Moderate" to c.accent

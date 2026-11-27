@@ -42,7 +42,10 @@ data class ChainageMatchResult(
     val travelDirection: TravelChainageDirection = TravelChainageDirection.UNKNOWN,
     val manualCalibrationAnchorMetres: Long? = null,
     val manualCalibrationOffsetMetres: Long? = null,
-    val isManualCalibrationPendingGps: Boolean = false
+    val isManualCalibrationPendingGps: Boolean = false,
+    val calibrationValidationStatus: String? = null,
+    val calibrationValidationReason: String? = null,
+    val calibrationAttemptedOffsetMetres: Long? = null
 ) {
     val displayChainage: String
         get() = customChainageText?.takeIf { it.isNotBlank() }

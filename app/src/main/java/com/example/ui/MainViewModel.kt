@@ -64,6 +64,7 @@ import com.example.model.MiniMapStyle
 import com.example.model.OverlayConfig
 import com.example.model.PermanentCalibrationProfile
 import com.example.model.ProjectProfile
+import com.example.model.ReferencePointSource
 import com.example.model.RefreshMode
 import com.example.model.RoadSide
 import com.example.model.RouteData
@@ -1494,12 +1495,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectAlignment(alignmentId: String?) {
         selectedAlignmentId.value = alignmentId
+        progressionTracker.resetAutoChainageFilterOnly()
+        ChainageMatcher.resetJumpValidationState()
         CtecsNavigationTelemetryHub.sharedDirectionManager.onAlignmentChanged(
             routeId = activeRouteData.value?.id,
             alignmentId = alignmentId
         )
         preferencesManager.launchSafeEdit {
             preferencesManager.updateSelectedAlignmentId(alignmentId)
+        }
+    }
+
+    private fun currentEffectiveRoute(): RouteData? {
+        val route = activeRouteData.value ?: return null
+        val selAlignId = selectedAlignmentId.value
+        return if (selAlignId != null && route.alignments.any { it.id == selAlignId }) {
+            route.copy(selectedAlignmentId = selAlignId)
+        } else {
+            route
         }
     }
 
@@ -1697,26 +1710,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 gpsAccuracy = loc.accuracy,
                 confidence = kmzMatch.confidence,
                 distanceAlongAlignmentMetres = kmzMatch.distanceAlongAlignmentMetres,
-                isUncertainJump = kmzMatch.isUncertain
+                isUncertainJump = kmzMatch.isUncertain,
+                preferredAlignmentName = kmzMatch.matchedAlignmentName,
+                isGpsAvailable = true
             )
         } else {
             null
         }
 
-        val finalResult = if (smartCorrected != null) {
-            kmzMatch.copy(
+        val isSmartInvalid = smartCorrected != null &&
+            (smartCorrected.hasConflict || smartCorrected.validationStatus == com.example.model.CalibrationValidationStatus.INVALID)
+
+        val finalResult = when {
+            smartCorrected != null && isSmartInvalid -> kmzMatch.copy(
+                chainage = rawKmzChainage,
+                source = ChainageSource.CUSTOM_CORRECTION,
+                rawUncorrectedChainage = rawKmzChainage,
+                confidence = com.example.model.MatchConfidence.LOW,
+                isUncertain = true,
+                correctionPointInfo = smartCorrected.infoMessage,
+                statusMessage = "Calibration Invalid (${smartCorrected.infoMessage})",
+                calibrationValidationStatus = com.example.model.CalibrationValidationStatus.INVALID,
+                calibrationValidationReason = smartCorrected.infoMessage,
+                calibrationAttemptedOffsetMetres = smartCorrected.attemptedOffsetMetres
+            )
+            smartCorrected != null -> kmzMatch.copy(
                 chainage = smartCorrected.correctedChainage,
                 source = ChainageSource.CUSTOM_CORRECTION,
                 rawUncorrectedChainage = rawKmzChainage,
                 correctionPointInfo = smartCorrected.infoMessage,
-                statusMessage = "Custom Correction (${smartCorrected.infoMessage})"
+                statusMessage = "Custom Correction (${smartCorrected.infoMessage})",
+                calibrationValidationStatus = smartCorrected.validationStatus,
+                calibrationValidationReason = smartCorrected.infoMessage,
+                calibrationAttemptedOffsetMetres = smartCorrected.appliedOffsetMetres
             )
-        } else {
-            // Tier 3: ORIGINAL KMZ ALIGNMENT
-            kmzMatch.copy(
-                source = ChainageSource.KMZ,
-                rawUncorrectedChainage = rawKmzChainage
-            )
+            else -> {
+                // Tier 3: ORIGINAL KMZ ALIGNMENT
+                kmzMatch.copy(
+                    source = ChainageSource.KMZ,
+                    rawUncorrectedChainage = rawKmzChainage
+                )
+            }
         }
 
         val stabilized = progressionTracker.processResult(finalResult, route.id)
@@ -1755,18 +1789,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     gpsAccuracy = loc.accuracy,
                     confidence = recoveredKmz.confidence,
                     distanceAlongAlignmentMetres = recoveredKmz.distanceAlongAlignmentMetres,
-                    isUncertainJump = recoveredKmz.isUncertain
+                    isUncertainJump = recoveredKmz.isUncertain,
+                    preferredAlignmentName = recoveredKmz.matchedAlignmentName,
+                    isGpsAvailable = true
                 )
             } else {
                 null
             }
+            val isRecSmartInvalid = recoveredSmart != null &&
+                (recoveredSmart.hasConflict || recoveredSmart.validationStatus == com.example.model.CalibrationValidationStatus.INVALID)
             val preRecovered = when {
+                recoveredSmart != null && isRecSmartInvalid -> recoveredKmz.copy(
+                    chainage = recoveredRaw,
+                    source = ChainageSource.CUSTOM_CORRECTION,
+                    rawUncorrectedChainage = recoveredRaw,
+                    confidence = com.example.model.MatchConfidence.LOW,
+                    isUncertain = true,
+                    correctionPointInfo = recoveredSmart.infoMessage,
+                    statusMessage = "Calibration Invalid (${recoveredSmart.infoMessage})",
+                    calibrationValidationStatus = com.example.model.CalibrationValidationStatus.INVALID,
+                    calibrationValidationReason = recoveredSmart.infoMessage,
+                    calibrationAttemptedOffsetMetres = recoveredSmart.attemptedOffsetMetres
+                )
                 recoveredSmart != null -> recoveredKmz.copy(
                     chainage = recoveredSmart.correctedChainage,
                     source = ChainageSource.CUSTOM_CORRECTION,
                     rawUncorrectedChainage = recoveredRaw,
                     correctionPointInfo = recoveredSmart.infoMessage,
-                    statusMessage = "Auto-Recovered (${recoveredSmart.infoMessage})"
+                    statusMessage = "Auto-Recovered (${recoveredSmart.infoMessage})",
+                    calibrationValidationStatus = recoveredSmart.validationStatus,
+                    calibrationValidationReason = recoveredSmart.infoMessage,
+                    calibrationAttemptedOffsetMetres = recoveredSmart.appliedOffsetMetres
                 )
                 recoveredRaw != null -> recoveredKmz.copy(
                     source = ChainageSource.KMZ,
@@ -1976,7 +2029,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val resolution = progressionTracker.processWithManualCalibration(
                 autoResult = autoResult,
                 locationState = locationTracker.locationState.value,
-                routeData = activeRouteData.value,
+                routeData = currentEffectiveRoute(),
                 calibration = workingCal,
                 nowMs = nowMs
             )
@@ -2960,45 +3013,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Smart KMZ Correction Points Management
-    fun addCorrectionPoint(point: ChainageCorrectionPoint) {
-        val route = activeRouteData.value
-        val resolvedPoint = if (route != null) {
-            val resolved = SmartChainageCorrectionEngine.resolveRoutePositionForChainage(
-                routeData = route,
-                targetKmzMetres = point.originalKmzMetres,
-                fallbackGps = if (point.latitude != 0.0 || point.longitude != 0.0) point.point else null
-            )
-            point.copy(
-                projectId = point.projectId.ifBlank { projectProfile.value.highwayId },
-                latitude = if (point.latitude != 0.0) point.latitude else resolved.point.latitude,
-                longitude = if (point.longitude != 0.0) point.longitude else resolved.point.longitude,
-                routeDistanceMetres = if (point.routeDistanceMetres > 0.01) point.routeDistanceMetres else resolved.routeDistanceMetres
-            )
-        } else {
-            point.copy(projectId = point.projectId.ifBlank { projectProfile.value.highwayId })
-        }
-        progressionTracker.resetChainageFilter()
-        viewModelScope.launch {
-            preferencesManager.setRouteCorrectionsEnabled(true)
-            preferencesManager.saveRouteCorrectionPoint(resolvedPoint)
-            preferencesManager.addChainageLogEntry(
-                ChainageLogEntry(
-                    actionType = "POINT_ADDED",
-                    routeId = resolvedPoint.routeId,
-                    routeName = route?.name ?: "Route",
-                    summary = "Added Point: ${resolvedPoint.correctedChainage.format()}",
-                    details = "Original KMZ: ${resolvedPoint.originalKmzChainage.format()} (Shift: ${resolvedPoint.displayOffset})"
-                )
-            )
-            _uiMessages.emit(UiMessage.Success("Correction point ${resolvedPoint.correctedChainage.format()} saved"))
-            showToast("Correction point ${resolvedPoint.correctedChainage.format()} saved", ToastType.SUCCESS)
-        }
-    }
-
-    fun updateCorrectionPoint(point: ChainageCorrectionPoint) {
-        val route = activeRouteData.value
-        val resolvedPoint = if (route != null) {
+    private fun buildValidatedCorrectionPoint(
+        point: ChainageCorrectionPoint,
+        route: RouteData?
+    ): Pair<ChainageCorrectionPoint, SmartChainageCorrectionEngine.ValidationResult?> {
+        val base = if (route != null) {
             val resolved = SmartChainageCorrectionEngine.resolveRoutePositionForChainage(
                 routeData = route,
                 targetKmzMetres = point.originalKmzMetres,
@@ -3013,6 +3032,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             point.copy(projectId = point.projectId.ifBlank { projectProfile.value.highwayId })
         }
+
+        if (route == null) {
+            return Pair(base, null)
+        }
+
+        val existing = routeCorrectionsMap.value[base.routeId].orEmpty()
+        val valRes = SmartChainageCorrectionEngine.validatePoint(base, existing, route)
+        val status = when {
+            !valRes.isValid -> CalibrationValidationStatus.INVALID
+            valRes.warnings.isNotEmpty() -> CalibrationValidationStatus.PENDING
+            base.referenceSource == ReferencePointSource.GPS_VERIFIED ||
+                base.referenceSource == ReferencePointSource.KMZ_IMPORT -> CalibrationValidationStatus.VERIFIED
+            else -> CalibrationValidationStatus.CALIBRATED
+        }
+        return Pair(base.copy(verificationStatus = status), valRes)
+    }
+
+    // Smart KMZ Correction Points Management
+    fun addCorrectionPoint(point: ChainageCorrectionPoint) {
+        val route = currentEffectiveRoute()
+        val (resolvedPoint, valRes) = buildValidatedCorrectionPoint(point, route)
+        progressionTracker.resetChainageFilter()
+        viewModelScope.launch {
+            preferencesManager.setRouteCorrectionsEnabled(true)
+            preferencesManager.saveRouteCorrectionPoint(resolvedPoint)
+            preferencesManager.addChainageLogEntry(
+                ChainageLogEntry(
+                    actionType = "POINT_ADDED",
+                    routeId = resolvedPoint.routeId,
+                    routeName = route?.name ?: "Route",
+                    summary = "Added Point: ${resolvedPoint.correctedChainage.format()} (${CalibrationValidationStatus.displayLabel(resolvedPoint.verificationStatus)})",
+                    details = "Original KMZ: ${resolvedPoint.originalKmzChainage.format()} (Shift: ${resolvedPoint.displayOffset})"
+                )
+            )
+            when (resolvedPoint.verificationStatus) {
+                CalibrationValidationStatus.INVALID -> {
+                    val err = valRes?.warnings?.firstOrNull() ?: "Calibration failed validation"
+                    _uiMessages.emit(UiMessage.Error("Invalid calibration: $err"))
+                    showToast("Invalid calibration: $err", ToastType.ERROR)
+                }
+                CalibrationValidationStatus.PENDING, CalibrationValidationStatus.NEEDS_REVIEW -> {
+                    _uiMessages.emit(UiMessage.Info("Saved as Pending review: ${resolvedPoint.correctedChainage.format()}"))
+                    showToast("Saved (Pending Review): ${resolvedPoint.correctedChainage.format()}", ToastType.WARNING)
+                }
+                else -> {
+                    _uiMessages.emit(UiMessage.Success("Correction point ${resolvedPoint.correctedChainage.format()} saved"))
+                    showToast("Correction point ${resolvedPoint.correctedChainage.format()} saved", ToastType.SUCCESS)
+                }
+            }
+        }
+    }
+
+    fun updateCorrectionPoint(point: ChainageCorrectionPoint) {
+        val route = currentEffectiveRoute()
+        val (resolvedPoint, valRes) = buildValidatedCorrectionPoint(point, route)
         progressionTracker.resetChainageFilter()
         viewModelScope.launch {
             preferencesManager.setRouteCorrectionsEnabled(true)
@@ -3022,12 +3096,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     actionType = "POINT_EDITED",
                     routeId = resolvedPoint.routeId,
                     routeName = route?.name ?: "Route",
-                    summary = "Updated Point: ${resolvedPoint.correctedChainage.format()}",
+                    summary = "Updated Point: ${resolvedPoint.correctedChainage.format()} (${CalibrationValidationStatus.displayLabel(resolvedPoint.verificationStatus)})",
                     details = "Original KMZ: ${resolvedPoint.originalKmzChainage.format()} (Shift: ${resolvedPoint.displayOffset})"
                 )
             )
-            _uiMessages.emit(UiMessage.Success("Correction point updated: ${resolvedPoint.correctedChainage.format()}"))
-            showToast("Correction point updated: ${resolvedPoint.correctedChainage.format()}", ToastType.SUCCESS)
+            when (resolvedPoint.verificationStatus) {
+                CalibrationValidationStatus.INVALID -> {
+                    val err = valRes?.warnings?.firstOrNull() ?: "Calibration failed validation"
+                    _uiMessages.emit(UiMessage.Error("Invalid calibration: $err"))
+                    showToast("Invalid calibration: $err", ToastType.ERROR)
+                }
+                CalibrationValidationStatus.PENDING, CalibrationValidationStatus.NEEDS_REVIEW -> {
+                    _uiMessages.emit(UiMessage.Info("Updated (Pending Review): ${resolvedPoint.correctedChainage.format()}"))
+                    showToast("Updated (Pending Review): ${resolvedPoint.correctedChainage.format()}", ToastType.WARNING)
+                }
+                else -> {
+                    _uiMessages.emit(UiMessage.Success("Correction point updated: ${resolvedPoint.correctedChainage.format()}"))
+                    showToast("Correction point updated: ${resolvedPoint.correctedChainage.format()}", ToastType.SUCCESS)
+                }
+            }
         }
     }
 
@@ -3105,7 +3192,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Imports verified permanent reference points from the active KMZ/KML alignment markers.
      */
     fun importReferencePointsFromActiveRoute(stepMetres: Long = 2000L) {
-        val route = activeRouteData.value ?: return
+        val route = currentEffectiveRoute() ?: return
         viewModelScope.launch(Dispatchers.Default) {
             val extracted = SmartChainageCorrectionEngine.extractReferencePointsFromRoute(
                 routeData = route,
@@ -3149,7 +3236,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Saves or updates a Permanent Calibration Profile for the active route and project.
      */
     fun saveCurrentCalibrationProfile(profileNameInput: String = "") {
-        val route = activeRouteData.value ?: return
+        val route = currentEffectiveRoute() ?: return
         val points = activeRouteCorrections.value
         if (points.isEmpty()) {
             showToast("Add at least 1 verified reference point before saving a profile", ToastType.WARNING)
@@ -3271,7 +3358,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         intervalMetres: Long = SmartChainageCorrectionEngine.DEFAULT_CALIBRATION_MARKER_INTERVAL_METRES,
         onResult: (Result<KmzReplacementPreview>) -> Unit
     ) {
-        val route = activeRouteData.value
+        val route = currentEffectiveRoute()
         if (route == null) {
             onResult(Result.failure(Exception("No active KMZ/KML alignment loaded")))
             return
@@ -3319,7 +3406,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         intervalMetres: Long = SmartChainageCorrectionEngine.DEFAULT_CALIBRATION_MARKER_INTERVAL_METRES,
         onComplete: ((Boolean, String) -> Unit)? = null
     ) {
-        val route = activeRouteData.value
+        val route = currentEffectiveRoute()
         if (route == null) {
             onComplete?.invoke(false, "No active KMZ/KML alignment loaded")
             return

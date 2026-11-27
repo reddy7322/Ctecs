@@ -14,19 +14,28 @@ object ReferencePointSource {
 }
 
 /**
- * Validation status for a reference point or calibration profile.
+ * Validation status for a reference point, live calibration output, or calibration profile.
  */
 object CalibrationValidationStatus {
+    const val CALIBRATED = "CALIBRATED"
     const val VERIFIED = "VERIFIED"
-    const val NEEDS_REVIEW = "NEEDS_REVIEW"
     const val LOW_CONFIDENCE = "LOW_CONFIDENCE"
+    const val PENDING = "PENDING"
+    const val NEEDS_REVIEW = "NEEDS_REVIEW"
     const val INVALID = "INVALID"
+    const val GPS_UNAVAILABLE = "GPS_UNAVAILABLE"
+
+    fun isValidatedSuccess(status: String?): Boolean =
+        status == VERIFIED || status == CALIBRATED
 
     fun displayLabel(status: String): String = when (status) {
+        CALIBRATED -> "Calibrated"
         VERIFIED -> "Verified"
-        NEEDS_REVIEW -> "Needs Review"
         LOW_CONFIDENCE -> "Low Confidence"
-        INVALID -> "Invalid / Conflict"
+        PENDING -> "Pending"
+        NEEDS_REVIEW -> "Pending Review"
+        INVALID -> "Invalid"
+        GPS_UNAVAILABLE -> "GPS Unavailable"
         else -> status
     }
 }

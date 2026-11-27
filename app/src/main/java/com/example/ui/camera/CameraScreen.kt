@@ -4758,9 +4758,11 @@ internal fun resolveChainageIndicatorsState(
         matchResult.chainage != null &&
         matchResult.confidence != MatchConfidence.NO_MATCH
 
+    val calValStatus = matchResult.calibrationValidationStatus
     val isUnreliable = matchResult.isUncertain ||
         matchResult.confidence == MatchConfidence.LOW ||
-        !matchResult.sourceKmzReferenceStatus.equals("Valid", ignoreCase = true)
+        !matchResult.sourceKmzReferenceStatus.equals("Valid", ignoreCase = true) ||
+        calValStatus == com.example.model.CalibrationValidationStatus.INVALID
 
     val kmzStatus = when {
         !hasActiveRoute && !isKmzDerived -> ChainageBubbleStatus.INACTIVE
@@ -4769,15 +4771,19 @@ internal fun resolveChainageIndicatorsState(
         else -> ChainageBubbleStatus.ACTIVE
     }
 
-    val isCustomApplied = isCorrectionsEnabled &&
+    val isCustomActiveSource = isCorrectionsEnabled &&
         matchResult.source == ChainageSource.CUSTOM_CORRECTION &&
         matchResult.chainage != null &&
         matchResult.confidence != MatchConfidence.NO_MATCH
 
-    val customStatus = if (isCustomApplied) {
-        ChainageBubbleStatus.ACTIVE
-    } else {
-        ChainageBubbleStatus.INACTIVE
+    val customStatus = when {
+        !isCustomActiveSource -> ChainageBubbleStatus.INACTIVE
+        calValStatus == com.example.model.CalibrationValidationStatus.INVALID ||
+            calValStatus == com.example.model.CalibrationValidationStatus.GPS_UNAVAILABLE ||
+            calValStatus == com.example.model.CalibrationValidationStatus.PENDING ||
+            calValStatus == com.example.model.CalibrationValidationStatus.NEEDS_REVIEW ||
+            calValStatus == com.example.model.CalibrationValidationStatus.LOW_CONFIDENCE -> ChainageBubbleStatus.WARNING
+        else -> ChainageBubbleStatus.ACTIVE
     }
 
     return ChainageIndicatorsState(

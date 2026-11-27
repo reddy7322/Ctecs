@@ -52,6 +52,9 @@ object SmartChainageCorrectionEngine {
 
     private const val MAX_INTERPOLATION_SCALE_DEVIATION = 0.35 // 35% tolerance before flagging chainage equation/warning
     private const val CONFLICT_SCALE_THRESHOLD = 0.65 // >65% discrepancy without chainage equation flags conflict
+    const val MAX_VALID_CALIBRATION_OFFSET_METRES = 10_000L // Hard validation limit (10 km) for unconfirmed offsets
+    const val LARGE_OFFSET_REVIEW_THRESHOLD_METRES = 2_000L // >2 km single-point shift requires review unless marked equation
+    const val MAX_ALIGN_POSITION_MISMATCH_METRES = 500.0 // Max allowed mismatch between anchor routeDistanceMetres and KMZ chainage position
     const val DEFAULT_CALIBRATION_MARKER_INTERVAL_METRES = 2000L // 2 km (2,000 m)
     const val DEFAULT_HEARTBEAT_INTERVAL_MS = 1000L
     const val DEFAULT_STALL_TIMEOUT_MS = 2500L
@@ -393,7 +396,8 @@ object SmartChainageCorrectionEngine {
         val infoMessage: String,
         val validationStatus: String = CalibrationValidationStatus.VERIFIED,
         val hierarchyTier: CalibrationHierarchyTier = CalibrationHierarchyTier.TIER_3_PIECEWISE_INTERPOLATION,
-        val hasConflict: Boolean = false
+        val hasConflict: Boolean = false,
+        val attemptedOffsetMetres: Long = appliedOffsetMetres
     ) {
         val originalKmzChainage: Chainage get() = rawKmzChainage
     }
@@ -409,7 +413,8 @@ object SmartChainageCorrectionEngine {
     data class ResolvedPointPosition(
         val point: GeoPoint,
         val routeDistanceMetres: Double,
-        val offsetFromAlignmentMetres: Double = 0.0
+        val offsetFromAlignmentMetres: Double = 0.0,
+        val isOutOfRouteRange: Boolean = false
     )
 
     data class ReferenceConflictReport(
@@ -592,12 +597,90 @@ object SmartChainageCorrectionEngine {
         )
     }
 
+    private fun selectAlignmentForRoute(
+        routeData: RouteData,
+        preferredAlignmentName: String? = null
+    ): RouteAlignment? {
+        if (routeData.selectedAlignmentId != null) {
+            routeData.alignments.firstOrNull { it.id == routeData.selectedAlignmentId }?.let { return it }
+        }
+        if (!preferredAlignmentName.isNullOrBlank()) {
+            routeData.alignments.firstOrNull {
+                it.name.equals(preferredAlignmentName, ignoreCase = true)
+            }?.let { return it }
+        }
+        return routeData.activeAlignment ?: routeData.alignments.firstOrNull()
+    }
+
+    private fun validateSinglePointInternal(
+        point: ChainageCorrectionPoint,
+        routeData: RouteData,
+        preferredAlignmentName: String? = null
+    ): Pair<List<String>, List<String>> {
+        val conflicts = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+
+        if (point.routeId.isNotBlank() && routeData.id.isNotBlank() && point.routeId != routeData.id) {
+            conflicts.add("Reference point ${point.correctedChainage.format()} belongs to a different route.")
+        }
+
+        if (point.originalKmzMetres < 0L) {
+            conflicts.add("Original KMZ chainage cannot be negative.")
+        }
+
+        if (point.correctedMetres < 0L) {
+            conflicts.add("Calibrated chainage (${point.correctedChainage.format()}) cannot be negative.")
+        }
+
+        if (routeData.startChainage != null && routeData.endChainage != null) {
+            val minKmz = minOf(routeData.startChainage.metres, routeData.endChainage.metres)
+            val maxKmz = maxOf(routeData.startChainage.metres, routeData.endChainage.metres)
+            if (point.originalKmzMetres < minKmz - 500L || point.originalKmzMetres > maxKmz + 500L) {
+                conflicts.add(
+                    "Original chainage (${point.originalKmzChainage.format()}) is outside route bounds (${Chainage(minKmz).format()}..${Chainage(maxKmz).format()})."
+                )
+            }
+        }
+
+        val absOffset = abs(point.offsetMetres)
+        val hasExplicitEquation = point.description.contains("eq", ignoreCase = true)
+        if (absOffset > MAX_VALID_CALIBRATION_OFFSET_METRES && !hasExplicitEquation) {
+            conflicts.add(
+                "Large correction shift (${point.displayOffset} jump) exceeds 10 km validation limit."
+            )
+        } else if (absOffset > LARGE_OFFSET_REVIEW_THRESHOLD_METRES && !hasExplicitEquation) {
+            warnings.add(
+                "Large offset (${point.displayOffset}) exceeds 2 km — verify reference marker."
+            )
+        }
+
+        // Verify stored routeDistanceMetres agrees with the canonical alignment position of originalKmzMetres
+        if (point.routeDistanceMetres > 0.01 && routeData.markers.size >= 2) {
+            val canonicalPos = resolveRoutePositionForChainage(
+                routeData = routeData,
+                targetKmzMetres = point.originalKmzMetres,
+                fallbackGps = null,
+                preferredAlignmentName = preferredAlignmentName
+            )
+            val anchorDeltaM = abs(point.routeDistanceMetres - canonicalPos.routeDistanceMetres)
+            if (anchorDeltaM > MAX_ALIGN_POSITION_MISMATCH_METRES) {
+                conflicts.add(
+                    "Anchor position mismatch: alignment position (${point.routeDistanceMetres.roundToInt()}m) is ${anchorDeltaM.roundToInt()}m away from KMZ ${point.originalKmzChainage.format()}."
+                )
+            }
+        }
+
+        return Pair(conflicts, warnings)
+    }
+
     /**
-     * Detects duplicate, reversed, or conflicting reference points along the active alignment.
+     * Detects duplicate, reversed, extreme-offset, out-of-range, or conflicting reference points
+     * along the active alignment (including single-point configurations).
      */
     fun detectReferenceConflicts(
         points: List<ChainageCorrectionPoint>,
-        routeData: RouteData
+        routeData: RouteData,
+        preferredAlignmentName: String? = null
     ): ReferenceConflictReport {
         val enabledPoints = points.filter { it.isEnabled }
         if (enabledPoints.isEmpty()) {
@@ -613,7 +696,14 @@ object SmartChainageCorrectionEngine {
         val conflicts = mutableListOf<String>()
         val warnings = mutableListOf<String>()
 
-        val activeAlign = routeData.activeAlignment ?: routeData.alignments.firstOrNull()
+        // Validate every point individually first (covers 1-point calibrations too)
+        for (pt in sorted) {
+            val (ptConflicts, ptWarnings) = validateSinglePointInternal(pt, routeData, preferredAlignmentName)
+            conflicts.addAll(ptConflicts)
+            warnings.addAll(ptWarnings)
+        }
+
+        val activeAlign = selectAlignmentForRoute(routeData, preferredAlignmentName)
         val expectedIncreasing = if (activeAlign != null) {
             val cached = ChainageMatcher.getOrCreateCachedGeometry(activeAlign, routeData.markers)
             cached.direction != "DECREASING"
@@ -631,7 +721,7 @@ object SmartChainageCorrectionEngine {
             val corrDelta = pB.correctedMetres - pA.correctedMetres
 
             // 1. Check duplicate alignment position with different corrected chainages
-            if (distSpan < 0.5 && abs( origDelta ) < 1L) {
+            if (distSpan < 0.5 && abs(origDelta) < 1L) {
                 if (abs(corrDelta) > 1L) {
                     conflicts.add(
                         "Conflicting references at ${pA.originalKmzChainage.format()}: " +
@@ -672,18 +762,21 @@ object SmartChainageCorrectionEngine {
             }
         }
 
+        val anyInvalid = sorted.any { it.verificationStatus == CalibrationValidationStatus.INVALID }
         val anyNeedsReview = sorted.any { it.verificationStatus == CalibrationValidationStatus.NEEDS_REVIEW }
+        val anyPending = sorted.any { it.verificationStatus == CalibrationValidationStatus.PENDING }
         val status = when {
-            conflicts.isNotEmpty() -> CalibrationValidationStatus.INVALID
-            anyNeedsReview || warnings.isNotEmpty() -> CalibrationValidationStatus.NEEDS_REVIEW
+            conflicts.isNotEmpty() || anyInvalid -> CalibrationValidationStatus.INVALID
+            anyNeedsReview -> CalibrationValidationStatus.NEEDS_REVIEW
+            anyPending || warnings.isNotEmpty() -> CalibrationValidationStatus.PENDING
             else -> CalibrationValidationStatus.VERIFIED
         }
 
         return ReferenceConflictReport(
-            hasConflict = conflicts.isNotEmpty(),
+            hasConflict = conflicts.isNotEmpty() || anyInvalid,
             validationStatus = status,
-            conflicts = conflicts,
-            warnings = warnings
+            conflicts = conflicts.distinct(),
+            warnings = warnings.distinct()
         )
     }
 
@@ -840,52 +933,44 @@ object SmartChainageCorrectionEngine {
 
     /**
      * Resolves a target KMZ chainage to its exact GeoPoint and cumulative distance along the route.
+     *
+     * Always resolves [targetKmzMetres] along the alignment markers first so standing elsewhere
+     * on the alignment (GPS) never corrupts an unrelated typed/picked KMZ anchor distance.
+     * Only uses [fallbackGps] projection when no markers exist OR when [fallbackGps] agrees within
+     * [MAX_ALIGN_POSITION_MISMATCH_METRES] of the target chainage position.
      */
     fun resolveRoutePositionForChainage(
         routeData: RouteData,
         targetKmzMetres: Long,
-        fallbackGps: GeoPoint? = null
+        fallbackGps: GeoPoint? = null,
+        preferredAlignmentName: String? = null
     ): ResolvedPointPosition {
-        val activeAlign = routeData.activeAlignment ?: routeData.alignments.firstOrNull()
+        val activeAlign = selectAlignmentForRoute(routeData, preferredAlignmentName)
 
         if (activeAlign != null && activeAlign.points.size >= 2) {
             val cached = ChainageMatcher.getOrCreateCachedGeometry(activeAlign, routeData.markers)
-
-            if (fallbackGps != null && (fallbackGps.latitude != 0.0 || fallbackGps.longitude != 0.0)) {
-                var bestDist = Double.MAX_VALUE
-                var bestAlong = 0.0
-                var bestPt: GeoPoint = fallbackGps
-                for (i in 0 until cached.segmentCount) {
-                    val proj = GeoUtils.projectPointToSegment(fallbackGps, cached.points[i], cached.points[i + 1])
-                    if (proj.perpendicularDistance < bestDist) {
-                        bestDist = proj.perpendicularDistance
-                        bestAlong = cached.cumulativeDistances[i] + proj.t * cached.segmentLengths[i]
-                        bestPt = proj.projectedPoint
-                    }
-                }
-                if (bestDist <= 60.0) {
-                    return ResolvedPointPosition(bestPt, bestAlong, bestDist)
-                }
-            }
-
             val mapped = cached.mappedMarkers
+
             if (mapped.size >= 2) {
                 val isIncreasing = mapped.last().chainageMetres >= mapped.first().chainageMetres
                 val first = mapped.first()
                 val last = mapped.last()
+                val minChM = minOf(first.chainageMetres, last.chainageMetres)
+                val maxChM = maxOf(first.chainageMetres, last.chainageMetres)
+                val isOutOfRange = targetKmzMetres < minChM - 500L || targetKmzMetres > maxChM + 500L
 
-                val targetDistAlong: Double = when {
+                val unclampedDistAlong: Double = when {
                     (isIncreasing && targetKmzMetres <= first.chainageMetres) ||
                         (!isIncreasing && targetKmzMetres >= first.chainageMetres) -> {
                         val sign = if (isIncreasing) 1.0 else -1.0
                         val deltaCh = (targetKmzMetres - first.chainageMetres) * sign
-                        (first.distanceAlongAlignmentM + deltaCh).coerceIn(0.0, cached.totalLengthM)
+                        first.distanceAlongAlignmentM + deltaCh
                     }
                     (isIncreasing && targetKmzMetres >= last.chainageMetres) ||
                         (!isIncreasing && targetKmzMetres <= last.chainageMetres) -> {
                         val sign = if (isIncreasing) 1.0 else -1.0
                         val deltaCh = (targetKmzMetres - last.chainageMetres) * sign
-                        (last.distanceAlongAlignmentM + deltaCh).coerceIn(0.0, cached.totalLengthM)
+                        last.distanceAlongAlignmentM + deltaCh
                     }
                     else -> {
                         var mA = first
@@ -908,16 +993,74 @@ object SmartChainageCorrectionEngine {
                         mA.distanceAlongAlignmentM + frac * (mB.distanceAlongAlignmentM - mA.distanceAlongAlignmentM)
                     }
                 }
+                val targetDistAlong = unclampedDistAlong.coerceIn(0.0, cached.totalLengthM)
+
+                // If caller supplied a GPS coordinate that closely agrees with targetKmzMetres,
+                // refine with exact perpendicular alignment projection without corrupting remote anchors.
+                if (!isOutOfRange && fallbackGps != null && (fallbackGps.latitude != 0.0 || fallbackGps.longitude != 0.0)) {
+                    var bestDist = Double.MAX_VALUE
+                    var bestAlong = targetDistAlong
+                    var bestPt: GeoPoint = fallbackGps
+                    for (i in 0 until cached.segmentCount) {
+                        val proj = GeoUtils.projectPointToSegment(fallbackGps, cached.points[i], cached.points[i + 1])
+                        if (proj.perpendicularDistance < bestDist) {
+                            bestDist = proj.perpendicularDistance
+                            bestAlong = cached.cumulativeDistances[i] + proj.t * cached.segmentLengths[i]
+                            bestPt = proj.projectedPoint
+                        }
+                    }
+                    if (bestDist <= 60.0 && abs(bestAlong - targetDistAlong) <= MAX_ALIGN_POSITION_MISMATCH_METRES) {
+                        return ResolvedPointPosition(bestPt, bestAlong, bestDist, isOutOfRouteRange = false)
+                    }
+                }
 
                 val pt = ChainageMatcher.interpolatePointAtDistanceAlongAlignment(cached, targetDistAlong)
-                return ResolvedPointPosition(pt, targetDistAlong, 0.0)
+                return ResolvedPointPosition(pt, targetDistAlong, 0.0, isOutOfRouteRange = isOutOfRange)
             } else if (mapped.size == 1) {
                 val single = mapped.first()
                 val sign = if (cached.direction == "DECREASING") -1.0 else 1.0
                 val deltaCh = (targetKmzMetres - single.chainageMetres) * sign
-                val targetDistAlong = (single.distanceAlongAlignmentM + deltaCh).coerceIn(0.0, cached.totalLengthM)
+                val unclampedDist = single.distanceAlongAlignmentM + deltaCh
+                val isOutOfRange = unclampedDist < -500.0 || unclampedDist > cached.totalLengthM + 500.0
+                val targetDistAlong = unclampedDist.coerceIn(0.0, cached.totalLengthM)
+
+                if (!isOutOfRange && fallbackGps != null && (fallbackGps.latitude != 0.0 || fallbackGps.longitude != 0.0)) {
+                    var bestDist = Double.MAX_VALUE
+                    var bestAlong = targetDistAlong
+                    var bestPt: GeoPoint = fallbackGps
+                    for (i in 0 until cached.segmentCount) {
+                        val proj = GeoUtils.projectPointToSegment(fallbackGps, cached.points[i], cached.points[i + 1])
+                        if (proj.perpendicularDistance < bestDist) {
+                            bestDist = proj.perpendicularDistance
+                            bestAlong = cached.cumulativeDistances[i] + proj.t * cached.segmentLengths[i]
+                            bestPt = proj.projectedPoint
+                        }
+                    }
+                    if (bestDist <= 60.0 && abs(bestAlong - targetDistAlong) <= MAX_ALIGN_POSITION_MISMATCH_METRES) {
+                        return ResolvedPointPosition(bestPt, bestAlong, bestDist, isOutOfRouteRange = false)
+                    }
+                }
+
                 val pt = ChainageMatcher.interpolatePointAtDistanceAlongAlignment(cached, targetDistAlong)
-                return ResolvedPointPosition(pt, targetDistAlong, 0.0)
+                return ResolvedPointPosition(pt, targetDistAlong, 0.0, isOutOfRouteRange = isOutOfRange)
+            }
+
+            // Alignment has no markers -> project fallbackGps if present
+            if (fallbackGps != null && (fallbackGps.latitude != 0.0 || fallbackGps.longitude != 0.0)) {
+                var bestDist = Double.MAX_VALUE
+                var bestAlong = 0.0
+                var bestPt: GeoPoint = fallbackGps
+                for (i in 0 until cached.segmentCount) {
+                    val proj = GeoUtils.projectPointToSegment(fallbackGps, cached.points[i], cached.points[i + 1])
+                    if (proj.perpendicularDistance < bestDist) {
+                        bestDist = proj.perpendicularDistance
+                        bestAlong = cached.cumulativeDistances[i] + proj.t * cached.segmentLengths[i]
+                        bestPt = proj.projectedPoint
+                    }
+                }
+                if (bestDist <= 60.0) {
+                    return ResolvedPointPosition(bestPt, bestAlong, bestDist)
+                }
             }
         }
 
@@ -950,7 +1093,8 @@ object SmartChainageCorrectionEngine {
 
         val nearest = markers.minByOrNull { abs(it.chainage.metres - targetKmzMetres) } ?: markers.first()
         val nearestDist = calculateCumulativeRouteDistanceForMarker(markers, nearest)
-        return ResolvedPointPosition(fallbackGps ?: nearest.point, nearestDist)
+        val outOfRange = abs(nearest.chainage.metres - targetKmzMetres) > 500L
+        return ResolvedPointPosition(fallbackGps ?: nearest.point, nearestDist, isOutOfRouteRange = outOfRange)
     }
 
     private fun calculateCumulativeRouteDistanceForMarker(markers: List<RouteMarker>, target: RouteMarker): Double {
@@ -975,7 +1119,7 @@ object SmartChainageCorrectionEngine {
             if (pt.routeDistanceMetres > 0.01) {
                 pt
             } else {
-                val resolved = resolveRoutePositionForChainage(routeData, pt.originalKmzMetres, pt.point)
+                val resolved = resolveRoutePositionForChainage(routeData, pt.originalKmzMetres, null)
                 pt.copy(routeDistanceMetres = resolved.routeDistanceMetres)
             }
         }
@@ -1033,10 +1177,11 @@ object SmartChainageCorrectionEngine {
     /**
      * Applies the Unified Permanent Chainage Calibration Engine to a live or queried KMZ match.
      *
-     * Key guarantee:
+     * Key guarantees:
      * - Never drops or freezes calibration when GPS confidence is MEDIUM or LOW (as long as matched to alignment).
-     * - Prioritizes verified permanent control points -> alignment geometry -> piecewise interpolation.
-     * - Detects conflicting verified control points and flags NEEDS_REVIEW / CONFLICT_DETECTED.
+     * - Never silently skips INVALID points or clamps invalid negative/out-of-range outputs into false VERIFIED results.
+     * - Applies calibration offset once in metres along the matched alignment direction.
+     * - Produces genuine 6-state validation status: CALIBRATED, VERIFIED, LOW_CONFIDENCE, PENDING/NEEDS_REVIEW, INVALID, GPS_UNAVAILABLE.
      */
     fun applyCorrection(
         rawChainage: Chainage,
@@ -1046,7 +1191,9 @@ object SmartChainageCorrectionEngine {
         gpsAccuracy: Float = 0f,
         confidence: MatchConfidence = MatchConfidence.HIGH,
         distanceAlongAlignmentMetres: Double = 0.0,
-        isUncertainJump: Boolean = false
+        isUncertainJump: Boolean = false,
+        preferredAlignmentName: String? = null,
+        isGpsAvailable: Boolean = true
     ): SmartCorrectionResult? {
         val startNs = System.nanoTime()
         try {
@@ -1054,32 +1201,41 @@ object SmartChainageCorrectionEngine {
                 return null
             }
 
+            // Keep enabled points INCLUDING points previously flagged INVALID/NEEDS_REVIEW/PENDING
+            // so validation issues are reported transparently instead of silently reverting to KMZ.
             val enabledPoints = correctionPoints.filter {
                 it.isEnabled &&
-                    it.verificationStatus != CalibrationValidationStatus.INVALID &&
                     (it.routeId.isBlank() || routeData.id.isBlank() || it.routeId == routeData.id)
             }
             if (enabledPoints.isEmpty()) return null
 
             val sortedPoints = sortPointsInRouteOrder(enabledPoints, routeData)
-            val conflictReport = detectReferenceConflicts(sortedPoints, routeData)
+            val conflictReport = detectReferenceConflicts(sortedPoints, routeData, preferredAlignmentName)
             val currentKmzMetres = rawChainage.metres
 
             val hasValidDistAlong = distanceAlongAlignmentMetres.isFinite() && distanceAlongAlignmentMetres >= 0.0
             val currentRouteDist = if (hasValidDistAlong && distanceAlongAlignmentMetres > 0.0) {
                 distanceAlongAlignmentMetres
-            } else if (hasValidDistAlong && gpsPoint != null) {
-                // Distinguish genuine 0.0m alignment start from omitted default parameter (0.0)
-                val resolvedDist = resolveRoutePositionForChainage(routeData, currentKmzMetres, gpsPoint).routeDistanceMetres
-                if (resolvedDist <= 2.0) 0.0 else resolvedDist
             } else {
-                resolveRoutePositionForChainage(routeData, currentKmzMetres, gpsPoint).routeDistanceMetres
+                val resolved = resolveRoutePositionForChainage(
+                    routeData = routeData,
+                    targetKmzMetres = currentKmzMetres,
+                    fallbackGps = gpsPoint,
+                    preferredAlignmentName = preferredAlignmentName
+                )
+                resolved.routeDistanceMetres
             }
 
-            val activeAlignment = routeData.activeAlignment ?: routeData.alignments.firstOrNull()
+            val activeAlignment = selectAlignmentForRoute(routeData, preferredAlignmentName)
+            val cachedActive = if (activeAlignment != null && activeAlignment.points.size >= 2) {
+                ChainageMatcher.getOrCreateCachedGeometry(activeAlignment, routeData.markers)
+            } else null
+
             val firstM = routeData.markers.firstOrNull()?.chainage?.metres ?: 0L
             val lastM = routeData.markers.lastOrNull()?.chainage?.metres ?: 0L
             val isRouteDecreasing = when {
+                cachedActive != null && cachedActive.direction == "DECREASING" -> true
+                cachedActive != null && cachedActive.direction == "INCREASING" && routeData.markers.size < 2 -> false
                 activeAlignment?.direction.equals("DECREASING", ignoreCase = true) -> true
                 activeAlignment?.direction.equals("INCREASING", ignoreCase = true) && routeData.markers.size < 2 -> false
                 routeData.markers.size >= 2 -> firstM > lastM
@@ -1087,77 +1243,175 @@ object SmartChainageCorrectionEngine {
             }
             val routeDirectionSign = if (isRouteDecreasing) -1L else 1L
 
-            val baseValidationStatus = when {
-                conflictReport.hasConflict -> CalibrationValidationStatus.INVALID
-                confidence == MatchConfidence.LOW || isUncertainJump -> CalibrationValidationStatus.LOW_CONFIDENCE
-                conflictReport.validationStatus == CalibrationValidationStatus.NEEDS_REVIEW -> CalibrationValidationStatus.NEEDS_REVIEW
-                else -> CalibrationValidationStatus.VERIFIED
+            fun buildInvalidResult(attemptedOffset: Long, reason: String): SmartCorrectionResult {
+                totalCalibrationsComputed.incrementAndGet()
+                return SmartCorrectionResult(
+                    correctedChainage = rawChainage,
+                    rawKmzChainage = rawChainage,
+                    appliedOffsetMetres = 0L,
+                    mode = CorrectionMode.CONFLICT_DETECTED,
+                    infoMessage = reason,
+                    validationStatus = CalibrationValidationStatus.INVALID,
+                    hierarchyTier = CalibrationHierarchyTier.TIER_3_PIECEWISE_INTERPOLATION,
+                    hasConflict = true,
+                    attemptedOffsetMetres = attemptedOffset
+                )
+            }
+
+            // Reject invalid / conflicting reference sets immediately without corrupting output
+            if (conflictReport.hasConflict) {
+                val primaryConflict = conflictReport.conflicts.firstOrNull() ?: "Calibration conflict requires review"
+                val attemptedOff = sortedPoints.firstOrNull()?.offsetMetres ?: 0L
+                return buildInvalidResult(attemptedOff, primaryConflict)
+            }
+
+            fun resolveRuntimeValidationStatus(
+                pointsUsed: List<ChainageCorrectionPoint>,
+                isExtrapolated: Boolean,
+                isExactAtRef: Boolean
+            ): String {
+                return when {
+                    conflictReport.hasConflict -> CalibrationValidationStatus.INVALID
+                    !isGpsAvailable -> CalibrationValidationStatus.GPS_UNAVAILABLE
+                    confidence == MatchConfidence.LOW || isUncertainJump || gpsAccuracy > 25.0f ->
+                        CalibrationValidationStatus.LOW_CONFIDENCE
+                    conflictReport.validationStatus == CalibrationValidationStatus.NEEDS_REVIEW ->
+                        CalibrationValidationStatus.NEEDS_REVIEW
+                    conflictReport.validationStatus == CalibrationValidationStatus.PENDING ->
+                        CalibrationValidationStatus.PENDING
+                    isExtrapolated -> CalibrationValidationStatus.LOW_CONFIDENCE
+                    confidence == MatchConfidence.MEDIUM || gpsAccuracy > 12.0f ->
+                        CalibrationValidationStatus.CALIBRATED
+                    !isExactAtRef && pointsUsed.size == 1 && pointsUsed.first().let {
+                        it.referenceSource == ReferencePointSource.MANUAL ||
+                            it.referenceSource == ReferencePointSource.ALIGNMENT_PICK
+                    } && pointsUsed.first().verificationStatus == CalibrationValidationStatus.CALIBRATED ->
+                        CalibrationValidationStatus.CALIBRATED
+                    else -> CalibrationValidationStatus.VERIFIED
+                }
+            }
+
+            fun validateComputedOutput(
+                unclampedMetres: Long,
+                isMultiPointOrEq: Boolean,
+                onValid: (Long) -> SmartCorrectionResult
+            ): SmartCorrectionResult {
+                val attemptedOffset = unclampedMetres - currentKmzMetres
+                if (unclampedMetres < 0L) {
+                    return buildInvalidResult(
+                        attemptedOffset,
+                        "Calibration produces negative chainage (${unclampedMetres}m) — rejected"
+                    )
+                }
+                if (abs(attemptedOffset) > MAX_VALID_CALIBRATION_OFFSET_METRES && !isMultiPointOrEq) {
+                    return buildInvalidResult(
+                        attemptedOffset,
+                        "Calibrated offset (${if (attemptedOffset >= 0) "+$attemptedOffset" else "$attemptedOffset"}m) exceeds 10 km validation limit"
+                    )
+                }
+                return onValid(unclampedMetres)
+            }
+
+            // Resolve canonical route distance for every point (even when stored routeDistanceMetres == 0.0)
+            val routeDistForPoint: (ChainageCorrectionPoint) -> Double = { pt ->
+                if (pt.routeDistanceMetres > 0.01) {
+                    pt.routeDistanceMetres
+                } else {
+                    resolveRoutePositionForChainage(
+                        routeData = routeData,
+                        targetKmzMetres = pt.originalKmzMetres,
+                        fallbackGps = null,
+                        preferredAlignmentName = preferredAlignmentName
+                    ).routeDistanceMetres
+                }
             }
 
             // Tier 1 check: Are we directly at a verified control point (within 1.5m along alignment)?
             val exactControlPt = sortedPoints.firstOrNull { pt ->
-                (currentRouteDist >= 0.0 && pt.routeDistanceMetres >= 0.0 &&
-                    (currentRouteDist > 0.0 || pt.routeDistanceMetres > 0.0) &&
-                    abs(currentRouteDist - pt.routeDistanceMetres) <= 1.5) ||
+                val ptDist = routeDistForPoint(pt)
+                ((currentRouteDist >= 0.0 && ptDist >= 0.0) &&
+                    (currentRouteDist > 0.0 || ptDist > 0.0) &&
+                    abs(currentRouteDist - ptDist) <= 1.5) ||
                     abs(currentKmzMetres - pt.originalKmzMetres) <= 1L
             }
-            if (exactControlPt != null && !conflictReport.hasConflict) {
-                val corrected = Chainage(exactControlPt.correctedMetres.coerceAtLeast(0L))
-                val appliedOffset = corrected.metres - currentKmzMetres
-                val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
-                totalCalibrationsComputed.incrementAndGet()
-                return SmartCorrectionResult(
-                    correctedChainage = corrected,
-                    rawKmzChainage = rawChainage,
-                    appliedOffsetMetres = appliedOffset,
-                    mode = CorrectionMode.SINGLE_POINT_PROPAGATION,
-                    infoMessage = "Verified Ref ${exactControlPt.correctedChainage.format()} ($signStr)",
-                    validationStatus = baseValidationStatus,
-                    hierarchyTier = CalibrationHierarchyTier.TIER_1_VERIFIED_CONTROL_POINT,
-                    hasConflict = false
-                )
+            if (exactControlPt != null) {
+                val hasEq = exactControlPt.description.contains("eq", ignoreCase = true)
+                return validateComputedOutput(exactControlPt.correctedMetres, hasEq) { validMetres ->
+                    val corrected = Chainage(validMetres)
+                    val appliedOffset = corrected.metres - currentKmzMetres
+                    val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
+                    totalCalibrationsComputed.incrementAndGet()
+                    SmartCorrectionResult(
+                        correctedChainage = corrected,
+                        rawKmzChainage = rawChainage,
+                        appliedOffsetMetres = appliedOffset,
+                        mode = CorrectionMode.SINGLE_POINT_PROPAGATION,
+                        infoMessage = "Verified Ref ${exactControlPt.correctedChainage.format()} ($signStr)",
+                        validationStatus = resolveRuntimeValidationStatus(
+                            pointsUsed = listOf(exactControlPt),
+                            isExtrapolated = false,
+                            isExactAtRef = true
+                        ),
+                        hierarchyTier = CalibrationHierarchyTier.TIER_1_VERIFIED_CONTROL_POINT,
+                        hasConflict = false,
+                        attemptedOffsetMetres = appliedOffset
+                    )
+                }
             }
 
             // CASE 1: Single Fixed Control Point -> Alignment-Distance Propagation
             if (sortedPoints.size == 1) {
                 val p1 = sortedPoints.first()
-                val correctedMetres = if (currentRouteDist > 0.01 && p1.routeDistanceMetres > 0.01) {
-                    val deltaDistAlong = currentRouteDist - p1.routeDistanceMetres
-                    (p1.correctedMetres + (routeDirectionSign * deltaDistAlong).roundToLong()).coerceAtLeast(0L)
+                val p1RouteDist = routeDistForPoint(p1)
+                val canUseRouteDist = cachedActive != null &&
+                    (currentRouteDist > 0.01 || p1RouteDist > 0.01)
+                val unclampedMetres = if (canUseRouteDist) {
+                    val deltaDistAlong = currentRouteDist - p1RouteDist
+                    p1.correctedMetres + (routeDirectionSign * deltaDistAlong).roundToLong()
                 } else {
-                    (currentKmzMetres + p1.offsetMetres).coerceAtLeast(0L)
+                    currentKmzMetres + p1.offsetMetres
                 }
 
-                val appliedOffset = correctedMetres - currentKmzMetres
-                val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
-                val desc = p1.description.takeIf { it.isNotBlank() } ?: "Ref ${p1.correctedChainage.format()}"
-                totalCalibrationsComputed.incrementAndGet()
+                val hasEq = p1.description.contains("eq", ignoreCase = true)
+                return validateComputedOutput(unclampedMetres, hasEq) { validMetres ->
+                    val appliedOffset = validMetres - currentKmzMetres
+                    val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
+                    val desc = p1.description.takeIf { it.isNotBlank() } ?: "Ref ${p1.correctedChainage.format()}"
+                    totalCalibrationsComputed.incrementAndGet()
 
-                return SmartCorrectionResult(
-                    correctedChainage = Chainage(correctedMetres),
-                    rawKmzChainage = rawChainage,
-                    appliedOffsetMetres = appliedOffset,
-                    mode = CorrectionMode.SINGLE_POINT_PROPAGATION,
-                    infoMessage = "$desc ($signStr)",
-                    validationStatus = baseValidationStatus,
-                    hierarchyTier = CalibrationHierarchyTier.TIER_2_VALIDATED_ALIGNMENT,
-                    hasConflict = false
-                )
+                    SmartCorrectionResult(
+                        correctedChainage = Chainage(validMetres),
+                        rawKmzChainage = rawChainage,
+                        appliedOffsetMetres = appliedOffset,
+                        mode = CorrectionMode.SINGLE_POINT_PROPAGATION,
+                        infoMessage = "$desc ($signStr)",
+                        validationStatus = resolveRuntimeValidationStatus(
+                            pointsUsed = sortedPoints,
+                            isExtrapolated = false,
+                            isExactAtRef = false
+                        ),
+                        hierarchyTier = CalibrationHierarchyTier.TIER_2_VALIDATED_ALIGNMENT,
+                        hasConflict = false,
+                        attemptedOffsetMetres = appliedOffset
+                    )
+                }
             }
 
             // CASE 2: Multiple Fixed Control Points -> Piecewise Alignment Interpolation
             var beforeIdx = -1
             var afterIdx = -1
 
-            val useRouteDist = (currentRouteDist > 0.01 || (hasValidDistAlong && gpsPoint != null)) &&
-                sortedPoints.all { it.routeDistanceMetres > 0.01 }
+            val pointDistances = sortedPoints.map { routeDistForPoint(it) }
+            val useRouteDist = cachedActive != null &&
+                pointDistances.zipWithNext().all { (a, b) -> b - a > 0.01 } &&
+                (currentRouteDist > 0.01 || pointDistances.first() <= 0.01)
 
             if (useRouteDist) {
                 for (i in sortedPoints.indices) {
-                    if (sortedPoints[i].routeDistanceMetres <= currentRouteDist) {
+                    if (pointDistances[i] <= currentRouteDist) {
                         beforeIdx = i
                     }
-                    if (sortedPoints[i].routeDistanceMetres >= currentRouteDist && afterIdx == -1) {
+                    if (pointDistances[i] >= currentRouteDist && afterIdx == -1) {
                         afterIdx = i
                     }
                 }
@@ -1185,77 +1439,100 @@ object SmartChainageCorrectionEngine {
                 // Before first control point: propagate from first verified reference along alignment
                 beforeIdx == -1 && afterIdx != -1 -> {
                     val firstPt = sortedPoints.first()
-                    val correctedMetres = if (useRouteDist) {
-                        val deltaDist = currentRouteDist - firstPt.routeDistanceMetres // negative
-                        (firstPt.correctedMetres + (routeDirectionSign * deltaDist).roundToLong()).coerceAtLeast(0L)
+                    val firstDist = pointDistances.first()
+                    val unclampedMetres = if (useRouteDist) {
+                        val deltaDist = currentRouteDist - firstDist // negative
+                        firstPt.correctedMetres + (routeDirectionSign * deltaDist).roundToLong()
                     } else {
-                        (currentKmzMetres + firstPt.offsetMetres).coerceAtLeast(0L)
+                        currentKmzMetres + firstPt.offsetMetres
                     }
-                    val appliedOffset = correctedMetres - currentKmzMetres
-                    val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
-                    SmartCorrectionResult(
-                        correctedChainage = Chainage(correctedMetres),
-                        rawKmzChainage = rawChainage,
-                        appliedOffsetMetres = appliedOffset,
-                        mode = CorrectionMode.EXTRAPOLATED_PRE_START,
-                        infoMessage = "Pre-Ref ${firstPt.correctedChainage.format()} ($signStr)",
-                        validationStatus = if (baseValidationStatus == CalibrationValidationStatus.VERIFIED) {
-                            CalibrationValidationStatus.LOW_CONFIDENCE
-                        } else baseValidationStatus,
-                        hierarchyTier = CalibrationHierarchyTier.TIER_2_VALIDATED_ALIGNMENT,
-                        hasConflict = conflictReport.hasConflict
-                    )
+                    val hasEq = firstPt.description.contains("eq", ignoreCase = true)
+                    validateComputedOutput(unclampedMetres, hasEq) { validMetres ->
+                        val appliedOffset = validMetres - currentKmzMetres
+                        val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
+                        SmartCorrectionResult(
+                            correctedChainage = Chainage(validMetres),
+                            rawKmzChainage = rawChainage,
+                            appliedOffsetMetres = appliedOffset,
+                            mode = CorrectionMode.EXTRAPOLATED_PRE_START,
+                            infoMessage = "Pre-Ref ${firstPt.correctedChainage.format()} ($signStr)",
+                            validationStatus = resolveRuntimeValidationStatus(
+                                pointsUsed = listOf(firstPt),
+                                isExtrapolated = true,
+                                isExactAtRef = false
+                            ),
+                            hierarchyTier = CalibrationHierarchyTier.TIER_2_VALIDATED_ALIGNMENT,
+                            hasConflict = false,
+                            attemptedOffsetMetres = appliedOffset
+                        )
+                    }
                 }
 
                 // After last control point: propagate from last verified reference along alignment
                 beforeIdx != -1 && afterIdx == -1 -> {
                     val lastPt = sortedPoints.last()
-                    val correctedMetres = if (useRouteDist) {
-                        val deltaDist = currentRouteDist - lastPt.routeDistanceMetres // positive
-                        (lastPt.correctedMetres + (routeDirectionSign * deltaDist).roundToLong()).coerceAtLeast(0L)
+                    val lastDist = pointDistances.last()
+                    val unclampedMetres = if (useRouteDist) {
+                        val deltaDist = currentRouteDist - lastDist // positive
+                        lastPt.correctedMetres + (routeDirectionSign * deltaDist).roundToLong()
                     } else {
-                        (currentKmzMetres + lastPt.offsetMetres).coerceAtLeast(0L)
+                        currentKmzMetres + lastPt.offsetMetres
                     }
-                    val appliedOffset = correctedMetres - currentKmzMetres
-                    val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
-                    SmartCorrectionResult(
-                        correctedChainage = Chainage(correctedMetres),
-                        rawKmzChainage = rawChainage,
-                        appliedOffsetMetres = appliedOffset,
-                        mode = CorrectionMode.EXTRAPOLATED_POST_END,
-                        infoMessage = "Post-Ref ${lastPt.correctedChainage.format()} ($signStr)",
-                        validationStatus = if (baseValidationStatus == CalibrationValidationStatus.VERIFIED) {
-                            CalibrationValidationStatus.LOW_CONFIDENCE
-                        } else baseValidationStatus,
-                        hierarchyTier = CalibrationHierarchyTier.TIER_2_VALIDATED_ALIGNMENT,
-                        hasConflict = conflictReport.hasConflict
-                    )
+                    val hasEq = lastPt.description.contains("eq", ignoreCase = true)
+                    validateComputedOutput(unclampedMetres, hasEq) { validMetres ->
+                        val appliedOffset = validMetres - currentKmzMetres
+                        val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
+                        SmartCorrectionResult(
+                            correctedChainage = Chainage(validMetres),
+                            rawKmzChainage = rawChainage,
+                            appliedOffsetMetres = appliedOffset,
+                            mode = CorrectionMode.EXTRAPOLATED_POST_END,
+                            infoMessage = "Post-Ref ${lastPt.correctedChainage.format()} ($signStr)",
+                            validationStatus = resolveRuntimeValidationStatus(
+                                pointsUsed = listOf(lastPt),
+                                isExtrapolated = true,
+                                isExactAtRef = false
+                            ),
+                            hierarchyTier = CalibrationHierarchyTier.TIER_2_VALIDATED_ALIGNMENT,
+                            hasConflict = false,
+                            attemptedOffsetMetres = appliedOffset
+                        )
+                    }
                 }
 
                 // Exact control point match
                 beforeIdx != -1 && beforeIdx == afterIdx -> {
                     val exactPt = sortedPoints[beforeIdx]
-                    val correctedMetres = exactPt.correctedMetres.coerceAtLeast(0L)
-                    val appliedOffset = correctedMetres - currentKmzMetres
-                    val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
-                    SmartCorrectionResult(
-                        correctedChainage = Chainage(correctedMetres),
-                        rawKmzChainage = rawChainage,
-                        appliedOffsetMetres = appliedOffset,
-                        mode = CorrectionMode.MULTI_POINT_INTERPOLATION,
-                        infoMessage = "At Ref ${exactPt.correctedChainage.format()} ($signStr)",
-                        validationStatus = baseValidationStatus,
-                        hierarchyTier = CalibrationHierarchyTier.TIER_1_VERIFIED_CONTROL_POINT,
-                        hasConflict = conflictReport.hasConflict
-                    )
+                    val hasEq = exactPt.description.contains("eq", ignoreCase = true)
+                    validateComputedOutput(exactPt.correctedMetres, hasEq) { validMetres ->
+                        val appliedOffset = validMetres - currentKmzMetres
+                        val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
+                        SmartCorrectionResult(
+                            correctedChainage = Chainage(validMetres),
+                            rawKmzChainage = rawChainage,
+                            appliedOffsetMetres = appliedOffset,
+                            mode = CorrectionMode.MULTI_POINT_INTERPOLATION,
+                            infoMessage = "At Ref ${exactPt.correctedChainage.format()} ($signStr)",
+                            validationStatus = resolveRuntimeValidationStatus(
+                                pointsUsed = listOf(exactPt),
+                                isExtrapolated = false,
+                                isExactAtRef = true
+                            ),
+                            hierarchyTier = CalibrationHierarchyTier.TIER_1_VERIFIED_CONTROL_POINT,
+                            hasConflict = false,
+                            attemptedOffsetMetres = appliedOffset
+                        )
+                    }
                 }
 
                 // Between two bracketing verified control points pA and pB -> Piecewise Alignment Interpolation
                 beforeIdx != -1 && afterIdx != -1 -> {
                     val pA = sortedPoints[beforeIdx]
                     val pB = sortedPoints[afterIdx]
+                    val distA = pointDistances[beforeIdx]
+                    val distB = pointDistances[afterIdx]
 
-                    val spanRouteDist = pB.routeDistanceMetres - pA.routeDistanceMetres
+                    val spanRouteDist = distB - distA
                     val spanOrigMetres = (pB.originalKmzMetres - pA.originalKmzMetres).toDouble()
                     val spanCorrMetres = (pB.correctedMetres - pA.correctedMetres).toDouble()
 
@@ -1263,22 +1540,14 @@ object SmartChainageCorrectionEngine {
                     val spanReversedConflict = (!isRouteDecreasing && spanCorrMetres < 0.0) ||
                         (isRouteDecreasing && spanCorrMetres > 0.0)
                     if (spanReversedConflict) {
-                        val safeFallback = (currentKmzMetres + pA.offsetMetres).coerceAtLeast(0L)
-                        val appliedOffset = safeFallback - currentKmzMetres
-                        return SmartCorrectionResult(
-                            correctedChainage = Chainage(safeFallback),
-                            rawKmzChainage = rawChainage,
-                            appliedOffsetMetres = appliedOffset,
-                            mode = CorrectionMode.CONFLICT_DETECTED,
-                            infoMessage = "Conflict: ${pA.correctedChainage.format()} ↔ ${pB.correctedChainage.format()} (Review Required)",
-                            validationStatus = CalibrationValidationStatus.INVALID,
-                            hierarchyTier = CalibrationHierarchyTier.TIER_3_PIECEWISE_INTERPOLATION,
-                            hasConflict = true
+                        return buildInvalidResult(
+                            pA.offsetMetres,
+                            "Conflict: ${pA.correctedChainage.format()} ↔ ${pB.correctedChainage.format()} (Review Required)"
                         )
                     }
 
                     val t = if (useRouteDist && spanRouteDist > 0.5) {
-                        ((currentRouteDist - pA.routeDistanceMetres) / spanRouteDist).coerceIn(0.0, 1.0)
+                        ((currentRouteDist - distA) / spanRouteDist).coerceIn(0.0, 1.0)
                     } else if (abs(spanOrigMetres) > 0.5) {
                         ((currentKmzMetres - pA.originalKmzMetres).toDouble() / spanOrigMetres).coerceIn(0.0, 1.0)
                     } else {
@@ -1290,26 +1559,37 @@ object SmartChainageCorrectionEngine {
                     } else 1.0
 
                     val interpolatedCorrMetres = if (abs(scaleFactor - 1.0) <= MAX_INTERPOLATION_SCALE_DEVIATION) {
-                        (pA.correctedMetres + t * spanCorrMetres).roundToLong().coerceAtLeast(0L)
+                        (pA.correctedMetres + t * spanCorrMetres).roundToLong()
                     } else {
                         val blendedOffset = (pA.offsetMetres + t * (pB.offsetMetres - pA.offsetMetres)).roundToLong()
-                        (currentKmzMetres + blendedOffset).coerceAtLeast(0L)
+                        currentKmzMetres + blendedOffset
                     }
 
-                    val appliedOffset = interpolatedCorrMetres - currentKmzMetres
-                    val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
-                    val warningSuffix = if (abs(scaleFactor - 1.0) > MAX_INTERPOLATION_SCALE_DEVIATION) " [Eq]" else ""
+                    val hasEq = abs(scaleFactor - 1.0) > MAX_INTERPOLATION_SCALE_DEVIATION ||
+                        pA.description.contains("eq", ignoreCase = true) ||
+                        pB.description.contains("eq", ignoreCase = true)
 
-                    SmartCorrectionResult(
-                        correctedChainage = Chainage(interpolatedCorrMetres),
-                        rawKmzChainage = rawChainage,
-                        appliedOffsetMetres = appliedOffset,
-                        mode = CorrectionMode.MULTI_POINT_INTERPOLATION,
-                        infoMessage = "${pA.correctedChainage.format()} ↔ ${pB.correctedChainage.format()} ($signStr)$warningSuffix",
-                        validationStatus = baseValidationStatus,
-                        hierarchyTier = CalibrationHierarchyTier.TIER_3_PIECEWISE_INTERPOLATION,
-                        hasConflict = conflictReport.hasConflict
-                    )
+                    validateComputedOutput(interpolatedCorrMetres, isMultiPointOrEq = true) { validMetres ->
+                        val appliedOffset = validMetres - currentKmzMetres
+                        val signStr = if (appliedOffset >= 0) "+${appliedOffset}m" else "${appliedOffset}m"
+                        val warningSuffix = if (hasEq && abs(scaleFactor - 1.0) > MAX_INTERPOLATION_SCALE_DEVIATION) " [Eq]" else ""
+
+                        SmartCorrectionResult(
+                            correctedChainage = Chainage(validMetres),
+                            rawKmzChainage = rawChainage,
+                            appliedOffsetMetres = appliedOffset,
+                            mode = CorrectionMode.MULTI_POINT_INTERPOLATION,
+                            infoMessage = "${pA.correctedChainage.format()} ↔ ${pB.correctedChainage.format()} ($signStr)$warningSuffix",
+                            validationStatus = resolveRuntimeValidationStatus(
+                                pointsUsed = listOf(pA, pB),
+                                isExtrapolated = false,
+                                isExactAtRef = false
+                            ),
+                            hierarchyTier = CalibrationHierarchyTier.TIER_3_PIECEWISE_INTERPOLATION,
+                            hasConflict = false,
+                            attemptedOffsetMetres = appliedOffset
+                        )
+                    }
                 }
 
                 else -> null
@@ -1385,9 +1665,14 @@ object SmartChainageCorrectionEngine {
         if (enabledPoints.size == 1) {
             val p1 = enabledPoints.first()
             val origCh = (targetCalibratedMetres - p1.offsetMetres).coerceAtLeast(0L)
-            if (p1.routeDistanceMetres > 0.01 && cached != null) {
+            val p1Dist = if (p1.routeDistanceMetres > 0.01) {
+                p1.routeDistanceMetres
+            } else {
+                resolveRoutePositionForChainage(routeData, p1.originalKmzMetres).routeDistanceMetres
+            }
+            if (cached != null && (p1Dist > 0.01 || cached.mappedMarkers.isNotEmpty())) {
                 val deltaCh = (targetCalibratedMetres - p1.correctedMetres) * dirSign
-                val targetDist = (p1.routeDistanceMetres + deltaCh).coerceIn(0.0, cached.totalLengthM)
+                val targetDist = (p1Dist + deltaCh).coerceIn(0.0, cached.totalLengthM)
                 return Pair(targetDist, origCh)
             } else {
                 val pos = resolveRoutePositionForChainage(routeData, origCh)
@@ -2061,40 +2346,35 @@ object SmartChainageCorrectionEngine {
         existingPoints: List<ChainageCorrectionPoint>,
         routeData: RouteData
     ): ValidationResult {
-        val warnings = mutableListOf<String>()
+        val hardErrors = mutableListOf<String>()
+        val advisories = mutableListOf<String>()
         val otherPoints = existingPoints.filter { it.id != point.id && it.isEnabled }
 
-        val minKmz = minOf(routeData.startChainage?.metres ?: 0L, routeData.endChainage?.metres ?: Long.MAX_VALUE)
-        val maxKmz = maxOf(routeData.startChainage?.metres ?: 0L, routeData.endChainage?.metres ?: Long.MAX_VALUE)
-        if (routeData.startChainage != null && routeData.endChainage != null) {
-            if (point.originalKmzMetres < minKmz - 500 || point.originalKmzMetres > maxKmz + 500) {
-                warnings.add("Original chainage (${point.originalKmzChainage.format()}) is outside route bounds (${Chainage(minKmz).format()}..${Chainage(maxKmz).format()}).")
-            }
-        }
+        val (singleErrors, singleWarnings) = validateSinglePointInternal(point, routeData)
+        hardErrors.addAll(singleErrors)
+        advisories.addAll(singleWarnings)
 
         val dupOrig = otherPoints.find {
             abs(it.originalKmzMetres - point.originalKmzMetres) <= 5L ||
                 (it.routeDistanceMetres > 0.01 && point.routeDistanceMetres > 0.01 && abs(it.routeDistanceMetres - point.routeDistanceMetres) <= 5.0)
         }
         if (dupOrig != null) {
-            warnings.add("Duplicate reference point: another control point already exists near KMZ ${dupOrig.originalKmzChainage.format()}.")
+            advisories.add("Duplicate reference point: another control point already exists near KMZ ${dupOrig.originalKmzChainage.format()}.")
         }
 
-        if (abs(point.offsetMetres) > 10_000L) {
-            warnings.add("Large correction shift (${point.displayOffset} jump) exceeds 10 km threshold.")
-        }
-
-        val combined = sortPointsInRouteOrder(otherPoints + point, routeData)
+        val candidateForOrder = point.copy(verificationStatus = CalibrationValidationStatus.CALIBRATED)
+        val combined = sortPointsInRouteOrder(otherPoints + candidateForOrder, routeData)
         val conflictReport = detectReferenceConflicts(combined, routeData)
-        if (conflictReport.hasConflict) {
-            warnings.add("Direction conflict: ${conflictReport.conflicts.first()}")
+        if (conflictReport.hasConflict && conflictReport.conflicts.isNotEmpty()) {
+            hardErrors.add("Direction conflict: ${conflictReport.conflicts.first()}")
         }
-        warnings.addAll(conflictReport.conflicts)
-        warnings.addAll(conflictReport.warnings)
+        hardErrors.addAll(conflictReport.conflicts)
+        advisories.addAll(conflictReport.warnings)
 
+        val allMessages = (hardErrors + advisories).distinct()
         return ValidationResult(
-            isValid = !conflictReport.hasConflict,
-            warnings = warnings.distinct()
+            isValid = hardErrors.isEmpty() && !conflictReport.hasConflict,
+            warnings = allMessages
         )
     }
 
