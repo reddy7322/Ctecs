@@ -112,7 +112,6 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -220,10 +219,8 @@ fun SettingsScreen(
     val isDownloadingUpdate by viewModel.isDownloadingUpdate.collectAsStateWithLifecycle()
     val updateDownloadProgress by viewModel.updateDownloadProgress.collectAsStateWithLifecycle()
 
-    // Theme & Donation Popup States (retained across UPI app launch & lifecycle changes)
+    // Theme State
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
-    var showBuyMeACoffeeSheet by rememberSaveable { mutableStateOf(false) }
-    var activeCoffeeOrderRef by rememberSaveable { mutableStateOf<String?>(null) }
 
     var searchQuery by remember { mutableStateOf("") }
     var showRestoreDialog by remember { mutableStateOf(false) }
@@ -4290,10 +4287,10 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(14.dp))
 
             // ====================================================
-            // 14. ALWAYS-VISIBLE APP INFORMATION & BUY ME A COFFEE
+            // 14. ALWAYS-VISIBLE APP INFORMATION
             // (NO dropdown, NO expand/collapse, permanently visible)
             // ====================================================
-            if (matchesSearch("permissions app information version build update restore default developer madhureddyainala buy me a coffee support donate upi", searchQuery)) {
+            if (matchesSearch("permissions app information version build update restore default developer madhureddyainala", searchQuery)) {
                 AlwaysVisibleAppInfoSection(
                     isCheckingUpdate = isCheckingUpdate,
                     availableUpdate = availableUpdate,
@@ -4301,8 +4298,7 @@ fun SettingsScreen(
                     updateDownloadProgress = updateDownloadProgress,
                     onCheckForUpdate = { viewModel.checkForAppUpdate(isManual = true) },
                     onDownloadAndInstallUpdate = { viewModel.downloadAndInstallUpdate() },
-                    onRequestResetDefaults = { showRestoreDialog = true },
-                    onOpenBuyMeACoffee = { showBuyMeACoffeeSheet = true }
+                    onRequestResetDefaults = { showRestoreDialog = true }
                 )
             }
 
@@ -4310,17 +4306,6 @@ fun SettingsScreen(
         }
         }
     }
-    }
-
-    // Compact Animated Buy Me a Coffee Popup (popup-only, keeps Settings visible underneath)
-    if (showBuyMeACoffeeSheet) {
-        BuyMeACoffeeBottomSheet(
-            repository = viewModel.donationRepository,
-            restoredOrderRef = activeCoffeeOrderRef,
-            onActiveOrderRefChange = { activeCoffeeOrderRef = it },
-            onDismiss = { showBuyMeACoffeeSheet = false },
-            onToast = { message -> viewModel.showToast(message) }
-        )
     }
 
     // Restore Defaults Dialog

@@ -296,7 +296,7 @@ class AutoSaveAndStartupLoaderTest {
     }
 
     @Test
-    fun settingsScreen_hasNoManualSaveOrApplyButton_andPreservesAppInfoAndBuyMeACoffee() {
+    fun settingsScreen_hasNoManualSaveOrApplyButton_andPreservesAppInfo() {
         val viewModel = MainViewModel(app)
         composeRule.setContent {
             MyApplicationTheme(themeMode = "dark") {

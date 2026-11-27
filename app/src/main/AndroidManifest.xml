@@ -62,14 +62,6 @@
         <package android:name="com.google.android.tts" />
         <package android:name="com.samsung.SMT" />
         <package android:name="com.samsung.android.tts" />
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="upi" />
-        </intent>
-        <package android:name="com.google.android.apps.nbu.paisa.user" />
-        <package android:name="com.phonepe.app" />
-        <package android:name="net.one97.paytm" />
-        <package android:name="in.org.npci.upiapp" />
     </queries>
 
     <application

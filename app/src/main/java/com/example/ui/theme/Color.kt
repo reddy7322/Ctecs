@@ -47,11 +47,6 @@ val DarkSuccess = Color(0xFF20C997)
 val DarkWarning = Color(0xFFFFB52E)
 val DarkError = Color(0xFFFF5263)
 
-// Coffee-inspired warm accents (Dark Mode)
-val DarkCoffeeAccent = Color(0xFFD99B58)
-val DarkCoffeeSurface = Color(0xFF1D1610)
-val DarkOnCoffeeAccent = Color(0xFF1A0F07)
-
 // ============================================================================
 // PART 1.3 – PROFESSIONAL MINIMALIST LIGHT THEME PALETTE
 // ============================================================================
@@ -71,11 +66,6 @@ val LightSecondaryAccent = Color(0xFF159FD5)
 val LightSuccess = Color(0xFF159C72)
 val LightWarning = Color(0xFFD99A20)
 val LightError = Color(0xFFDC4455)
-
-// Coffee-inspired warm accents (Light Mode)
-val LightCoffeeAccent = Color(0xFF8C5629)
-val LightCoffeeSurface = Color(0xFFFBF5EE)
-val LightOnCoffeeAccent = Color(0xFFFFFFFF)
 
 // ============================================================================
 // COMPATIBILITY ALIASES

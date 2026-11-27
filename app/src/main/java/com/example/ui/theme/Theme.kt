@@ -44,10 +44,7 @@ data class CtecsColorTokens(
     val warning: Color,
     val error: Color,
     val scrim: Color,
-    val subtleSeparator: Color,
-    val coffeeAccent: Color = DarkCoffeeAccent,
-    val coffeeSurface: Color = DarkCoffeeSurface,
-    val onCoffeeAccent: Color = DarkOnCoffeeAccent
+    val subtleSeparator: Color
 )
 
 /** Deep Charcoal Dark Mode — preserved for legacy callers */
@@ -69,10 +66,7 @@ val CharcoalDarkCtecsColorTokens = CtecsColorTokens(
     warning = DarkWarning,
     error = DarkError,
     scrim = Color(0xBA0B0E14),
-    subtleSeparator = CharcoalDarkSeparator,
-    coffeeAccent = DarkCoffeeAccent,
-    coffeeSurface = DarkCoffeeSurface,
-    onCoffeeAccent = DarkOnCoffeeAccent
+    subtleSeparator = CharcoalDarkSeparator
 )
 
 /** True Black AMOLED Dark Mode (#000000) — soft charcoal surfaces, crisp white text, subtle separators */
@@ -94,10 +88,7 @@ val AmoledCtecsColorTokens = CtecsColorTokens(
     warning = DarkWarning,
     error = DarkError,
     scrim = Color(0xD6000000),
-    subtleSeparator = AmoledSeparator,
-    coffeeAccent = DarkCoffeeAccent,
-    coffeeSurface = DarkCoffeeSurface,
-    onCoffeeAccent = DarkOnCoffeeAccent
+    subtleSeparator = AmoledSeparator
 )
 
 // Alias preserved for any existing callers (now aligned with True Black AMOLED Dark Mode)
@@ -122,10 +113,7 @@ val LightCtecsColorTokens = CtecsColorTokens(
     warning = LightWarning,
     error = LightError,
     scrim = Color(0x70101828),
-    subtleSeparator = LightSeparator,
-    coffeeAccent = LightCoffeeAccent,
-    coffeeSurface = LightCoffeeSurface,
-    onCoffeeAccent = LightOnCoffeeAccent
+    subtleSeparator = LightSeparator
 )
 
 private val CharcoalDarkColorScheme = darkColorScheme(

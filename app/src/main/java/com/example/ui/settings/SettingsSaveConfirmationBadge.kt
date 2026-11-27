@@ -1,5 +1,7 @@
 package com.example.ui.settings
 
+import android.content.Context
+import android.provider.Settings
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -61,6 +63,18 @@ import com.example.ui.theme.CtecsTheme
 
 val LocalSettingsAutoSaveCoordinator = compositionLocalOf<SettingsAutoSaveCoordinator?> { null }
 val LocalSettingsSectionKey = compositionLocalOf<String?> { null }
+
+internal fun isSystemReducedMotionEnabled(context: Context): Boolean {
+    return try {
+        Settings.Global.getFloat(
+            context.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f
+        ) == 0f
+    } catch (_: Throwable) {
+        false
+    }
+}
 
 /**
  * Observes a single specific setting key's auto-save state and renders the tiny,

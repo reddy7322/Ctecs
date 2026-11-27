@@ -10,8 +10,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,7 +24,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Coffee
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Restore
@@ -205,7 +202,6 @@ private fun ThemeModePillButton(
  * - NO dropdown, NO expand/collapse, NO chevron, NO hidden content, NO separate page.
  * - Preserves all existing App Information details (app icon, CTECS name, version & build,
  *   release channel, update checker, reset defaults, exact developer credit).
- * - Hosts ONE dedicated, sleek animated "Buy Me a Coffee ☕" button directly inside the section.
  */
 @Composable
 fun AlwaysVisibleAppInfoSection(
@@ -216,7 +212,6 @@ fun AlwaysVisibleAppInfoSection(
     onCheckForUpdate: () -> Unit,
     onDownloadAndInstallUpdate: () -> Unit,
     onRequestResetDefaults: () -> Unit,
-    onOpenBuyMeACoffee: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val c = CtecsTheme.colors
@@ -520,62 +515,6 @@ fun AlwaysVisibleAppInfoSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("app_info_developer_credit")
-        )
-
-        SmartFadeDivider(color = c.subtleSeparator)
-
-        // One dedicated, sleek animated Buy Me a Coffee button directly inside App Information
-        BuyMeACoffeeActionButton(
-            onClick = onOpenBuyMeACoffee,
-            modifier = Modifier.fillMaxWidth()
-        )
-    }
-}
-
-@Composable
-fun BuyMeACoffeeActionButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val c = CtecsTheme.colors
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.97f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "buy_coffee_press_scale"
-    )
-
-    Row(
-        modifier = modifier
-            .scale(scale)
-            .defaultMinSize(minHeight = 48.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(c.coffeeSurface)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = androidx.compose.material3.ripple(color = c.coffeeAccent),
-                role = Role.Button,
-                onClick = onClick
-            )
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .testTag("buy_me_a_coffee_button"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.Coffee,
-            contentDescription = "Coffee icon",
-            tint = c.coffeeAccent,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = "Buy Me a Coffee ☕",
-            color = c.coffeeAccent,
-            fontSize = 13.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1
         )
     }
 }

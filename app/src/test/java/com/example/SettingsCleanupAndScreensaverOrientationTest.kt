@@ -120,11 +120,11 @@ class SettingsCleanupAndScreensaverOrientationTest {
         composeTestRule.onAllNodesWithText(app.packageName, substring = true).assertCountEquals(0)
         composeTestRule.onAllNodesWithText("9 Categories", substring = true).assertCountEquals(0)
 
-        // Preserved App Info details: version, release channel, developer credit, and Buy Me a Coffee button
+        // Preserved App Info details: version, release channel, developer credit
         composeTestRule.onNodeWithTag("app_info_version").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Update Channel:", substring = true).performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Made with ❤️ madhureddyainala").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("buy_me_a_coffee_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("buy_me_a_coffee_button").assertDoesNotExist()
         composeTestRule.onNodeWithTag("settings_done_button").assertDoesNotExist()
         composeTestRule.onAllNodesWithText("Preferences saved automatically", substring = true, ignoreCase = true).assertCountEquals(0)
     }
