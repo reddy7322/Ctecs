@@ -620,7 +620,11 @@ class ChainageDropPreventionAndHomeRefreshTest {
 
         // REFRESHING state: button disabled against rapid repeated taps while chainage stays visible
         composeTestRule.mainClock.autoAdvance = false
-        composeTestRule.runOnUiThread { refreshState = ChainageCardRefreshState.REFRESHING }
+        composeTestRule.runOnUiThread {
+            refreshState = ChainageCardRefreshState.REFRESHING
+            androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+        }
+        composeTestRule.mainClock.advanceTimeByFrame()
         composeTestRule.mainClock.advanceTimeBy(300L)
         composeTestRule.onNodeWithTag("home_chainage_refresh_button")
             .assertIsDisplayed()
@@ -631,7 +635,9 @@ class ChainageDropPreventionAndHomeRefreshTest {
         composeTestRule.runOnUiThread {
             refreshState = ChainageCardRefreshState.SUCCESS
             isDark = false
+            androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
         }
+        composeTestRule.mainClock.advanceTimeByFrame()
         composeTestRule.mainClock.advanceTimeBy(350L)
         composeTestRule.mainClock.autoAdvance = true
         composeTestRule.waitForIdle()
