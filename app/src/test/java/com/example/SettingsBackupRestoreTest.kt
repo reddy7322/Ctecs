@@ -24,15 +24,15 @@ import com.example.data.RouteEntity
 import com.example.model.CameraGridMode
 import com.example.model.CameraMode
 import com.example.model.CameraSettings
+import com.example.geo.KmzCalibrationEngine
 import com.example.model.CaptureTimer
-import com.example.model.ChainageCorrectionPoint
 import com.example.model.DefinedProject
+import com.example.model.KmzManualCalibration
 import com.example.model.MiniMapCornerShape
 import com.example.model.MiniMapSizePreset
 import com.example.model.MiniMapStyleConfig
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
-import com.example.model.PermanentCalibrationProfile
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
 import com.example.model.VideoQualityOption
@@ -59,7 +59,7 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [33])
 class SettingsBackupRestoreTest {
 
     @get:Rule
@@ -178,30 +178,19 @@ class SettingsBackupRestoreTest {
                 )
             )
         )
-        val cp1 = ChainageCorrectionPoint(
-            id = "cp-1",
-            routeId = "route-nh58",
-            latitude = 29.500,
-            longitude = 77.700,
-            originalKmzMetres = 200_000L,
-            correctedMetres = 200_120L,
-            description = "KM 200 Verified",
-            isEnabled = true
-        )
-        preferencesManager.saveCalibrationProfile(
-            PermanentCalibrationProfile(
-                profileId = "prof-nh58",
-                profileName = "NH-58 Calibrated Main",
-                projectId = "NH-58 Express",
+        preferencesManager.saveKmzCalibration(
+            KmzManualCalibration(
                 routeId = "route-nh58",
-                originalFileName = "NH-58.kmz",
+                routeFileName = "NH-58.kmz",
+                alignmentId = "align-nh58-main",
+                alignmentName = "NH-58 Calibrated Main",
                 alignmentFingerprint = "fp-nh58-001",
-                controlPoints = listOf(cp1)
+                originalKmzMetres = 200_000L,
+                manualReferenceMetres = 200_120L,
+                anchorDistanceAlongMetres = 10_000.0,
+                anchorLatitude = 29.500,
+                anchorLongitude = 77.700
             )
-        )
-        preferencesManager.saveRouteCorrectionPointsList(
-            routeId = "route-nh58",
-            points = listOf(cp1)
         )
         preferencesManager.saveCustomChainagesList(listOf("200+120", "205+500"))
         val extraEntries = buildList {
@@ -305,12 +294,13 @@ class SettingsBackupRestoreTest {
         assertEquals("MM", project.workType)
         assertEquals(2, restartedPrefs.definedProjectsFlow.first().size)
 
-        val profiles = restartedPrefs.calibrationProfilesFlow.first()
-        assertEquals(1, profiles.size)
-        assertEquals("NH-58 Calibrated Main", profiles.first().profileName)
-        val controlPoints = restartedPrefs.routeCorrectionsFlow.first()["route-nh58"].orEmpty()
-        assertEquals(1, controlPoints.size)
-        assertEquals(200_120L, controlPoints.first().correctedMetres)
+        val calibrations = restartedPrefs.kmzCalibrationsFlow.first()
+        assertEquals(1, calibrations.size)
+        val restoredCal = calibrations[KmzCalibrationEngine.storageKey("route-nh58", "align-nh58-main")]
+        assertNotNull(restoredCal)
+        assertEquals("NH-58 Calibrated Main", restoredCal!!.alignmentName)
+        assertEquals(200_120L, restoredCal.manualReferenceMetres)
+        assertEquals(120L, restoredCal.offsetMetres)
         assertEquals(listOf("200+120", "205+500"), restartedPrefs.savedCustomChainagesFlow.first())
     }
 
@@ -596,34 +586,35 @@ class SettingsBackupRestoreTest {
             HighwayProjectEntity(id = "proj-keep", name = "Existing Project")
         )
 
-        // Existing permanent control point for route-keep (NOT in backup!)
-        preferencesManager.saveRouteCorrectionPoint(
-            ChainageCorrectionPoint(
-                id = "keep-cp-local",
+        // Existing manual calibration for route-keep (NOT in backup!)
+        preferencesManager.saveKmzCalibration(
+            KmzManualCalibration(
                 routeId = "route-keep",
-                latitude = 29.1,
-                longitude = 77.1,
+                routeFileName = "NH58_alignment.kmz",
+                alignmentId = "align-keep",
+                alignmentName = "Keep Mainline",
+                alignmentFingerprint = "fp-keep",
                 originalKmzMetres = 5000L,
-                correctedMetres = 5050L,
-                description = "Existing Verified Point",
-                isEnabled = true
+                manualReferenceMetres = 5050L,
+                anchorDistanceAlongMetres = 5000.0,
+                anchorLatitude = 29.1,
+                anchorLongitude = 77.1
             )
         )
 
         val backupOnlyNh58 = run {
-            preferencesManager.saveRouteCorrectionPointsList(
-                "route-nh58",
-                listOf(
-                    ChainageCorrectionPoint(
-                        id = "cp-nh58",
-                        routeId = "route-nh58",
-                        latitude = 29.5,
-                        longitude = 77.7,
-                        originalKmzMetres = 200000L,
-                        correctedMetres = 200080L,
-                        description = "NH58 Stone",
-                        isEnabled = true
-                    )
+            preferencesManager.saveKmzCalibration(
+                KmzManualCalibration(
+                    routeId = "route-nh58",
+                    routeFileName = "NH58.kmz",
+                    alignmentId = "align-nh58",
+                    alignmentName = "NH58 Main",
+                    alignmentFingerprint = "fp-nh58",
+                    originalKmzMetres = 200000L,
+                    manualReferenceMetres = 200080L,
+                    anchorDistanceAlongMetres = 10000.0,
+                    anchorLatitude = 29.5,
+                    anchorLongitude = 77.7
                 )
             )
             val exp = backupManager.exportBackup()
@@ -634,15 +625,15 @@ class SettingsBackupRestoreTest {
         val report = backupManager.restoreFromPreview(preview, RestoreMode.COMPLETE, emptySet())
         assertTrue(report.success)
 
-        // Verify ALL media, Room records, KMZ file, and existing permanent control point remain untouched!
+        // Verify ALL media, Room records, KMZ file, and existing manual calibration remain untouched!
         assertTrue(existingPhoto.exists())
         assertTrue(existingKmz.exists())
         assertNotNull(db.photoRecordDao().getPhotoById(insertedPhotoId))
         assertNotNull(db.routeDao().getRouteById("route-keep"))
         assertNotNull(db.highwayProjectDao().getProjectById("proj-keep"))
-        val allCorrections = preferencesManager.routeCorrectionsFlow.first()
-        assertTrue(allCorrections["route-keep"]?.any { it.id == "keep-cp-local" } == true)
-        assertTrue(allCorrections["route-nh58"]?.any { it.id == "cp-nh58" } == true)
+        val allCalibrations = preferencesManager.kmzCalibrationsFlow.first()
+        assertEquals(50L, allCalibrations[KmzCalibrationEngine.storageKey("route-keep", "align-keep")]?.offsetMetres)
+        assertEquals(80L, allCalibrations[KmzCalibrationEngine.storageKey("route-nh58", "align-nh58")]?.offsetMetres)
     }
 
     @Test

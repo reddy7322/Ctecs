@@ -597,28 +597,12 @@ object ChainageMatcher {
                         isUncertain = true
                         uncertainReason = "STALE_GPS_FIX"
                         lastReliableChainage = prevBaselineChainage
-                        SmartChainageCorrectionEngine.recordRejectedChainage(
-                            gpsAccuracyMetres = gpsAccuracy,
-                            alignmentName = bestAlignment.alignmentName,
-                            previousChainageMetres = prevBaselineChainage.metres,
-                            rejectedChainageMetres = estimatedChainageMetres,
-                            direction = directionLabel,
-                            reason = "STALE_GPS_FIX"
-                        )
                     }
                     isPoorAccuracySpike -> {
                         synchronized(jumpValidationLock) { pendingJumpCandidate = null }
                         isUncertain = true
                         uncertainReason = "POOR_GPS_ACCURACY"
                         lastReliableChainage = prevBaselineChainage
-                        SmartChainageCorrectionEngine.recordRejectedChainage(
-                            gpsAccuracyMetres = gpsAccuracy,
-                            alignmentName = bestAlignment.alignmentName,
-                            previousChainageMetres = prevBaselineChainage.metres,
-                            rejectedChainageMetres = estimatedChainageMetres,
-                            direction = directionLabel,
-                            reason = "POOR_GPS_ACCURACY"
-                        )
                     }
                     isLargeJump || isImplausibleSpeed -> {
                         val isHighQualityOnAlignment = gpsAccuracy <= 25.0f && effectiveOffset <= maxMatchOffsetMetres
@@ -672,14 +656,6 @@ object ChainageMatcher {
                                 isUncertain = true
                                 uncertainReason = if (isPhysicallyImpossibleJump) "IMPLAUSIBLE_DROP_JUMP" else "UNCONFIRMED_JUMP_SPIKE"
                                 lastReliableChainage = prevBaselineChainage
-                                SmartChainageCorrectionEngine.recordRejectedChainage(
-                                    gpsAccuracyMetres = gpsAccuracy,
-                                    alignmentName = bestAlignment.alignmentName,
-                                    previousChainageMetres = prevBaselineChainage.metres,
-                                    rejectedChainageMetres = estimatedChainageMetres,
-                                    direction = directionLabel,
-                                    reason = uncertainReason!!
-                                )
                             }
                         }
                     }
@@ -739,6 +715,13 @@ object ChainageMatcher {
             } else {
                 Chainage(estimatedChainageMetres)
             }
+            val finalDistanceAlongM = if (isUncertain && lastReliableChainage != null &&
+                previousResult != null && previousResult.matchedSegmentIndex >= 0
+            ) {
+                previousResult.distanceAlongAlignmentMetres
+            } else {
+                bestDistanceAlongM
+            }
 
             return ChainageMatchResult(
                 chainage = finalChainage,
@@ -749,6 +732,7 @@ object ChainageMatcher {
                 confidence = confidence,
                 statusMessage = statusMessage,
                 isManual = false,
+                matchedAlignmentId = bestAlignment.alignmentId,
                 matchedAlignmentName = bestAlignment.alignmentName,
                 detectedSide = detectedSide,
                 timestamp = effectiveFixTimeMs,
@@ -758,7 +742,7 @@ object ChainageMatcher {
                 alignmentDirection = bestAlignment.direction,
                 isUncertain = isUncertain,
                 lastReliableChainage = lastReliableChainage,
-                distanceAlongAlignmentMetres = bestDistanceAlongM,
+                distanceAlongAlignmentMetres = finalDistanceAlongM,
                 nearestReferenceMarkerLabel = nearestMarkerLabel,
                 bracketingMarkersInfo = bracketingInfo,
                 sourceKmzReferenceStatus = referenceStatus

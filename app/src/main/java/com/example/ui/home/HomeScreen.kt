@@ -617,17 +617,14 @@ fun HomeScreen(
             )
 
             if (showChainageManagementDialog) {
-                val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
-                val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
+                val activeCalibration by viewModel.activeKmzCalibration.collectAsStateWithLifecycle()
                 ChainageManagementDialog(
                     viewModel = viewModel,
                     matchResult = matchResult,
                     activeRoute = activeRoute,
                     currentGpsPoint = locationState.point,
                     currentGpsAccuracy = locationState.accuracy,
-                    correctionPoints = correctionsForRoute,
-                    isCorrectionsEnabled = isCorrectionsEnabled,
-                    initialTab = 0,
+                    activeCalibration = activeCalibration,
                     onDismiss = { showChainageManagementDialog = false }
                 )
             }
@@ -809,15 +806,13 @@ fun HomeScreen(
             }
 
             if (showNavigateToChainageDialog) {
-                val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
-                val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
+                val activeCalibration by viewModel.activeKmzCalibration.collectAsStateWithLifecycle()
                 val voiceAssistantSettings by viewModel.chainageVoiceAssistantSettings.collectAsStateWithLifecycle()
                 NavigateToChainageDialog(
                     matchResult = matchResult,
                     activeRoute = activeRoute,
                     currentGpsPoint = locationState.point,
-                    correctionPoints = correctionsForRoute,
-                    isCorrectionsEnabled = isCorrectionsEnabled,
+                    activeCalibration = activeCalibration,
                     projectRoadSide = projectProfile.roadSide,
                     detectedSideLabel = smartDirectionState.confirmedSide.orEmpty(),
                     nextKmStoneSuggestion = nextKmState.nextChainage.takeIf { nextKmState.isReliable },
@@ -1101,7 +1096,7 @@ fun CentralChainageDisplay(
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
 
     val subtleGlowAccent = when {
-        calibrationValidationStatus == com.example.model.CalibrationValidationStatus.INVALID -> c.error
+        calibrationValidationStatus == com.example.model.KmzCalibrationCoverageStatus.ALIGNMENT_MISMATCH.name -> c.warning
         source == ChainageSource.MANUAL -> c.error
         source == ChainageSource.CUSTOM_CORRECTION -> c.accentSecondary
         else -> Color.Transparent
@@ -1366,22 +1361,24 @@ fun CentralChainageDisplay(
                 val calValStatus = calibrationValidationStatus
                 val sourceLabel = when (source) {
                     ChainageSource.MANUAL -> "MANUAL"
-                    ChainageSource.CUSTOM_CORRECTION -> when (calValStatus) {
-                        com.example.model.CalibrationValidationStatus.INVALID ->
-                            "CALIBRATION INVALID"
-                        com.example.model.CalibrationValidationStatus.PENDING,
-                        com.example.model.CalibrationValidationStatus.NEEDS_REVIEW ->
-                            "CALIBRATION PENDING REVIEW"
-                        com.example.model.CalibrationValidationStatus.GPS_UNAVAILABLE ->
-                            "GPS UNAVAILABLE"
-                        else -> if (rawChainage != null) "CUSTOM CORRECTION ($rawChainage)" else "CUSTOM CORRECTION"
+                    ChainageSource.CUSTOM_CORRECTION -> if (rawChainage != null) {
+                        "CALIBRATED ($rawChainage)"
+                    } else {
+                        "CALIBRATED"
                     }
-                    ChainageSource.KMZ -> "KMZ"
+                    ChainageSource.KMZ -> when (calValStatus) {
+                        com.example.model.KmzCalibrationCoverageStatus.OUTSIDE_2KM_RANGE.name ->
+                            "KMZ (OUTSIDE 2 KM)"
+                        com.example.model.KmzCalibrationCoverageStatus.ALIGNMENT_MISMATCH.name ->
+                            "KMZ (ALIGN CHANGED)"
+                        else -> "KMZ"
+                    }
                     ChainageSource.GPS -> "GPS"
                 }
 
                 val (confText, confCol) = when {
-                    calValStatus == com.example.model.CalibrationValidationStatus.INVALID -> "Invalid Cal" to c.error
+                    calValStatus == com.example.model.KmzCalibrationCoverageStatus.ALIGNMENT_MISMATCH.name ->
+                        "Align Changed" to c.warning
                     isAwaitingReliableFix -> "Awaiting GPS" to c.error
                     confidence == MatchConfidence.HIGH -> "Good" to c.success
                     confidence == MatchConfidence.MEDIUM -> "Moderate" to c.accent

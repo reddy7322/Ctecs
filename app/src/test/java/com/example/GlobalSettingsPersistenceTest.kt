@@ -12,8 +12,8 @@ import com.example.model.CameraMode
 import com.example.model.CameraSettings
 import com.example.model.CaptureMode
 import com.example.model.CaptureTimer
+import com.example.geo.KmzCalibrationEngine
 import com.example.model.Chainage
-import com.example.model.ChainageCorrectionPoint
 import com.example.model.CoordinateFormat
 import com.example.model.CtecsWidgetInstanceConfig
 import com.example.model.CtecsWidgetSettings
@@ -32,9 +32,9 @@ import com.example.model.MiniMapSizePreset
 import com.example.model.MiniMapStyle
 import com.example.model.MiniMapStyleConfig
 import com.example.model.NavigationNotificationSettings
+import com.example.model.KmzManualCalibration
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
-import com.example.model.PermanentCalibrationProfile
 import com.example.model.PreviewRatio
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
@@ -63,7 +63,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [33])
 class GlobalSettingsPersistenceTest {
 
     private lateinit var application: Application
@@ -340,27 +340,18 @@ class GlobalSettingsPersistenceTest {
         // 7. Chainage Calibration, Manual Override & Custom Chainages
         vm1.setManualChainage("196+494")
         vm1.addCustomChainagePreset("201+500")
-        preferencesManager.setRouteCorrectionsEnabled(false)
-        preferencesManager.saveRouteCorrectionPoint(
-            ChainageCorrectionPoint(
-                id = "cp1",
+        preferencesManager.saveKmzCalibration(
+            KmzManualCalibration(
                 routeId = "route_1",
-                latitude = 29.855,
-                longitude = 77.885,
-                originalKmzMetres = 196_000L,
-                correctedMetres = 196_120L,
-                description = "KM 196 Ref"
-            )
-        )
-        preferencesManager.saveCalibrationProfile(
-            PermanentCalibrationProfile(
-                profileId = "prof_1",
-                profileName = "NH58 Permanent Profile",
-                projectId = "NH-709AD",
-                routeId = "route_1",
-                originalFileName = "nh58.kmz",
+                routeFileName = "nh58.kmz",
+                alignmentId = "align_lhs_2",
+                alignmentName = "NH58 LHS Alignment",
                 alignmentFingerprint = "fp_abc123",
-                controlPoints = emptyList()
+                originalKmzMetres = 196_000L,
+                manualReferenceMetres = 196_120L,
+                anchorDistanceAlongMetres = 6_000.0,
+                anchorLatitude = 29.855,
+                anchorLongitude = 77.885
             )
         )
 
@@ -438,9 +429,10 @@ class GlobalSettingsPersistenceTest {
         assertEquals(Chainage(196_494L), vm2.manualChainage.value)
         assertEquals("196+494", vm2.manualChainageText.value)
         assertTrue(vm2.savedCustomChainages.value.contains("201+500"))
-        assertFalse(vm2.isRouteCorrectionsEnabled.value)
-        assertEquals(1, vm2.routeCorrectionsMap.value["route_1"]?.size)
-        assertEquals(1, vm2.calibrationProfiles.value.size)
+        val restoredCal = vm2.kmzCalibrationsMap.value[KmzCalibrationEngine.storageKey("route_1", "align_lhs_2")]
+        assertNotNull(restoredCal)
+        assertEquals(196_120L, restoredCal?.manualReferenceMetres)
+        assertEquals(120L, restoredCal?.offsetMetres)
 
         assertEquals("com.mappls.app", vm2.preferredExternalNavAppId.value)
         assertFalse(vm2.surveyShow200mLabels.value)

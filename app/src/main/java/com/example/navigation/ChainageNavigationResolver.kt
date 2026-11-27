@@ -8,13 +8,12 @@ import android.net.Uri
 import android.os.Build
 import com.example.geo.ChainageMatcher
 import com.example.geo.GeoUtils
-import com.example.geo.SmartChainageCorrectionEngine
+import com.example.geo.KmzCalibrationEngine
 import com.example.location.LocationTracker
-import com.example.model.CalibrationValidationStatus
 import com.example.model.Chainage
-import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageMatchResult
 import com.example.model.GeoPoint
+import com.example.model.KmzManualCalibration
 import com.example.model.MatchConfidence
 import com.example.model.RoadSide
 import com.example.model.RouteAlignment
@@ -139,7 +138,7 @@ data class ExternalNavLaunchResult(
 
 /**
  * Pure, deterministic resolver for CTECS Navigate to Chainage.
- * Reuses existing [Chainage], [ChainageMatcher], and [SmartChainageCorrectionEngine] without
+ * Reuses existing [Chainage], [ChainageMatcher], and [KmzCalibrationEngine] without
  * creating duplicate GPS listeners or chainage engines.
  */
 object ChainageNavigationResolver {
@@ -276,8 +275,7 @@ object ChainageNavigationResolver {
         rawDestinationInput: String,
         matchResult: ChainageMatchResult?,
         activeRoute: RouteData?,
-        correctionPoints: List<ChainageCorrectionPoint> = emptyList(),
-        isCorrectionsEnabled: Boolean = true,
+        activeCalibration: KmzManualCalibration? = null,
         projectRoadSide: RoadSide = RoadSide.RHS,
         detectedSideOverride: String? = null
     ): ChainageDestinationCalculation {
@@ -394,44 +392,29 @@ object ChainageNavigationResolver {
             )
         }
 
-        val activeCorrections = if (isCorrectionsEnabled) {
-            correctionPoints.filter {
-                it.isEnabled &&
-                    it.verificationStatus != CalibrationValidationStatus.INVALID &&
-                    (it.routeId.isBlank() || activeRoute.id.isBlank() || it.routeId == activeRoute.id)
-            }
-        } else {
-            emptyList()
-        }
-
         // Select best alignment matching user's carriageway side (LHS / RHS) or active alignment
         val targetAlignment = selectAlignmentForCarriageway(
             routeData = activeRoute,
             matchedAlignmentName = matchResult?.matchedAlignmentName,
             sideLabel = currentSide
         )
+        val effectiveCalibration = activeCalibration?.takeIf { cal ->
+            cal.routeId == activeRoute.id &&
+                (targetAlignment == null || cal.alignmentId.isBlank() ||
+                    cal.alignmentId == (targetAlignment.id.takeIf { it.isNotBlank() } ?: activeRoute.id))
+        }
         val cachedGeometry = if (targetAlignment != null && targetAlignment.points.size >= 2) {
             ChainageMatcher.getOrCreateCachedGeometry(targetAlignment, activeRoute.markers)
         } else null
 
         // 3. Determine calibrated chainage bounds of the active route
-        val (boundA, boundB) = SmartChainageCorrectionEngine.computeCalibratedRouteRange(
+        val (boundA, boundB) = KmzCalibrationEngine.computeCalibratedRouteRange(
             routeData = activeRoute,
-            correctionPoints = activeCorrections
+            calibration = effectiveCalibration,
+            targetAlignment = targetAlignment
         )
-        val markerMin = activeRoute.markers.minOfOrNull { it.chainage.metres }
-        val markerMax = activeRoute.markers.maxOfOrNull { it.chainage.metres }
-        val singleOffset = if (activeCorrections.size == 1) activeCorrections.first().offsetMetres else 0L
-        val effectiveMinCh = minOf(
-            boundA,
-            boundB,
-            (markerMin ?: boundA) + singleOffset
-        )
-        val effectiveMaxCh = maxOf(
-            boundA,
-            boundB,
-            (markerMax ?: boundB) + singleOffset
-        )
+        val effectiveMinCh = minOf(boundA, boundB)
+        val effectiveMaxCh = maxOf(boundA, boundB)
 
         // Allow up to 50m boundary tolerance at start/end of alignment; reject out-of-coverage chainages
         val boundaryToleranceM = 50L
@@ -464,9 +447,8 @@ object ChainageNavigationResolver {
         // 4. Check for ambiguous duplicate chainages on the active alignment (e.g. overlapping chainage equations)
         val ambiguityExplanation = detectAmbiguousChainageAtTarget(
             targetCalibratedMetres = destMetres,
-            routeData = activeRoute,
             cached = cachedGeometry,
-            activeCorrections = activeCorrections
+            activeCalibration = effectiveCalibration
         )
         if (ambiguityExplanation != null) {
             return ChainageDestinationCalculation(
@@ -491,15 +473,18 @@ object ChainageNavigationResolver {
         }
 
         // 5. Resolve exact alignment distance and geographic coordinate for destination chainage
-        val (destDistAlongM, origKmzMetres) = SmartChainageCorrectionEngine.resolveAlignmentDistanceForCalibratedChainage(
+        val (destDistAlongM, origKmzMetres) = KmzCalibrationEngine.resolveAlignmentDistanceForCalibratedChainage(
             targetCalibratedMetres = destMetres,
             routeData = activeRoute,
-            correctionPoints = activeCorrections
+            calibration = effectiveCalibration,
+            targetAlignment = targetAlignment
         )
+        val effectiveAppliedOffset = if (effectiveCalibration != null &&
+            effectiveCalibration.isWithinCoverage(destDistAlongM)
+        ) effectiveCalibration.offsetMetres else 0L
 
         val exactMarker = activeRoute.markers.firstOrNull { m ->
-            abs((m.chainage.metres + singleOffset) - destMetres) <= 1L &&
-                activeCorrections.size <= 1
+            abs((m.chainage.metres + effectiveAppliedOffset) - destMetres) <= 1L
         }
 
         val resolvedPoint: GeoPoint? = when {
@@ -508,7 +493,11 @@ object ChainageNavigationResolver {
             }
             exactMarker != null -> exactMarker.point
             activeRoute.markers.isNotEmpty() -> {
-                SmartChainageCorrectionEngine.resolveRoutePositionForChainage(activeRoute, origKmzMetres).point
+                KmzCalibrationEngine.resolveAlignmentPositionForOriginalChainage(
+                    routeData = activeRoute,
+                    originalKmzMetres = origKmzMetres,
+                    targetAlignment = targetAlignment
+                ).point
             }
             else -> null
         }
@@ -540,10 +529,11 @@ object ChainageNavigationResolver {
             matchResult != null && matchResult.distanceAlongAlignmentMetres > 0.01 ->
                 matchResult.distanceAlongAlignmentMetres
             currentCh != null ->
-                SmartChainageCorrectionEngine.resolveAlignmentDistanceForCalibratedChainage(
+                KmzCalibrationEngine.resolveAlignmentDistanceForCalibratedChainage(
                     targetCalibratedMetres = currentCh.metres,
                     routeData = activeRoute,
-                    correctionPoints = activeCorrections
+                    calibration = effectiveCalibration,
+                    targetAlignment = targetAlignment
                 ).first
             else -> null
         }
@@ -591,7 +581,7 @@ object ChainageNavigationResolver {
             chainageDifferenceMetres = diffMetres,
             formattedChainageDifference = formattedDiff,
             formattedDifferenceMetresDetail = formattedDiffDetail,
-            alignmentTravelDistanceMetres = alignmentTravelMetres,
+            alignmentTravelDistanceMetres = if (hasEquationOnSpan) alignmentTravelMetres else diffMetres,
             hasChainageEquationOnSpan = hasEquationOnSpan,
             chainageEquationNote = equationNote,
             travelDirection = travelDirection,
@@ -683,13 +673,15 @@ object ChainageNavigationResolver {
      */
     private fun detectAmbiguousChainageAtTarget(
         targetCalibratedMetres: Long,
-        routeData: RouteData,
         cached: ChainageMatcher.CachedAlignmentGeometry?,
-        activeCorrections: List<ChainageCorrectionPoint>
+        activeCalibration: KmzManualCalibration?
     ): String? {
         if (cached == null || cached.mappedMarkers.size < 3) return null
-        val singleOffset = if (activeCorrections.size == 1) activeCorrections.first().offsetMetres else 0L
-        val targetRawMetres = targetCalibratedMetres - singleOffset
+        val targetRawCandidates = if (activeCalibration != null && activeCalibration.offsetMetres != 0L) {
+            listOf(targetCalibratedMetres - activeCalibration.offsetMetres, targetCalibratedMetres)
+        } else {
+            listOf(targetCalibratedMetres)
+        }
 
         val matchingSpanPositions = mutableListOf<Double>()
         val mapped = cached.mappedMarkers
@@ -698,14 +690,24 @@ object ChainageNavigationResolver {
             val mB = mapped[i + 1]
             val minCh = minOf(mA.chainageMetres, mB.chainageMetres)
             val maxCh = maxOf(mA.chainageMetres, mB.chainageMetres)
-            if (targetRawMetres in minCh..maxCh) {
-                val spanCh = (mB.chainageMetres - mA.chainageMetres).toDouble()
-                val frac = if (abs(spanCh) > 0.01) {
-                    ((targetRawMetres - mA.chainageMetres).toDouble() / spanCh).coerceIn(0.0, 1.0)
-                } else 0.0
-                val posM = mA.distanceAlongAlignmentM + frac * (mB.distanceAlongAlignmentM - mA.distanceAlongAlignmentM)
-                if (matchingSpanPositions.none { abs(it - posM) <= 120.0 }) {
-                    matchingSpanPositions.add(posM)
+            for (targetRawMetres in targetRawCandidates) {
+                if (targetRawMetres in minCh..maxCh) {
+                    val spanCh = (mB.chainageMetres - mA.chainageMetres).toDouble()
+                    val frac = if (abs(spanCh) > 0.01) {
+                        ((targetRawMetres - mA.chainageMetres).toDouble() / spanCh).coerceIn(0.0, 1.0)
+                    } else 0.0
+                    val posM = mA.distanceAlongAlignmentM + frac * (mB.distanceAlongAlignmentM - mA.distanceAlongAlignmentM)
+                    val isCalibratedCandidate = (targetRawMetres != targetCalibratedMetres)
+                    val validForScope = if (activeCalibration == null || activeCalibration.offsetMetres == 0L) {
+                        true
+                    } else if (isCalibratedCandidate) {
+                        activeCalibration.isWithinCoverage(posM)
+                    } else {
+                        !activeCalibration.isWithinCoverage(posM)
+                    }
+                    if (validForScope && matchingSpanPositions.none { abs(it - posM) <= 120.0 }) {
+                        matchingSpanPositions.add(posM)
+                    }
                 }
             }
         }

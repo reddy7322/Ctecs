@@ -569,7 +569,6 @@ fun CameraScreen(
     val manualChainageText by viewModel.manualChainageText.collectAsStateWithLifecycle()
     val manualChainageCalibration by viewModel.manualChainageCalibration.collectAsStateWithLifecycle()
     val savedCustomChainages by viewModel.savedCustomChainages.collectAsStateWithLifecycle()
-    val isRouteCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
     val overlayConfig by viewModel.overlayConfig.collectAsStateWithLifecycle()
     val currentLocationName by viewModel.currentLocationName.collectAsStateWithLifecycle()
@@ -606,12 +605,12 @@ fun CameraScreen(
     val hasActiveRoute = remember(activeRoute) {
         activeRoute != null && (activeRoute!!.alignments.isNotEmpty() || activeRoute!!.markers.isNotEmpty())
     }
-    val chainageIndicators = remember(matchResult, manualChainageText, hasActiveRoute, isRouteCorrectionsEnabled) {
+    val chainageIndicators = remember(matchResult, manualChainageText, hasActiveRoute) {
         resolveChainageIndicatorsState(
             matchResult = matchResult,
             manualChainageText = manualChainageText,
             hasActiveRoute = hasActiveRoute,
-            isCorrectionsEnabled = isRouteCorrectionsEnabled
+            isCorrectionsEnabled = true
         )
     }
 
@@ -4761,8 +4760,7 @@ internal fun resolveChainageIndicatorsState(
     val calValStatus = matchResult.calibrationValidationStatus
     val isUnreliable = matchResult.isUncertain ||
         matchResult.confidence == MatchConfidence.LOW ||
-        !matchResult.sourceKmzReferenceStatus.equals("Valid", ignoreCase = true) ||
-        calValStatus == com.example.model.CalibrationValidationStatus.INVALID
+        !matchResult.sourceKmzReferenceStatus.equals("Valid", ignoreCase = true)
 
     val kmzStatus = when {
         !hasActiveRoute && !isKmzDerived -> ChainageBubbleStatus.INACTIVE
@@ -4777,12 +4775,11 @@ internal fun resolveChainageIndicatorsState(
         matchResult.confidence != MatchConfidence.NO_MATCH
 
     val customStatus = when {
+        calValStatus == com.example.model.KmzCalibrationCoverageStatus.OUTSIDE_2KM_RANGE.name ||
+            calValStatus == com.example.model.KmzCalibrationCoverageStatus.ALIGNMENT_MISMATCH.name ||
+            calValStatus == com.example.model.KmzCalibrationCoverageStatus.GPS_UNAVAILABLE.name ->
+            ChainageBubbleStatus.WARNING
         !isCustomActiveSource -> ChainageBubbleStatus.INACTIVE
-        calValStatus == com.example.model.CalibrationValidationStatus.INVALID ||
-            calValStatus == com.example.model.CalibrationValidationStatus.GPS_UNAVAILABLE ||
-            calValStatus == com.example.model.CalibrationValidationStatus.PENDING ||
-            calValStatus == com.example.model.CalibrationValidationStatus.NEEDS_REVIEW ||
-            calValStatus == com.example.model.CalibrationValidationStatus.LOW_CONFIDENCE -> ChainageBubbleStatus.WARNING
         else -> ChainageBubbleStatus.ACTIVE
     }
 

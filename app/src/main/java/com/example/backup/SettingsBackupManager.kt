@@ -9,10 +9,9 @@ import com.example.BuildConfig
 import com.example.camera.CameraResolutionHelper
 import com.example.data.PreferencesManager
 import com.example.model.Chainage
-import com.example.model.ChainageCorrectionPoint
 import com.example.model.DefinedProject
+import com.example.model.KmzManualCalibration
 import com.example.model.MiniMapStyleConfig
-import com.example.model.PermanentCalibrationProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -61,7 +60,11 @@ class SettingsBackupManager(
         )
 
         private val OBSOLETE_REMOVED_KEYS = setOf(
-            "weather_work_target_input_json"
+            "weather_work_target_input_json",
+            "route_chainage_corrections_json",
+            "route_chainage_corrections_enabled",
+            "chainage_audit_log_json",
+            "permanent_calibration_profiles_json"
         )
 
         private val KNOWN_SUPPORTED_KEYS: Set<String> by lazy {
@@ -232,13 +235,10 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_GALLERY_SORT_OPTION.name,
                 PreferencesManager.KEY_GALLERY_GROUP_OPTION.name,
                 // Chainage & Calibration
-                PreferencesManager.KEY_ROUTE_CORRECTIONS_JSON.name,
-                PreferencesManager.KEY_ROUTE_CORRECTIONS_ENABLED.name,
+                PreferencesManager.KEY_KMZ_MANUAL_CALIBRATIONS_JSON.name,
                 PreferencesManager.KEY_MANUAL_CHAINAGE_OVERRIDE.name,
                 PreferencesManager.KEY_MANUAL_CHAINAGE_CUSTOM_TEXT.name,
                 PreferencesManager.KEY_SAVED_CUSTOM_CHAINAGES.name,
-                PreferencesManager.KEY_CHAINAGE_AUDIT_LOG_JSON.name,
-                PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name,
                 // Screensaver, Navigation Notifications, Widgets, KM Stone Alerts, Nav & Survey
                 PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name,
                 PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name,
@@ -408,13 +408,10 @@ class SettingsBackupManager(
         PreferencesManager.KEY_ACTIVE_ROUTE_ID.name,
         PreferencesManager.KEY_SELECTED_ALIGNMENT_ID.name -> BackupCategory.HIGHWAY_CUSTOMISATION
 
-        PreferencesManager.KEY_ROUTE_CORRECTIONS_JSON.name,
-        PreferencesManager.KEY_ROUTE_CORRECTIONS_ENABLED.name,
+        PreferencesManager.KEY_KMZ_MANUAL_CALIBRATIONS_JSON.name,
         PreferencesManager.KEY_MANUAL_CHAINAGE_OVERRIDE.name,
         PreferencesManager.KEY_MANUAL_CHAINAGE_CUSTOM_TEXT.name,
-        PreferencesManager.KEY_SAVED_CUSTOM_CHAINAGES.name,
-        PreferencesManager.KEY_CHAINAGE_AUDIT_LOG_JSON.name,
-        PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name -> BackupCategory.CHAINAGE_CALIBRATION
+        PreferencesManager.KEY_SAVED_CUSTOM_CHAINAGES.name -> BackupCategory.CHAINAGE_CALIBRATION
 
         PreferencesManager.KEY_SHOW_MAP_INSET.name,
         PreferencesManager.KEY_PHOTO_MINI_MAP_JSON.name,
@@ -480,7 +477,7 @@ class SettingsBackupManager(
         val galleryView = preferencesManager.galleryViewModeFlow.first()
         val gallerySort = preferencesManager.gallerySortOptionFlow.first()
         val galleryGroup = preferencesManager.galleryGroupOptionFlow.first()
-        val correctionsEnabled = preferencesManager.routeCorrectionsEnabledFlow.first()
+        val kmzCalibrations = preferencesManager.kmzCalibrationsFlow.first()
         val savedCustomChainages = preferencesManager.savedCustomChainagesFlow.first()
         val activeRouteId = preferencesManager.activeRouteIdFlow.first()
 
@@ -678,7 +675,13 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_SURVEY_MAP_TYPE.name, PrefValueType.STRING, preferencesManager.getInitialSurveyMapType())
 
         // Calibration defaults
-        putEntry(PreferencesManager.KEY_ROUTE_CORRECTIONS_ENABLED.name, PrefValueType.BOOLEAN, correctionsEnabled)
+        if (kmzCalibrations.isNotEmpty()) {
+            putEntry(
+                PreferencesManager.KEY_KMZ_MANUAL_CALIBRATIONS_JSON.name,
+                PrefValueType.STRING,
+                preferencesManager.serializeKmzCalibrations(kmzCalibrations)
+            )
+        }
         if (savedCustomChainages.isNotEmpty()) {
             putEntry(PreferencesManager.KEY_SAVED_CUSTOM_CHAINAGES.name, PrefValueType.STRING, savedCustomChainages.joinToString("||"))
         }
@@ -704,9 +707,7 @@ class SettingsBackupManager(
         try {
             onProgress?.invoke(0.15f, "Inspecting application settings...")
             val entries = collectCompleteExportEntries()
-            val profiles = preferencesManager.calibrationProfilesFlow.first()
-            val corrections = preferencesManager.routeCorrectionsFlow.first()
-            val correctionsEnabled = preferencesManager.routeCorrectionsEnabledFlow.first()
+            val kmzCalibrations = preferencesManager.kmzCalibrationsFlow.first()
             val savedChainages = preferencesManager.savedCustomChainagesFlow.first()
             val manualText = preferencesManager.manualChainageTextFlow.first()
             val manualChainage = preferencesManager.manualChainageOverrideFlow.first()
@@ -714,9 +715,7 @@ class SettingsBackupManager(
             onProgress?.invoke(0.35f, "Packaging settings & calibration data...")
             val settingsJsonBytes = buildSettingsJson(entries).toString(2).toByteArray(Charsets.UTF_8)
             val calibrationJsonBytes = buildCalibrationJson(
-                correctionsEnabled = correctionsEnabled,
-                profiles = profiles,
-                corrections = corrections,
+                kmzCalibrations = kmzCalibrations,
                 savedCustomChainages = savedChainages,
                 manualChainageOverride = manualChainage?.format(),
                 manualChainageCustomText = manualText
@@ -757,7 +756,7 @@ class SettingsBackupManager(
             }
 
             val categoryCounts = entries.groupingBy { it.category.id }.eachCount()
-            val controlPointCount = corrections.values.sumOf { it.size }
+            val calibrationCount = kmzCalibrations.size
             val createdIso = formatIsoTimestamp(nowMs)
             val integrityHash = computeManifestIntegrityHash(
                 schemaVersion = BackupManifest.CURRENT_SCHEMA_VERSION,
@@ -775,8 +774,8 @@ class SettingsBackupManager(
                 androidSdk = Build.VERSION.SDK_INT,
                 totalSettingsCount = entries.size,
                 categoryCounts = categoryCounts,
-                calibrationProfileCount = profiles.size,
-                controlPointCount = controlPointCount,
+                calibrationProfileCount = calibrationCount,
+                controlPointCount = calibrationCount,
                 supportingFiles = supportingSpecs,
                 entryChecksums = entryChecksums,
                 manifestIntegrityHash = integrityHash
@@ -831,8 +830,8 @@ class SettingsBackupManager(
                 externalUriString = destinationUri?.toString(),
                 sizeBytes = finalLocalFile.length(),
                 totalSettingsCount = entries.size,
-                calibrationProfileCount = profiles.size,
-                controlPointCount = controlPointCount,
+                calibrationProfileCount = calibrationCount,
+                controlPointCount = calibrationCount,
                 supportingFilesCount = supportingSpecs.size
             )
         } catch (e: Exception) {
@@ -1043,8 +1042,7 @@ class SettingsBackupManager(
 
         try {
             val filteredEntries = verified.entries.filter { it.category in targetCategories }
-            val existingProfiles = preferencesManager.calibrationProfilesFlow.first()
-            val existingCorrections = preferencesManager.routeCorrectionsFlow.first()
+            val existingKmzCalibrations = preferencesManager.kmzCalibrationsFlow.first()
 
             val supportingTempRestored = mutableListOf<Pair<String, String>>() // prefKey -> targetAbsolutePath
             val extractedFilesCount = restoreSupportingFilesForSelection(
@@ -1069,51 +1067,35 @@ class SettingsBackupManager(
             if (BackupCategory.CHAINAGE_CALIBRATION in targetCategories && verified.calibrationJson != null) {
                 val calMerge = buildMergedCalibrationEntries(
                     calibrationJson = verified.calibrationJson,
-                    existingProfiles = existingProfiles,
-                    existingCorrections = existingCorrections
+                    existingCalibrations = existingKmzCalibrations
                 )
-                restoredProfilesCount = calMerge.restoredProfileCount
-                restoredControlPointsCount = calMerge.restoredPointCount
+                restoredProfilesCount = calMerge.restoredCalibrationCount
+                restoredControlPointsCount = calMerge.restoredCalibrationCount
 
                 filteredEntries.forEach { entry ->
-                    when (entry.key) {
-                        PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name -> {
-                            finalMutations.add(entry.copy(value = calMerge.mergedProfilesJson))
-                        }
-                        PreferencesManager.KEY_ROUTE_CORRECTIONS_JSON.name -> {
-                            finalMutations.add(entry.copy(value = calMerge.mergedCorrectionsJson))
-                        }
-                        else -> {
-                            processSingleRestoreEntry(
-                                entry = entry,
-                                rewrittenPathByKey = rewrittenPathByKey,
-                                supportedPhotoLabels = supportedPhotoLabels,
-                                supportedVideoLabels = supportedVideoLabels,
-                                finalMutations = finalMutations,
-                                keysToRemove = keysToRemove,
-                                adaptedSettings = adaptedSettings,
-                                skippedSettings = skippedSettings
-                            )
-                        }
+                    if (entry.key == PreferencesManager.KEY_KMZ_MANUAL_CALIBRATIONS_JSON.name) {
+                        finalMutations.add(entry.copy(value = calMerge.mergedCalibrationsJson))
+                    } else {
+                        processSingleRestoreEntry(
+                            entry = entry,
+                            rewrittenPathByKey = rewrittenPathByKey,
+                            supportedPhotoLabels = supportedPhotoLabels,
+                            supportedVideoLabels = supportedVideoLabels,
+                            finalMutations = finalMutations,
+                            keysToRemove = keysToRemove,
+                            adaptedSettings = adaptedSettings,
+                            skippedSettings = skippedSettings
+                        )
                     }
                 }
-                // Ensure merged profiles/points are still applied even if settings.json didn't have raw keys (e.g. schema v0)
-                if (finalMutations.none { it.key == PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name } && calMerge.restoredProfileCount > 0) {
+                if (finalMutations.none { it.key == PreferencesManager.KEY_KMZ_MANUAL_CALIBRATIONS_JSON.name } &&
+                    calMerge.restoredCalibrationCount > 0
+                ) {
                     finalMutations.add(
                         TypedPrefEntry(
-                            key = PreferencesManager.KEY_CALIBRATION_PROFILES_JSON.name,
+                            key = PreferencesManager.KEY_KMZ_MANUAL_CALIBRATIONS_JSON.name,
                             type = PrefValueType.STRING,
-                            value = calMerge.mergedProfilesJson,
-                            category = BackupCategory.CHAINAGE_CALIBRATION
-                        )
-                    )
-                }
-                if (finalMutations.none { it.key == PreferencesManager.KEY_ROUTE_CORRECTIONS_JSON.name } && calMerge.restoredPointCount > 0) {
-                    finalMutations.add(
-                        TypedPrefEntry(
-                            key = PreferencesManager.KEY_ROUTE_CORRECTIONS_JSON.name,
-                            type = PrefValueType.STRING,
-                            value = calMerge.mergedCorrectionsJson,
+                            value = calMerge.mergedCalibrationsJson,
                             category = BackupCategory.CHAINAGE_CALIBRATION
                         )
                     )
@@ -1613,21 +1595,14 @@ class SettingsBackupManager(
     }
 
     private fun buildCalibrationJson(
-        correctionsEnabled: Boolean,
-        profiles: List<PermanentCalibrationProfile>,
-        corrections: Map<String, List<ChainageCorrectionPoint>>,
+        kmzCalibrations: Map<String, KmzManualCalibration>,
         savedCustomChainages: List<String>,
         manualChainageOverride: String?,
         manualChainageCustomText: String?
     ): JSONObject {
-        val profilesArr = JSONArray().apply {
-            profiles.forEach { put(it.toJson()) }
-        }
-        val correctionsObj = JSONObject().apply {
-            corrections.forEach { (routeId, pts) ->
-                val arr = JSONArray()
-                pts.forEach { arr.put(it.toJson()) }
-                put(routeId, arr)
+        val calibrationsObj = JSONObject().apply {
+            kmzCalibrations.forEach { (key, cal) ->
+                put(key, cal.toJson())
             }
         }
         val savedArr = JSONArray().apply {
@@ -1635,9 +1610,7 @@ class SettingsBackupManager(
         }
         return JSONObject().apply {
             put("schemaVersion", BackupManifest.CURRENT_SCHEMA_VERSION)
-            put("routeCorrectionsEnabled", correctionsEnabled)
-            put("calibrationProfiles", profilesArr)
-            put("routeCorrections", correctionsObj)
+            put("kmzManualCalibrations", calibrationsObj)
             put("savedCustomChainages", savedArr)
             if (!manualChainageOverride.isNullOrBlank()) put("manualChainageOverride", manualChainageOverride)
             if (!manualChainageCustomText.isNullOrBlank()) put("manualChainageCustomText", manualChainageCustomText)
@@ -1645,82 +1618,32 @@ class SettingsBackupManager(
     }
 
     private data class CalibrationMergeResult(
-        val mergedProfilesJson: String,
-        val mergedCorrectionsJson: String,
-        val restoredProfileCount: Int,
-        val restoredPointCount: Int
+        val mergedCalibrationsJson: String,
+        val restoredCalibrationCount: Int
     )
 
     private fun buildMergedCalibrationEntries(
         calibrationJson: JSONObject,
-        existingProfiles: List<PermanentCalibrationProfile>,
-        existingCorrections: Map<String, List<ChainageCorrectionPoint>>
+        existingCalibrations: Map<String, KmzManualCalibration>
     ): CalibrationMergeResult {
-        val importedProfiles = mutableListOf<PermanentCalibrationProfile>()
-        val profilesArr = calibrationJson.optJSONArray("calibrationProfiles") ?: JSONArray()
-        for (i in 0 until profilesArr.length()) {
-            profilesArr.optJSONObject(i)?.let { importedProfiles.add(PermanentCalibrationProfile.fromJson(it)) }
+        val importedCalibrations = linkedMapOf<String, KmzManualCalibration>()
+        val calObj = calibrationJson.optJSONObject("kmzManualCalibrations") ?: JSONObject()
+        val keys = calObj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val obj = calObj.optJSONObject(k) ?: continue
+            val cal = KmzManualCalibration.fromJson(obj) ?: continue
+            val normKey = com.example.geo.KmzCalibrationEngine.storageKey(cal.routeId, cal.alignmentId)
+            importedCalibrations[normKey] = cal
         }
 
-        // Merge profiles preserving all existing device profiles + applying imported profiles cleanly
-        val mergedProfiles = existingProfiles.toMutableList()
-        importedProfiles.forEach { imp ->
-            val idx = mergedProfiles.indexOfFirst {
-                it.profileId == imp.profileId ||
-                    (it.alignmentFingerprint.isNotBlank() && it.alignmentFingerprint == imp.alignmentFingerprint)
-            }
-            if (idx >= 0) {
-                mergedProfiles[idx] = imp
-            } else {
-                mergedProfiles.add(imp)
-            }
-        }
-
-        val importedCorrections = mutableMapOf<String, List<ChainageCorrectionPoint>>()
-        val corrObj = calibrationJson.optJSONObject("routeCorrections") ?: JSONObject()
-        val routeKeys = corrObj.keys()
-        while (routeKeys.hasNext()) {
-            val rId = routeKeys.next()
-            val arr = corrObj.optJSONArray(rId) ?: continue
-            val list = mutableListOf<ChainageCorrectionPoint>()
-            for (i in 0 until arr.length()) {
-                arr.optJSONObject(i)?.let { list.add(ChainageCorrectionPoint.fromJson(it)) }
-            }
-            importedCorrections[rId] = list
-        }
-
-        // Merge control points per route without deleting existing control points on target device
-        val mergedCorrections = existingCorrections.mapValues { it.value.toMutableList() }.toMutableMap()
-        importedCorrections.forEach { (routeId, pts) ->
-            val targetList = mergedCorrections.getOrPut(routeId) { mutableListOf() }
-            pts.forEach { impPt ->
-                val idx = targetList.indexOfFirst { it.id == impPt.id }
-                if (idx >= 0) {
-                    targetList[idx] = impPt
-                } else {
-                    targetList.add(impPt)
-                }
-            }
-            targetList.sortBy { it.originalKmzMetres }
-        }
-
-        val mergedProfilesJson = JSONArray().apply {
-            mergedProfiles.forEach { put(it.toJson()) }
-        }.toString()
-
-        val mergedCorrectionsJson = JSONObject().apply {
-            mergedCorrections.forEach { (routeId, pts) ->
-                val arr = JSONArray()
-                pts.forEach { arr.put(it.toJson()) }
-                put(routeId, arr)
-            }
-        }.toString()
+        // Merge calibrations cleanly by (routeId, alignmentId) without wiping other alignments on target device
+        val merged = LinkedHashMap(existingCalibrations)
+        merged.putAll(importedCalibrations)
 
         return CalibrationMergeResult(
-            mergedProfilesJson = mergedProfilesJson,
-            mergedCorrectionsJson = mergedCorrectionsJson,
-            restoredProfileCount = importedProfiles.size,
-            restoredPointCount = importedCorrections.values.sumOf { it.size }
+            mergedCalibrationsJson = preferencesManager.serializeKmzCalibrations(merged),
+            restoredCalibrationCount = importedCalibrations.size
         )
     }
 

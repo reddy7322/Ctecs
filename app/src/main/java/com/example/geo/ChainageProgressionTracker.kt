@@ -378,14 +378,6 @@ class ChainageProgressionTracker {
         if (rawResult.timestamp > 0L && lastAcceptedAutoFixTimeMs > 0L &&
             rawResult.timestamp + 500L < lastAcceptedAutoFixTimeMs && lastValidChainage != null
         ) {
-            SmartChainageCorrectionEngine.recordRejectedChainage(
-                gpsAccuracyMetres = rawResult.gpsAccuracy,
-                alignmentName = rawResult.matchedAlignmentName,
-                previousChainageMetres = lastValidChainage?.metres,
-                rejectedChainageMetres = rawChainage.metres,
-                direction = confirmedTravelDirection.name,
-                reason = "STALE_CALLBACK_REJECTED"
-            )
             return rawResult.copy(
                 chainage = lastValidChainage,
                 confidence = MatchConfidence.LOW,
@@ -398,14 +390,6 @@ class ChainageProgressionTracker {
 
         // Poor GPS accuracy gate: retain last reliable chainage cleanly instead of blending noisy data
         if (rawResult.gpsAccuracy > MAX_TRACKING_GPS_ACCURACY_M && lastValidChainage != null) {
-            SmartChainageCorrectionEngine.recordRejectedChainage(
-                gpsAccuracyMetres = rawResult.gpsAccuracy,
-                alignmentName = rawResult.matchedAlignmentName,
-                previousChainageMetres = lastValidChainage?.metres,
-                rejectedChainageMetres = rawChainage.metres,
-                direction = confirmedTravelDirection.name,
-                reason = "POOR_GPS_ACCURACY"
-            )
             return rawResult.copy(
                 chainage = lastValidChainage,
                 confidence = MatchConfidence.LOW,

@@ -259,8 +259,7 @@ fun RoutesScreen(
     if (showCalibrationDialog && activeRoute != null) {
         val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
         val locationState by viewModel.locationState.collectAsStateWithLifecycle()
-        val correctionsForRoute by viewModel.activeRouteCorrections.collectAsStateWithLifecycle()
-        val isCorrectionsEnabled by viewModel.isRouteCorrectionsEnabled.collectAsStateWithLifecycle()
+        val activeCalibration by viewModel.activeKmzCalibration.collectAsStateWithLifecycle()
 
         ChainageManagementDialog(
             viewModel = viewModel,
@@ -268,9 +267,7 @@ fun RoutesScreen(
             activeRoute = activeRoute,
             currentGpsPoint = locationState.point,
             currentGpsAccuracy = locationState.accuracy,
-            correctionPoints = correctionsForRoute,
-            isCorrectionsEnabled = isCorrectionsEnabled,
-            initialTab = 1,
+            activeCalibration = activeCalibration,
             onDismiss = { showCalibrationDialog = false }
         )
     }

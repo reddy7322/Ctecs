@@ -756,23 +756,40 @@ object OverlayRenderer {
                     }
 
                     val match = snapshot.matchResult
-                    val calibrationSummary = if (match.isManual && match.manualChainageMode != null) {
-                        val parts = mutableListOf<String>()
-                        parts.add("Mode: ${match.manualChainageMode.displayLabel}")
-                        match.manualCalibrationAnchorMetres?.let {
-                            parts.add("Ref: ${com.example.model.Chainage(it).format()}")
+                    val calibrationSummary = when {
+                        match.isManual && match.manualChainageMode != null -> {
+                            val parts = mutableListOf<String>()
+                            parts.add("Mode: ${match.manualChainageMode.displayLabel}")
+                            match.manualCalibrationAnchorMetres?.let {
+                                parts.add("Ref: ${com.example.model.Chainage(it).format()}")
+                            }
+                            match.manualCalibrationOffsetMetres?.let { offset ->
+                                val sign = if (offset >= 0L) "+${offset}m" else "${offset}m"
+                                parts.add("Offset: $sign")
+                            }
+                            if (match.travelDirection == com.example.model.TravelChainageDirection.FORWARD ||
+                                match.travelDirection == com.example.model.TravelChainageDirection.REVERSE
+                            ) {
+                                parts.add("Travel: ${match.travelDirection.label}")
+                            }
+                            parts.joinToString(", ")
                         }
-                        match.manualCalibrationOffsetMetres?.let { offset ->
-                            val sign = if (offset >= 0L) "+${offset}m" else "${offset}m"
-                            parts.add("Offset: $sign")
+                        match.source == com.example.model.ChainageSource.CUSTOM_CORRECTION -> {
+                            val parts = mutableListOf<String>("KMZ Calibrated")
+                            match.manualCalibrationAnchorMetres?.let {
+                                parts.add("Ref: ${com.example.model.Chainage(it).format()}")
+                            }
+                            match.manualCalibrationOffsetMetres?.let { offset ->
+                                val sign = if (offset >= 0L) "+${offset}m" else "${offset}m"
+                                parts.add("Offset: $sign")
+                            }
+                            match.rawUncorrectedChainage?.let { orig ->
+                                parts.add("Orig: ${orig.format()}")
+                            }
+                            parts.joinToString(", ")
                         }
-                        if (match.travelDirection == com.example.model.TravelChainageDirection.FORWARD ||
-                            match.travelDirection == com.example.model.TravelChainageDirection.REVERSE
-                        ) {
-                            parts.add("Travel: ${match.travelDirection.label}")
-                        }
-                        parts.joinToString(", ")
-                    } else null
+                        else -> null
+                    }
 
                     val descParts = mutableListOf<String>()
                     if (locName.isNotBlank() && !locName.equals("None", ignoreCase = true)) {

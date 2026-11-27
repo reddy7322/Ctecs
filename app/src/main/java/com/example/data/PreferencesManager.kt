@@ -24,14 +24,13 @@ import com.example.model.CameraSettings
 import com.example.model.CaptureMode
 import com.example.model.CaptureTimer
 import com.example.model.Chainage
-import com.example.model.ChainageCorrectionPoint
-import com.example.model.ChainageLogEntry
 import com.example.model.ChainageVoiceAssistantSettings
 import com.example.model.CoordinateFormat
 import com.example.model.CtecsWidgetSettings
 import com.example.model.DefinedProject
 import com.example.model.HomeScreensaverSettings
 import com.example.model.KmStoneAlertSettings
+import com.example.model.KmzManualCalibration
 import com.example.model.LogoPosition
 import com.example.model.LogoShape
 import com.example.model.MiniMapStyleConfig
@@ -39,7 +38,6 @@ import com.example.model.NavigationNotificationSettings
 import com.example.model.OutputQualityPreset
 import com.example.model.OverlayConfig
 import com.example.model.OverlayTemplate
-import com.example.model.PermanentCalibrationProfile
 import com.example.model.PreviewRatio
 import com.example.model.ProjectProfile
 import com.example.model.RoadSide
@@ -301,16 +299,13 @@ class PreferencesManager(context: Context) {
         val KEY_GALLERY_SORT_OPTION = stringPreferencesKey("gallery_sort_option")
         val KEY_GALLERY_GROUP_OPTION = stringPreferencesKey("gallery_group_option")
 
-        // Smart KMZ Chainage Correction & Manual Override Keys
-        val KEY_ROUTE_CORRECTIONS_JSON = stringPreferencesKey("route_chainage_corrections_json")
-        val KEY_ROUTE_CORRECTIONS_ENABLED = booleanPreferencesKey("route_chainage_corrections_enabled")
+        // KMZ/KML Manual Reference Calibration & Manual Chainage Override Keys
+        val KEY_KMZ_MANUAL_CALIBRATIONS_JSON = stringPreferencesKey("kmz_manual_calibrations_json")
         val KEY_MANUAL_CHAINAGE_OVERRIDE = stringPreferencesKey("manual_chainage_override")
         val KEY_MANUAL_CHAINAGE_CUSTOM_TEXT = stringPreferencesKey("manual_chainage_custom_text")
         val KEY_MANUAL_CHAINAGE_CALIBRATION_JSON = stringPreferencesKey("manual_chainage_calibration_json")
         val KEY_LAST_RELIABLE_CHAINAGE_JSON = stringPreferencesKey("last_reliable_chainage_snapshot_json")
         val KEY_SAVED_CUSTOM_CHAINAGES = stringPreferencesKey("saved_custom_chainages")
-        val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
-        val KEY_CALIBRATION_PROFILES_JSON = stringPreferencesKey("permanent_calibration_profiles_json")
         val KEY_HOME_SCREENSAVER_JSON = stringPreferencesKey("home_screensaver_settings_json")
         val KEY_NAV_NOTIFICATION_JSON = stringPreferencesKey("nav_notification_settings_json")
         val KEY_WIDGET_SETTINGS_JSON = stringPreferencesKey("widget_settings_config_json")
@@ -482,11 +477,8 @@ class PreferencesManager(context: Context) {
     fun getInitialDefinedProjects(): List<DefinedProject> =
         parseDefinedProjects(getInitialPreferences()[KEY_DEFINED_PROJECTS])
 
-    fun getInitialRouteCorrections(): Map<String, List<ChainageCorrectionPoint>> =
-        parseRouteCorrections(getInitialPreferences()[KEY_ROUTE_CORRECTIONS_JSON])
-
-    fun getInitialRouteCorrectionsEnabled(): Boolean =
-        getInitialPreferences()[KEY_ROUTE_CORRECTIONS_ENABLED] ?: true
+    fun getInitialKmzCalibrations(): Map<String, KmzManualCalibration> =
+        parseKmzCalibrations(getInitialPreferences()[KEY_KMZ_MANUAL_CALIBRATIONS_JSON])
 
     fun getInitialManualChainageOverride(): Chainage? {
         val raw = getInitialPreferences()[KEY_MANUAL_CHAINAGE_OVERRIDE]
@@ -539,12 +531,6 @@ class PreferencesManager(context: Context) {
         return if (raw.isBlank()) emptyList()
         else raw.split("||").map { it.trim() }.filter { it.isNotBlank() }
     }
-
-    fun getInitialCalibrationProfiles(): List<PermanentCalibrationProfile> =
-        parseCalibrationProfiles(getInitialPreferences()[KEY_CALIBRATION_PROFILES_JSON])
-
-    fun getInitialChainageAuditLog(): List<ChainageLogEntry> =
-        parseChainageLogs(getInitialPreferences()[KEY_CHAINAGE_AUDIT_LOG_JSON])
 
     fun getInitialIsFlashOn(): Boolean = getInitialPreferences()[KEY_IS_FLASH_ON] ?: false
     fun getInitialIsFrontCamera(): Boolean = getInitialPreferences()[KEY_IS_FRONT_CAMERA] ?: false
@@ -1449,15 +1435,11 @@ class PreferencesManager(context: Context) {
         }
     }
 
-    val routeCorrectionsFlow: Flow<Map<String, List<ChainageCorrectionPoint>>> = observedDataFlow.map { prefs ->
-        prefs[KEY_ROUTE_CORRECTIONS_JSON]
+    val kmzCalibrationsFlow: Flow<Map<String, KmzManualCalibration>> = observedDataFlow.map { prefs ->
+        prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON]
     }.distinctUntilChanged().map { rawJson ->
-        parseRouteCorrections(rawJson)
+        parseKmzCalibrations(rawJson)
     }
-
-    val routeCorrectionsEnabledFlow: Flow<Boolean> = observedDataFlow.map { prefs ->
-        prefs[KEY_ROUTE_CORRECTIONS_ENABLED] ?: true
-    }.distinctUntilChanged()
 
     val manualChainageOverrideFlow: Flow<Chainage?> = observedDataFlow.map { prefs ->
         val raw = prefs[KEY_MANUAL_CHAINAGE_OVERRIDE]
@@ -1486,57 +1468,68 @@ class PreferencesManager(context: Context) {
         else raw.split("||").map { it.trim() }.filter { it.isNotBlank() }
     }
 
-    val calibrationProfilesFlow: Flow<List<PermanentCalibrationProfile>> = observedDataFlow.map { prefs ->
-        prefs[KEY_CALIBRATION_PROFILES_JSON]
-    }.distinctUntilChanged().map { rawJson ->
-        parseCalibrationProfiles(rawJson)
+    suspend fun saveKmzCalibration(calibration: KmzManualCalibration) {
+        safeEdit { prefs ->
+            val current = parseKmzCalibrations(prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON]).toMutableMap()
+            val key = com.example.geo.KmzCalibrationEngine.storageKey(
+                calibration.routeId,
+                calibration.alignmentId
+            )
+            current[key] = calibration
+            prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON] = serializeKmzCalibrations(current)
+        }
     }
 
-    suspend fun saveCalibrationProfile(profile: PermanentCalibrationProfile) {
+    suspend fun removeKmzCalibration(routeId: String, alignmentId: String? = null) {
         safeEdit { prefs ->
-            val current = parseCalibrationProfiles(prefs[KEY_CALIBRATION_PROFILES_JSON]).toMutableList()
-            val existingIdx = current.indexOfFirst {
-                it.profileId == profile.profileId ||
-                    (it.alignmentFingerprint.isNotBlank() && it.alignmentFingerprint == profile.alignmentFingerprint)
-            }
-            if (existingIdx != -1) {
-                val prev = current[existingIdx]
-                current[existingIdx] = profile.copy(
-                    profileId = prev.profileId,
-                    version = maxOf(prev.version + 1, profile.version)
-                )
+            val current = parseKmzCalibrations(prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON]).toMutableMap()
+            if (!alignmentId.isNullOrBlank()) {
+                val exactKey = com.example.geo.KmzCalibrationEngine.storageKey(routeId, alignmentId)
+                current.remove(exactKey)
+                // Also clean any fallback key stored under routeId alone if matching route
+                val routeFallbackKey = com.example.geo.KmzCalibrationEngine.storageKey(routeId, routeId)
+                if (current[routeFallbackKey]?.alignmentId == alignmentId ||
+                    current[routeFallbackKey]?.alignmentId.isNullOrBlank()
+                ) {
+                    current.remove(routeFallbackKey)
+                }
             } else {
-                current.add(0, profile)
+                val keysToRemove = current.entries
+                    .filter { it.value.routeId == routeId }
+                    .map { it.key }
+                keysToRemove.forEach { current.remove(it) }
             }
-            prefs[KEY_CALIBRATION_PROFILES_JSON] = serializeCalibrationProfiles(current)
+            if (current.isEmpty()) {
+                prefs.remove(KEY_KMZ_MANUAL_CALIBRATIONS_JSON)
+            } else {
+                prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON] = serializeKmzCalibrations(current)
+            }
         }
     }
 
-    suspend fun deleteCalibrationProfile(profileId: String) {
-        safeEdit { prefs ->
-            val current = parseCalibrationProfiles(prefs[KEY_CALIBRATION_PROFILES_JSON])
-                .filterNot { it.profileId == profileId }
-            prefs[KEY_CALIBRATION_PROFILES_JSON] = serializeCalibrationProfiles(current)
-        }
-    }
-
-    private fun parseCalibrationProfiles(rawJson: String?): List<PermanentCalibrationProfile> {
-        if (rawJson.isNullOrBlank()) return emptyList()
-        val result = mutableListOf<PermanentCalibrationProfile>()
+    fun parseKmzCalibrations(rawJson: String?): Map<String, KmzManualCalibration> {
+        if (rawJson.isNullOrBlank()) return emptyMap()
+        val result = linkedMapOf<String, KmzManualCalibration>()
         try {
-            val arr = JSONArray(rawJson)
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                result.add(PermanentCalibrationProfile.fromJson(obj))
+            val root = JSONObject(rawJson)
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val obj = root.optJSONObject(key) ?: continue
+                val cal = KmzManualCalibration.fromJson(obj) ?: continue
+                val normalizedKey = com.example.geo.KmzCalibrationEngine.storageKey(cal.routeId, cal.alignmentId)
+                result[normalizedKey] = cal
             }
         } catch (_: Exception) {}
         return result
     }
 
-    private fun serializeCalibrationProfiles(profiles: List<PermanentCalibrationProfile>): String {
-        val arr = JSONArray()
-        profiles.forEach { arr.put(it.toJson()) }
-        return arr.toString()
+    fun serializeKmzCalibrations(map: Map<String, KmzManualCalibration>): String {
+        val root = JSONObject()
+        for ((k, cal) in map) {
+            root.put(k, cal.toJson())
+        }
+        return root.toString()
     }
 
     suspend fun setManualChainageOverride(chainage: Chainage?, customText: String? = null) {
@@ -1596,139 +1589,6 @@ class PreferencesManager(context: Context) {
         }
     }
 
-    suspend fun setRouteCorrectionsEnabled(enabled: Boolean) {
-        safeEdit { prefs ->
-            prefs[KEY_ROUTE_CORRECTIONS_ENABLED] = enabled
-        }
-    }
-
-    suspend fun saveRouteCorrectionPoint(point: ChainageCorrectionPoint) {
-        safeEdit { prefs ->
-            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
-            val list = currentMap[point.routeId]?.toMutableList() ?: mutableListOf()
-            val existingIdx = list.indexOfFirst { it.id == point.id }
-            if (existingIdx != -1) {
-                list[existingIdx] = point
-            } else {
-                list.add(point)
-            }
-            list.sortBy { it.originalKmzMetres }
-            currentMap[point.routeId] = list
-            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
-        }
-    }
-
-    suspend fun saveRouteCorrectionPointsList(routeId: String, points: List<ChainageCorrectionPoint>) {
-        safeEdit { prefs ->
-            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
-            if (points.isEmpty()) {
-                currentMap.remove(routeId)
-            } else {
-                currentMap[routeId] = points.sortedBy { it.originalKmzMetres }
-            }
-            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
-        }
-    }
-
-    suspend fun deleteRouteCorrectionPoint(routeId: String, pointId: String) {
-        safeEdit { prefs ->
-            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
-            val list = currentMap[routeId]?.filter { it.id != pointId } ?: emptyList()
-            if (list.isEmpty()) {
-                currentMap.remove(routeId)
-            } else {
-                currentMap[routeId] = list
-            }
-            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
-        }
-    }
-
-    suspend fun toggleRouteCorrectionPoint(routeId: String, pointId: String, isEnabled: Boolean) {
-        safeEdit { prefs ->
-            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
-            val list = currentMap[routeId]?.map {
-                if (it.id == pointId) it.copy(isEnabled = isEnabled) else it
-            } ?: emptyList()
-            currentMap[routeId] = list
-            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
-        }
-    }
-
-    suspend fun resetRouteCorrections(routeId: String) {
-        safeEdit { prefs ->
-            val currentMap = parseRouteCorrections(prefs[KEY_ROUTE_CORRECTIONS_JSON]).toMutableMap()
-            currentMap.remove(routeId)
-            prefs[KEY_ROUTE_CORRECTIONS_JSON] = serializeRouteCorrections(currentMap)
-        }
-    }
-
-    private fun parseRouteCorrections(rawJson: String?): Map<String, List<ChainageCorrectionPoint>> {
-        if (rawJson.isNullOrBlank()) return emptyMap()
-        val result = mutableMapOf<String, List<ChainageCorrectionPoint>>()
-        try {
-            val root = JSONObject(rawJson)
-            val keys = root.keys()
-            while (keys.hasNext()) {
-                val rId = keys.next()
-                val arr = root.optJSONArray(rId) ?: continue
-                val pts = mutableListOf<ChainageCorrectionPoint>()
-                for (i in 0 until arr.length()) {
-                    val obj = arr.optJSONObject(i) ?: continue
-                    pts.add(ChainageCorrectionPoint.fromJson(obj))
-                }
-                pts.sortBy { it.originalKmzMetres }
-                result[rId] = pts
-            }
-        } catch (_: Exception) {}
-        return result
-    }
-
-    private fun serializeRouteCorrections(map: Map<String, List<ChainageCorrectionPoint>>): String {
-        val root = JSONObject()
-        for ((rId, pts) in map) {
-            val arr = JSONArray()
-            pts.forEach { arr.put(it.toJson()) }
-            root.put(rId, arr)
-        }
-        return root.toString()
-    }
-
-    val chainageAuditLogFlow: Flow<List<ChainageLogEntry>> = observedDataFlow.map { prefs ->
-        prefs[KEY_CHAINAGE_AUDIT_LOG_JSON]
-    }.distinctUntilChanged().map { raw ->
-        parseChainageLogs(raw)
-    }
-
-    suspend fun addChainageLogEntry(entry: ChainageLogEntry) {
-        safeEdit { prefs ->
-            val list = parseChainageLogs(prefs[KEY_CHAINAGE_AUDIT_LOG_JSON]).toMutableList()
-            list.add(0, entry) // Prepend newest first
-            // Retain recent 50 entries
-            val trimmed = if (list.size > 50) list.take(50) else list
-            val arr = JSONArray()
-            trimmed.forEach { arr.put(it.toJson()) }
-            prefs[KEY_CHAINAGE_AUDIT_LOG_JSON] = arr.toString()
-        }
-    }
-
-    suspend fun clearChainageAuditLog() {
-        safeEdit { prefs ->
-            prefs.remove(KEY_CHAINAGE_AUDIT_LOG_JSON)
-        }
-    }
-
-    private fun parseChainageLogs(raw: String?): List<ChainageLogEntry> {
-        if (raw.isNullOrBlank()) return emptyList()
-        val result = mutableListOf<ChainageLogEntry>()
-        try {
-            val arr = JSONArray(raw)
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                result.add(ChainageLogEntry.fromJson(obj))
-            }
-        } catch (_: Exception) {}
-        return result
-    }
 
     /**
      * Reads every persisted entry from ctecs_user_preferences DataStore dynamically with runtime type.

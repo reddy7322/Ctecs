@@ -18,6 +18,7 @@ data class ChainageMatchResult(
     val confidence: MatchConfidence = MatchConfidence.NO_MATCH,
     val statusMessage: String = "No route loaded",
     val isManual: Boolean = false,
+    val matchedAlignmentId: String = "",
     val matchedAlignmentName: String = "",
     val detectedSide: String = "Unknown", // "LHS", "RHS", "BHS", or "Unknown"
     val timestamp: Long = System.currentTimeMillis(),
@@ -45,7 +46,8 @@ data class ChainageMatchResult(
     val isManualCalibrationPendingGps: Boolean = false,
     val calibrationValidationStatus: String? = null,
     val calibrationValidationReason: String? = null,
-    val calibrationAttemptedOffsetMetres: Long? = null
+    val calibrationAttemptedOffsetMetres: Long? = null,
+    val distanceFromCalibrationAnchorMetres: Double? = null
 ) {
     val displayChainage: String
         get() = customChainageText?.takeIf { it.isNotBlank() }

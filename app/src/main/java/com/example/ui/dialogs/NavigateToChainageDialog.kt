@@ -93,10 +93,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.Chainage
-import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageVoiceAssistantSettings
 import com.example.model.GeoPoint
+import com.example.model.KmzManualCalibration
 import com.example.model.RoadSide
 import com.example.model.RouteData
 import com.example.navigation.ActiveChainageNavigationTarget
@@ -213,8 +213,7 @@ fun NavigateToChainageDialog(
     matchResult: ChainageMatchResult,
     activeRoute: RouteData?,
     currentGpsPoint: GeoPoint?,
-    correctionPoints: List<ChainageCorrectionPoint>,
-    isCorrectionsEnabled: Boolean,
+    activeCalibration: KmzManualCalibration?,
     projectRoadSide: RoadSide,
     detectedSideLabel: String,
     nextKmStoneSuggestion: String?,
@@ -286,8 +285,7 @@ fun NavigateToChainageDialog(
         matchResult,
         activeRoute?.id,
         activeRoute?.selectedAlignmentId,
-        correctionPoints,
-        isCorrectionsEnabled,
+        activeCalibration,
         projectRoadSide,
         detectedSideLabel
     ) {
@@ -298,8 +296,7 @@ fun NavigateToChainageDialog(
                 rawDestinationInput = submittedQuery,
                 matchResult = matchResult,
                 activeRoute = activeRoute,
-                correctionPoints = correctionPoints,
-                isCorrectionsEnabled = isCorrectionsEnabled,
+                activeCalibration = activeCalibration,
                 projectRoadSide = projectRoadSide,
                 detectedSideOverride = detectedSideLabel
             )
@@ -308,8 +305,7 @@ fun NavigateToChainageDialog(
 
     val latestMatch by rememberUpdatedState(matchResult)
     val latestRoute by rememberUpdatedState(activeRoute)
-    val latestCorrections by rememberUpdatedState(correctionPoints)
-    val latestCorrectionsEnabled by rememberUpdatedState(isCorrectionsEnabled)
+    val latestCalibration by rememberUpdatedState(activeCalibration)
     val latestRoadSide by rememberUpdatedState(projectRoadSide)
     val latestDetectedSide by rememberUpdatedState(detectedSideLabel)
     val latestCalc by rememberUpdatedState(calculation)
@@ -321,8 +317,7 @@ fun NavigateToChainageDialog(
             rawDestinationInput = raw,
             matchResult = latestMatch,
             activeRoute = latestRoute,
-            correctionPoints = latestCorrections,
-            isCorrectionsEnabled = latestCorrectionsEnabled,
+            activeCalibration = latestCalibration,
             projectRoadSide = latestRoadSide,
             detectedSideOverride = latestDetectedSide
         )

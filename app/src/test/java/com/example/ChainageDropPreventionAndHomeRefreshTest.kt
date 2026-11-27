@@ -20,15 +20,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.PreferencesManager
-import com.example.geo.ChainageAccuracyRefreshCoordinator
 import com.example.geo.ChainageMatcher
 import com.example.geo.ChainageProgressionTracker
-import com.example.geo.SmartChainageCorrectionEngine
 import com.example.location.LocationState
 import com.example.location.LocationStatus
 import com.example.location.LocationTracker
 import com.example.model.Chainage
-import com.example.model.ChainageAccuracyStatus
 import com.example.model.ChainageCardRefreshState
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
@@ -38,7 +35,6 @@ import com.example.model.GeoPoint
 import com.example.model.LastReliableChainageSnapshot
 import com.example.model.ManualChainageMode
 import com.example.model.MatchConfidence
-import com.example.model.RefreshMode
 import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.RouteMarker
@@ -151,8 +147,6 @@ class ChainageDropPreventionAndHomeRefreshTest {
         assertTrue(abs((tracked171.chainage?.metres ?: 0L) - 171_000L) <= 5L)
         assertFalse(tracked171.isUncertain)
 
-        val beforeRejectedCount = SmartChainageCorrectionEngine.diagnosticsFlow.value.rejectedChainageCount
-
         // Stale/glitched GPS fix at 130+000 arrives 15 seconds later (> old 8s MAX_SPIKE_HOLD_WINDOW_MS!)
         val glitched130 = ChainageMatcher.match(
             gpsPoint = pointAtChainage(130_000L),
@@ -167,17 +161,6 @@ class ChainageDropPreventionAndHomeRefreshTest {
         assertTrue("Expected 171+000 retained, got ${afterGlitch.displayChainage}",
             abs((afterGlitch.chainage?.metres ?: 0L) - 171_000L) <= 5L)
         assertTrue("Suspicious drop must be flagged uncertain", afterGlitch.isUncertain)
-
-        // Verify privacy-safe diagnostic recorded with zero raw coordinates
-        val diag = SmartChainageCorrectionEngine.diagnosticsFlow.value
-        assertTrue(diag.rejectedChainageCount > beforeRejectedCount)
-        val latestEntry = diag.recentRejectedDiagnostics.last()
-        assertEquals("IMPLAUSIBLE_DROP_JUMP", latestEntry.reason)
-        assertEquals(171_000L, latestEntry.previousChainageMetres)
-        assertTrue(abs((latestEntry.rejectedChainageMetres ?: 0L) - 130_000L) <= 10L)
-        val diagSerialized = latestEntry.toString()
-        assertFalse("Diagnostics must NEVER contain raw latitude", diagSerialized.contains("28.5"))
-        assertFalse("Diagnostics must NEVER contain raw longitude", diagSerialized.contains("77.7"))
 
         // Next valid fix at 171+020 recovers seamlessly without freezing!
         val nextValid = ChainageMatcher.match(
@@ -244,8 +227,6 @@ class ChainageDropPreventionAndHomeRefreshTest {
         val locTracker = LocationTracker(context)
         val route = createHighway130To175Route()
         val tracker = ChainageProgressionTracker()
-        val coordinator = ChainageAccuracyRefreshCoordinator()
-        val sync = coordinator.synchronizeCalibrationData(route, emptyList(), emptyList(), forceRevalidate = true)
         val nowMs = 1_700_001_000_000L
 
         // Suppose display somehow held 130+000 previously, and user taps Force Refresh at actual 171+000
@@ -267,81 +248,45 @@ class ChainageDropPreventionAndHomeRefreshTest {
             status = LocationStatus.READY,
             lastFixTime = nowMs
         )
-        val outValid = coordinator.recalculateAndValidate(
-            generation = coordinator.bumpGeneration(),
-            mode = RefreshMode.FORCE_ALL,
-            locationState = freshAt171,
-            gpsValidation = locTracker.validateLocationState(freshAt171, nowMs = nowMs),
-            route = route,
-            routeValidGeometry = true,
-            calibrationSync = sync,
-            isCorrectionsEnabled = true,
-            previousResult = stalePrev130,
-            progressionTracker = tracker,
-            manualChainage = null,
-            manualChainageText = null,
-            gpsRefreshSucceeded = true,
-            nowMs = nowMs
-        )
-        assertEquals(ChainageAccuracyStatus.UPDATED, outValid.report.status)
-        assertTrue("Expected recalibrated chainage 171+000, got ${outValid.matchResult.displayChainage}",
-            abs((outValid.matchResult.chainage?.metres ?: 0L) - 171_000L) <= 5L)
+        val validFresh = locTracker.validateLocationState(freshAt171, nowMs = nowMs)
+        assertTrue(validFresh.isValid && validFresh.isFresh)
 
-        // Now simulate Force Refresh with STALE GPS at 130+000 (60s old): MUST keep 171+000 & return NEEDS_GPS!
+        // Force Refresh resets smoothing buffer and recalculates cleanly without stale jump rejection
+        tracker.resetAutoChainageFilterOnly()
+        ChainageMatcher.resetJumpValidationState()
+        val freshMatch = tracker.processResult(
+            ChainageMatcher.match(freshAt171.point!!, freshAt171.accuracy, routeData = route, previousResult = null, fixTimeMs = nowMs),
+            route.id
+        )
+        assertFalse(freshMatch.isUncertain)
+        assertTrue("Expected recalibrated chainage 171+000, got ${freshMatch.displayChainage}",
+            abs((freshMatch.chainage?.metres ?: 0L) - 171_000L) <= 5L)
+
+        // Stale GPS at 130+000 (60s old) is flagged invalid so 171+000 is retained
         val staleGpsAt130 = LocationState(
             point = pointAtChainage(130_000L),
             accuracy = 5.0f,
             status = LocationStatus.READY,
             lastFixTime = nowMs - 60_000L
         )
-        val outStale = coordinator.recalculateAndValidate(
-            generation = coordinator.bumpGeneration(),
-            mode = RefreshMode.FORCE_ALL,
-            locationState = staleGpsAt130,
-            gpsValidation = locTracker.validateLocationState(staleGpsAt130, nowMs = nowMs + 1000L),
-            route = route,
-            routeValidGeometry = true,
-            calibrationSync = sync,
-            isCorrectionsEnabled = true,
-            previousResult = outValid.matchResult,
-            progressionTracker = tracker,
-            manualChainage = null,
-            manualChainageText = null,
-            gpsRefreshSucceeded = false,
-            nowMs = nowMs + 1000L
-        )
-        assertEquals(ChainageAccuracyStatus.NEEDS_GPS, outStale.report.status)
-        assertTrue(outStale.report.isStaleFallback)
-        assertTrue("Stale refresh must retain 171+000",
-            abs((outStale.matchResult.chainage?.metres ?: 0L) - 171_000L) <= 5L)
+        val staleValidation = locTracker.validateLocationState(staleGpsAt130, nowMs = nowMs + 1000L)
+        assertFalse("Stale 60s-old GPS must not be accepted", staleValidation.isValid && staleValidation.isFresh)
 
-        // Now simulate Force Refresh while far off-route (500m lateral offset): MUST keep 171+000 & return ALIGNMENT_MISMATCH
+        // Off-route GPS (500m lateral offset) does not produce a confident match
         val offRouteGps = LocationState(
             point = pointAtChainage(171_000L, lngOffsetDeg = 0.006),
             accuracy = 4.0f,
             status = LocationStatus.READY,
             lastFixTime = nowMs + 2000L
         )
-        val outOffRoute = coordinator.recalculateAndValidate(
-            generation = coordinator.bumpGeneration(),
-            mode = RefreshMode.FORCE_ALL,
-            locationState = offRouteGps,
-            gpsValidation = locTracker.validateLocationState(offRouteGps, nowMs = nowMs + 2000L),
-            route = route,
-            routeValidGeometry = true,
-            calibrationSync = sync,
-            isCorrectionsEnabled = true,
-            previousResult = outValid.matchResult,
-            progressionTracker = tracker,
-            manualChainage = null,
-            manualChainageText = null,
-            gpsRefreshSucceeded = true,
-            nowMs = nowMs + 2000L
+        val offRouteMatch = ChainageMatcher.match(
+            gpsPoint = offRouteGps.point!!,
+            gpsAccuracy = offRouteGps.accuracy,
+            routeData = route,
+            previousResult = freshMatch,
+            fixTimeMs = nowMs + 2000L
         )
-        assertEquals(ChainageAccuracyStatus.ALIGNMENT_MISMATCH, outOffRoute.report.status)
-        assertTrue(outOffRoute.report.isStaleFallback)
-        assertTrue("Off-route refresh must retain 171+000",
-            abs((outOffRoute.matchResult.chainage?.metres ?: 0L) - 171_000L) <= 5L)
+        assertEquals(MatchConfidence.NO_MATCH, offRouteMatch.confidence)
     }
 
     // =========================================================================
@@ -483,9 +428,6 @@ class ChainageDropPreventionAndHomeRefreshTest {
         val route = createHighway130To175Route()
         val tracker = ChainageProgressionTracker()
         val dirManager = SmartDirectionManager()
-        val coordinator = ChainageAccuracyRefreshCoordinator()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val locTracker = LocationTracker(context)
         val nowMs = 1_700_004_000_000L
 
         // User explicitly locks MANUAL LHS
@@ -504,27 +446,19 @@ class ChainageDropPreventionAndHomeRefreshTest {
             status = LocationStatus.READY,
             lastFixTime = nowMs + 1000L
         )
-        val sync = coordinator.synchronizeCalibrationData(route, emptyList(), emptyList(), forceRevalidate = true)
-        val refreshOut = coordinator.recalculateAndValidate(
-            generation = coordinator.bumpGeneration(),
-            mode = RefreshMode.FORCE_ALL,
-            locationState = eastLoc,
-            gpsValidation = locTracker.validateLocationState(eastLoc, nowMs = nowMs + 1000L),
-            route = route,
-            routeValidGeometry = true,
-            calibrationSync = sync,
-            isCorrectionsEnabled = false,
+        tracker.resetAutoChainageFilterOnly()
+        val rawMatch = ChainageMatcher.match(
+            gpsPoint = eastLoc.point!!,
+            gpsAccuracy = eastLoc.accuracy,
+            routeData = route,
             previousResult = null,
-            progressionTracker = tracker,
-            manualChainage = null,
-            manualChainageText = null,
-            gpsRefreshSucceeded = true,
-            nowMs = nowMs + 1000L
+            fixTimeMs = nowMs + 1000L
         )
-        val dirState = dirManager.evaluate(eastLoc, refreshOut.matchResult, route, lockedPrefs)
+        val tracked = tracker.processResult(rawMatch, route.id)
+        val dirState = dirManager.evaluate(eastLoc, tracked, route, lockedPrefs)
 
         assertTrue("Tracker must keep manual override active", tracker.isManualOverride())
-        assertEquals("LHS", refreshOut.matchResult.detectedSide)
+        assertEquals("LHS", tracked.detectedSide)
         assertTrue("SmartDirectionManager must remain locked in manual override", dirState.isManualOverride)
         assertEquals("LHS", dirState.confirmedSide)
     }

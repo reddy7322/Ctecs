@@ -2,7 +2,6 @@ package com.example
 
 import com.example.data.PhotoRecordEntity
 import com.example.data.PhotoRepository
-import com.example.geo.SmartChainageCorrectionEngine
 import com.example.model.Chainage
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
@@ -20,83 +19,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
 class HighwayCustomisationAndGalleryTest {
-
-    @Before
-    fun setUp() {
-        SmartChainageCorrectionEngine.resetDiagnostics(nowMs = 1_000_000L)
-    }
-
-    @Test
-    fun `heartbeat monitor detects stalled chainage calculation and records sub-task restart`() {
-        SmartChainageCorrectionEngine.notifyTaskStarted(nowMs = 1_000_000L)
-        assertTrue(SmartChainageCorrectionEngine.diagnosticsFlow.value.isCalculationInProgress)
-
-        // Before stall timeout (1.5s elapsed < 2.5s threshold)
-        val stalledEarly = SmartChainageCorrectionEngine.checkHeartbeatAndDetectStall(
-            nowMs = 1_001_500L,
-            stallThresholdMs = 2_500L
-        )
-        assertFalse(stalledEarly)
-        assertEquals(0L, SmartChainageCorrectionEngine.diagnosticsFlow.value.stallDetectedCount)
-
-        // Exceeds stall timeout (3.0s elapsed >= 2.5s threshold)
-        val stalled = SmartChainageCorrectionEngine.checkHeartbeatAndDetectStall(
-            nowMs = 1_003_000L,
-            stallThresholdMs = 2_500L
-        )
-        assertTrue(stalled)
-        assertEquals(1L, SmartChainageCorrectionEngine.diagnosticsFlow.value.stallDetectedCount)
-        assertEquals(
-            SmartChainageCorrectionEngine.EngineHealthStatus.STALL_DETECTED,
-            SmartChainageCorrectionEngine.diagnosticsFlow.value.engineStatus
-        )
-
-        // Auto-restart affected sub-task
-        SmartChainageCorrectionEngine.recordSubTaskRestarted(
-            reason = "Heartbeat watchdog auto-restarted stalled calculation task",
-            nowMs = 1_003_050L
-        )
-        val diagAfterRestart = SmartChainageCorrectionEngine.diagnosticsFlow.value
-        assertEquals(1L, diagAfterRestart.autoRestartCount)
-        assertEquals(SmartChainageCorrectionEngine.EngineHealthStatus.RECOVERED, diagAfterRestart.engineStatus)
-        assertTrue(diagAfterRestart.lastRecoveryReason.contains("Heartbeat watchdog"))
-    }
-
-    @Test
-    fun `conflated GPS updates track coalesced updates and matching throughput`() {
-        // First GPS fix starts processing
-        SmartChainageCorrectionEngine.recordGpsUpdateReceived(nowMs = 2_000_000L)
-        SmartChainageCorrectionEngine.notifyTaskStarted(nowMs = 2_000_010L)
-
-        // Two rapid GPS fixes arrive while matching task is running -> conflated
-        SmartChainageCorrectionEngine.recordGpsUpdateReceived(nowMs = 2_000_050L)
-        SmartChainageCorrectionEngine.recordGpsUpdateReceived(nowMs = 2_000_090L)
-
-        SmartChainageCorrectionEngine.notifyTaskCompleted(
-            latencyMicros = 420L,
-            alignmentName = "NH-58 Mainline",
-            segmentsCount = 1280,
-            gridCellsCount = 340,
-            matchedChainage = "200+050",
-            offsetMetres = 2.4,
-            confidence = "HIGH",
-            hierarchyTier = SmartChainageCorrectionEngine.CalibrationHierarchyTier.TIER_1_VERIFIED_CONTROL_POINT.label,
-            nowMs = 2_000_500L
-        )
-
-        val diag = SmartChainageCorrectionEngine.diagnosticsFlow.value
-        assertEquals(3L, diag.totalGpsUpdatesReceived)
-        assertEquals(2L, diag.conflatedSkippedUpdates)
-        assertEquals(1L, diag.totalMatchesCompleted)
-        assertEquals(420L, diag.lastMatchLatencyMicros)
-        assertEquals("NH-58 Mainline", diag.activeAlignmentName)
-        assertEquals(1280, diag.activeAlignmentSegmentsCount)
-        assertEquals("200+050", diag.activeMatchedChainageText)
-    }
 
     @Test
     fun `ProjectProfile buildHighwayText handles None, custom activity, subActivity and BHS`() {
