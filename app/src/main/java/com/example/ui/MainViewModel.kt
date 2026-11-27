@@ -45,6 +45,7 @@ import com.example.model.CaptureSnapshot
 import com.example.model.Chainage
 import com.example.model.ChainageAccuracyReport
 import com.example.model.ChainageAccuracyStatus
+import com.example.model.ChainageCardRefreshState
 import com.example.model.ChainageCorrectionPoint
 import com.example.model.ChainageLogEntry
 import com.example.model.ChainageMatchResult
@@ -57,6 +58,7 @@ import com.example.model.HomeScreensaverSettings
 import com.example.navigation.CtecsNavigationTelemetryHub
 import com.example.navigation.LockScreenNavigationService
 import com.example.model.KmzReplacementPreview
+import com.example.model.LastReliableChainageSnapshot
 import com.example.model.MiniMapOrientationMode
 import com.example.model.MiniMapStyle
 import com.example.model.OverlayConfig
@@ -416,13 +418,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = preferencesManager.getInitialActualSiteMeasurements()
         )
 
-    val workTargetInput: StateFlow<com.example.model.WorkTargetInput> =
-        preferencesManager.workTargetInputFlow.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = preferencesManager.getInitialWorkTargetInput()
-        )
-
     private val _selectedWeatherWorkActivity = MutableStateFlow(
         preferencesManager.getInitialWeatherIntelligenceSettings().primaryActivity
     )
@@ -481,53 +476,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
-    val workTargetPrediction: StateFlow<com.example.model.WorkTargetPrediction> =
-        combine(
-            workTargetInput,
-            hourlyWorkSuitabilityTimeline,
-            weatherForecastBundle,
-            weatherIntelligenceSettings,
-            actualSiteMeasurements
-        ) { input, selectedTimeline, bundle, settings, site ->
-            val timelineForTarget = if (selectedTimeline.firstOrNull()?.activity == input.activity) {
-                selectedTimeline
-            } else {
-                com.example.weather.IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(
-                    activity = input.activity,
-                    hourlyPoints = bundle?.next24Hours().orEmpty(),
-                    contractSpec = settings.contractSpec,
-                    siteMeasurements = site,
-                    bituminousConfig = settings.bituminousConfig
-                )
-            }
-            com.example.weather.WorkTargetPredictionEngine.predictWorkTarget(
-                input = input,
-                hourlyTimeline = timelineForTarget
-            )
-        }.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = com.example.weather.WorkTargetPredictionEngine.predictWorkTarget(
-                input = preferencesManager.getInitialWorkTargetInput(),
-                hourlyTimeline = emptyList()
-            )
-        )
-
     val weatherDelayRiskSummary: StateFlow<com.example.model.DelayRiskSummary> =
         combine(
             selectedWeatherWorkActivity,
-            hourlyWorkSuitabilityTimeline,
-            workTargetPrediction
-        ) { activity, timeline, prediction ->
-            com.example.weather.WorkTargetPredictionEngine.analyzeDelayRisks(
+            hourlyWorkSuitabilityTimeline
+        ) { activity, timeline ->
+            com.example.weather.WeatherDelayRiskAnalyzer.analyzeDelayRisks(
                 activity = activity,
-                hourlyTimeline = timeline,
-                targetPrediction = prediction.takeIf { it.activity == activity }
+                hourlyTimeline = timeline
             )
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.Eagerly,
-            initialValue = com.example.weather.WorkTargetPredictionEngine.analyzeDelayRisks(
+            initialValue = com.example.weather.WeatherDelayRiskAnalyzer.analyzeDelayRisks(
                 activity = preferencesManager.getInitialWeatherIntelligenceSettings().primaryActivity,
                 hourlyTimeline = emptyList()
             )
@@ -537,14 +498,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         combine(
             weatherForecastBundle,
             weatherIntelligenceSettings,
-            highwayWorkAssessments,
-            workTargetPrediction
-        ) { bundle, settings, assessments, prediction ->
+            highwayWorkAssessments
+        ) { bundle, settings, assessments ->
             weatherAlertNotifier.evaluateActionableAlerts(
                 bundle = bundle,
                 settings = settings,
-                assessments = assessments,
-                targetPrediction = prediction
+                assessments = assessments
             )
         }.stateIn(
             scope = viewModelScope,
@@ -614,12 +573,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateWorkTargetInput(input: com.example.model.WorkTargetInput) {
-        preferencesManager.launchSafeEdit {
-            preferencesManager.updateWorkTargetInput(input)
-        }
-    }
-
     fun toggleWeatherSection(sectionKey: String) {
         val current = weatherExpandedSections.value
         val updated = if (sectionKey in current) current - sectionKey else current + sectionKey
@@ -645,8 +598,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val alerts = weatherAlertNotifier.evaluateActionableAlerts(
                     bundle = bundle,
                     settings = weatherIntelligenceSettings.value,
-                    assessments = highwayWorkAssessments.value,
-                    targetPrediction = workTargetPrediction.value
+                    assessments = highwayWorkAssessments.value
                 )
                 weatherAlertNotifier.dispatchSystemNotifications(getApplication(), alerts)
             } else if (updated != null) {
@@ -1567,11 +1519,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isRefreshingChainageAccuracy = MutableStateFlow(false)
     val isRefreshingChainageAccuracy: StateFlow<Boolean> = _isRefreshingChainageAccuracy.asStateFlow()
 
+    private val _chainageCardRefreshState = MutableStateFlow(ChainageCardRefreshState.IDLE)
+    val chainageCardRefreshState: StateFlow<ChainageCardRefreshState> = _chainageCardRefreshState.asStateFlow()
+    private var chainageCardFeedbackJob: Job? = null
+
+    @Volatile
+    private var lastAcceptedAutoFixTimeMs: Long = 0L
+    @Volatile
+    private var lastPersistedReliableRouteId: String? = null
+    @Volatile
+    private var lastPersistedReliableMetres: Long? = null
+    @Volatile
+    private var lastPersistedReliableTimeMs: Long = 0L
+
     private val _chainageAccuracyReport = MutableStateFlow<ChainageAccuracyReport?>(null)
     val chainageAccuracyReport: StateFlow<ChainageAccuracyReport?> = _chainageAccuracyReport.asStateFlow()
 
     val calibrationDiagnostics: StateFlow<SmartChainageCorrectionEngine.CalibrationEngineDiagnostics> =
         SmartChainageCorrectionEngine.diagnosticsFlow
+
+    private fun persistReliableChainageSnapshotIfNeeded(routeId: String?, match: ChainageMatchResult) {
+        if (routeId.isNullOrBlank()) return
+        val ch = match.chainage ?: return
+        if (match.isUncertain || match.isManual) return
+        val isReliableConfidence = match.confidence == com.example.model.MatchConfidence.HIGH ||
+            match.confidence == com.example.model.MatchConfidence.MEDIUM
+        if (!isReliableConfidence) return
+
+        val nowMs = System.currentTimeMillis()
+        val sameRoute = lastPersistedReliableRouteId == routeId
+        val prevM = lastPersistedReliableMetres
+        val movedEnough = prevM == null || kotlin.math.abs(ch.metres - prevM) >= 10L
+        val intervalElapsed = (nowMs - lastPersistedReliableTimeMs) >= 15_000L
+        if (sameRoute && !movedEnough && !intervalElapsed) return
+
+        lastPersistedReliableRouteId = routeId
+        lastPersistedReliableMetres = ch.metres
+        lastPersistedReliableTimeMs = nowMs
+
+        val snapshot = LastReliableChainageSnapshot(
+            routeId = routeId,
+            chainageMetres = ch.metres,
+            rawChainageMetres = (match.rawUncorrectedChainage ?: ch).metres,
+            alignmentName = match.matchedAlignmentName,
+            distanceAlongMetres = match.distanceAlongAlignmentMetres,
+            detectedSide = match.detectedSide.ifBlank { "RHS" },
+            sourceName = match.source.name,
+            timestampMs = match.timestamp.takeIf { it > 0L } ?: nowMs
+        )
+        preferencesManager.launchSafeEdit {
+            preferencesManager.updateLastReliableChainageSnapshot(snapshot)
+        }
+    }
 
     private fun computeAutoMatchForState(
         loc: LocationState,
@@ -1579,8 +1578,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         correctionsMap: Map<String, List<ChainageCorrectionPoint>>,
         isCorrectionsEnabled: Boolean
     ): ChainageMatchResult {
-        // Tier 4 fallback if no GPS fix
+        // Tier 4 fallback if no GPS fix — preserve last validated reliable chainage cleanly while awaiting GPS
         if (loc.point == null) {
+            val retained = lastCalculatedMatchResult?.takeIf { route != null && it.chainage != null }
+            if (retained != null) {
+                val retainedUncertain = retained.copy(
+                    gpsAccuracy = loc.accuracy,
+                    isUncertain = true,
+                    lastReliableChainage = retained.chainage,
+                    statusMessage = "Awaiting GPS — retained ${retained.displayChainage}"
+                )
+                val dirState = evaluateAndPublishSmartDirection(loc, retainedUncertain, route)
+                return retainedUncertain.copy(
+                    detectedSide = dirState.confirmedSide ?: retained.detectedSide,
+                    smartDirectionState = dirState
+                )
+            }
             val baseNoGps = ChainageMatchResult.noRoute(loc.accuracy).copy(
                 source = ChainageSource.GPS,
                 timestamp = if (loc.lastFixTime > 0L) loc.lastFixTime else System.currentTimeMillis()
@@ -1630,13 +1643,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val rawKmzChainage = kmzMatch.chainage
 
         if (kmzMatch.confidence == com.example.model.MatchConfidence.NO_MATCH || rawKmzChainage == null) {
-            val stabilized = progressionTracker.processResult(kmzMatch, route.id)
+            val prevReliable = lastCalculatedMatchResult?.takeIf { it.chainage != null && loc.accuracy > 35.0f }
+            val stabilized = if (prevReliable != null) {
+                SmartChainageCorrectionEngine.recordRejectedChainage(
+                    gpsAccuracyMetres = loc.accuracy,
+                    alignmentName = prevReliable.matchedAlignmentName.ifBlank { route.name },
+                    previousChainageMetres = prevReliable.chainage?.metres,
+                    rejectedChainageMetres = null,
+                    direction = prevReliable.travelDirection.name,
+                    reason = "POOR_GPS_OFF_ROUTE_RETAINED"
+                )
+                prevReliable.copy(
+                    gpsAccuracy = loc.accuracy,
+                    offsetMetres = kmzMatch.offsetMetres,
+                    isUncertain = true,
+                    lastReliableChainage = prevReliable.chainage,
+                    statusMessage = "GPS weak (${loc.accuracy.toInt()}m) — retained ${prevReliable.displayChainage}"
+                )
+            } else {
+                progressionTracker.processResult(kmzMatch, route.id).copy(
+                    source = ChainageSource.GPS,
+                    rawUncorrectedChainage = null
+                )
+            }
             val dirState = evaluateAndPublishSmartDirection(loc, stabilized, route)
             val enrichedNoMatch = stabilized.copy(
-                detectedSide = dirState.confirmedSide ?: "Unknown",
-                smartDirectionState = dirState,
-                source = ChainageSource.GPS,
-                rawUncorrectedChainage = null
+                detectedSide = dirState.confirmedSide ?: stabilized.detectedSide.ifBlank { "Unknown" },
+                smartDirectionState = dirState
             )
             lastCalculatedMatchResult = enrichedNoMatch
             val latencyUs = (System.nanoTime() - startNs) / 1_000L
@@ -1870,6 +1903,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .onEach { SmartChainageCorrectionEngine.recordGpsUpdateReceived() }
                 .conflate()
 
+            data class VersionedAutoMatch(
+                val generation: Long,
+                val fixTimeMs: Long,
+                val routeId: String?,
+                val result: ChainageMatchResult
+            )
+
             combine(
                 conflatedGpsFlow,
                 effectiveRouteFlow,
@@ -1877,9 +1917,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isRouteCorrectionsEnabled,
                 _smartDirectionPreferences
             ) { loc, route, correctionsMap, isCorrectionsEnabled, _ ->
-                computeAutoMatchForState(loc, route, correctionsMap, isCorrectionsEnabled)
-            }.conflate().collect { result ->
-                _autoMatchStateFlow.value = result
+                val genAtStart = refreshCoordinator.currentGeneration()
+                val res = computeAutoMatchForState(loc, route, correctionsMap, isCorrectionsEnabled)
+                VersionedAutoMatch(
+                    generation = genAtStart,
+                    fixTimeMs = loc.lastFixTime,
+                    routeId = route?.id,
+                    result = res
+                )
+            }.conflate().collect { versioned ->
+                // Race-condition & stale callback guard: older in-flight background GPS matches
+                // must NEVER overwrite a newer completed Force Refresh or newer GPS fix.
+                val currentGen = refreshCoordinator.currentGeneration()
+                val isSupersededByRefresh = versioned.generation != currentGen || refreshCoordinator.isBusy()
+                val isOlderFix = versioned.fixTimeMs > 0L &&
+                    lastAcceptedAutoFixTimeMs > 0L &&
+                    versioned.fixTimeMs + 500L < lastAcceptedAutoFixTimeMs
+
+                if (isSupersededByRefresh || isOlderFix) {
+                    SmartChainageCorrectionEngine.recordRejectedChainage(
+                        gpsAccuracyMetres = versioned.result.gpsAccuracy,
+                        alignmentName = versioned.result.matchedAlignmentName,
+                        previousChainageMetres = _autoMatchStateFlow.value.chainage?.metres,
+                        rejectedChainageMetres = versioned.result.chainage?.metres,
+                        direction = versioned.result.travelDirection.name,
+                        reason = if (isSupersededByRefresh) "OLDER_CALLBACK_IGNORED_REFRESH" else "OLDER_CALLBACK_IGNORED_FIX_TIME"
+                    )
+                    return@collect
+                }
+
+                if (versioned.fixTimeMs > lastAcceptedAutoFixTimeMs) {
+                    lastAcceptedAutoFixTimeMs = versioned.fixTimeMs
+                }
+                lastCalculatedMatchResult = versioned.result
+                _autoMatchStateFlow.value = versioned.result
+                persistReliableChainageSnapshotIfNeeded(versioned.routeId, versioned.result)
             }
         }
     }
@@ -2089,20 +2161,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             activeRouteData.collect { route ->
                 lastCalculatedMatchResult = null
+                ChainageMatcher.resetJumpValidationState()
                 CtecsNavigationTelemetryHub.sharedDirectionManager.onAlignmentChanged(
                     routeId = route?.id,
                     alignmentId = selectedAlignmentId.value ?: route?.selectedAlignmentId ?: route?.activeAlignment?.id
                 )
-                val refreshedDir = evaluateAndPublishSmartDirection(
-                    loc = locationTracker.locationState.value,
-                    matchResult = _autoMatchStateFlow.value,
-                    route = route
-                )
-                _autoMatchStateFlow.update { current ->
-                    current.copy(
-                        detectedSide = refreshedDir.confirmedSide ?: "Unknown",
+
+                // Restore persisted last reliable chainage cleanly on app restart before first live GPS fix
+                val currentLoc = locationTracker.locationState.value
+                val persistedSnapshot = if (route != null && currentLoc.point == null) {
+                    preferencesManager.getInitialLastReliableChainageSnapshot()
+                        ?.takeIf { it.routeId == route.id }
+                } else null
+
+                if (route != null && persistedSnapshot != null) {
+                    progressionTracker.seedPersistedLastReliableChainage(route.id, persistedSnapshot)
+                    val restoredCh = Chainage(persistedSnapshot.chainageMetres)
+                    val restoredRaw = persistedSnapshot.rawChainageMetres?.let { Chainage(it) } ?: restoredCh
+                    val restoredSource = runCatching { ChainageSource.valueOf(persistedSnapshot.sourceName) }
+                        .getOrDefault(ChainageSource.KMZ)
+                    val baseRestored = ChainageMatchResult(
+                        chainage = restoredCh,
+                        rawUncorrectedChainage = restoredRaw,
+                        confidence = com.example.model.MatchConfidence.MEDIUM,
+                        statusMessage = "Restored last verified chainage — awaiting GPS",
+                        matchedAlignmentName = persistedSnapshot.alignmentName,
+                        detectedSide = persistedSnapshot.detectedSide,
+                        timestamp = persistedSnapshot.timestampMs,
+                        isUncertain = true,
+                        lastReliableChainage = restoredCh,
+                        distanceAlongAlignmentMetres = persistedSnapshot.distanceAlongMetres,
+                        source = restoredSource
+                    )
+                    val refreshedDir = evaluateAndPublishSmartDirection(
+                        loc = currentLoc,
+                        matchResult = baseRestored,
+                        route = route
+                    )
+                    val finalRestored = baseRestored.copy(
+                        detectedSide = refreshedDir.confirmedSide ?: persistedSnapshot.detectedSide,
                         smartDirectionState = refreshedDir
                     )
+                    lastCalculatedMatchResult = finalRestored
+                    _autoMatchStateFlow.value = finalRestored
+                } else {
+                    val refreshedDir = evaluateAndPublishSmartDirection(
+                        loc = currentLoc,
+                        matchResult = _autoMatchStateFlow.value,
+                        route = route
+                    )
+                    _autoMatchStateFlow.update { current ->
+                        current.copy(
+                            detectedSide = refreshedDir.confirmedSide ?: "Unknown",
+                            smartDirectionState = refreshedDir
+                        )
+                    }
                 }
                 CtecsNavigationTelemetryHub.updateTelemetry(routeData = route)
                 syncBackgroundNavigationService()
@@ -2399,8 +2512,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val alerts = weatherAlertNotifier.evaluateActionableAlerts(
                             bundle = bundle,
                             settings = weatherIntelligenceSettings.value,
-                            assessments = highwayWorkAssessments.value,
-                            targetPrediction = workTargetPrediction.value
+                            assessments = highwayWorkAssessments.value
                         )
                         weatherAlertNotifier.dispatchSystemNotifications(getApplication(), alerts)
                     } else {
@@ -4677,6 +4789,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Compact, quiet Home Page Chainage Card force recalibration trigger.
+     * Prevents duplicate concurrent runs, drives the minimalist icon state
+     * (IDLE -> REFRESHING -> SUCCESS/WARNING -> IDLE), and executes the full
+     * centralized recalibration pipeline without bulky dialogs or disruptive toasts.
+     */
+    fun triggerHomeChainageForceRefresh() {
+        if (_chainageCardRefreshState.value == ChainageCardRefreshState.REFRESHING ||
+            refreshCoordinator.isBusy()
+        ) {
+            return
+        }
+        chainageCardFeedbackJob?.cancel()
+        _chainageCardRefreshState.value = ChainageCardRefreshState.REFRESHING
+
+        forceRefreshAllChainageAccuracy(
+            mode = RefreshMode.FORCE_ALL,
+            suppressToast = true
+        ) { report ->
+            val outcomeState = when (report.status) {
+                ChainageAccuracyStatus.VERIFIED,
+                ChainageAccuracyStatus.UPDATED -> ChainageCardRefreshState.SUCCESS
+                ChainageAccuracyStatus.NEEDS_GPS,
+                ChainageAccuracyStatus.ALIGNMENT_MISMATCH,
+                ChainageAccuracyStatus.CALIBRATION_NEEDS_REVIEW -> ChainageCardRefreshState.WARNING
+            }
+            _chainageCardRefreshState.value = outcomeState
+            chainageCardFeedbackJob?.cancel()
+            chainageCardFeedbackJob = viewModelScope.launch {
+                kotlinx.coroutines.delay(
+                    if (outcomeState == ChainageCardRefreshState.SUCCESS) 1_250L else 2_200L
+                )
+                if (_chainageCardRefreshState.value == outcomeState) {
+                    _chainageCardRefreshState.value = ChainageCardRefreshState.IDLE
+                }
+            }
+        }
+    }
+
+    /**
      * Unified Force Refresh All / Smart Refresh action for Chainage Accuracy.
      * Synchronizes GPS, validates/rebuilds KMZ alignment caches without losing files,
      * preserves permanent control points & profiles, preserves manual chainage overrides,
@@ -4684,6 +4835,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun forceRefreshAllChainageAccuracy(
         mode: RefreshMode = RefreshMode.FORCE_ALL,
+        suppressToast: Boolean = false,
         onComplete: ((ChainageAccuracyReport) -> Unit)? = null
     ) {
         val generation = refreshCoordinator.tryBeginRefresh() ?: return
@@ -4758,8 +4910,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (mode == RefreshMode.FORCE_ALL) {
                         stuckChainageMonitor.reset()
                     }
+                    if (locState.lastFixTime > lastAcceptedAutoFixTimeMs) {
+                        lastAcceptedAutoFixTimeMs = locState.lastFixTime
+                    }
                     lastCalculatedMatchResult = enrichedRefreshMatch
                     _autoMatchStateFlow.value = enrichedRefreshMatch
+                    persistReliableChainageSnapshotIfNeeded(effectiveRoute?.id, enrichedRefreshMatch)
                 }
 
                 SmartChainageCorrectionEngine.recordRefreshExecuted(
@@ -4781,16 +4937,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                val toastType = when (output.report.status) {
-                    ChainageAccuracyStatus.VERIFIED, ChainageAccuracyStatus.UPDATED -> ToastType.SUCCESS
-                    ChainageAccuracyStatus.NEEDS_GPS, ChainageAccuracyStatus.CALIBRATION_NEEDS_REVIEW -> ToastType.WARNING
-                    ChainageAccuracyStatus.ALIGNMENT_MISMATCH -> ToastType.ERROR
+                if (!suppressToast) {
+                    val toastType = when (output.report.status) {
+                        ChainageAccuracyStatus.VERIFIED, ChainageAccuracyStatus.UPDATED -> ToastType.SUCCESS
+                        ChainageAccuracyStatus.NEEDS_GPS, ChainageAccuracyStatus.CALIBRATION_NEEDS_REVIEW -> ToastType.WARNING
+                        ChainageAccuracyStatus.ALIGNMENT_MISMATCH -> ToastType.ERROR
+                    }
+                    _uiMessages.emit(
+                        if (toastType == ToastType.ERROR) UiMessage.Error(output.report.summaryMessage)
+                        else UiMessage.Success(output.report.summaryMessage)
+                    )
+                    showToast(output.report.summaryMessage, toastType)
                 }
-                _uiMessages.emit(
-                    if (toastType == ToastType.ERROR) UiMessage.Error(output.report.summaryMessage)
-                    else UiMessage.Success(output.report.summaryMessage)
-                )
-                showToast(output.report.summaryMessage, toastType)
 
                 withContext(Dispatchers.Main) {
                     onComplete?.invoke(output.report)
@@ -4811,7 +4969,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isManualOverrideActive = _manualChainage.value != null || !_manualChainageText.value.isNullOrBlank()
                 )
                 _chainageAccuracyReport.value = fallbackReport
-                showToast(fallbackReport.summaryMessage, ToastType.WARNING)
+                if (!suppressToast) {
+                    showToast(fallbackReport.summaryMessage, ToastType.WARNING)
+                }
                 withContext(Dispatchers.Main) {
                     onComplete?.invoke(fallbackReport)
                 }
@@ -4834,6 +4994,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startLocation() {
         isAppForegrounded = true
         locationTracker.startTracking()
+        locationTracker.checkAndRecoverIfStale(stallThresholdMs = 5_000L)
         if (!_isScreensaverScreenOff.value && !_isScreensaverAodActive.value) {
             compassTracker.startTracking()
         }

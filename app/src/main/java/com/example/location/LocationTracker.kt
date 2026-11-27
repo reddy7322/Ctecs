@@ -81,10 +81,14 @@ class LocationTracker(private val context: Context) {
     private var stationarySinceMs: Long = 0L
 
     private val lastCallbackMillis = AtomicLong(0L)
+    private val latestAcceptedFixTimeMs = AtomicLong(0L)
     private val stallRecoveries = AtomicLong(0L)
 
     companion object {
         const val DEFAULT_GPS_FRESH_AGE_MS = 20_000L
+        const val MAX_LIVE_LOCATION_AGE_MS = 25_000L
+        const val MAX_ACCEPTABLE_LAST_LOCATION_AGE_MS = 30_000L
+        const val MAX_LAST_LOCATION_FALLBACK_ACCURACY_M = 35.0f
         const val ACTIVE_INTERVAL_MS = 1_000L
         const val ACTIVE_MIN_INTERVAL_MS = 500L
         const val STATIONARY_INTERVAL_MS = 3_500L
@@ -233,7 +237,11 @@ class LocationTracker(private val context: Context) {
 
             fusedClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null && _locationState.value.point == null) {
-                    handleNewLocation(loc)
+                    handleNewLocation(
+                        loc = loc,
+                        maxAgeMs = MAX_ACCEPTABLE_LAST_LOCATION_AGE_MS,
+                        maxAccuracyForCachedFallback = MAX_LAST_LOCATION_FALLBACK_ACCURACY_M
+                    )
                 }
             }
 
@@ -367,17 +375,40 @@ class LocationTracker(private val context: Context) {
         _locationState.value = _locationState.value.copy(status = LocationStatus.IDLE)
     }
 
-    private fun handleNewLocation(loc: Location) {
-        if (!isValidCoordinate(loc.latitude, loc.longitude)) return
-        val now = System.currentTimeMillis()
-        lastCallbackMillis.set(now)
+    internal fun handleNewLocation(
+        loc: Location,
+        maxAgeMs: Long = MAX_LIVE_LOCATION_AGE_MS,
+        maxAccuracyForCachedFallback: Float? = null,
+        nowMs: Long = System.currentTimeMillis()
+    ): Boolean {
+        if (!isValidCoordinate(loc.latitude, loc.longitude)) return false
+        // Use true OS fix timestamp so stale cached lastLocation fixes are NEVER disguised as fresh
+        val rawFixTime = loc.time
+        val effectiveFixTime = if (rawFixTime > 0L) rawFixTime.coerceAtMost(nowMs + 2_000L) else nowMs
+        val fixAgeMs = (nowMs - effectiveFixTime).coerceAtLeast(0L)
+        if (maxAgeMs > 0L && fixAgeMs > maxAgeMs) {
+            return false
+        }
+
+        // Strict monotonic timestamp guard: older background/network callbacks must never overwrite newer fixes
+        val previousLatestFix = latestAcceptedFixTimeMs.get()
+        if (previousLatestFix > 0L && effectiveFixTime < previousLatestFix - 500L) {
+            return false
+        }
+
         val accuracy = if (loc.accuracy.isNaN() || loc.accuracy < 0f) 0f else loc.accuracy
+        if (maxAccuracyForCachedFallback != null && accuracy > maxAccuracyForCachedFallback) {
+            return false
+        }
+
+        latestAcceptedFixTimeMs.set(effectiveFixTime)
+        lastCallbackMillis.set(nowMs)
         val status = if (accuracy <= 15.0f) LocationStatus.READY else LocationStatus.POOR_ACCURACY
         val point = GeoPoint(loc.latitude, loc.longitude, loc.altitude)
         val validBearing = if (loc.hasBearing() && !loc.bearing.isNaN()) loc.bearing else null
         val validSpeed = if (loc.hasSpeed() && !loc.speed.isNaN() && loc.speed >= 0f) loc.speed else null
 
-        evaluateAdaptivePolling(loc.latitude, loc.longitude, validSpeed, now)
+        evaluateAdaptivePolling(loc.latitude, loc.longitude, validSpeed, nowMs)
 
         _locationState.value = LocationState(
             point = point,
@@ -386,8 +417,9 @@ class LocationTracker(private val context: Context) {
             speed = validSpeed,
             altitude = loc.altitude,
             status = status,
-            lastFixTime = now
+            lastFixTime = effectiveFixTime
         )
+        return true
     }
 
     /**
@@ -402,17 +434,16 @@ class LocationTracker(private val context: Context) {
             val cts = CancellationTokenSource()
             fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
                 .addOnSuccessListener { loc ->
-                    if (loc != null && isValidCoordinate(loc.latitude, loc.longitude)) {
-                        handleNewLocation(loc)
+                    if (loc != null && handleNewLocation(loc, maxAgeMs = DEFAULT_GPS_FRESH_AGE_MS)) {
                         onComplete?.invoke(true)
                     } else {
                         fusedClient.lastLocation.addOnSuccessListener { lastLoc ->
-                            if (lastLoc != null && isValidCoordinate(lastLoc.latitude, lastLoc.longitude)) {
-                                handleNewLocation(lastLoc)
-                                onComplete?.invoke(true)
-                            } else {
-                                onComplete?.invoke(false)
-                            }
+                            val accepted = lastLoc != null && handleNewLocation(
+                                loc = lastLoc,
+                                maxAgeMs = DEFAULT_GPS_FRESH_AGE_MS,
+                                maxAccuracyForCachedFallback = MAX_LAST_LOCATION_FALLBACK_ACCURACY_M
+                            )
+                            onComplete?.invoke(accepted)
                         }.addOnFailureListener {
                             onComplete?.invoke(false)
                         }
@@ -464,17 +495,16 @@ class LocationTracker(private val context: Context) {
                 try {
                     fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
                         .addOnSuccessListener { loc ->
-                            if (loc != null && isValidCoordinate(loc.latitude, loc.longitude)) {
-                                handleNewLocation(loc)
+                            if (loc != null && handleNewLocation(loc, maxAgeMs = maxFreshAgeMs)) {
                                 if (cont.isActive) cont.resume(true)
                             } else {
                                 fusedClient.lastLocation.addOnSuccessListener { lastLoc ->
-                                    if (lastLoc != null && isValidCoordinate(lastLoc.latitude, lastLoc.longitude)) {
-                                        handleNewLocation(lastLoc)
-                                        if (cont.isActive) cont.resume(true)
-                                    } else {
-                                        if (cont.isActive) cont.resume(false)
-                                    }
+                                    val accepted = lastLoc != null && handleNewLocation(
+                                        loc = lastLoc,
+                                        maxAgeMs = maxFreshAgeMs,
+                                        maxAccuracyForCachedFallback = MAX_LAST_LOCATION_FALLBACK_ACCURACY_M
+                                    )
+                                    if (cont.isActive) cont.resume(accepted)
                                 }.addOnFailureListener {
                                     if (cont.isActive) cont.resume(false)
                                 }
@@ -510,6 +540,7 @@ class LocationTracker(private val context: Context) {
     ) {
         val now = if (fixTimeMs > 0L) fixTimeMs else System.currentTimeMillis()
         lastCallbackMillis.set(now)
+        latestAcceptedFixTimeMs.set(now)
         val point = GeoPoint(lat, lng, altitude)
         val status = if (accuracy <= 15.0f) LocationStatus.READY else LocationStatus.POOR_ACCURACY
         _locationState.value = LocationState(

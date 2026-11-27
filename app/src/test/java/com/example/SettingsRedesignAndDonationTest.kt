@@ -33,7 +33,11 @@ import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.pm.ResolveInfo
 import android.net.Uri
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import com.example.donation.DonationWebhookVerifier
+import com.example.donation.UpiAppAvailability
+import com.example.donation.UpiFailureCategory
 import com.example.donation.UpiIntentResolution
 import com.example.donation.UpiQrGenerator
 import com.example.donation.UpiUriValidationResult
@@ -159,9 +163,10 @@ class SettingsRedesignAndDonationTest {
         val upiUri = DonationConfig.buildUpiPaymentUri(50.0, "CTECS998877")
         val parsedUri = Uri.parse(upiUri)
         assertEquals(
-            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
             upiUri
         )
+        assertFalse("Must NEVER encode @ as %40 inside pa (causes BHIM 'This request type is not supported')", upiUri.contains("%40", ignoreCase = true))
         assertFalse("Must NEVER double-encode %40 as %2540", upiUri.contains("%25", ignoreCase = true))
         assertEquals("tvtelugu@ptyes", parsedUri.getQueryParameter("pa"))
         assertEquals("madhu", parsedUri.getQueryParameter("pn"))
@@ -172,7 +177,13 @@ class SettingsRedesignAndDonationTest {
         assertEquals("Standard personal VPA URI must omit unsupported P2M tr parameter", null, parsedUri.getQueryParameter("tr"))
         assertTrue(DonationConfig.validateUpiPaymentUri(upiUri, 50.0) is UpiUriValidationResult.Valid)
 
-        // Strict URI validator rejects double-encoded VPA, non-UPI schemes, and unsigned P2M tr
+        // Strict URI validator rejects %40-encoded VPA (BHIM failure), double-encoded %2540, non-UPI schemes, and unsigned P2M tr
+        assertTrue(
+            DonationConfig.validateUpiPaymentUri(
+                "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+                20.0
+            ) is UpiUriValidationResult.Invalid
+        )
         assertTrue(
             DonationConfig.validateUpiPaymentUri(
                 "upi://pay?pa=tvtelugu%2540ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
@@ -181,7 +192,7 @@ class SettingsRedesignAndDonationTest {
         )
         assertTrue(
             DonationConfig.validateUpiPaymentUri(
-                "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&tr=CTECS123&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+                "upi://pay?pa=tvtelugu@ptyes&pn=madhu&tr=CTECS123&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
                 20.0
             ) is UpiUriValidationResult.Invalid
         )
@@ -211,8 +222,21 @@ class SettingsRedesignAndDonationTest {
         assertTrue("QR version matrix must be at least 21x21", qr10.size >= 21)
         assertFalse("Dynamic QRs for different orders must differ", qr10.modules.contentEquals(qr100.modules))
 
-        val bmp = UpiQrGenerator.generateBitmap(uri10, targetSizePx = 256)
-        assertTrue(bmp.width >= 180 && bmp.height >= 180 && bmp.width == bmp.height)
+        val bmp = UpiQrGenerator.generateValidatedUpiBitmap(uri10, expectedAmountInr = 10.0, targetSizePx = 256)
+        assertTrue(bmp != null && bmp.width >= 180 && bmp.height >= 180 && bmp.width == bmp.height)
+
+        // Validated QR generator rejects malformed %40 VPA or mismatched amount
+        assertEquals(
+            null,
+            UpiQrGenerator.generateValidatedUpiBitmap(
+                "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=10.00&cu=INR&tn=CTECS%20Coffee%20Support",
+                expectedAmountInr = 10.0
+            )
+        )
+        assertEquals(
+            null,
+            UpiQrGenerator.generateValidatedUpiBitmap(uri10, expectedAmountInr = 50.0)
+        )
     }
 
     // =========================================================================
@@ -488,7 +512,7 @@ class SettingsRedesignAndDonationTest {
         assertEquals(DonationConfig.CURRENCY, createdOrder.currency)
         assertEquals(50.0, createdOrder.amountInr, 0.001)
         assertEquals(
-            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
             createdOrder.upiUri
         )
         assertNotEquals(DonationStatus.PAID, createdOrder.parsedStatus)
@@ -575,13 +599,13 @@ class SettingsRedesignAndDonationTest {
 
     @Test
     fun upiPaymentCompatibility_supportsAllAmountsMajorAppsBhimBrowserExclusionAndNetworkFallback() = runBlocking {
-        // 1. Validate exact standard URI for ₹10, ₹20, ₹50, ₹100, and custom ₹75.50
+        // 1. Validate exact standard URI for ₹10, ₹20, ₹50, ₹100, and custom ₹75.50 (unencoded @ in pa)
         val expectedByAmount = mapOf(
-            10.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=10.00&cu=INR&tn=CTECS%20Coffee%20Support",
-            20.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
-            50.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
-            100.0 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=100.00&cu=INR&tn=CTECS%20Coffee%20Support",
-            75.5 to "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=75.50&cu=INR&tn=CTECS%20Coffee%20Support"
+            10.0 to "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=10.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            20.0 to "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            50.0 to "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=50.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            100.0 to "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=100.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            75.5 to "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=75.50&cu=INR&tn=CTECS%20Coffee%20Support"
         )
         expectedByAmount.forEach { (amount, expectedUri) ->
             val built = DonationConfig.buildUpiPaymentUri(amount)
@@ -595,27 +619,30 @@ class SettingsRedesignAndDonationTest {
         val noApps = donationRepo.buildCompatibleUpiIntent(order, targetPackage = "in.org.npci.upiapp")
         assertTrue(noApps is UpiIntentResolution.NoUpiAppInstalled)
 
-        // 3. Register Google Pay, PhonePe, Paytm, BHIM, another UPI app, AND Chrome browser on ShadowPackageManager
+        // 3. Register Google Pay, PhonePe, Paytm, BHIM, Amazon Pay, Chrome browser, AND a non-exported app
         val shadowPm = shadowOf(app.packageManager)
         val upiPackages = listOf(
-            "com.google.android.apps.nbu.paisa.user" to "Google Pay",
-            "com.phonepe.app" to "PhonePe",
-            "net.one97.paytm" to "Paytm",
-            "in.org.npci.upiapp" to "BHIM",
-            "in.amazon.mShop.android.shopping" to "Amazon Pay",
-            "com.android.chrome" to "Chrome"
+            Triple("com.google.android.apps.nbu.paisa.user", "Google Pay", true),
+            Triple("com.phonepe.app", "PhonePe", true),
+            Triple("net.one97.paytm", "Paytm", true),
+            Triple("in.org.npci.upiapp", "BHIM", true),
+            Triple("in.amazon.mShop.android.shopping", "Amazon Pay", true),
+            Triple("com.android.chrome", "Chrome", true),
+            Triple("com.private.nonexported.upi", "PrivateUPI", false)
         )
         val upiFilter = IntentFilter(Intent.ACTION_VIEW).apply {
             addCategory(Intent.CATEGORY_DEFAULT)
             addDataScheme("upi")
         }
-        upiPackages.forEach { (pkg, label) ->
+        val uri20 = DonationConfig.buildUpiPaymentAndroidUri(20.0)
+        val probeUri = DonationConfig.buildUpiProbeUri()
+        upiPackages.forEach { (pkg, label, isExported) ->
             val comp = android.content.ComponentName(pkg, "$pkg.UpiPayActivity")
             val resolveInfo = ResolveInfo().apply {
                 activityInfo = ActivityInfo().apply {
                     packageName = pkg
                     name = comp.className
-                    exported = true
+                    exported = isExported
                 }
                 nonLocalizedLabel = label
             }
@@ -624,19 +651,30 @@ class SettingsRedesignAndDonationTest {
             @Suppress("DEPRECATION")
             shadowPm.addIntentFilterForActivity(comp, upiFilter)
             @Suppress("DEPRECATION")
-            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, DonationConfig.buildUpiPaymentAndroidUri(20.0)), resolveInfo)
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, uri20), resolveInfo)
             @Suppress("DEPRECATION")
-            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, DonationConfig.buildUpiPaymentAndroidUri(20.0)).setPackage(pkg), resolveInfo)
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, uri20).setPackage(pkg), resolveInfo)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, probeUri), resolveInfo)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, probeUri).setPackage(pkg), resolveInfo)
         }
 
-        // Verify ordinary browser (Chrome) is NEVER included in compatible UPI apps
-        val compatible = donationRepo.getCompatibleUpiApps(DonationConfig.buildUpiPaymentAndroidUri(20.0))
+        // Verify ordinary browser (Chrome) AND non-exported app are NEVER included in compatible UPI apps
+        val compatible = donationRepo.getCompatibleUpiApps(uri20)
         assertFalse("Browser must never be offered as a UPI app", compatible.any { it.packageName == "com.android.chrome" })
+        assertFalse("Non-exported activity must never be treated as compatible", compatible.any { it.packageName == "com.private.nonexported.upi" })
         assertTrue(compatible.any { it.packageName == "com.google.android.apps.nbu.paisa.user" })
         assertTrue(compatible.any { it.packageName == "com.phonepe.app" })
         assertTrue(compatible.any { it.packageName == "net.one97.paytm" })
         assertTrue(compatible.any { it.packageName == "in.org.npci.upiapp" })
         assertTrue(compatible.any { it.packageName == "in.amazon.mShop.android.shopping" })
+
+        // Verify availability helper distinguishes genuinely compatible apps vs unsupported/missing apps
+        assertTrue(donationRepo.getUpiAppAvailability("in.org.npci.upiapp", uri20) is UpiAppAvailability.Compatible)
+        assertTrue(donationRepo.getUpiAppAvailability("com.android.chrome", uri20) is UpiAppAvailability.Unavailable)
+        assertTrue(donationRepo.getUpiAppAvailability("com.private.nonexported.upi", uri20) is UpiAppAvailability.Unavailable)
+        assertTrue(donationRepo.getUpiAppAvailability("com.not.installed.upi", uri20) is UpiAppAvailability.Unavailable)
 
         // Verify targeted launch for Google Pay, PhonePe, Paytm, BHIM, and chooser for Other UPI
         listOf(
@@ -652,7 +690,7 @@ class SettingsRedesignAndDonationTest {
             assertEquals(pkg, ready.intent.`package`)
             assertEquals(null, ready.intent.type) // Never sets unsupported MIME type
             assertEquals(
-                "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+                "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
                 ready.intent.dataString
             )
         }
@@ -665,35 +703,242 @@ class SettingsRedesignAndDonationTest {
         val missingApp = donationRepo.buildCompatibleUpiIntent(order, targetPackage = "com.nonexistent.upi")
         assertTrue(missingApp is UpiIntentResolution.TargetAppUnavailable)
 
-        // 4. Legacy persisted URI with unsupported `&tr=...` is automatically repaired to valid standard URI
-        val legacyOrder = order.copy(
-            upiUri = "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&tr=OLD123&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support"
+        // 4. Legacy persisted URIs with `%40` VPA or unsupported `&tr=...` are automatically repaired
+        val legacyPercent40Order = order.copy(
+            upiUri = "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support"
         )
-        val repaired = donationRepo.resolveValidatedPaymentUri(legacyOrder).toString()
         assertEquals(
-            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
-            repaired
+            "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            donationRepo.resolveValidatedPaymentUri(legacyPercent40Order).toString()
+        )
+        val legacyTrOrder = order.copy(
+            upiUri = "upi://pay?pa=tvtelugu@ptyes&pn=madhu&tr=OLD123&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support"
+        )
+        assertEquals(
+            "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            donationRepo.resolveValidatedPaymentUri(legacyTrOrder).toString()
         )
 
-        // 5. Network interruption when backend URL is unreachable still safely creates local order & retains record
+        // 5. SSRF protection blocks loopback/private/metadata URLs; unreachable public HTTPS still keeps local order intact
+        assertFalse(DonationRepository(app, inMemoryDb.donationDao(), backendBaseUrl = "https://127.0.0.1:8443").isBackendConfigured)
+        assertFalse(DonationRepository(app, inMemoryDb.donationDao(), backendBaseUrl = "https://169.254.169.254").isBackendConfigured)
+        assertFalse(DonationRepository(app, inMemoryDb.donationDao(), backendBaseUrl = "https://10.0.0.5").isBackendConfigured)
+        assertFalse(DonationRepository(app, inMemoryDb.donationDao(), backendBaseUrl = "http://payments.example.com").isBackendConfigured)
+
         val offlineBackendRepo = DonationRepository(
             context = app,
             donationDao = inMemoryDb.donationDao(),
-            backendBaseUrl = "https://127.0.0.1:1" // guaranteed connection refused / unreachable
+            backendBaseUrl = "https://ctecs-unreachable-test.invalid"
         )
+        assertTrue(offlineBackendRepo.isBackendConfigured)
         val createdOffline = offlineBackendRepo.createOrReuseDonationOrder(10.0, DonationConfig.generateIdempotencyKey())
         assertTrue(createdOffline is DonationActionResult.Success)
         val offlineOrder = (createdOffline as DonationActionResult.Success).data
         assertFalse(offlineOrder.backendSynced)
         assertEquals(
-            "upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=10.00&cu=INR&tn=CTECS%20Coffee%20Support",
+            "upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=10.00&cu=INR&tn=CTECS%20Coffee%20Support",
             offlineOrder.upiUri
         )
 
         // 6. Sanitized log helper strips recipient VPA, encoded VPA, name, and UPI query string
-        val redacted = DonationConfig.sanitizeForLog("Failed to open upi://pay?pa=tvtelugu%40ptyes&pn=madhu for tvtelugu@ptyes (madhu)")
+        val redacted = DonationConfig.sanitizeForLog("Failed to open upi://pay?pa=tvtelugu@ptyes&pn=madhu for tvtelugu@ptyes (madhu)")
         assertFalse(redacted.contains("tvtelugu", ignoreCase = true))
         assertFalse(redacted.contains("madhu", ignoreCase = true))
+    }
+
+    // =========================================================================
+    // PART G: PAYTM RISK POLICY, SECURITY DECLINE, BHIM UNSUPPORTED & ALL 16 FAILURE CASES
+    // =========================================================================
+
+    @Test
+    fun upiFailureClassification_handlesErrorsABC_vpaUnavailable_bankDecline_network_expiry_and_paytmRestriction() = runBlocking {
+        // Register GPay, PhonePe, Paytm, and BHIM so intent resolution & chooser exclusion can be verified
+        val shadowPm = shadowOf(app.packageManager)
+        val uri20 = DonationConfig.buildUpiPaymentAndroidUri(20.0)
+        val probeUri = DonationConfig.buildUpiProbeUri()
+        val upiFilter = IntentFilter(Intent.ACTION_VIEW).apply {
+            addCategory(Intent.CATEGORY_DEFAULT)
+            addDataScheme("upi")
+        }
+        listOf(
+            "com.google.android.apps.nbu.paisa.user" to "Google Pay",
+            "com.phonepe.app" to "PhonePe",
+            "net.one97.paytm" to "Paytm",
+            "in.org.npci.upiapp" to "BHIM"
+        ).forEach { (pkg, label) ->
+            val comp = android.content.ComponentName(pkg, "$pkg.UpiPayActivity")
+            val ri = ResolveInfo().apply {
+                activityInfo = ActivityInfo().apply {
+                    packageName = pkg
+                    name = comp.className
+                    exported = true
+                }
+                nonLocalizedLabel = label
+            }
+            @Suppress("DEPRECATION")
+            shadowPm.addActivityIfNotPresent(comp)
+            @Suppress("DEPRECATION")
+            shadowPm.addIntentFilterForActivity(comp, upiFilter)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, uri20), ri)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, uri20).setPackage(pkg), ri)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, probeUri), ri)
+            @Suppress("DEPRECATION")
+            shadowPm.addResolveInfoForIntent(Intent(Intent.ACTION_VIEW, probeUri).setPackage(pkg), ri)
+        }
+
+        // Error C: BHIM "This request type is not supported" -> UNSUPPORTED_REQUEST, FAILED, no retry loop
+        val bhimOrder = (donationRepo.createOrReuseDonationOrder(20.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+        val bhimEval = (donationRepo.handleUpiAppReturnDetailed(
+            orderRef = bhimOrder.orderRef,
+            resultCode = Activity.RESULT_OK,
+            responseString = "Status=FAILURE&message=This%20request%20type%20is%20not%20supported",
+            launchedPackage = "in.org.npci.upiapp",
+            paymentMethodLabel = "BHIM"
+        ) as DonationActionResult.Success).data
+        assertEquals(DonationStatus.FAILED, bhimEval.transaction.parsedStatus)
+        assertEquals(UpiFailureCategory.UNSUPPORTED_REQUEST, bhimEval.failureCategory)
+        assertFalse(bhimEval.allowImmediateRetry)
+        assertFalse("BHIM error should not permanently restrict BHIM once URI is fixed", bhimEval.providerMarkedUnavailable)
+
+        // Scenario 10: Recipient VPA unavailable (NPCI code ZH) -> RECIPIENT_VPA_UNAVAILABLE
+        val vpaOrder = (donationRepo.createOrReuseDonationOrder(10.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+        val vpaEval = (donationRepo.handleUpiAppReturnDetailed(
+            orderRef = vpaOrder.orderRef,
+            resultCode = Activity.RESULT_OK,
+            responseString = "Status=FAILURE&responseCode=ZH&message=Invalid%20VPA",
+            launchedPackage = "com.phonepe.app",
+            paymentMethodLabel = "PhonePe"
+        ) as DonationActionResult.Success).data
+        assertEquals(DonationStatus.FAILED, vpaEval.transaction.parsedStatus)
+        assertEquals(UpiFailureCategory.RECIPIENT_VPA_UNAVAILABLE, vpaEval.failureCategory)
+
+        // Scenario 12b: Bank / provider decline (code U30) -> BANK_OR_PROVIDER_DECLINE
+        val bankOrder = (donationRepo.createOrReuseDonationOrder(50.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+        val bankEval = (donationRepo.handleUpiAppReturnDetailed(
+            orderRef = bankOrder.orderRef,
+            resultCode = Activity.RESULT_OK,
+            responseString = "Status=FAILURE&responseCode=U30&message=Debit%20has%20been%20failed",
+            launchedPackage = "com.google.android.apps.nbu.paisa.user",
+            paymentMethodLabel = "Google Pay"
+        ) as DonationActionResult.Success).data
+        assertEquals(DonationStatus.FAILED, bankEval.transaction.parsedStatus)
+        assertEquals(UpiFailureCategory.BANK_OR_PROVIDER_DECLINE, bankEval.failureCategory)
+        assertTrue(bankEval.allowImmediateRetry)
+
+        // Scenario 13: Network interruption (code U69 / timeout) -> NETWORK_INTERRUPTION
+        val netOrder = (donationRepo.createOrReuseDonationOrder(100.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+        val netEval = (donationRepo.handleUpiAppReturnDetailed(
+            orderRef = netOrder.orderRef,
+            resultCode = Activity.RESULT_OK,
+            responseString = "Status=FAILURE&responseCode=U69&message=Network%20timeout",
+            launchedPackage = "com.google.android.apps.nbu.paisa.user",
+            paymentMethodLabel = "Google Pay"
+        ) as DonationActionResult.Success).data
+        assertEquals(DonationStatus.FAILED, netEval.transaction.parsedStatus)
+        assertEquals(UpiFailureCategory.NETWORK_INTERRUPTION, netEval.failureCategory)
+
+        // Error A: Paytm UPI Risk Policy warning/rejection -> RECIPIENT_RISK_RESTRICTION + marks Paytm restricted
+        val paytmRiskOrder = (donationRepo.createOrReuseDonationOrder(20.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+        val riskEval = (donationRepo.handleUpiAppReturnDetailed(
+            orderRef = paytmRiskOrder.orderRef,
+            resultCode = Activity.RESULT_OK,
+            responseString = "Status=FAILURE&responseCode=ZD&message=Transaction%20may%20fail%20under%20UPI%20Risk%20Policy",
+            launchedPackage = "net.one97.paytm",
+            paymentMethodLabel = "Paytm"
+        ) as DonationActionResult.Success).data
+        assertEquals(DonationStatus.FAILED, riskEval.transaction.parsedStatus)
+        assertEquals(UpiFailureCategory.RECIPIENT_RISK_RESTRICTION, riskEval.failureCategory)
+        assertTrue(riskEval.providerMarkedUnavailable)
+        assertFalse("Must never immediately retry a risk-policy-declined Paytm transaction", riskEval.allowImmediateRetry)
+
+        // Error B: Paytm "Your payment is declined for security reasons" -> PROVIDER_SECURITY_DECLINE + keeps Paytm restricted
+        val paytmSecOrder = (donationRepo.createOrReuseDonationOrder(20.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+        val secEval = (donationRepo.handleUpiAppReturnDetailed(
+            orderRef = paytmSecOrder.orderRef,
+            resultCode = Activity.RESULT_OK,
+            responseString = "Status=FAILURE&message=Your%20payment%20is%20declined%20for%20security%20reasons",
+            launchedPackage = "net.one97.paytm",
+            paymentMethodLabel = "Paytm"
+        ) as DonationActionResult.Success).data
+        assertEquals(DonationStatus.FAILED, secEval.transaction.parsedStatus)
+        assertEquals(UpiFailureCategory.PROVIDER_SECURITY_DECLINE, secEval.failureCategory)
+        assertTrue(secEval.providerMarkedUnavailable)
+        assertFalse(secEval.allowImmediateRetry)
+
+        // Paytm is now reported as RestrictedByProvider & blocked from repeated launch,
+        // while Google Pay, PhonePe, BHIM, and Other UPI (excluding Paytm) remain available!
+        assertTrue(donationRepo.getUpiAppAvailability("net.one97.paytm", uri20) is UpiAppAvailability.RestrictedByProvider)
+        val paytmRetryBlocked = donationRepo.buildCompatibleUpiIntent(paytmSecOrder, targetPackage = "net.one97.paytm", targetDisplayName = "Paytm")
+        assertTrue("Restricted Paytm must return ProviderRestricted instead of retrying", paytmRetryBlocked is UpiIntentResolution.ProviderRestricted)
+
+        val gpayStillWorks = donationRepo.buildCompatibleUpiIntent(paytmSecOrder, targetPackage = "com.google.android.apps.nbu.paisa.user", targetDisplayName = "Google Pay")
+        assertTrue("Other independent UPI apps must remain usable", gpayStillWorks is UpiIntentResolution.LaunchReady)
+
+        val otherChooser = donationRepo.buildCompatibleUpiIntent(paytmSecOrder, targetPackage = null) as UpiIntentResolution.LaunchReady
+        @Suppress("DEPRECATION")
+        val excluded = otherChooser.intent.getParcelableArrayExtra(Intent.EXTRA_EXCLUDE_COMPONENTS)
+        assertTrue("Other UPI chooser must exclude restricted Paytm component", excluded != null && excluded.isNotEmpty())
+
+        // Scenario 16: Stale PENDING/CREATED order transitions cleanly to EXPIRED after TTL
+        val staleOrder = (donationRepo.createOrReuseDonationOrder(20.0, DonationConfig.generateIdempotencyKey(), nowMs = 1_000_000L) as DonationActionResult.Success).data
+        val expiredRes = donationRepo.refreshStatusFromTrustedBackend(staleOrder.orderRef, nowMs = staleOrder.expiresAtMs + 5_000L)
+        assertEquals(DonationStatus.EXPIRED, (expiredRes as DonationActionResult.Success).data.parsedStatus)
+
+        // Audit logs for security declines must NEVER leak recipient VPA or name
+        val paytmLogs = donationRepo.getAuditLogsForOrder(paytmSecOrder.orderRef)
+        assertTrue(paytmLogs.none { it.reason.contains("tvtelugu", ignoreCase = true) || it.reason.contains("madhu", ignoreCase = true) })
+        assertTrue(paytmLogs.none { it.evidence.contains("tvtelugu", ignoreCase = true) || it.evidence.contains("madhu", ignoreCase = true) })
+    }
+
+    @Test
+    fun buyMeACoffeePopup_disablesSecurityRestrictedPaytmAndHidesRetryWhileKeepingOtherAppsAndQrUsable() {
+        val declinedOrder = runBlocking {
+            val created = (donationRepo.createOrReuseDonationOrder(20.0, DonationConfig.generateIdempotencyKey()) as DonationActionResult.Success).data
+            donationRepo.handleUpiAppReturnDetailed(
+                orderRef = created.orderRef,
+                resultCode = Activity.RESULT_OK,
+                responseString = "Status=FAILURE&message=Your%20payment%20is%20declined%20for%20security%20reasons",
+                launchedPackage = "net.one97.paytm",
+                paymentMethodLabel = "Paytm"
+            )
+            created
+        }
+
+        composeRule.setContent {
+            MyApplicationTheme(themeMode = "dark") {
+                com.example.ui.settings.BuyMeACoffeeBottomSheet(
+                    repository = donationRepo,
+                    restoredOrderRef = declinedOrder.orderRef,
+                    onDismiss = {},
+                    onToast = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // 1. Failed status shown, retry button HIDDEN (never repeatedly retry a security-declined Paytm attempt)
+        composeRule.onNodeWithTag("donation_status_failed").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("coffee_retry_payment_btn").assertCountEquals(0)
+
+        // 2. Paytm button is disabled with subtle restricted indicator; Google Pay, PhonePe, BHIM & QR remain enabled
+        composeRule.onNodeWithTag("coffee_pay_paytm_btn").assertIsNotEnabled()
+        composeRule.onNodeWithTag("coffee_pay_paytm_restricted", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("coffee_pay_gpay_btn").assertIsEnabled()
+        composeRule.onNodeWithTag("coffee_pay_phonepe_btn").assertIsEnabled()
+        composeRule.onNodeWithTag("coffee_pay_bhim_btn").assertIsEnabled()
+        composeRule.onNodeWithTag("coffee_pay_qr_btn").assertIsEnabled()
+
+        // 3. Tapping QR still generates a valid scannable QR for the preserved ₹20 amount with strict privacy
+        composeRule.onNodeWithTag("coffee_pay_qr_btn").performClick()
+        composeRule.waitUntil(4000L) {
+            composeRule.onAllNodesWithTag("coffee_dynamic_qr_image").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("coffee_dynamic_qr_image").assertIsDisplayed()
+        composeRule.onAllNodesWithText("tvtelugu", substring = true, ignoreCase = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("madhu", substring = true, ignoreCase = true).assertCountEquals(0)
     }
 
     @Test

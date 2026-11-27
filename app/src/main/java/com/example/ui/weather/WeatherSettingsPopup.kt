@@ -278,12 +278,6 @@ fun WeatherSettingsPopup(
                                 tag = "ws_alert_fog",
                                 onCheckedChange = { v -> onUpdateSettings { it.copy(alertFogVisibility = v) } }
                             )
-                            PopupSwitchRow(
-                                title = "Working-Window Changes",
-                                checked = settings.alertWorkTargetChanges,
-                                tag = "ws_alert_window",
-                                onCheckedChange = { v -> onUpdateSettings { it.copy(alertWorkTargetChanges = v) } }
-                            )
 
                             HorizontalDivider(color = c.subtleSeparator, thickness = 0.7.dp)
 

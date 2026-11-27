@@ -22,6 +22,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -98,6 +99,9 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SatelliteAlt
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -139,6 +143,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
@@ -184,6 +189,7 @@ import com.example.geo.OsmTileManager
 import com.example.location.LocationNameResolver
 import com.example.location.LocationState
 import com.example.location.LocationTracker
+import com.example.model.ChainageCardRefreshState
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.DirectionDetectionState
@@ -234,6 +240,7 @@ fun HomeScreen(
     // FLAG_KEEP_SCREEN_ON is acquired only while the Screensaver overlay is active.
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
     val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
+    val chainageCardRefreshState by viewModel.chainageCardRefreshState.collectAsStateWithLifecycle()
     val smartDirectionState by viewModel.smartDirectionState.collectAsStateWithLifecycle()
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val projectProfile by viewModel.projectProfile.collectAsStateWithLifecycle()
@@ -562,10 +569,14 @@ fun HomeScreen(
             val displayChainageText = when {
                 matchResult.source == ChainageSource.MANUAL || matchResult.isManual -> matchResult.displayChainage
                 activeRoute == null -> "NO KMZ"
-                locationState.point == null -> "--+---"
                 matchResult.chainage != null -> matchResult.displayChainage
+                locationState.point == null -> "--+---"
                 else -> "--+---"
             }
+
+            val isAwaitingReliableFix = activeRoute != null &&
+                matchResult.isUncertain &&
+                matchResult.chainage != null
 
             val detectedSide = smartDirectionState.confirmedSide
                 ?: smartDirectionState.detectionState.shortLabel
@@ -585,6 +596,9 @@ fun HomeScreen(
                 subTextColor = subTextColor,
                 isDark = isDark,
                 isCompact = isCompactHeight,
+                refreshState = chainageCardRefreshState,
+                isAwaitingReliableFix = isAwaitingReliableFix,
+                onForceRefreshChainage = { viewModel.triggerHomeChainageForceRefresh() },
                 onClick = { showChainageManagementDialog = true },
                 onSelectManualSide = { chosenSide ->
                     viewModel.updateSide(chosenSide)
@@ -1047,6 +1061,9 @@ fun CentralChainageDisplay(
     subTextColor: Color,
     isDark: Boolean = false,
     isCompact: Boolean = false,
+    refreshState: ChainageCardRefreshState = ChainageCardRefreshState.IDLE,
+    isAwaitingReliableFix: Boolean = false,
+    onForceRefreshChainage: (() -> Unit)? = null,
     onClick: () -> Unit = {},
     onToggleSide: (() -> Unit)? = null,
     onSelectManualSide: ((RoadSide) -> Unit)? = null,
@@ -1118,15 +1135,17 @@ fun CentralChainageDisplay(
             val useStackedBadges = containerWidth < 350.dp || fontScale > 1.25f || (isLongSideText && containerWidth < 390.dp)
 
             // Dynamic font sizing calculation
+            val showRefreshButton = onForceRefreshChainage != null && hasActiveRoute
+            val refreshButtonAllowance = if (showRefreshButton) 40.dp else 0.dp
             val charCount = chainageText.length.coerceAtLeast(6)
             val digitFontSize: TextUnit = if (useStackedBadges) {
-                val availForDigits = (containerWidth - 20.dp).coerceAtLeast(140.dp)
+                val availForDigits = (containerWidth - 20.dp - refreshButtonAllowance).coerceAtLeast(130.dp)
                 val calculatedSp = (availForDigits.value / (charCount * 0.58f * fontScale))
                 calculatedSp.coerceIn(28f, if (containerWidth < 330.dp) 44f else 54f).sp
             } else {
                 val kmBadgeW = if (containerWidth < 360.dp) 38.dp else 44.dp
                 val sideBadgeW = if (isLongSideText) 95.dp else if (containerWidth < 360.dp) 68.dp else 80.dp
-                val availForDigits = (containerWidth - kmBadgeW - sideBadgeW - 24.dp).coerceAtLeast(110.dp)
+                val availForDigits = (containerWidth - kmBadgeW - sideBadgeW - refreshButtonAllowance - 24.dp).coerceAtLeast(105.dp)
                 val calculatedSp = (availForDigits.value / (charCount * 0.58f * fontScale))
                 val maxCap = when {
                     containerWidth < 360.dp -> 44f
@@ -1219,15 +1238,29 @@ fun CentralChainageDisplay(
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    // Dominant Full-Width Live Chainage Digits
-                    OdometerChainageRow(
-                        chainageText = chainageText,
-                        mainTextColor = mainTextColor,
-                        digitFontSize = digitFontSize,
-                        isDark = isDark
-                    )
+                    // Dominant Full-Width Live Chainage Digits with minimalist Force Refresh icon beside it
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OdometerChainageRow(
+                            chainageText = chainageText,
+                            mainTextColor = mainTextColor,
+                            digitFontSize = digitFontSize,
+                            isDark = isDark
+                        )
+                        if (showRefreshButton) {
+                            HomeChainageRefreshIconButton(
+                                refreshState = refreshState,
+                                subTextColor = subTextColor,
+                                isDark = isDark,
+                                onClick = { onForceRefreshChainage?.invoke() }
+                            )
+                        }
+                    }
                 } else {
-                    // Inline Hero Row: [KM]  173+720  [RHS]
+                    // Inline Hero Row: [KM]  173+720  [↻]  [RHS]
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center,
@@ -1259,7 +1292,16 @@ fun CentralChainageDisplay(
                             isDark = isDark
                         )
 
-                        Box(modifier = Modifier.padding(start = if (containerWidth < 360.dp) 5.dp else 8.dp)) {
+                        if (showRefreshButton) {
+                            HomeChainageRefreshIconButton(
+                                refreshState = refreshState,
+                                subTextColor = subTextColor,
+                                isDark = isDark,
+                                onClick = { onForceRefreshChainage?.invoke() }
+                            )
+                        }
+
+                        Box(modifier = Modifier.padding(start = if (showRefreshButton) 0.dp else if (containerWidth < 360.dp) 5.dp else 8.dp)) {
                             if (smartDirectionState != null) {
                                 SmartDirectionIndicatorBadge(
                                     directionState = smartDirectionState,
@@ -1325,11 +1367,12 @@ fun CentralChainageDisplay(
                     ChainageSource.GPS -> "GPS"
                 }
 
-                val (confText, confCol) = when (confidence) {
-                    MatchConfidence.HIGH -> "Good" to c.success
-                    MatchConfidence.MEDIUM -> "Moderate" to c.accent
-                    MatchConfidence.LOW -> "Poor" to c.error
-                    MatchConfidence.NO_MATCH -> "No Fix" to subTextColor
+                val (confText, confCol) = when {
+                    isAwaitingReliableFix -> "Awaiting GPS" to c.error
+                    confidence == MatchConfidence.HIGH -> "Good" to c.success
+                    confidence == MatchConfidence.MEDIUM -> "Moderate" to c.accent
+                    confidence == MatchConfidence.LOW -> "Poor" to c.error
+                    else -> "No Fix" to subTextColor
                 }
 
                 if (containerWidth < 350.dp || fontScale > 1.25f) {
@@ -1418,6 +1461,106 @@ fun CentralChainageDisplay(
                             maxLines = 1
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeChainageRefreshIconButton(
+    refreshState: ChainageCardRefreshState,
+    subTextColor: Color,
+    isDark: Boolean,
+    onClick: () -> Unit
+) {
+    val c = CtecsTheme.colors
+    val isRefreshing = refreshState == ChainageCardRefreshState.REFRESHING
+
+    val iconTint by animateColorAsState(
+        targetValue = when (refreshState) {
+            ChainageCardRefreshState.IDLE -> subTextColor.copy(alpha = if (isDark) 0.74f else 0.66f)
+            ChainageCardRefreshState.REFRESHING -> c.accent
+            ChainageCardRefreshState.SUCCESS -> c.success
+            ChainageCardRefreshState.WARNING -> c.error
+        },
+        animationSpec = tween(200),
+        label = "home_chainage_refresh_tint"
+    )
+
+    val accessibilityLabel = when (refreshState) {
+        ChainageCardRefreshState.IDLE -> "Force refresh chainage"
+        ChainageCardRefreshState.REFRESHING -> "Recalibrating chainage"
+        ChainageCardRefreshState.SUCCESS -> "Chainage recalibrated"
+        ChainageCardRefreshState.WARNING -> "GPS or alignment warning"
+    }
+
+    IconButton(
+        onClick = onClick,
+        enabled = !isRefreshing,
+        modifier = Modifier
+            .size(48.dp)
+            .testTag("home_chainage_refresh_button")
+    ) {
+        AnimatedContent(
+            targetState = refreshState,
+            transitionSpec = {
+                (fadeIn(tween(180)) + scaleIn(initialScale = 0.72f, animationSpec = tween(220)))
+                    .togetherWith(fadeOut(tween(140)) + scaleOut(targetScale = 0.72f, animationSpec = tween(140)))
+            },
+            label = "home_chainage_refresh_icon"
+        ) { state ->
+            when (state) {
+                ChainageCardRefreshState.SUCCESS -> {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = accessibilityLabel,
+                        tint = iconTint,
+                        modifier = Modifier
+                            .size(19.dp)
+                            .testTag("home_chainage_refresh_success_icon")
+                    )
+                }
+                ChainageCardRefreshState.WARNING -> {
+                    Icon(
+                        imageVector = Icons.Rounded.WarningAmber,
+                        contentDescription = accessibilityLabel,
+                        tint = iconTint,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .testTag("home_chainage_refresh_warning_icon")
+                    )
+                }
+                ChainageCardRefreshState.REFRESHING -> {
+                    val infiniteTransition = rememberInfiniteTransition(label = "home_chainage_refresh_spin")
+                    val spinAngle by infiniteTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 850, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "home_chainage_refresh_angle"
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.Sync,
+                        contentDescription = accessibilityLabel,
+                        tint = iconTint,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .graphicsLayer { rotationZ = spinAngle }
+                            .testTag("home_chainage_refresh_spinning_icon")
+                    )
+                }
+                ChainageCardRefreshState.IDLE -> {
+                    Icon(
+                        imageVector = Icons.Rounded.Sync,
+                        contentDescription = accessibilityLabel,
+                        tint = iconTint,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .testTag("home_chainage_refresh_idle_icon")
+                    )
                 }
             }
         }

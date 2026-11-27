@@ -14,7 +14,6 @@ import com.example.model.BituminousMaterialConfig
 import com.example.model.BituminousWorkCategory
 import com.example.model.ContractSpecificationConfig
 import com.example.model.DailyWeatherPoint
-import com.example.model.DelayRiskSummary
 import com.example.model.HighwayWorkActivity
 import com.example.model.HourlyWeatherPoint
 import com.example.model.OtherBituminousWorkType
@@ -24,11 +23,10 @@ import com.example.model.WeatherIntelligenceSettings
 import com.example.model.WeatherObservation
 import com.example.model.WeatherUiState
 import com.example.model.WorkSuitabilityStatus
-import com.example.model.WorkTargetInput
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.weather.WeatherDashboardScreen
 import com.example.weather.IrcMorthWeatherRuleEngine
-import com.example.weather.WorkTargetPredictionEngine
+import com.example.weather.WeatherDelayRiskAnalyzer
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -336,18 +334,14 @@ class DynamicBituminousMaterialWeatherTest {
                     selectedActivity = HighwayWorkActivity.BC_LAYING,
                     hourlyWorkTimeline = initialTimeline,
                     siteMeasurements = siteMeasurements,
-                    workTargetInput = WorkTargetInput(),
-                    workTargetPrediction = WorkTargetPredictionEngine.predictWorkTarget(WorkTargetInput(), initialTimeline),
-                    delayRiskSummary = WorkTargetPredictionEngine.analyzeDelayRisks(
+                    delayRiskSummary = WeatherDelayRiskAnalyzer.analyzeDelayRisks(
                         HighwayWorkActivity.BC_LAYING,
-                        initialTimeline,
-                        WorkTargetPredictionEngine.predictWorkTarget(WorkTargetInput(), initialTimeline)
+                        initialTimeline
                     ),
                     actionableAlerts = emptyList(),
                     onSelectActivity = {},
                     onUpdateContractSpec = {},
                     onUpdateSiteMeasurements = {},
-                    onUpdateWorkTargetInput = {},
                     onRefreshWeather = {},
                     onNavigateBack = {},
                     nowMs = makeTimeMs(9)

@@ -307,6 +307,7 @@ class PreferencesManager(context: Context) {
         val KEY_MANUAL_CHAINAGE_OVERRIDE = stringPreferencesKey("manual_chainage_override")
         val KEY_MANUAL_CHAINAGE_CUSTOM_TEXT = stringPreferencesKey("manual_chainage_custom_text")
         val KEY_MANUAL_CHAINAGE_CALIBRATION_JSON = stringPreferencesKey("manual_chainage_calibration_json")
+        val KEY_LAST_RELIABLE_CHAINAGE_JSON = stringPreferencesKey("last_reliable_chainage_snapshot_json")
         val KEY_SAVED_CUSTOM_CHAINAGES = stringPreferencesKey("saved_custom_chainages")
         val KEY_CHAINAGE_AUDIT_LOG_JSON = stringPreferencesKey("chainage_audit_log_json")
         val KEY_CALIBRATION_PROFILES_JSON = stringPreferencesKey("permanent_calibration_profiles_json")
@@ -335,7 +336,6 @@ class PreferencesManager(context: Context) {
         // Advanced Weather Forecast & IRC/MoRTH Highway Work Intelligence Keys
         val KEY_LAST_WEATHER_FORECAST_BUNDLE_JSON = stringPreferencesKey("last_weather_forecast_bundle_json")
         val KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON = stringPreferencesKey("weather_intelligence_settings_json")
-        val KEY_WORK_TARGET_INPUT_JSON = stringPreferencesKey("weather_work_target_input_json")
         val KEY_ACTUAL_SITE_MEASUREMENTS_JSON = stringPreferencesKey("weather_actual_site_measurements_json")
         val KEY_WEATHER_EXPANDED_SECTIONS = stringPreferencesKey("weather_expanded_sections_csv")
     }
@@ -454,11 +454,6 @@ class PreferencesManager(context: Context) {
             getInitialPreferences()[KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON]
         )
 
-    fun getInitialWorkTargetInput(): com.example.model.WorkTargetInput =
-        com.example.model.WorkTargetInput.fromJsonString(
-            getInitialPreferences()[KEY_WORK_TARGET_INPUT_JSON]
-        )
-
     fun getInitialActualSiteMeasurements(): com.example.model.ActualSiteMeasurements =
         com.example.model.ActualSiteMeasurements.fromJsonString(
             getInitialPreferences()[KEY_ACTUAL_SITE_MEASUREMENTS_JSON]
@@ -511,6 +506,11 @@ class PreferencesManager(context: Context) {
 
     fun getInitialManualChainageCalibration(): com.example.model.ManualChainageCalibrationState {
         return parseManualChainageCalibration(getInitialPreferences())
+    }
+
+    fun getInitialLastReliableChainageSnapshot(): com.example.model.LastReliableChainageSnapshot? {
+        val json = getInitialPreferences()[KEY_LAST_RELIABLE_CHAINAGE_JSON]
+        return com.example.model.LastReliableChainageSnapshot.fromJsonString(json)
     }
 
     private fun parseManualChainageCalibration(prefs: Preferences): com.example.model.ManualChainageCalibrationState {
@@ -797,17 +797,6 @@ class PreferencesManager(context: Context) {
     suspend fun updateWeatherIntelligenceSettings(settings: com.example.model.WeatherIntelligenceSettings) {
         safeEdit { prefs ->
             prefs[KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON] = settings.toJsonString()
-        }
-    }
-
-    val workTargetInputFlow: Flow<com.example.model.WorkTargetInput> =
-        observedDataFlow.map { prefs ->
-            com.example.model.WorkTargetInput.fromJsonString(prefs[KEY_WORK_TARGET_INPUT_JSON])
-        }.distinctUntilChanged()
-
-    suspend fun updateWorkTargetInput(input: com.example.model.WorkTargetInput) {
-        safeEdit { prefs ->
-            prefs[KEY_WORK_TARGET_INPUT_JSON] = input.toJsonString()
         }
     }
 
@@ -1582,6 +1571,16 @@ class PreferencesManager(context: Context) {
             } else {
                 prefs.remove(KEY_MANUAL_CHAINAGE_CUSTOM_TEXT)
                 prefs.remove(KEY_MANUAL_CHAINAGE_OVERRIDE)
+            }
+        }
+    }
+
+    suspend fun updateLastReliableChainageSnapshot(snapshot: com.example.model.LastReliableChainageSnapshot?) {
+        safeEdit { prefs ->
+            if (snapshot != null) {
+                prefs[KEY_LAST_RELIABLE_CHAINAGE_JSON] = snapshot.toJsonString()
+            } else {
+                prefs.remove(KEY_LAST_RELIABLE_CHAINAGE_JSON)
             }
         }
     }

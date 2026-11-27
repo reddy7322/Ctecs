@@ -30,14 +30,12 @@ import com.example.model.MoRTHRevision
 import com.example.model.SurfaceMoistureCondition
 import com.example.model.TackCoatCondition
 import com.example.model.TemperatureUnit
-import com.example.model.ValueSourceTag
 import com.example.model.WeatherConditionType
 import com.example.model.WeatherForecastBundle
 import com.example.model.WeatherIntelligenceSettings
 import com.example.model.WeatherObservation
 import com.example.model.WeatherUiState
 import com.example.model.WorkSuitabilityStatus
-import com.example.model.WorkTargetInput
 import com.example.ui.home.AnimatedWeatherIcon
 import com.example.ui.home.HomeLiveWeatherCard
 import com.example.location.LocationState
@@ -64,8 +62,8 @@ import com.example.weather.IrcMorthWeatherRuleEngine
 import com.example.weather.OpenMeteoWeatherFetcher
 import com.example.weather.SharedWeatherRepository
 import com.example.weather.WeatherAlertNotifier
+import com.example.weather.WeatherDelayRiskAnalyzer
 import com.example.weather.WeatherForecastFetcher
-import com.example.weather.WorkTargetPredictionEngine
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -81,7 +79,7 @@ import java.util.TimeZone
 
 /**
  * Comprehensive verification suite for CTECS Advanced Weather Forecast,
- * IRC/MoRTH Compliance Intelligence, Work Target Prediction, Delay Risks,
+ * IRC/MoRTH Compliance Intelligence, Weather Delay Risks,
  * Alerts, Offline Caching, and Settings Persistence.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -481,11 +479,11 @@ class WeatherAndHighwayIntelligenceTest {
     }
 
     // -------------------------------------------------------------------------
-    // 3. Hourly Work Timeline, Work Target Math & Delay Risk Analysis
+    // 3. Hourly Work Timeline & Weather Delay Risk Analysis
     // -------------------------------------------------------------------------
 
     @Test
-    fun `Hourly work timeline, Work Target calculations, bottlenecks, and delay risk warnings are accurate and never invent missing rates`() {
+    fun `Hourly work timeline and weather delay risk warnings detect rain, drying, and high wind`() {
         val nowMs = makeTimestampMs(2026, Calendar.NOVEMBER, 20, 7, 0)
         // Hours 11, 12, 13 have rain; hour 15 has high wind > 40 km/h
         val bundle = buildSampleBundle(
@@ -504,58 +502,16 @@ class WeatherAndHighwayIntelligenceTest {
         assertTrue(timeline[11].isMandatoryViolation)
         assertTrue(timeline[15].isMandatoryViolation)
 
-        // 1. Missing production rate MUST NOT be invented
-        val missingRateInput = WorkTargetInput(
-            activity = HighwayWorkActivity.BC_LAYING,
-            startChainageKm = 10.0,
-            endChainageKm = 11.0,
-            workingWidthMeters = 7.0,
-            layerThicknessMm = 40.0,
-            expectedProductionRatePerHour = null
-        )
-        val missingPred = WorkTargetPredictionEngine.predictWorkTarget(missingRateInput, timeline)
-        assertFalse(missingPred.isCalculationComplete)
-        assertTrue(missingPred.missingInputWarnings.any { it.contains("Production Rate") })
-
-        // 2. Complete calculation: Length = 1000m, Width = 7m -> Area = 7000 m², Thickness = 40mm -> Compacted Vol = 280 m³
-        val validInput = WorkTargetInput(
-            activity = HighwayWorkActivity.BC_LAYING,
-            startChainageKm = 10.0,
-            endChainageKm = 11.0,
-            workingWidthMeters = 7.0,
-            layerThicknessMm = 40.0,
-            plannedStartHour = 7,
-            availableWorkingHours = 10.0, // Hours 7..16 (4 unsuitable hours: 11,12,13,15 -> 6 suitable hours)
-            expectedProductionRatePerHour = 1000.0,
-            productionRateSource = ValueSourceTag.USER_ENTERED,
-            prepAndInspectionHours = 0.5,
-            wetSurfaceRecoveryHoursPerRainEvent = 1.5
-        )
-        val pred = WorkTargetPredictionEngine.predictWorkTarget(validInput, timeline)
-        assertTrue(pred.isCalculationComplete)
-        assertEquals(1000.0, pred.totalLengthMeters, 0.01)
-        assertEquals(7000.0, pred.totalAreaSqm, 0.01)
-        assertEquals(280.0, pred.compactedVolumeM3, 0.01)
-        assertEquals(4.0, pred.weatherInterruptionHours, 0.01)
-        assertEquals(1.5, pred.wetSurfaceRecoveryHours, 0.01)
-        assertEquals(0.5, pred.prepAndInspectionHours, 0.01)
-        assertEquals(4.0, pred.netEffectiveWorkingHours, 0.01) // 6 suitable - 1.5 recovery - 0.5 prep
-        assertEquals(4000.0, pred.weatherAdjustedTargetQuantity, 0.1)
-        assertEquals(3000.0, pred.remainingBalanceQuantity, 0.1)
-        assertTrue(pred.estimateDisclaimer.contains("ESTIMATE ONLY"))
-
-        // 3. HMP Capacity bottleneck caps effective hourly rate accurately
-        // 80 TPH / (0.04m * 2.38 t/m³) = 840.34 m²/hr < 1000 m²/hr user rate
-        val hmpCapped = WorkTargetPredictionEngine.predictWorkTarget(validInput.copy(hmpCapacityTph = 80.0), timeline)
-        assertTrue(hmpCapped.effectiveHourlyRate < 850.0)
-        assertTrue(hmpCapped.limitingResourceNote.contains("HMP"))
-
-        // 4. Delay & Risk Analyzer detects rain, surface drying, and high wind warnings
-        val risks = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline, pred)
+        // Delay & Risk Analyzer detects rain, surface drying, and high wind warnings without any target calculations
+        val risks = WeatherDelayRiskAnalyzer.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline)
         assertTrue(risks.warnings.any { it.title.contains("Rain", ignoreCase = true) })
         assertTrue(risks.warnings.any { it.title.contains("Drying", ignoreCase = true) })
         assertTrue(risks.warnings.any { it.title.contains("Wind", ignoreCase = true) })
         assertNotNull(risks.nextSuitableWindowLabel)
+        assertFalse(
+            "Weather impact summary must not reference removed activity targets",
+            risks.weatherImpactSummary.contains("target", ignoreCase = true)
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -576,10 +532,11 @@ class WeatherAndHighwayIntelligenceTest {
             referenceTimeMs = nowMs
         )
         val notifier = WeatherAlertNotifier()
-        val alerts = notifier.evaluateActionableAlerts(bundle, settings, assessments, null, nowMs)
+        val alerts = notifier.evaluateActionableAlerts(bundle, settings, assessments, nowMs)
         assertTrue(alerts.any { it.category == "THUNDERSTORM" })
         assertTrue(alerts.any { it.category == "STRONG_WIND" })
         assertTrue(alerts.any { it.category == "BITUMINOUS_RESTRICTION" })
+        assertTrue(alerts.none { it.category == "WORK_TARGET" })
 
         val firstPass = notifier.filterNewAlerts(alerts, nowMs)
         assertEquals(alerts.size, firstPass.size)
@@ -592,7 +549,7 @@ class WeatherAndHighwayIntelligenceTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `PreferencesManager and SettingsBackupManager persist and export weather intelligence settings`() = runBlocking {
+    fun `PreferencesManager and SettingsBackupManager persist and export weather intelligence settings cleanly`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val prefs = PreferencesManager(context)
         val customSettings = WeatherIntelligenceSettings(
@@ -603,34 +560,38 @@ class WeatherAndHighwayIntelligenceTest {
                 morthRevision = MoRTHRevision.SIXTH_REVISION_2026,
                 sixthRevisionContractVerified = true,
                 dbmBinderType = BitumenBinderType.MODIFIED_PMB
-            ),
-            savedProductionRatesByActivity = mapOf(HighwayWorkActivity.DBM_LAYING to 650.0)
-        )
-        val customTarget = WorkTargetInput(
-            activity = HighwayWorkActivity.DBM_LAYING,
-            startChainageKm = 12.0,
-            endChainageKm = 13.5,
-            expectedProductionRatePerHour = 650.0
+            )
         )
         prefs.updateWeatherIntelligenceSettings(customSettings)
-        prefs.updateWorkTargetInput(customTarget)
 
         val restoredSettings = prefs.getInitialWeatherIntelligenceSettings()
-        val restoredTarget = prefs.getInitialWorkTargetInput()
         assertEquals(TemperatureUnit.FAHRENHEIT, restoredSettings.temperatureUnit)
         assertFalse(restoredSettings.animationsEnabled)
         assertEquals(MoRTHRevision.SIXTH_REVISION_2026, restoredSettings.contractSpec.morthRevision)
-        assertEquals(650.0, restoredSettings.savedProductionRatesByActivity[HighwayWorkActivity.DBM_LAYING] ?: 0.0, 0.01)
-        assertEquals(13.5, restoredTarget.endChainageKm ?: 0.0, 0.01)
+
+        // Legacy weather settings JSON containing obsolete target fields migrates cleanly without data loss
+        val legacyJson = """
+            {
+              "temperatureUnit": "FAHRENHEIT",
+              "animationsEnabled": false,
+              "primaryActivity": "DBM_LAYING",
+              "alertWorkTargetChanges": true,
+              "savedProductionRatesByActivity": {"DBM_LAYING": 650.0, "BC_LAYING": 800.0},
+              "defaultProductionRateSource": "USER_ENTERED"
+            }
+        """.trimIndent()
+        val migratedSettings = WeatherIntelligenceSettings.fromJsonString(legacyJson)
+        assertEquals(TemperatureUnit.FAHRENHEIT, migratedSettings.temperatureUnit)
+        assertFalse(migratedSettings.animationsEnabled)
+        assertEquals(HighwayWorkActivity.DBM_LAYING, migratedSettings.primaryActivity)
 
         val backupManager = SettingsBackupManager(context, prefs)
         val exported = backupManager.collectCompleteExportEntries()
         assertTrue(exported.any { it.key == PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name })
-        assertTrue(exported.any { it.key == PreferencesManager.KEY_WORK_TARGET_INPUT_JSON.name })
+        assertTrue(exported.none { it.key == "weather_work_target_input_json" })
 
         // Clean up back to defaults
         prefs.updateWeatherIntelligenceSettings(WeatherIntelligenceSettings())
-        prefs.updateWorkTargetInput(WorkTargetInput())
     }
 
     // -------------------------------------------------------------------------
@@ -709,14 +670,7 @@ class WeatherAndHighwayIntelligenceTest {
         val settings = WeatherIntelligenceSettings(animationsEnabled = false)
         val assessments = IrcMorthWeatherRuleEngine.evaluateAllActivities(bundleNoAlerts.current, settings.contractSpec, referenceTimeMs = nowMs)
         val timeline = IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(HighwayWorkActivity.BC_LAYING, bundleNoAlerts.hourly, settings.contractSpec)
-        val targetInput = WorkTargetInput(
-            activity = HighwayWorkActivity.BC_LAYING,
-            startChainageKm = 10.0,
-            endChainageKm = 11.0,
-            expectedProductionRatePerHour = 800.0
-        )
-        val targetPred = WorkTargetPredictionEngine.predictWorkTarget(targetInput, timeline)
-        val delayRisks = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline, targetPred)
+        val delayRisks = WeatherDelayRiskAnalyzer.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline)
         var pickedActivity by mutableStateOf(HighwayWorkActivity.BC_LAYING)
 
         composeRule.setContent {
@@ -731,14 +685,11 @@ class WeatherAndHighwayIntelligenceTest {
                     selectedActivity = pickedActivity,
                     hourlyWorkTimeline = timeline,
                     siteMeasurements = ActualSiteMeasurements(),
-                    workTargetInput = targetInput,
-                    workTargetPrediction = targetPred,
                     delayRiskSummary = delayRisks,
                     actionableAlerts = emptyList(),
                     onSelectActivity = { pickedActivity = it },
                     onUpdateContractSpec = {},
                     onUpdateSiteMeasurements = {},
-                    onUpdateWorkTargetInput = {},
                     onRefreshWeather = {},
                     onNavigateBack = {},
                     nowMs = nowMs
@@ -815,10 +766,8 @@ class WeatherAndHighwayIntelligenceTest {
                     }
                     WeatherIntelligenceSettingsSectionContent(
                         settings = state,
-                        workTargetInput = WorkTargetInput(),
                         accentColor = ComposeColor(0xFF38BDF8),
                         onUpdateSettings = { fn -> state = fn(state) },
-                        onUpdateWorkTargetInput = {},
                         onOpenWeatherDashboard = { openedDashboard = true },
                         onResetDefaults = {}
                     )
@@ -831,6 +780,8 @@ class WeatherAndHighwayIntelligenceTest {
         composeRule.onNodeWithTag("settings_open_weather_dashboard_button").performClick()
         assertTrue(openedDashboard)
         composeRule.onNodeWithText("1. WEATHER DISPLAY").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_saved_production_rate_input").assertDoesNotExist()
+        composeRule.onNodeWithText("7 & 8. PROJECT WORK TARGETS & PRODUCTION RATES").assertDoesNotExist()
     }
 
     @Test
@@ -895,14 +846,7 @@ class WeatherAndHighwayIntelligenceTest {
         val settings = WeatherIntelligenceSettings(animationsEnabled = false)
         val assessments = IrcMorthWeatherRuleEngine.evaluateAllActivities(bundle.current, settings.contractSpec, referenceTimeMs = nowMs)
         val timeline = IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(HighwayWorkActivity.BC_LAYING, bundle.hourly, settings.contractSpec)
-        val targetInput = WorkTargetInput(
-            activity = HighwayWorkActivity.BC_LAYING,
-            startChainageKm = 196.0,
-            endChainageKm = 197.0,
-            expectedProductionRatePerHour = 800.0
-        )
-        val targetPred = WorkTargetPredictionEngine.predictWorkTarget(targetInput, timeline)
-        val delayRisks = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline, targetPred)
+        val delayRisks = WeatherDelayRiskAnalyzer.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline)
 
         composeRule.setContent {
             MyApplicationTheme(themeMode = "dark") {
@@ -917,14 +861,11 @@ class WeatherAndHighwayIntelligenceTest {
                         selectedActivity = HighwayWorkActivity.BC_LAYING,
                         hourlyWorkTimeline = timeline,
                         siteMeasurements = ActualSiteMeasurements(),
-                        workTargetInput = targetInput,
-                        workTargetPrediction = targetPred,
                         delayRiskSummary = delayRisks,
                         actionableAlerts = bundle.alerts + bundle.alerts, // duplicate alerts must be deduplicated
                         onSelectActivity = {},
                         onUpdateContractSpec = {},
                         onUpdateSiteMeasurements = {},
-                        onUpdateWorkTargetInput = {},
                         onRefreshWeather = {},
                         onNavigateBack = {},
                         nowMs = nowMs,

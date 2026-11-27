@@ -26,7 +26,6 @@ import com.example.model.WeatherIntelligenceSettings
 import com.example.model.WeatherObservation
 import com.example.model.WeatherUiState
 import com.example.model.WindSpeedUnit
-import com.example.model.WorkTargetInput
 import com.example.ui.AppTab
 import com.example.ui.theme.CtecsColorTokens
 import com.example.ui.theme.CtecsTheme
@@ -34,7 +33,7 @@ import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.weather.LiveHighwayLocationSnapshot
 import com.example.ui.weather.WeatherDashboardScreen
 import com.example.weather.IrcMorthWeatherRuleEngine
-import com.example.weather.WorkTargetPredictionEngine
+import com.example.weather.WeatherDelayRiskAnalyzer
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -164,10 +163,7 @@ class WorkPlanningRemovalVerificationTest {
         val timeline = IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(
             HighwayWorkActivity.BC_LAYING, bundle.hourly, spec, measurements
         )
-        val pred = WorkTargetPredictionEngine.predictWorkTarget(
-            WorkTargetInput(activity = HighwayWorkActivity.BC_LAYING), timeline
-        )
-        val risk = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline, pred)
+        val risk = WeatherDelayRiskAnalyzer.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline)
         val alert = WeatherAlertItem(
             id = "a1",
             title = "Gusty Winds Expected",
@@ -194,14 +190,11 @@ class WorkPlanningRemovalVerificationTest {
                     selectedActivity = currentActivity,
                     hourlyWorkTimeline = timeline,
                     siteMeasurements = measurements,
-                    workTargetInput = WorkTargetInput(activity = currentActivity),
-                    workTargetPrediction = pred,
                     delayRiskSummary = risk,
                     actionableAlerts = listOf(alert),
                     onSelectActivity = { currentActivity = it },
                     onUpdateContractSpec = {},
                     onUpdateSiteMeasurements = {},
-                    onUpdateWorkTargetInput = {},
                     onRefreshWeather = {},
                     onNavigateBack = {},
                     nowMs = nowMs,
@@ -232,10 +225,11 @@ class WorkPlanningRemovalVerificationTest {
         composeRule.onNodeWithTag("weather_dashboard_screen").assertIsDisplayed()
         composeRule.onNodeWithTag("weather_dashboard_hero_card").assertIsDisplayed()
 
-        // Contextual Weather Settings popup opens and updates settings live
+        // Contextual Weather Settings popup opens and updates settings live without target-change toggles
         composeRule.onNodeWithTag("weather_settings_button").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("weather_settings_popup").assertIsDisplayed()
         composeRule.onNodeWithText("Weather Settings").assertIsDisplayed()
+        composeRule.onNodeWithTag("ws_alert_window").assertDoesNotExist()
         composeRule.onNodeWithTag("ws_temp_unit_1").performClick() // Switch to °F
         composeRule.waitForIdle()
         assertEquals(TemperatureUnit.FAHRENHEIT, updatedTempUnit)

@@ -17,7 +17,6 @@ import com.example.model.WeatherConditionType
 import com.example.model.WeatherForecastBundle
 import com.example.model.WeatherIntelligenceSettings
 import com.example.model.WorkSuitabilityStatus
-import com.example.model.WorkTargetPrediction
 import java.util.Locale
 
 /**
@@ -36,7 +35,6 @@ class WeatherAlertNotifier {
         bundle: WeatherForecastBundle?,
         settings: WeatherIntelligenceSettings,
         assessments: List<ActivitySuitabilityAssessment>,
-        targetPrediction: WorkTargetPrediction?,
         nowMs: Long = System.currentTimeMillis()
     ): List<WeatherAlertItem> {
         if (!settings.weatherAlertsEnabled || bundle == null) return emptyList()
@@ -166,32 +164,6 @@ class WeatherAlertNotifier {
                 )
             }
         }
-
-        // 7. Planned work target change alert
-        if (settings.alertWorkTargetChanges &&
-            targetPrediction != null &&
-            targetPrediction.isCalculationComplete &&
-            targetPrediction.activity in settings.enabledAlertActivities &&
-            targetPrediction.expectedCompletionPercent < 80.0 &&
-            targetPrediction.weatherInterruptionHours > 0.0
-        ) {
-            alerts += WeatherAlertItem(
-                id = "alert_target_${targetPrediction.activity.name}_${nowMs / 3_600_000L}",
-                title = "${targetPrediction.activity.shortName} Target Reduced (${targetPrediction.expectedCompletionPercent.toInt()}%)",
-                description = String.format(
-                    Locale.US,
-                    "Weather interruptions (%.1f hr) reduced estimated daily target to %.1f %s.",
-                    targetPrediction.weatherInterruptionHours,
-                    targetPrediction.weatherAdjustedTargetQuantity,
-                    targetPrediction.quantityUnit
-                ),
-                severity = WeatherAlertSeverity.ADVISORY,
-                startEpochMs = nowMs,
-                endEpochMs = nowMs + 3_600_000L,
-                category = "WORK_TARGET"
-            )
-        }
-
         return alerts
     }
 
@@ -279,7 +251,7 @@ class WeatherAlertNotifier {
                     "Weather & Highway Work Alerts",
                     NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
-                    description = "Live highway weather warnings, bituminous laying restrictions, and target change alerts."
+                    description = "Live highway weather warnings and bituminous laying suitability alerts."
                 }
                 nm.createNotificationChannel(channel)
             }

@@ -1,6 +1,7 @@
 package com.example.donation
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -50,10 +51,25 @@ sealed class DonationActionResult<out T> {
 
 sealed class UpiIntentResolution {
     data class LaunchReady(val intent: Intent, val paymentMethodLabel: String, val validatedUri: Uri) : UpiIntentResolution()
+    data class ProviderRestricted(val restriction: ProviderRestriction) : UpiIntentResolution()
     data class TargetAppUnavailable(val requestedPackage: String) : UpiIntentResolution()
     data object NoUpiAppInstalled : UpiIntentResolution()
     data class InvalidPaymentUri(val reason: String) : UpiIntentResolution()
 }
+
+sealed class UpiAppAvailability {
+    data class Compatible(val app: InstalledUpiApp) : UpiAppAvailability()
+    data class RestrictedByProvider(val restriction: ProviderRestriction) : UpiAppAvailability()
+    data class Unavailable(val packageName: String) : UpiAppAvailability()
+}
+
+data class UpiReturnEvaluation(
+    val transaction: DonationTransactionEntity,
+    val failureCategory: UpiFailureCategory,
+    val responseCode: String,
+    val providerMarkedUnavailable: Boolean,
+    val allowImmediateRetry: Boolean
+)
 
 /**
  * Coordinates CTECS Buy Me a Coffee donations, local Room transaction storage,
@@ -77,6 +93,12 @@ class DonationRepository(
 
     private val _adminSession = MutableStateFlow<AdminSession?>(null)
     val adminSession: StateFlow<AdminSession?> = _adminSession.asStateFlow()
+
+    private val _restrictedProviders = MutableStateFlow<Map<String, ProviderRestriction>>(loadPersistedProviderRestrictions())
+    val restrictedProvidersFlow: StateFlow<Map<String, ProviderRestriction>> = _restrictedProviders.asStateFlow()
+
+    private val _lastReturnEvaluation = MutableStateFlow<UpiReturnEvaluation?>(null)
+    val lastReturnEvaluation: StateFlow<UpiReturnEvaluation?> = _lastReturnEvaluation.asStateFlow()
 
     val currentOwnerUserId: String
         get() {
@@ -111,11 +133,59 @@ class DonationRepository(
     suspend fun getAuditLogsForOrder(orderRef: String): List<DonationAuditLogEntity> =
         donationDao.getAuditLogsForOrder(orderRef)
 
+    fun getRestrictedProvider(packageName: String?): ProviderRestriction? {
+        if (packageName.isNullOrBlank()) return null
+        return _restrictedProviders.value[packageName]
+    }
+
+    /**
+     * Marks a specific UPI payment provider package as restricted/unavailable for this donation
+     * flow after a genuine provider-side security decline or UPI Risk Policy rejection (e.g. Paytm).
+     * Never attempts to bypass provider security controls.
+     */
+    fun markProviderRestricted(
+        packageName: String,
+        displayName: String,
+        category: UpiFailureCategory,
+        responseCode: String = "",
+        sanitizedReason: String,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        val cleanPkg = packageName.trim()
+        if (cleanPkg.isEmpty()) return
+        val entry = ProviderRestriction(
+            packageName = cleanPkg,
+            displayName = displayName.ifBlank { cleanPkg },
+            category = category,
+            responseCode = responseCode.trim().take(24),
+            sanitizedReason = DonationConfig.sanitizeForLog(sanitizedReason).ifBlank { "Provider security restriction" },
+            restrictedAtMs = nowMs
+        )
+        val updated = _restrictedProviders.value.toMutableMap().apply { put(cleanPkg, entry) }
+        _restrictedProviders.value = updated
+        persistProviderRestrictions(updated)
+    }
+
+    /**
+     * Clears a provider restriction only after official provider/bank resolution has been completed.
+     */
+    fun clearProviderRestriction(packageName: String) {
+        val cleanPkg = packageName.trim()
+        if (cleanPkg.isEmpty()) return
+        val updated = _restrictedProviders.value.toMutableMap().apply { remove(cleanPkg) }
+        _restrictedProviders.value = updated
+        persistProviderRestrictions(updated)
+    }
+
     /**
      * Queries Android PackageManager for compatible installed UPI handler apps for [upiUri],
-     * explicitly excluding ordinary web browsers so a browser or WebView is never launched.
+     * explicitly requiring exported `ACTION_VIEW` `upi://pay` handlers and excluding ordinary
+     * web browsers so a browser or incompatible package is never reported as supported.
      */
-    fun getCompatibleUpiApps(upiUri: Uri = DonationConfig.buildUpiProbeUri()): List<InstalledUpiApp> {
+    fun getCompatibleUpiApps(
+        upiUri: Uri = DonationConfig.buildUpiProbeUri(),
+        excludeRestricted: Boolean = false
+    ): List<InstalledUpiApp> {
         return try {
             val probeIntent = Intent(Intent.ACTION_VIEW, upiUri)
             val pm = context.packageManager
@@ -128,9 +198,13 @@ class DonationRepository(
                 @Suppress("DEPRECATION")
                 pm.queryIntentActivities(probeIntent, PackageManager.MATCH_DEFAULT_ONLY)
             }
+            val restricted = if (excludeRestricted) _restrictedProviders.value.keys else emptySet()
             resolved.mapNotNull { info ->
-                val pkg = info.activityInfo?.packageName ?: return@mapNotNull null
+                val activityInfo = info.activityInfo ?: return@mapNotNull null
+                if (!activityInfo.exported) return@mapNotNull null
+                val pkg = activityInfo.packageName ?: return@mapNotNull null
                 if (isOrdinaryBrowserPackage(pkg)) return@mapNotNull null
+                if (pkg in restricted) return@mapNotNull null
                 val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: pkg
                 InstalledUpiApp(pkg, label)
             }.distinctBy { it.packageName }
@@ -146,8 +220,33 @@ class DonationRepository(
     fun getInstalledUpiApps(): List<InstalledUpiApp> = getCompatibleUpiApps(DonationConfig.buildUpiProbeUri())
 
     /**
+     * Evaluates the real runtime availability of a specific UPI package:
+     * never treats mere package installation as UPI payment support, and respects
+     * confirmed provider security/risk-policy restrictions.
+     */
+    fun getUpiAppAvailability(
+        packageName: String,
+        upiUri: Uri = DonationConfig.buildUpiProbeUri()
+    ): UpiAppAvailability {
+        val restriction = getRestrictedProvider(packageName)
+        if (restriction != null) {
+            return UpiAppAvailability.RestrictedByProvider(restriction)
+        }
+        val compatible = getCompatibleUpiApps(upiUri, excludeRestricted = true)
+        val match = compatible.firstOrNull { it.packageName == packageName }
+            ?: return UpiAppAvailability.Unavailable(packageName)
+        val targetedIntent = Intent(Intent.ACTION_VIEW, upiUri).apply { setPackage(packageName) }
+        return if (canResolveIntent(targetedIntent)) {
+            UpiAppAvailability.Compatible(match)
+        } else {
+            UpiAppAvailability.Unavailable(packageName)
+        }
+    }
+
+    /**
      * Resolves and validates the UPI payment [Uri] for [order]. If a persisted legacy order
-     * carries an older unsupported or malformed URI, safely regenerates the standard validated URI.
+     * carries an older unsupported or malformed URI (including `pa=tvtelugu%40ptyes` or `&tr=`),
+     * safely regenerates the standard validated URI.
      */
     fun resolveValidatedPaymentUri(order: DonationTransactionEntity): Uri {
         return when (val checked = DonationConfig.validateUpiPaymentUri(order.upiUri, order.amountInr)) {
@@ -158,7 +257,8 @@ class DonationRepository(
 
     /**
      * Builds a validated, compatible native Android `ACTION_VIEW` UPI payment [Intent]
-     * without setting any unsupported MIME type and without forcing incompatible apps or browsers.
+     * without setting any unsupported MIME type, without forcing incompatible apps or browsers,
+     * and without repeatedly launching providers restricted by UPI Risk Policy / security declines.
      */
     fun buildCompatibleUpiIntent(
         order: DonationTransactionEntity,
@@ -171,19 +271,25 @@ class DonationRepository(
             return UpiIntentResolution.InvalidPaymentUri(recheck.reason)
         }
 
-        val compatibleApps = getCompatibleUpiApps(validatedUri)
-        if (compatibleApps.isEmpty()) {
+        if (!targetPackage.isNullOrBlank()) {
+            val restriction = getRestrictedProvider(targetPackage)
+            if (restriction != null) {
+                return UpiIntentResolution.ProviderRestricted(restriction)
+            }
+        }
+
+        val allCompatibleApps = getCompatibleUpiApps(validatedUri, excludeRestricted = false)
+        if (allCompatibleApps.isEmpty()) {
             return UpiIntentResolution.NoUpiAppInstalled
         }
 
         if (!targetPackage.isNullOrBlank()) {
-            val exactMatch = compatibleApps.firstOrNull { it.packageName == targetPackage }
+            val exactMatch = allCompatibleApps.firstOrNull { it.packageName == targetPackage }
                 ?: return UpiIntentResolution.TargetAppUnavailable(targetPackage)
             val targetedIntent = Intent(Intent.ACTION_VIEW, validatedUri).apply {
                 setPackage(exactMatch.packageName)
             }
-            val resolvesDirectly = canResolveIntent(targetedIntent)
-            if (!resolvesDirectly) {
+            if (!canResolveIntent(targetedIntent)) {
                 return UpiIntentResolution.TargetAppUnavailable(targetPackage)
             }
             return UpiIntentResolution.LaunchReady(
@@ -193,13 +299,55 @@ class DonationRepository(
             )
         }
 
+        val unrestrictedApps = getCompatibleUpiApps(validatedUri, excludeRestricted = true)
+        if (unrestrictedApps.isEmpty()) {
+            val firstRestriction = allCompatibleApps
+                .firstNotNullOfOrNull { getRestrictedProvider(it.packageName) }
+            if (firstRestriction != null) {
+                return UpiIntentResolution.ProviderRestricted(firstRestriction)
+            }
+            return UpiIntentResolution.NoUpiAppInstalled
+        }
+
         val baseIntent = Intent(Intent.ACTION_VIEW, validatedUri)
         val chooserIntent = Intent.createChooser(baseIntent, null)
+        // Exclude security-restricted provider components from Android's chooser (API 24+)
+        val excludedComponents = resolveComponentsForPackages(validatedUri, _restrictedProviders.value.keys)
+        if (excludedComponents.isNotEmpty()) {
+            chooserIntent.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, excludedComponents.toTypedArray())
+        }
         return UpiIntentResolution.LaunchReady(
             intent = chooserIntent,
             paymentMethodLabel = "UPI Intent",
             validatedUri = validatedUri
         )
+    }
+
+    private fun resolveComponentsForPackages(upiUri: Uri, packages: Set<String>): List<ComponentName> {
+        if (packages.isEmpty()) return emptyList()
+        return try {
+            val pm = context.packageManager
+            val probe = Intent(Intent.ACTION_VIEW, upiUri)
+            val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(
+                    probe,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(probe, PackageManager.MATCH_DEFAULT_ONLY)
+            }
+            resolved.mapNotNull { info ->
+                val ai = info.activityInfo ?: return@mapNotNull null
+                if (ai.packageName in packages && !ai.name.isNullOrBlank()) {
+                    ComponentName(ai.packageName, ai.name)
+                } else {
+                    null
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun canResolveIntent(intent: Intent): Boolean {
@@ -391,33 +539,118 @@ class DonationRepository(
     /**
      * Handles the raw Android ActivityResult returned by a native UPI app.
      *
-     * CRITICAL SECURITY RULE:
-     * NEVER marks a donation PAID based on UPI app return data (`Status=SUCCESS` or `RESULT_OK`),
-     * because intent results are client-side and untrusted. Only cancellation/failure is recorded
-     * immediately; otherwise the donation remains strictly PENDING until trusted server verification.
+     * CRITICAL SECURITY & COMPLIANCE RULES:
+     * - NEVER marks a donation PAID based on UPI app return data (`Status=SUCCESS` or `RESULT_OK`),
+     *   because intent results are client-side and untrusted.
+     * - Classifies provider security declines, UPI Risk Policy rejections (Paytm), unsupported
+     *   request errors (BHIM), VPA unavailability, bank declines, network issues, and user
+     *   cancellations independently.
+     * - When a provider declines for security/risk policy, records the sanitized failure code
+     *   and marks that provider unavailable rather than repeatedly initiating failed retries.
      */
     suspend fun handleUpiAppReturn(
         orderRef: String,
         resultCode: Int,
         responseString: String?,
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        launchedPackage: String? = null,
+        paymentMethodLabel: String? = null
     ): DonationActionResult<DonationTransactionEntity> = withContext(Dispatchers.IO) {
+        val detailed = handleUpiAppReturnDetailed(
+            orderRef = orderRef,
+            resultCode = resultCode,
+            responseString = responseString,
+            nowMs = nowMs,
+            launchedPackage = launchedPackage,
+            paymentMethodLabel = paymentMethodLabel
+        )
+        when (detailed) {
+            is DonationActionResult.Success -> DonationActionResult.Success(detailed.data.transaction, detailed.message)
+            is DonationActionResult.Error -> detailed
+        }
+    }
+
+    suspend fun handleUpiAppReturnDetailed(
+        orderRef: String,
+        resultCode: Int,
+        responseString: String?,
+        nowMs: Long = System.currentTimeMillis(),
+        launchedPackage: String? = null,
+        paymentMethodLabel: String? = null
+    ): DonationActionResult<UpiReturnEvaluation> = withContext(Dispatchers.IO) {
         val current = donationDao.getByOrderRef(orderRef)
             ?: return@withContext DonationActionResult.Error("Donation order not found.")
         if (current.parsedStatus == DonationStatus.PAID) {
-            return@withContext DonationActionResult.Success(current)
+            val eval = UpiReturnEvaluation(
+                transaction = current,
+                failureCategory = UpiFailureCategory.NONE,
+                responseCode = "",
+                providerMarkedUnavailable = false,
+                allowImmediateRetry = false
+            )
+            _lastReturnEvaluation.value = eval
+            return@withContext DonationActionResult.Success(eval)
         }
 
         val parsedStatusParam = extractUpiResponseParam(responseString, "Status")?.uppercase(Locale.US)
-        val newStatus = when {
-            resultCode == Activity.RESULT_CANCELED && parsedStatusParam.isNullOrBlank() -> DonationStatus.CANCELLED
-            parsedStatusParam == "FAILURE" || parsedStatusParam == "FAILED" -> DonationStatus.FAILED
-            parsedStatusParam == "CANCELLED" || parsedStatusParam == "CANCELED" -> DonationStatus.CANCELLED
-            else -> DonationStatus.PENDING // NEVER PAID on client intent return!
+        val responseCode = extractUpiResponseParam(responseString, "responseCode")
+            ?: extractUpiResponseParam(responseString, "respCode")
+            ?: ""
+        val providerMessage = extractUpiResponseParam(responseString, "message")
+            ?: extractUpiResponseParam(responseString, "errorMessage")
+            ?: extractUpiResponseParam(responseString, "reason")
+            ?: ""
+
+        val failureCategory = classifyUpiReturnFailure(
+            resultCode = resultCode,
+            statusParam = parsedStatusParam,
+            responseCode = responseCode,
+            providerMessage = providerMessage,
+            rawResponse = responseString,
+            launchedPackage = launchedPackage
+        )
+
+        val newStatus = when (failureCategory) {
+            UpiFailureCategory.USER_CANCELLED -> DonationStatus.CANCELLED
+            UpiFailureCategory.UNSUPPORTED_REQUEST,
+            UpiFailureCategory.PROVIDER_SECURITY_DECLINE,
+            UpiFailureCategory.RECIPIENT_RISK_RESTRICTION,
+            UpiFailureCategory.RECIPIENT_VPA_UNAVAILABLE,
+            UpiFailureCategory.BANK_OR_PROVIDER_DECLINE,
+            UpiFailureCategory.NETWORK_INTERRUPTION,
+            UpiFailureCategory.APP_UNAVAILABLE -> DonationStatus.FAILED
+            UpiFailureCategory.NONE -> DonationStatus.PENDING // NEVER PAID on client intent return!
+        }
+
+        val safeProviderNote = DonationConfig.sanitizeForLog(
+            buildString {
+                append(failureCategory.name)
+                if (responseCode.isNotBlank()) append(" code=").append(responseCode.take(24))
+                if (providerMessage.isNotBlank()) append(" msg=").append(providerMessage.take(120))
+            }
+        )
+
+        var markedUnavailable = false
+        val effectivePkg = launchedPackage?.trim().orEmpty()
+        if (effectivePkg.isNotEmpty() && (
+                failureCategory == UpiFailureCategory.PROVIDER_SECURITY_DECLINE ||
+                    failureCategory == UpiFailureCategory.RECIPIENT_RISK_RESTRICTION
+                )
+        ) {
+            markProviderRestricted(
+                packageName = effectivePkg,
+                displayName = paymentMethodLabel ?: current.paymentMethod,
+                category = failureCategory,
+                responseCode = responseCode,
+                sanitizedReason = safeProviderNote,
+                nowMs = nowMs
+            )
+            markedUnavailable = true
         }
 
         val updated = current.copy(
             status = newStatus.name,
+            paymentMethod = paymentMethodLabel?.ifBlank { current.paymentMethod } ?: current.paymentMethod,
             updatedAtMs = nowMs
         )
         donationDao.updateTransaction(updated)
@@ -428,21 +661,39 @@ class DonationRepository(
                 newStatus = newStatus.name,
                 actorRole = "CLIENT_INTENT",
                 actorId = currentOwnerUserId,
-                evidence = "resultCode=$resultCode, statusParam=${parsedStatusParam ?: "NONE"}",
-                reason = if (newStatus == DonationStatus.PENDING) {
-                    "Returned from UPI app — kept PENDING pending trusted verification"
-                } else {
-                    "UPI app reported ${newStatus.displayLabel}"
+                evidence = DonationConfig.sanitizeForLog(
+                    "pkg=${effectivePkg.ifBlank { "chooser" }}, resultCode=$resultCode, statusParam=${parsedStatusParam ?: "NONE"}, respCode=${responseCode.ifBlank { "NONE" }}"
+                ),
+                reason = when (newStatus) {
+                    DonationStatus.PENDING -> "Returned from UPI app — kept PENDING awaiting trusted backend verification"
+                    DonationStatus.CANCELLED -> "Payment cancelled in UPI app"
+                    else -> "Provider reported failure ($safeProviderNote)"
                 },
                 timestampMs = nowMs
             )
         )
-        val msg = when (newStatus) {
-            DonationStatus.CANCELLED -> "Payment cancelled. You can retry or change the amount anytime."
-            DonationStatus.FAILED -> "UPI app reported payment failure."
-            else -> "Payment submitted in UPI app. Status remains Pending until verified — you may also submit your 12-digit UTR for review."
+
+        val evaluation = UpiReturnEvaluation(
+            transaction = updated,
+            failureCategory = failureCategory,
+            responseCode = responseCode,
+            providerMarkedUnavailable = markedUnavailable,
+            allowImmediateRetry = !failureCategory.blocksImmediateRetry && !markedUnavailable
+        )
+        _lastReturnEvaluation.value = evaluation
+
+        val msg = when (failureCategory) {
+            UpiFailureCategory.USER_CANCELLED -> "Payment cancelled."
+            UpiFailureCategory.PROVIDER_SECURITY_DECLINE,
+            UpiFailureCategory.RECIPIENT_RISK_RESTRICTION -> "Provider security policy declined payment."
+            UpiFailureCategory.UNSUPPORTED_REQUEST -> "Request type not supported by selected payment app."
+            UpiFailureCategory.RECIPIENT_VPA_UNAVAILABLE -> "Recipient payment address unavailable."
+            UpiFailureCategory.NETWORK_INTERRUPTION -> "Network interruption during payment."
+            UpiFailureCategory.BANK_OR_PROVIDER_DECLINE -> "Payment declined by bank or provider."
+            UpiFailureCategory.APP_UNAVAILABLE -> "Selected payment app unavailable."
+            UpiFailureCategory.NONE -> "Payment pending trusted verification."
         }
-        DonationActionResult.Success(updated, msg)
+        DonationActionResult.Success(evaluation, msg)
     }
 
     /**
@@ -748,8 +999,8 @@ class DonationRepository(
                 newStatus = newStatus.name,
                 actorRole = "ADMIN",
                 actorId = session.adminId,
-                evidence = cleanEvidence,
-                reason = cleanReason,
+                evidence = DonationConfig.sanitizeForLog(cleanEvidence),
+                reason = DonationConfig.sanitizeForLog(cleanReason),
                 timestampMs = nowMs
             )
         )
@@ -926,13 +1177,61 @@ class DonationRepository(
         }
     }
 
+    private fun loadPersistedProviderRestrictions(): Map<String, ProviderRestriction> {
+        val raw = prefs.getString(KEY_RESTRICTED_PROVIDERS_JSON, null) ?: return emptyMap()
+        return try {
+            val root = JSONObject(raw)
+            val result = LinkedHashMap<String, ProviderRestriction>()
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val pkg = keys.next()
+                val obj = root.optJSONObject(pkg) ?: continue
+                val catName = obj.optString("category", UpiFailureCategory.PROVIDER_SECURITY_DECLINE.name)
+                val cat = UpiFailureCategory.entries.firstOrNull { it.name == catName }
+                    ?: UpiFailureCategory.PROVIDER_SECURITY_DECLINE
+                result[pkg] = ProviderRestriction(
+                    packageName = pkg,
+                    displayName = obj.optString("displayName", pkg),
+                    category = cat,
+                    responseCode = obj.optString("responseCode", ""),
+                    sanitizedReason = DonationConfig.sanitizeForLog(obj.optString("sanitizedReason", "")),
+                    restrictedAtMs = obj.optLong("restrictedAtMs", 0L)
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    private fun persistProviderRestrictions(map: Map<String, ProviderRestriction>) {
+        val root = JSONObject()
+        map.forEach { (pkg, entry) ->
+            val obj = JSONObject()
+                .put("displayName", entry.displayName)
+                .put("category", entry.category.name)
+                .put("responseCode", entry.responseCode)
+                .put("sanitizedReason", DonationConfig.sanitizeForLog(entry.sanitizedReason))
+                .put("restrictedAtMs", entry.restrictedAtMs)
+            root.put(pkg, obj)
+        }
+        prefs.edit().putString(KEY_RESTRICTED_PROVIDERS_JSON, root.toString()).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "ctecs_donation_secure_prefs"
         private const val KEY_DONOR_OWNER_ID = "donor_owner_id"
         private const val KEY_ADMIN_ID = "admin_id"
         private const val KEY_ADMIN_PASS_SALT = "admin_pass_salt"
         private const val KEY_ADMIN_PASS_HASH = "admin_pass_hash"
+        private const val KEY_RESTRICTED_PROVIDERS_JSON = "restricted_upi_providers_json"
+        const val PAYTM_PACKAGE_NAME = "net.one97.paytm"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        private val RISK_POLICY_CODES = setOf("RN", "RNF", "U16", "U28", "RM", "ZD", "RISK")
+        private val SECURITY_DECLINE_CODES = setOf("XP", "ZM", "SEC", "SE")
+        private val VPA_UNAVAILABLE_CODES = setOf("ZH", "U17", "U18", "XJ", "VPA_ERR")
+        private val NETWORK_ERROR_CODES = setOf("U69", "U67", "NET", "TIMEOUT")
 
         private val ORDINARY_BROWSER_PACKAGES = setOf(
             "com.android.chrome",
@@ -957,6 +1256,10 @@ class DonationRepository(
                 lower.contains("webview")
         }
 
+        /**
+         * Validates that a configured backend verification URL uses HTTPS and points
+         * to a public host (blocking loopback, private, and link-local metadata addresses).
+         */
         fun isValidTrustedBackendUrl(url: String): Boolean {
             val trimmed = url.trim()
             if (trimmed.isEmpty()) return false
@@ -965,16 +1268,113 @@ class DonationRepository(
             } catch (_: Exception) {
                 return false
             }
-            return parsed.scheme.equals("https", ignoreCase = true) && !parsed.host.isNullOrBlank()
+            if (!parsed.scheme.equals("https", ignoreCase = true)) return false
+            val host = parsed.host?.trim()?.lowercase(Locale.US).orEmpty()
+            if (host.isEmpty()) return false
+            if (host == "localhost" || host == "0.0.0.0" || host == "::1" || host == "[::1]") return false
+            if (host.startsWith("127.") || host.startsWith("10.") || host.startsWith("169.254.") || host.startsWith("192.168.")) {
+                return false
+            }
+            val octets = host.split(".")
+            if (octets.size == 4 && octets[0] == "172") {
+                val second = octets[1].toIntOrNull()
+                if (second != null && second in 16..31) return false
+            }
+            return true
+        }
+
+        internal fun classifyUpiReturnFailure(
+            resultCode: Int,
+            statusParam: String?,
+            responseCode: String,
+            providerMessage: String,
+            rawResponse: String?,
+            launchedPackage: String?
+        ): UpiFailureCategory {
+            val codeUpper = responseCode.trim().uppercase(Locale.US)
+            val decodedRaw = rawResponse?.let { runCatching { Uri.decode(it) }.getOrDefault(it) }
+            val decodedMsg = runCatching { Uri.decode(providerMessage) }.getOrDefault(providerMessage)
+            val combinedText = listOfNotNull(decodedMsg, decodedRaw)
+                .joinToString(" ")
+                .lowercase(Locale.US)
+
+            if (statusParam == "CANCELLED" || statusParam == "CANCELED") {
+                return UpiFailureCategory.USER_CANCELLED
+            }
+            if (resultCode == Activity.RESULT_CANCELED &&
+                statusParam.isNullOrBlank() &&
+                codeUpper.isEmpty() &&
+                providerMessage.isBlank()
+            ) {
+                return UpiFailureCategory.USER_CANCELLED
+            }
+
+            // Error C: Unsupported request type (e.g., BHIM "This request type is not supported")
+            if (combinedText.contains("not supported") ||
+                combinedText.contains("unsupported") ||
+                combinedText.contains("request type")
+            ) {
+                return UpiFailureCategory.UNSUPPORTED_REQUEST
+            }
+
+            // Error A: Provider UPI Risk Policy restriction (e.g., Paytm Risk Policy alert)
+            if (codeUpper in RISK_POLICY_CODES ||
+                combinedText.contains("risk policy") ||
+                combinedText.contains("risk restriction") ||
+                combinedText.contains("risk")
+            ) {
+                return UpiFailureCategory.RECIPIENT_RISK_RESTRICTION
+            }
+
+            // Error B: Security decline (e.g., Paytm "Your payment is declined for security reasons")
+            if (codeUpper in SECURITY_DECLINE_CODES ||
+                combinedText.contains("security reason") ||
+                combinedText.contains("security policy") ||
+                combinedText.contains("declined for security") ||
+                (launchedPackage == PAYTM_PACKAGE_NAME &&
+                    (statusParam == "FAILURE" || statusParam == "FAILED") &&
+                    combinedText.contains("declined"))
+            ) {
+                return UpiFailureCategory.PROVIDER_SECURITY_DECLINE
+            }
+
+            // Recipient VPA unavailable / invalid
+            if (codeUpper in VPA_UNAVAILABLE_CODES ||
+                combinedText.contains("invalid vpa") ||
+                combinedText.contains("vpa unavailable") ||
+                combinedText.contains("account not found")
+            ) {
+                return UpiFailureCategory.RECIPIENT_VPA_UNAVAILABLE
+            }
+
+            // Network / timeout interruption
+            if (codeUpper in NETWORK_ERROR_CODES ||
+                combinedText.contains("network") ||
+                combinedText.contains("timeout") ||
+                combinedText.contains("timed out") ||
+                combinedText.contains("no internet")
+            ) {
+                return UpiFailureCategory.NETWORK_INTERRUPTION
+            }
+
+            // Generic provider or bank decline
+            if (statusParam == "FAILURE" || statusParam == "FAILED") {
+                return UpiFailureCategory.BANK_OR_PROVIDER_DECLINE
+            }
+
+            // Submitted / Success / OK client returns stay PENDING until trusted verification
+            return UpiFailureCategory.NONE
         }
 
         internal fun extractUpiResponseParam(response: String?, key: String): String? {
             if (response.isNullOrBlank()) return null
-            return response.split("&")
+            val raw = response.split("&")
                 .map { it.split("=", limit = 2) }
                 .firstOrNull { it.size == 2 && it[0].trim().equals(key, ignoreCase = true) }
                 ?.get(1)
                 ?.trim()
+                ?: return null
+            return runCatching { Uri.decode(raw) }.getOrDefault(raw)
         }
 
         internal fun sanitizeCsvCell(raw: String): String {

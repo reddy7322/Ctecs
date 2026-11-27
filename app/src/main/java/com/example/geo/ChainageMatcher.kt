@@ -43,6 +43,25 @@ object ChainageMatcher {
     private val lastMatchLatencyMicros = AtomicLong(0L)
     private val automaticJumpRecoveries = AtomicLong(0L)
 
+    // Multi-fix spatial jump confirmation state: prevents a single stale/glitched GPS fix
+    // (e.g. 171+000 -> 130+000 even after >8s) from blindly replacing a valid chainage.
+    private data class PendingJumpCandidate(
+        val routeKey: String,
+        val gpsPoint: GeoPoint,
+        val estimatedMetres: Long,
+        val alignmentName: String,
+        val fixTimeMs: Long
+    )
+
+    private val jumpValidationLock = Any()
+    private var pendingJumpCandidate: PendingJumpCandidate? = null
+
+    fun resetJumpValidationState() {
+        synchronized(jumpValidationLock) {
+            pendingJumpCandidate = null
+        }
+    }
+
     fun getCacheHits(): Long = cacheHits.get()
     fun getCacheMisses(): Long = cacheMisses.get()
     fun getLastMatchLatencyMicros(): Long = lastMatchLatencyMicros.get()
@@ -221,8 +240,11 @@ object ChainageMatcher {
         // If no explicit markers mapped to this alignment path, synthesize baseline chainage
         // directly from the path coordinates so every point along the path has an accurate baseline chainage
         if (mapped.isEmpty() && n >= 2 && totalDist > 0.0) {
-            val inferredStartMetres = allMarkers.firstOrNull()?.chainage?.metres
-                ?: Chainage.parse(alignment.name)?.metres
+            val nearestStartMarker = allMarkers.minByOrNull { GeoUtils.distanceMetres(pts.first(), it.point) }
+            val nearestStartDist = nearestStartMarker?.let { GeoUtils.distanceMetres(pts.first(), it.point) } ?: Double.MAX_VALUE
+            val inferredStartMetres = Chainage.parse(alignment.name)?.metres
+                ?: (if (nearestStartDist <= 1500.0) nearestStartMarker?.chainage?.metres else null)
+                ?: allMarkers.firstOrNull()?.chainage?.metres
                 ?: 0L
             val sign = if (alignment.direction == "DECREASING") -1 else 1
             val endMetres = (inferredStartMetres + sign * totalDist).roundToLong().coerceAtLeast(0L)
@@ -381,9 +403,11 @@ object ChainageMatcher {
                 val proj = GeoUtils.projectPointToSegment(gpsPoint, p1, p2)
                 val distAlong = cached.cumulativeDistances[segIdx] + proj.t * cached.segmentLengths[segIdx]
 
-                // Parallel carriageway continuity hysteresis (5.0m advantage for previously matched alignment)
+                // Parallel carriageway continuity hysteresis (5.0m normal / 7.5m under weaker GPS)
                 val isPrevAlignment = prevAlignmentName.isNotBlank() && alignName == prevAlignmentName
-                val alignmentContinuityBonus = if (isPrevAlignment) 5.0 else 0.0
+                val alignmentContinuityBonus = if (isPrevAlignment) {
+                    if (gpsAccuracy > 15.0f) 7.5 else 5.0
+                } else 0.0
 
                 // Longitudinal segment continuity tie-breaker: prevents snapping onto an unrelated
                 // branch at tight curves, loops, cloverleafs, or crossing intersections when perpendicular
@@ -542,35 +566,129 @@ object ChainageMatcher {
                 }
             }
 
-            // 4. Continuity check: Detect single-spike chainage jumps, implausible speeds,
-            // and poor-accuracy noise spikes without ever locking permanently.
-            // CRITICAL: Always compare against the UNCALIBRATED baseline chainage of previousResult
-            // so that a calibration shift > 250m never triggers a false jump lock!
+            // 4. Continuity & plausibility validation:
+            // - Rejects out-of-order stale fix timestamps before they can regress chainage.
+            // - Rejects poor-accuracy noise spikes cleanly.
+            // - Validates large drops/jumps (e.g. 171+000 -> 130+000) against physical travel velocity
+            //   (supporting BOTH forward and reverse movement equally) and requires 2 consecutive
+            //   spatially-consistent, accurate, on-alignment fixes before snapping across an implausible jump.
+            // - Always compares against the UNCALIBRATED baseline chainage of previousResult so that
+            //   a calibration shift > 250m never triggers a false jump lock.
             var isUncertain = false
+            var uncertainReason: String? = null
             val prevBaselineChainage = previousResult?.rawUncorrectedChainage ?: previousResult?.chainage
             var lastReliableChainage: Chainage? = prevBaselineChainage
 
             if (previousResult != null && prevBaselineChainage != null && previousResult.confidence != MatchConfidence.NO_MATCH) {
+                val isOlderFixTimestamp = previousResult.timestamp > 0L && effectiveFixTimeMs + 500L < previousResult.timestamp
                 val chainageJump = abs(estimatedChainageMetres - prevBaselineChainage.metres)
-                val elapsedMs = abs(effectiveFixTimeMs - previousResult.timestamp)
-                val dtSec = (elapsedMs / 1000.0).coerceAtLeast(0.0)
+                val elapsedMs = (effectiveFixTimeMs - previousResult.timestamp).coerceAtLeast(0L)
+                val dtSec = elapsedMs / 1000.0
                 val isPoorAccuracySpike = gpsAccuracy > 35.0f && chainageJump > 25L
+                // Upper highway speed sanity bound (~198 km/h = 55 m/s) — symmetric for forward AND reverse travel
+                val maxPlausibleDistM = maxOf(SUDDEN_JUMP_THRESHOLD_METRES, dtSec * 55.0 + 150.0)
                 val isImplausibleSpeed = dtSec in 0.1..6.0 && chainageJump > maxOf(65.0, dtSec * 55.0 + 35.0)
+                val isPhysicallyImpossibleJump = chainageJump > maxPlausibleDistM
                 val isLargeJump = chainageJump > SUDDEN_JUMP_THRESHOLD_METRES
+                val directionLabel = if (estimatedChainageMetres >= prevBaselineChainage.metres) "INCREASING" else "DECREASING"
 
-                if (isLargeJump || isPoorAccuracySpike || isImplausibleSpeed) {
-                    if (!isPoorAccuracySpike && (previousResult.isUncertain || elapsedMs > MAX_SPIKE_HOLD_WINDOW_MS)) {
-                        // Previous reading already held a spike once, or > 8s elapsed with acceptable GPS:
-                        // Automatically recover and snap to the new position so chainage never freezes!
-                        isUncertain = false
-                        lastReliableChainage = Chainage(estimatedChainageMetres)
-                        automaticJumpRecoveries.incrementAndGet()
-                    } else {
-                        // Transient GPS spike or poor-accuracy jump: hold previous reliable baseline chainage
+                when {
+                    isOlderFixTimestamp -> {
                         isUncertain = true
+                        uncertainReason = "STALE_GPS_FIX"
                         lastReliableChainage = prevBaselineChainage
+                        SmartChainageCorrectionEngine.recordRejectedChainage(
+                            gpsAccuracyMetres = gpsAccuracy,
+                            alignmentName = bestAlignment.alignmentName,
+                            previousChainageMetres = prevBaselineChainage.metres,
+                            rejectedChainageMetres = estimatedChainageMetres,
+                            direction = directionLabel,
+                            reason = "STALE_GPS_FIX"
+                        )
+                    }
+                    isPoorAccuracySpike -> {
+                        synchronized(jumpValidationLock) { pendingJumpCandidate = null }
+                        isUncertain = true
+                        uncertainReason = "POOR_GPS_ACCURACY"
+                        lastReliableChainage = prevBaselineChainage
+                        SmartChainageCorrectionEngine.recordRejectedChainage(
+                            gpsAccuracyMetres = gpsAccuracy,
+                            alignmentName = bestAlignment.alignmentName,
+                            previousChainageMetres = prevBaselineChainage.metres,
+                            rejectedChainageMetres = estimatedChainageMetres,
+                            direction = directionLabel,
+                            reason = "POOR_GPS_ACCURACY"
+                        )
+                    }
+                    isLargeJump || isImplausibleSpeed -> {
+                        val isHighQualityOnAlignment = gpsAccuracy <= 25.0f && effectiveOffset <= maxMatchOffsetMetres
+                        val isPlausibleLongGapTravel = !isPhysicallyImpossibleJump &&
+                            elapsedMs > MAX_SPIKE_HOLD_WINDOW_MS &&
+                            isHighQualityOnAlignment
+
+                        if (isPlausibleLongGapTravel) {
+                            // Genuine travel (forward OR reverse) across a >8s GPS gap within physical velocity bounds
+                            synchronized(jumpValidationLock) { pendingJumpCandidate = null }
+                            isUncertain = false
+                            lastReliableChainage = Chainage(estimatedChainageMetres)
+                            automaticJumpRecoveries.incrementAndGet()
+                        } else {
+                            // Suspicious or physically impossible drop/jump (e.g. 171+000 -> 130+000):
+                            // Require 2 consecutive spatially-consistent, fresh, accurate, on-alignment fixes
+                            val routeKey = routeData.id
+                            val confirmedBySecondFix = synchronized(jumpValidationLock) {
+                                val prevCand = pendingJumpCandidate
+                                val matchesCandidate = isHighQualityOnAlignment &&
+                                    prevCand != null &&
+                                    prevCand.routeKey == routeKey &&
+                                    effectiveFixTimeMs >= prevCand.fixTimeMs &&
+                                    (effectiveFixTimeMs - prevCand.fixTimeMs) <= 15_000L &&
+                                    GeoUtils.distanceMetres(prevCand.gpsPoint, gpsPoint) <= 60.0 &&
+                                    abs(prevCand.estimatedMetres - estimatedChainageMetres) <= 80L
+                                if (matchesCandidate) {
+                                    pendingJumpCandidate = null
+                                    true
+                                } else {
+                                    pendingJumpCandidate = if (isHighQualityOnAlignment) {
+                                        PendingJumpCandidate(
+                                            routeKey = routeKey,
+                                            gpsPoint = gpsPoint,
+                                            estimatedMetres = estimatedChainageMetres,
+                                            alignmentName = bestAlignment.alignmentName,
+                                            fixTimeMs = effectiveFixTimeMs
+                                        )
+                                    } else {
+                                        null
+                                    }
+                                    false
+                                }
+                            }
+
+                            if (confirmedBySecondFix) {
+                                isUncertain = false
+                                lastReliableChainage = Chainage(estimatedChainageMetres)
+                                automaticJumpRecoveries.incrementAndGet()
+                            } else {
+                                isUncertain = true
+                                uncertainReason = if (isPhysicallyImpossibleJump) "IMPLAUSIBLE_DROP_JUMP" else "UNCONFIRMED_JUMP_SPIKE"
+                                lastReliableChainage = prevBaselineChainage
+                                SmartChainageCorrectionEngine.recordRejectedChainage(
+                                    gpsAccuracyMetres = gpsAccuracy,
+                                    alignmentName = bestAlignment.alignmentName,
+                                    previousChainageMetres = prevBaselineChainage.metres,
+                                    rejectedChainageMetres = estimatedChainageMetres,
+                                    direction = directionLabel,
+                                    reason = uncertainReason!!
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        synchronized(jumpValidationLock) { pendingJumpCandidate = null }
                     }
                 }
+            } else {
+                synchronized(jumpValidationLock) { pendingJumpCandidate = null }
             }
 
             // 5. Four-Tier Confidence Scoring
@@ -723,5 +841,6 @@ object ChainageMatcher {
      */
     fun clearCache() {
         geometryCache.clear()
+        resetJumpValidationState()
     }
 }

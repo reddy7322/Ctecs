@@ -6,6 +6,7 @@ import com.example.model.Chainage
 import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.GeoPoint
+import com.example.model.LastReliableChainageSnapshot
 import com.example.model.ManualChainageCalibrationState
 import com.example.model.ManualChainageMode
 import com.example.model.MatchConfidence
@@ -47,6 +48,7 @@ class ChainageProgressionTracker {
     private var lastChainageSource: ChainageSource? = null
     private var lastProjectedPoint: GeoPoint? = null
     private var smoothedMetres: Double? = null
+    private var lastAcceptedAutoFixTimeMs: Long = 0L
 
     // Side stabilization state (LHS / RHS / BHS — completely separate from forward/reverse travel)
     private var currentDetectedSide: String = "RHS"
@@ -104,6 +106,7 @@ class ChainageProgressionTracker {
         lastChainageSource = null
         lastProjectedPoint = null
         smoothedMetres = null
+        lastAcceptedAutoFixTimeMs = 0L
         hasInitialSide = false
         candidateSide = null
         candidateSideCount = 0
@@ -111,16 +114,48 @@ class ChainageProgressionTracker {
         resetDirectionAndManualTracking()
     }
 
+    /**
+     * Resets ONLY the automatic smoothing filter state (e.g., during Force Refresh)
+     * WITHOUT wiping out travel direction history, manual LHS/RHS lock, or manual calibration session.
+     */
     @Synchronized
-    fun resetChainageFilter() {
+    fun resetAutoChainageFilterOnly() {
         lastValidChainage = null
         lastValidRawChainage = null
         lastCalibrationOffset = null
         lastChainageSource = null
         lastProjectedPoint = null
         smoothedMetres = null
+        lastAcceptedAutoFixTimeMs = 0L
         lastChainageDelta = 0L
-        resetDirectionAndManualTracking()
+    }
+
+    @Synchronized
+    fun resetChainageFilter() {
+        resetAutoChainageFilterOnly()
+    }
+
+    /**
+     * Seeds the tracker with a persisted last-reliable chainage snapshot on cold app startup
+     * before the first live GPS fix arrives, without overriding an already active live chainage.
+     */
+    @Synchronized
+    fun seedPersistedLastReliableChainage(routeId: String, snapshot: LastReliableChainageSnapshot) {
+        if (lastValidChainage != null && currentRouteId == routeId) return
+        currentRouteId = routeId
+        val ch = Chainage(snapshot.chainageMetres)
+        val rawCh = snapshot.rawChainageMetres?.let { Chainage(it) } ?: ch
+        lastValidChainage = ch
+        lastValidRawChainage = rawCh
+        lastCalibrationOffset = ch.metres - rawCh.metres
+        lastChainageSource = runCatching { ChainageSource.valueOf(snapshot.sourceName) }
+            .getOrDefault(ChainageSource.KMZ)
+        smoothedMetres = ch.metres.toDouble()
+        lastAcceptedAutoFixTimeMs = snapshot.timestampMs
+        if (manualSideOverride == null && snapshot.detectedSide.isNotBlank()) {
+            currentDetectedSide = snapshot.detectedSide
+            hasInitialSide = true
+        }
     }
 
     @Synchronized
@@ -339,8 +374,38 @@ class ChainageProgressionTracker {
         val rawUncorrected = rawResult.rawUncorrectedChainage ?: rawChainage
         val projPt = rawResult.projectedPoint
 
+        // Strict monotonic fix timestamp guard: older delayed callbacks must never regress chainage
+        if (rawResult.timestamp > 0L && lastAcceptedAutoFixTimeMs > 0L &&
+            rawResult.timestamp + 500L < lastAcceptedAutoFixTimeMs && lastValidChainage != null
+        ) {
+            SmartChainageCorrectionEngine.recordRejectedChainage(
+                gpsAccuracyMetres = rawResult.gpsAccuracy,
+                alignmentName = rawResult.matchedAlignmentName,
+                previousChainageMetres = lastValidChainage?.metres,
+                rejectedChainageMetres = rawChainage.metres,
+                direction = confirmedTravelDirection.name,
+                reason = "STALE_CALLBACK_REJECTED"
+            )
+            return rawResult.copy(
+                chainage = lastValidChainage,
+                confidence = MatchConfidence.LOW,
+                isUncertain = true,
+                detectedSide = effectiveSide,
+                lastReliableChainage = lastValidChainage,
+                travelDirection = confirmedTravelDirection
+            )
+        }
+
         // Poor GPS accuracy gate: retain last reliable chainage cleanly instead of blending noisy data
         if (rawResult.gpsAccuracy > MAX_TRACKING_GPS_ACCURACY_M && lastValidChainage != null) {
+            SmartChainageCorrectionEngine.recordRejectedChainage(
+                gpsAccuracyMetres = rawResult.gpsAccuracy,
+                alignmentName = rawResult.matchedAlignmentName,
+                previousChainageMetres = lastValidChainage?.metres,
+                rejectedChainageMetres = rawChainage.metres,
+                direction = confirmedTravelDirection.name,
+                reason = "POOR_GPS_ACCURACY"
+            )
             return rawResult.copy(
                 chainage = lastValidChainage,
                 confidence = MatchConfidence.LOW,
@@ -353,8 +418,10 @@ class ChainageProgressionTracker {
 
         val prevOffset = lastCalibrationOffset
         val currOffset = rawChainage.metres - rawUncorrected.metres
-        val calibrationChanged = (lastChainageSource != null && lastChainageSource != rawResult.source) ||
-            (prevOffset != null && abs(currOffset - prevOffset) >= 2L)
+        val calibrationChanged = !rawResult.isUncertain && (
+            (lastChainageSource != null && lastChainageSource != rawResult.source) ||
+                (prevOffset != null && abs(currOffset - prevOffset) >= 2L)
+            )
 
         if (calibrationChanged) {
             lastValidChainage = rawChainage
@@ -363,6 +430,9 @@ class ChainageProgressionTracker {
             lastChainageSource = rawResult.source
             lastProjectedPoint = projPt
             smoothedMetres = rawChainage.metres.toDouble()
+            if (rawResult.timestamp > lastAcceptedAutoFixTimeMs) {
+                lastAcceptedAutoFixTimeMs = rawResult.timestamp
+            }
             return rawResult.copy(
                 chainage = rawChainage,
                 detectedSide = effectiveSide,
@@ -415,6 +485,9 @@ class ChainageProgressionTracker {
         lastValidRawChainage = rawUncorrected
         lastCalibrationOffset = currOffset
         lastChainageSource = rawResult.source
+        if (!rawResult.isUncertain && rawResult.timestamp > lastAcceptedAutoFixTimeMs) {
+            lastAcceptedAutoFixTimeMs = rawResult.timestamp
+        }
 
         return rawResult.copy(
             chainage = smoothedChainage,

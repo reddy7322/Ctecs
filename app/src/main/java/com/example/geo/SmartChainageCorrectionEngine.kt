@@ -10,6 +10,7 @@ import com.example.model.KmzReplacementPreview
 import com.example.model.MatchConfidence
 import com.example.model.PermanentCalibrationProfile
 import com.example.model.ReferencePointSource
+import com.example.model.RejectedChainageDiagnostic
 import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.RouteMarker
@@ -67,6 +68,7 @@ object SmartChainageCorrectionEngine {
     private val forceRefreshCounter = AtomicLong(0L)
     private val smartRefreshCounter = AtomicLong(0L)
     private val stuckRecoveryCounter = AtomicLong(0L)
+    private val rejectedChainageCounter = AtomicLong(0L)
     private val activeTaskStartEpochMs = AtomicLong(0L)
     private val lastHeartbeatMs = AtomicLong(System.currentTimeMillis())
     private val isTaskRunning = AtomicBoolean(false)
@@ -107,7 +109,9 @@ object SmartChainageCorrectionEngine {
         val activeMatchOffsetMetres: Double = 0.0,
         val activeMatchConfidence: String = "NO_MATCH",
         val activeHierarchyTier: String = "Standby",
-        val lastRecoveryReason: String = ""
+        val lastRecoveryReason: String = "",
+        val rejectedChainageCount: Long = 0L,
+        val recentRejectedDiagnostics: List<RejectedChainageDiagnostic> = emptyList()
     )
 
     private val _diagnosticsFlow = MutableStateFlow(CalibrationEngineDiagnostics())
@@ -294,6 +298,38 @@ object SmartChainageCorrectionEngine {
                 lastAccuracyStatusLabel = accuracyStatusLabel,
                 lastRefreshEpochMs = nowMs,
                 lastRecoveryReason = summaryMessage
+            )
+        }
+    }
+
+    /**
+     * Records a privacy-safe diagnostic entry when a suspicious, stale, inaccurate, or
+     * out-of-order chainage reading is rejected. Never stores raw GPS latitude/longitude.
+     */
+    fun recordRejectedChainage(
+        gpsAccuracyMetres: Float,
+        alignmentName: String,
+        previousChainageMetres: Long?,
+        rejectedChainageMetres: Long?,
+        direction: String,
+        reason: String,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        val totalRejected = rejectedChainageCounter.incrementAndGet()
+        val entry = RejectedChainageDiagnostic(
+            timestampMs = nowMs,
+            gpsAccuracyMetres = if (gpsAccuracyMetres.isFinite()) gpsAccuracyMetres else 0f,
+            alignmentName = alignmentName,
+            previousChainageMetres = previousChainageMetres,
+            rejectedChainageMetres = rejectedChainageMetres,
+            direction = direction,
+            reason = reason
+        )
+        _diagnosticsFlow.update { current ->
+            val updatedList = (current.recentRejectedDiagnostics + entry).takeLast(20)
+            current.copy(
+                rejectedChainageCount = totalRejected,
+                recentRejectedDiagnostics = updatedList
             )
         }
     }

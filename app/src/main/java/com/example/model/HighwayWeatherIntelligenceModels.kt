@@ -14,8 +14,7 @@ enum class HighwayWorkActivity(
     val categoryLabel: String,
     val primaryReference: String,
     val isBituminousHotMix: Boolean,
-    val defaultThicknessMm: Double,
-    val productionUnitLabel: String
+    val defaultThicknessMm: Double
 ) {
     BC_LAYING(
         displayName = "BC Laying",
@@ -23,8 +22,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Bituminous Wearing Course",
         primaryReference = "MoRTH 5th Rev Cl. 507.4.1 & 501.5.1 / IRC:105-2019 Cl. 3.3.4",
         isBituminousHotMix = true,
-        defaultThicknessMm = 40.0,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 40.0
     ),
     DBM_LAYING(
         displayName = "DBM Laying",
@@ -32,8 +30,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Bituminous Binder Course",
         primaryReference = "MoRTH 5th Rev Cl. 505 & 501.5.1 / IRC:105-2019 Cl. 3.3.4",
         isBituminousHotMix = true,
-        defaultThicknessMm = 60.0,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 60.0
     ),
     TACK_COAT_APPLICATION(
         displayName = "Tack Coat Application",
@@ -41,8 +38,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Bituminous Surface Interface",
         primaryReference = "MoRTH 5th Rev Cl. 503.4 & 501.5.1",
         isBituminousHotMix = false,
-        defaultThicknessMm = 0.0,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 0.0
     ),
     PRIME_COAT_APPLICATION(
         displayName = "Prime Coat Application",
@@ -50,8 +46,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Granular Base Priming",
         primaryReference = "MoRTH 5th Rev Cl. 502.4 & 501.5.1",
         isBituminousHotMix = false,
-        defaultThicknessMm = 0.0,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 0.0
     ),
     MILLING_OPERATIONS(
         displayName = "Milling Operations",
@@ -59,8 +54,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Pavement Scarifying & Profile Milling",
         primaryReference = "MoRTH 5th Rev Cl. 501.8.3 / IRC:SP:83 (Site Safety & Visibility)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 50.0,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 50.0
     ),
     GLASS_GRID_APPLICATION(
         displayName = "Glass Grid Application",
@@ -68,8 +62,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Geosynthetic Interlayer",
         primaryReference = "MoRTH Section 700 / Manufacturer & Contract Spec (Dry Clean Surface)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 0.0,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 0.0
     ),
     CRACK_SEALING(
         displayName = "Crack Sealing",
@@ -77,8 +70,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Pavement Maintenance",
         primaryReference = "MoRTH Cl. 3004.3 / IRC:82 (Dry Clean Crack Walls)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 0.0,
-        productionUnitLabel = "m/hr"
+        defaultThicknessMm = 0.0
     ),
     SURFACE_PREPARATION_CLEANING(
         displayName = "Surface Preparation and Cleaning",
@@ -86,8 +78,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Pre-Laying Preparation",
         primaryReference = "MoRTH 5th Rev Cl. 501.8 / Cl. 503.4.1 (Dry Dust-Free Surface)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 0.0,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 0.0
     ),
     GSB_OPERATIONS(
         displayName = "GSB Operations",
@@ -95,8 +86,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Granular Sub-Base",
         primaryReference = "MoRTH 5th Rev Cl. 401.4 (OMC Moisture Control)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 200.0,
-        productionUnitLabel = "m³/hr"
+        defaultThicknessMm = 200.0
     ),
     WMM_OPERATIONS(
         displayName = "WMM Operations",
@@ -104,8 +94,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Wet Mix Macadam",
         primaryReference = "MoRTH 5th Rev Cl. 406.3 (OMC Moisture & Compaction Control)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 250.0,
-        productionUnitLabel = "m³/hr"
+        defaultThicknessMm = 250.0
     ),
     EARTHWORK(
         displayName = "Earthwork",
@@ -113,8 +102,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Embankment & Subgrade",
         primaryReference = "MoRTH 5th Rev Section 300 Cl. 305.3 (OMC / No Waterlogged Soil)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 200.0,
-        productionUnitLabel = "m³/hr"
+        defaultThicknessMm = 200.0
     ),
     ROAD_MARKING(
         displayName = "Road Marking",
@@ -122,8 +110,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Thermoplastic / Pavement Marking",
         primaryReference = "MoRTH 5th Rev Cl. 803.4 / IRC:35-2015 (Dry Surface, No Rain/Dew)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 2.5,
-        productionUnitLabel = "m²/hr"
+        defaultThicknessMm = 2.5
     ),
     CONCRETE_WORKS(
         displayName = "Concrete Works",
@@ -131,8 +118,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "PQC / Structural Concrete",
         primaryReference = "MoRTH 5th Rev Section 600 & 1700 / IS:456 / IRC:15",
         isBituminousHotMix = false,
-        defaultThicknessMm = 250.0,
-        productionUnitLabel = "m³/hr"
+        defaultThicknessMm = 250.0
     ),
     GENERAL_HIGHWAY_MAINTENANCE(
         displayName = "General Highway Maintenance",
@@ -140,8 +126,7 @@ enum class HighwayWorkActivity(
         categoryLabel = "Routine Corridor Operations",
         primaryReference = "MoRTH Section 3000 / IRC:82 (Activity & Safety Dependent)",
         isBituminousHotMix = false,
-        defaultThicknessMm = 0.0,
-        productionUnitLabel = "km/hr"
+        defaultThicknessMm = 0.0
     );
 
     companion object {
@@ -745,17 +730,6 @@ enum class TackCoatCondition(val label: String) {
     }
 }
 
-enum class ValueSourceTag(val label: String) {
-    USER_ENTERED("User-Entered"),
-    HISTORICAL("Historical"),
-    ESTIMATED("Estimated");
-
-    companion object {
-        fun fromName(raw: String?): ValueSourceTag =
-            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: USER_ENTERED
-    }
-}
-
 /**
  * Contract-specific specification configuration controlling how MoRTH and IRC rules are applied.
  * MoRTH 6th Revision never auto-replaces MoRTH 5th Revision without explicit contract selection.
@@ -945,139 +919,6 @@ data class HourlyWorkWindow(
     val insufficientSpecData: Boolean = false
 )
 
-/**
- * User-configured or project-linked inputs for Highway Work Target & Completion Prediction.
- * Missing production rates are NEVER invented — null indicates user input is required.
- */
-data class WorkTargetInput(
-    val activity: HighwayWorkActivity = HighwayWorkActivity.BC_LAYING,
-    val startChainageKm: Double? = null,
-    val endChainageKm: Double? = null,
-    val workingWidthMeters: Double = 7.0,
-    val layerThicknessMm: Double = 40.0,
-    val plannedStartHour: Int = 7,
-    val availableWorkingHours: Double = 10.0,
-    val expectedProductionRatePerHour: Double? = null, // Area m²/hr, Volume m³/hr, m/hr, or km/hr depending on activity
-    val productionRateSource: ValueSourceTag = ValueSourceTag.USER_ENTERED,
-    val paverCapacitySqmPerHour: Double? = null,
-    val rollerCountAvailable: Int? = null,
-    val hmpCapacityTph: Double? = null,
-    val compactBulkDensityTPerM3: Double = 2.38, // Standard compacted BC/DBM density for HMP tonnage-to-area check
-    val dumpersCount: Int? = null,
-    val dumperPayloadTonnes: Double = 18.0,
-    val dumperCycleMinutes: Double = 45.0,
-    val manpowerAvailabilityPercent: Int = 100,
-    val prepAndInspectionHours: Double = 0.75,
-    val wetSurfaceRecoveryHoursPerRainEvent: Double = 1.5,
-    val nightWorkAllowed: Boolean = false,
-    val workingRestrictionNotes: String = ""
-) {
-    val totalLengthMeters: Double
-        get() {
-            val s = startChainageKm ?: return 0.0
-            val e = endChainageKm ?: return 0.0
-            return kotlin.math.abs(e - s) * 1000.0
-        }
-
-    fun toJsonString(): String = JSONObject().apply {
-        put("activity", activity.name)
-        startChainageKm?.let { put("startChainageKm", it) }
-        endChainageKm?.let { put("endChainageKm", it) }
-        put("workingWidthMeters", workingWidthMeters)
-        put("layerThicknessMm", layerThicknessMm)
-        put("plannedStartHour", plannedStartHour)
-        put("availableWorkingHours", availableWorkingHours)
-        expectedProductionRatePerHour?.let { put("expectedProductionRatePerHour", it) }
-        put("productionRateSource", productionRateSource.name)
-        paverCapacitySqmPerHour?.let { put("paverCapacitySqmPerHour", it) }
-        rollerCountAvailable?.let { put("rollerCountAvailable", it) }
-        hmpCapacityTph?.let { put("hmpCapacityTph", it) }
-        put("compactBulkDensityTPerM3", compactBulkDensityTPerM3)
-        dumpersCount?.let { put("dumpersCount", it) }
-        put("dumperPayloadTonnes", dumperPayloadTonnes)
-        put("dumperCycleMinutes", dumperCycleMinutes)
-        put("manpowerAvailabilityPercent", manpowerAvailabilityPercent)
-        put("prepAndInspectionHours", prepAndInspectionHours)
-        put("wetSurfaceRecoveryHoursPerRainEvent", wetSurfaceRecoveryHoursPerRainEvent)
-        put("nightWorkAllowed", nightWorkAllowed)
-        put("workingRestrictionNotes", workingRestrictionNotes)
-    }.toString()
-
-    companion object {
-        fun fromJsonString(raw: String?): WorkTargetInput {
-            if (raw.isNullOrBlank()) return WorkTargetInput()
-            return try {
-                val obj = JSONObject(raw)
-                WorkTargetInput(
-                    activity = HighwayWorkActivity.fromName(obj.optString("activity", "")),
-                    startChainageKm = if (obj.has("startChainageKm") && !obj.isNull("startChainageKm")) obj.optDouble("startChainageKm") else null,
-                    endChainageKm = if (obj.has("endChainageKm") && !obj.isNull("endChainageKm")) obj.optDouble("endChainageKm") else null,
-                    workingWidthMeters = obj.optDouble("workingWidthMeters", 7.0).coerceAtLeast(0.5),
-                    layerThicknessMm = obj.optDouble("layerThicknessMm", 40.0).coerceAtLeast(0.0),
-                    plannedStartHour = obj.optInt("plannedStartHour", 7).coerceIn(0, 23),
-                    availableWorkingHours = obj.optDouble("availableWorkingHours", 10.0).coerceIn(0.5, 24.0),
-                    expectedProductionRatePerHour = if (obj.has("expectedProductionRatePerHour") && !obj.isNull("expectedProductionRatePerHour")) obj.optDouble("expectedProductionRatePerHour") else null,
-                    productionRateSource = ValueSourceTag.fromName(obj.optString("productionRateSource", "")),
-                    paverCapacitySqmPerHour = if (obj.has("paverCapacitySqmPerHour") && !obj.isNull("paverCapacitySqmPerHour")) obj.optDouble("paverCapacitySqmPerHour") else null,
-                    rollerCountAvailable = if (obj.has("rollerCountAvailable") && !obj.isNull("rollerCountAvailable")) obj.optInt("rollerCountAvailable") else null,
-                    hmpCapacityTph = if (obj.has("hmpCapacityTph") && !obj.isNull("hmpCapacityTph")) obj.optDouble("hmpCapacityTph") else null,
-                    compactBulkDensityTPerM3 = obj.optDouble("compactBulkDensityTPerM3", 2.38).coerceIn(1.2, 3.0),
-                    dumpersCount = if (obj.has("dumpersCount") && !obj.isNull("dumpersCount")) obj.optInt("dumpersCount") else null,
-                    dumperPayloadTonnes = obj.optDouble("dumperPayloadTonnes", 18.0).coerceAtLeast(1.0),
-                    dumperCycleMinutes = obj.optDouble("dumperCycleMinutes", 45.0).coerceAtLeast(5.0),
-                    manpowerAvailabilityPercent = obj.optInt("manpowerAvailabilityPercent", 100).coerceIn(10, 100),
-                    prepAndInspectionHours = obj.optDouble("prepAndInspectionHours", 0.75).coerceIn(0.0, 6.0),
-                    wetSurfaceRecoveryHoursPerRainEvent = obj.optDouble("wetSurfaceRecoveryHoursPerRainEvent", 1.5).coerceIn(0.0, 8.0),
-                    nightWorkAllowed = obj.optBoolean("nightWorkAllowed", false),
-                    workingRestrictionNotes = obj.optString("workingRestrictionNotes", "")
-                )
-            } catch (_: Exception) {
-                WorkTargetInput()
-            }
-        }
-    }
-}
-
-/**
- * Work Target & Completion Prediction output — explicitly marked as an engineering estimate.
- */
-data class WorkTargetPrediction(
-    val activity: HighwayWorkActivity,
-    val isCalculationComplete: Boolean,
-    val missingInputWarnings: List<String>,
-    val totalLengthMeters: Double,
-    val totalAreaSqm: Double,
-    val compactedVolumeM3: Double,
-    val quantityBasisNote: String,
-    val plannedTargetQuantity: Double,
-    val weatherAdjustedTargetQuantity: Double,
-    val quantityUnit: String,
-    val effectiveHourlyRate: Double,
-    val rateSourceTag: ValueSourceTag,
-    val limitingResourceNote: String,
-    val plannedWorkingHours: Double,
-    val suitableWeatherHours: Double,
-    val weatherInterruptionHours: Double,
-    val wetSurfaceRecoveryHours: Double,
-    val prepAndInspectionHours: Double,
-    val netEffectiveWorkingHours: Double,
-    val expectedCompletionPercent: Double,
-    val estimatedCompletionHours: Double?,
-    val estimatedDelayHours: Double,
-    val remainingBalanceQuantity: Double,
-    val remainingHoursNeeded: Double?,
-    val expectedCompletionDaysEstimate: Double?,
-    val alternativeWorkWindowLabel: String?,
-    val targetReductionReasons: List<String>,
-    val confidence: ForecastConfidence,
-    val estimateDisclaimer: String = ESTIMATE_DISCLAIMER
-) {
-    companion object {
-        const val ESTIMATE_DISCLAIMER =
-            "ESTIMATE ONLY — Not a guaranteed production or completion commitment. Actual output depends on verified site conditions, plant supply, haulage, equipment readiness, and Engineer approval."
-    }
-}
-
 data class DelayRiskWarning(
     val title: String,
     val severity: WeatherAlertSeverity,
@@ -1093,7 +934,7 @@ data class DelayRiskSummary(
     val estimatedLostHoursMax: Double,
     val expectedDelayRangeLabel: String,
     val nextSuitableWindowLabel: String?,
-    val dailyTargetImpactSummary: String,
+    val weatherImpactSummary: String,
     val overallConfidence: ForecastConfidence
 )
 
@@ -1150,7 +991,6 @@ data class WeatherIntelligenceSettings(
     val alertExtremeTemps: Boolean = true,
     val alertFogVisibility: Boolean = true,
     val alertUnsuitableBituminousConditions: Boolean = true,
-    val alertWorkTargetChanges: Boolean = true,
     val alertRainProbabilityThresholdPercent: Int = 55,
     val alertStrongWindThresholdKmh: Int = 40,
     val alertHighTempThresholdC: Int = 42,
@@ -1169,10 +1009,7 @@ data class WeatherIntelligenceSettings(
     val contractSpec: ContractSpecificationConfig = ContractSpecificationConfig(),
     // 6b. Dynamic Bituminous Material & Binder Configuration (Weather Settings Popup)
     val bituminousConfig: BituminousMaterialConfig = BituminousMaterialConfig(),
-    // 7. Project Work Targets & Production Rates
-    val savedProductionRatesByActivity: Map<HighwayWorkActivity, Double> = emptyMap(),
-    val defaultProductionRateSource: ValueSourceTag = ValueSourceTag.USER_ENTERED,
-    // 8. Weather Data Preferences
+    // 7. Weather Data Preferences
     val autoRefreshEnabled: Boolean = true,
     val autoRefreshIntervalMinutes: Int = 15,
     val staleDataThresholdMinutes: Int = 60,
@@ -1202,7 +1039,6 @@ data class WeatherIntelligenceSettings(
         put("alertExtremeTemps", alertExtremeTemps)
         put("alertFogVisibility", alertFogVisibility)
         put("alertUnsuitableBituminousConditions", alertUnsuitableBituminousConditions)
-        put("alertWorkTargetChanges", alertWorkTargetChanges)
         put("alertRainProbabilityThresholdPercent", alertRainProbabilityThresholdPercent)
         put("alertStrongWindThresholdKmh", alertStrongWindThresholdKmh)
         put("alertHighTempThresholdC", alertHighTempThresholdC)
@@ -1211,10 +1047,6 @@ data class WeatherIntelligenceSettings(
         put("enabledAlertActivities", JSONArray().apply { enabledAlertActivities.forEach { put(it.name) } })
         put("contractSpec", contractSpec.toJsonObject())
         put("bituminousConfig", bituminousConfig.toJsonObject())
-        put("savedProductionRatesByActivity", JSONObject().apply {
-            savedProductionRatesByActivity.forEach { (act, rate) -> put(act.name, rate) }
-        })
-        put("defaultProductionRateSource", defaultProductionRateSource.name)
         put("autoRefreshEnabled", autoRefreshEnabled)
         put("autoRefreshIntervalMinutes", autoRefreshIntervalMinutes)
         put("staleDataThresholdMinutes", staleDataThresholdMinutes)
@@ -1236,19 +1068,8 @@ data class WeatherIntelligenceSettings(
                     }
                 }.ifEmpty { WeatherIntelligenceSettings().enabledAlertActivities }
 
-                val rateMap = buildMap<HighwayWorkActivity, Double> {
-                    val ratesObj = obj.optJSONObject("savedProductionRatesByActivity")
-                    if (ratesObj != null) {
-                        val keys = ratesObj.keys()
-                        while (keys.hasNext()) {
-                            val k = keys.next()
-                            val act = HighwayWorkActivity.entries.firstOrNull { it.name.equals(k, ignoreCase = true) }
-                            val v = ratesObj.optDouble(k, -1.0)
-                            if (act != null && v > 0.0) put(act, v)
-                        }
-                    }
-                }
-
+                // Legacy target keys (alertWorkTargetChanges, savedProductionRatesByActivity,
+                // defaultProductionRateSource) are safely ignored for zero-loss migration.
                 WeatherIntelligenceSettings(
                     temperatureUnit = TemperatureUnit.fromName(obj.optString("temperatureUnit", "")),
                     windSpeedUnit = WindSpeedUnit.fromName(obj.optString("windSpeedUnit", "")),
@@ -1273,7 +1094,6 @@ data class WeatherIntelligenceSettings(
                     alertExtremeTemps = obj.optBoolean("alertExtremeTemps", true),
                     alertFogVisibility = obj.optBoolean("alertFogVisibility", true),
                     alertUnsuitableBituminousConditions = obj.optBoolean("alertUnsuitableBituminousConditions", true),
-                    alertWorkTargetChanges = obj.optBoolean("alertWorkTargetChanges", true),
                     alertRainProbabilityThresholdPercent = obj.optInt("alertRainProbabilityThresholdPercent", 55).coerceIn(10, 100),
                     alertStrongWindThresholdKmh = obj.optInt("alertStrongWindThresholdKmh", 40).coerceIn(15, 100),
                     alertHighTempThresholdC = obj.optInt("alertHighTempThresholdC", 42).coerceIn(30, 55),
@@ -1282,8 +1102,6 @@ data class WeatherIntelligenceSettings(
                     enabledAlertActivities = actSet,
                     contractSpec = ContractSpecificationConfig.fromJsonObject(obj.optJSONObject("contractSpec")),
                     bituminousConfig = BituminousMaterialConfig.fromJsonObject(obj.optJSONObject("bituminousConfig")),
-                    savedProductionRatesByActivity = rateMap,
-                    defaultProductionRateSource = ValueSourceTag.fromName(obj.optString("defaultProductionRateSource", "")),
                     autoRefreshEnabled = obj.optBoolean("autoRefreshEnabled", true),
                     autoRefreshIntervalMinutes = obj.optInt("autoRefreshIntervalMinutes", 15).coerceIn(5, 120),
                     staleDataThresholdMinutes = obj.optInt("staleDataThresholdMinutes", 60).coerceIn(15, 360),

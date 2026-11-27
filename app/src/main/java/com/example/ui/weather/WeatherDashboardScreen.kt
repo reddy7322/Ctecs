@@ -87,8 +87,6 @@ import com.example.model.WeatherForecastBundle
 import com.example.model.WeatherIntelligenceSettings
 import com.example.model.WeatherObservation
 import com.example.model.WeatherUiState
-import com.example.model.WorkTargetInput
-import com.example.model.WorkTargetPrediction
 import com.example.ui.home.AnimatedWeatherIcon
 import com.example.ui.home.weatherAtmosphereColor
 import com.example.ui.theme.CtecsTheme
@@ -130,14 +128,11 @@ fun WeatherDashboardScreen(
     selectedActivity: HighwayWorkActivity,
     hourlyWorkTimeline: List<HourlyWorkWindow>,
     siteMeasurements: ActualSiteMeasurements,
-    workTargetInput: WorkTargetInput,
-    workTargetPrediction: WorkTargetPrediction,
     delayRiskSummary: DelayRiskSummary,
     actionableAlerts: List<WeatherAlertItem>,
     onSelectActivity: (HighwayWorkActivity) -> Unit,
     onUpdateContractSpec: (ContractSpecificationConfig) -> Unit,
     onUpdateSiteMeasurements: (ActualSiteMeasurements) -> Unit,
-    onUpdateWorkTargetInput: (WorkTargetInput) -> Unit,
     onRefreshWeather: () -> Unit,
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier,

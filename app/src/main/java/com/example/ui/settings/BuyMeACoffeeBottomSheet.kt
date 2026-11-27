@@ -109,6 +109,7 @@ import com.example.donation.DonationConfig
 import com.example.donation.DonationRepository
 import com.example.donation.DonationStatus
 import com.example.donation.DonationTransactionEntity
+import com.example.donation.UpiFailureCategory
 import com.example.donation.UpiIntentResolution
 import com.example.donation.UpiQrGenerator
 import com.example.ui.theme.CtecsTheme
@@ -275,8 +276,23 @@ fun BuyMeACoffeeBottomSheet(
     var justCopiedPaymentLink by remember { mutableStateOf(false) }
     var lastFailedBrand by remember { mutableStateOf<UpiAppBrand?>(null) }
     var hasLaunchError by remember { mutableStateOf(false) }
+    var lastLaunchedPackage by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastLaunchedMethodLabel by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastFailureAllowsRetry by rememberSaveable { mutableStateOf(true) }
     var latestCreatedOrder by remember { mutableStateOf<DonationTransactionEntity?>(null) }
     var hydratedAmountFromOrderRef by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val restrictedProviders by repository.restrictedProvidersFlow.collectAsStateWithLifecycle()
+    val lastReturnEvaluation by repository.lastReturnEvaluation.collectAsStateWithLifecycle()
+
+    var compatiblePackages by remember { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(repository) {
+        compatiblePackages = withContext(Dispatchers.IO) {
+            repository.getCompatibleUpiApps(DonationConfig.buildUpiProbeUri(), excludeRestricted = false)
+                .map { it.packageName }
+                .toSet()
+        }
+    }
 
     LaunchedEffect(activeOrderRef) {
         onActiveOrderRefChange(activeOrderRef)
@@ -340,6 +356,14 @@ fun BuyMeACoffeeBottomSheet(
         }
     }
 
+    val matchingReturnEval = lastReturnEvaluation?.takeIf { it.transaction.orderRef == activeOrder?.orderRef }
+    val retryAllowed = lastFailureAllowsRetry &&
+        (matchingReturnEval?.allowImmediateRetry != false) &&
+        (lastFailedBrand?.let { !restrictedProviders.containsKey(it.packageName) } != false) &&
+        !(activeOrder?.paymentMethod?.let { method ->
+            restrictedProviders.values.any { it.displayName.equals(method, ignoreCase = true) }
+        } ?: false)
+
     // Generate dynamic UPI QR off the main thread using the exact validated UPI payment URI
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(showQrPanel, activeOrder?.orderRef, activeOrder?.upiUri, activeOrder?.amountInr) {
@@ -350,7 +374,13 @@ fun BuyMeACoffeeBottomSheet(
         }
         val validatedQrUri = repository.resolveValidatedPaymentUri(currentOrder).toString()
         qrBitmap = withContext(Dispatchers.IO) {
-            runCatching { UpiQrGenerator.generateBitmap(validatedQrUri, targetSizePx = 440) }.getOrNull()
+            runCatching {
+                UpiQrGenerator.generateValidatedUpiBitmap(
+                    upiUri = validatedQrUri,
+                    expectedAmountInr = currentOrder.amountInr,
+                    targetSizePx = 440
+                )
+            }.getOrNull()
         }
     }
 
@@ -361,10 +391,25 @@ fun BuyMeACoffeeBottomSheet(
         val ref = activeOrderRef ?: return@rememberLauncherForActivityResult
         val rawResponse = result.data?.getStringExtra("response")
             ?: result.data?.dataString
+        val launchedPkg = lastLaunchedPackage
+        val launchedMethod = lastLaunchedMethodLabel
         scope.launch {
-            val handled = repository.handleUpiAppReturn(ref, result.resultCode, rawResponse)
+            val handled = repository.handleUpiAppReturnDetailed(
+                orderRef = ref,
+                resultCode = result.resultCode,
+                responseString = rawResponse,
+                launchedPackage = launchedPkg,
+                paymentMethodLabel = launchedMethod
+            )
             if (handled is DonationActionResult.Success) {
-                latestCreatedOrder = handled.data
+                val eval = handled.data
+                latestCreatedOrder = eval.transaction
+                lastFailureAllowsRetry = eval.allowImmediateRetry
+                hasLaunchError = eval.failureCategory != UpiFailureCategory.NONE &&
+                    eval.failureCategory != UpiFailureCategory.USER_CANCELLED
+                if (eval.providerMarkedUnavailable || !eval.allowImmediateRetry) {
+                    lastFailedBrand = null
+                }
             }
             // Quietly poll trusted backend if configured (only trusted backend can confirm PAID)
             if (repository.isBackendConfigured) {
@@ -446,10 +491,14 @@ fun BuyMeACoffeeBottomSheet(
     }
 
     fun initiateUpiAppPayment(slot: PaymentActionSlot, targetBrand: UpiAppBrand?) {
+        if (targetBrand != null && restrictedProviders.containsKey(targetBrand.packageName)) {
+            return
+        }
         val amount = resolveValidatedAmount() ?: return
         if (loadingSlot != null) return
         loadingSlot = slot
         hasLaunchError = false
+        lastFailureAllowsRetry = true
         lastFailedBrand = null
 
         scope.launch {
@@ -465,6 +514,8 @@ fun BuyMeACoffeeBottomSheet(
 
                 when (resolution) {
                     is UpiIntentResolution.LaunchReady -> {
+                        lastLaunchedPackage = targetBrand?.packageName
+                        lastLaunchedMethodLabel = resolution.paymentMethodLabel
                         val initRes = repository.markPaymentInitiated(
                             orderRef = order.orderRef,
                             paymentMethod = resolution.paymentMethodLabel
@@ -489,44 +540,76 @@ fun BuyMeACoffeeBottomSheet(
                         }
                     }
 
+                    is UpiIntentResolution.ProviderRestricted -> {
+                        // Provider declined under UPI Risk Policy / security policy:
+                        // never bypass or retry this provider; preserve amount and reveal QR fallback.
+                        hasLaunchError = true
+                        lastFailureAllowsRetry = false
+                        lastFailedBrand = null
+                        val failRes = repository.recordPaymentLaunchFailure(
+                            orderRef = order.orderRef,
+                            paymentMethod = resolution.restriction.displayName,
+                            technicalReason = resolution.restriction.sanitizedReason
+                        )
+                        if (failRes is DonationActionResult.Success) {
+                            latestCreatedOrder = failRes.data
+                        }
+                        showQrPanel = true
+                    }
+
                     is UpiIntentResolution.TargetAppUnavailable -> {
                         // Selected UPI app is not installed or cannot handle this URI:
-                        // never force an incompatible app; try chooser if other UPI apps exist,
+                        // never force an incompatible app; try chooser if other non-restricted UPI apps exist,
                         // otherwise seamlessly reveal Dynamic QR while keeping selected amount.
                         val fallbackResolution = withContext(Dispatchers.IO) {
                             repository.buildCompatibleUpiIntent(order = order, targetPackage = null)
                         }
-                        if (fallbackResolution is UpiIntentResolution.LaunchReady) {
-                            val initRes = repository.markPaymentInitiated(
-                                orderRef = order.orderRef,
-                                paymentMethod = fallbackResolution.paymentMethodLabel
-                            )
-                            if (initRes is DonationActionResult.Success) {
-                                latestCreatedOrder = initRes.data
-                            }
-                            runCatching {
-                                upiLauncher.launch(fallbackResolution.intent)
-                            }.onFailure { err ->
-                                hasLaunchError = true
-                                lastFailedBrand = targetBrand
-                                val failRes = repository.recordPaymentLaunchFailure(
+                        when (fallbackResolution) {
+                            is UpiIntentResolution.LaunchReady -> {
+                                lastLaunchedPackage = null
+                                lastLaunchedMethodLabel = fallbackResolution.paymentMethodLabel
+                                val initRes = repository.markPaymentInitiated(
                                     orderRef = order.orderRef,
-                                    paymentMethod = fallbackResolution.paymentMethodLabel,
-                                    technicalReason = err.javaClass.simpleName
+                                    paymentMethod = fallbackResolution.paymentMethodLabel
                                 )
-                                if (failRes is DonationActionResult.Success) {
-                                    latestCreatedOrder = failRes.data
+                                if (initRes is DonationActionResult.Success) {
+                                    latestCreatedOrder = initRes.data
+                                }
+                                runCatching {
+                                    upiLauncher.launch(fallbackResolution.intent)
+                                }.onFailure { err ->
+                                    hasLaunchError = true
+                                    lastFailedBrand = targetBrand
+                                    val failRes = repository.recordPaymentLaunchFailure(
+                                        orderRef = order.orderRef,
+                                        paymentMethod = fallbackResolution.paymentMethodLabel,
+                                        technicalReason = err.javaClass.simpleName
+                                    )
+                                    if (failRes is DonationActionResult.Success) {
+                                        latestCreatedOrder = failRes.data
+                                    }
+                                    showQrPanel = true
+                                }
+                            }
+                            is UpiIntentResolution.ProviderRestricted -> {
+                                hasLaunchError = true
+                                lastFailureAllowsRetry = false
+                                lastFailedBrand = null
+                                val res = repository.markPaymentInitiated(order.orderRef, paymentMethod = "UPI QR Fallback")
+                                if (res is DonationActionResult.Success) {
+                                    latestCreatedOrder = res.data
                                 }
                                 showQrPanel = true
                             }
-                        } else {
-                            hasLaunchError = true
-                            lastFailedBrand = targetBrand
-                            val res = repository.markPaymentInitiated(order.orderRef, paymentMethod = "UPI QR Fallback")
-                            if (res is DonationActionResult.Success) {
-                                latestCreatedOrder = res.data
+                            else -> {
+                                hasLaunchError = true
+                                lastFailedBrand = targetBrand
+                                val res = repository.markPaymentInitiated(order.orderRef, paymentMethod = "UPI QR Fallback")
+                                if (res is DonationActionResult.Success) {
+                                    latestCreatedOrder = res.data
+                                }
+                                showQrPanel = true
                             }
-                            showQrPanel = true
                         }
                     }
 
@@ -541,7 +624,8 @@ fun BuyMeACoffeeBottomSheet(
 
                     is UpiIntentResolution.InvalidPaymentUri -> {
                         hasLaunchError = true
-                        lastFailedBrand = targetBrand
+                        lastFailureAllowsRetry = false
+                        lastFailedBrand = null
                         val failRes = repository.recordPaymentLaunchFailure(
                             orderRef = order.orderRef,
                             paymentMethod = targetBrand?.displayName ?: "UPI Intent",
@@ -607,8 +691,12 @@ fun BuyMeACoffeeBottomSheet(
     }
 
     fun retryCurrentPayment() {
-        hasLaunchError = false
+        if (!retryAllowed) return
         val brandToRetry = lastFailedBrand
+        if (brandToRetry != null && restrictedProviders.containsKey(brandToRetry.packageName)) {
+            return
+        }
+        hasLaunchError = false
         lastFailedBrand = null
         val slot = when (brandToRetry) {
             UpiAppBrand.GOOGLE_PAY -> PaymentActionSlot.GOOGLE_PAY
@@ -701,6 +789,7 @@ fun BuyMeACoffeeBottomSheet(
                                 order = activeOrder,
                                 isRefreshing = isRefreshingStatus,
                                 hasLaunchError = hasLaunchError,
+                                allowRetry = retryAllowed,
                                 reducedMotion = reducedMotion,
                                 onRefresh = { refreshOrderStatus(activeOrder) },
                                 onRetry = ::retryCurrentPayment,
@@ -862,72 +951,54 @@ fun BuyMeACoffeeBottomSheet(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            PaymentIconButton(
-                                contentDesc = "Google Pay",
-                                isLoading = loadingSlot == PaymentActionSlot.GOOGLE_PAY,
-                                enabled = loadingSlot == null,
-                                containerColor = buttonSurfaceColor,
-                                onClick = { initiateUpiAppPayment(PaymentActionSlot.GOOGLE_PAY, UpiAppBrand.GOOGLE_PAY) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("coffee_pay_gpay_btn")
-                            ) {
-                                AuthenticUpiBrandIcon(
-                                    brand = UpiAppBrand.GOOGLE_PAY,
-                                    installedIcon = installedUpiIcons.iconFor(UpiAppBrand.GOOGLE_PAY),
-                                    size = 22.dp
-                                )
-                            }
-
-                            PaymentIconButton(
-                                contentDesc = "PhonePe",
-                                isLoading = loadingSlot == PaymentActionSlot.PHONE_PE,
-                                enabled = loadingSlot == null,
-                                containerColor = buttonSurfaceColor,
-                                onClick = { initiateUpiAppPayment(PaymentActionSlot.PHONE_PE, UpiAppBrand.PHONE_PE) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("coffee_pay_phonepe_btn")
-                            ) {
-                                AuthenticUpiBrandIcon(
-                                    brand = UpiAppBrand.PHONE_PE,
-                                    installedIcon = installedUpiIcons.iconFor(UpiAppBrand.PHONE_PE),
-                                    size = 22.dp
-                                )
-                            }
-
-                            PaymentIconButton(
-                                contentDesc = "Paytm",
-                                isLoading = loadingSlot == PaymentActionSlot.PAYTM,
-                                enabled = loadingSlot == null,
-                                containerColor = buttonSurfaceColor,
-                                onClick = { initiateUpiAppPayment(PaymentActionSlot.PAYTM, UpiAppBrand.PAYTM) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("coffee_pay_paytm_btn")
-                            ) {
-                                AuthenticUpiBrandIcon(
-                                    brand = UpiAppBrand.PAYTM,
-                                    installedIcon = installedUpiIcons.iconFor(UpiAppBrand.PAYTM),
-                                    size = 22.dp
-                                )
-                            }
-
-                            PaymentIconButton(
-                                contentDesc = "BHIM",
-                                isLoading = loadingSlot == PaymentActionSlot.BHIM,
-                                enabled = loadingSlot == null,
-                                containerColor = buttonSurfaceColor,
-                                onClick = { initiateUpiAppPayment(PaymentActionSlot.BHIM, UpiAppBrand.BHIM) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("coffee_pay_bhim_btn")
-                            ) {
-                                AuthenticUpiBrandIcon(
-                                    brand = UpiAppBrand.BHIM,
-                                    installedIcon = installedUpiIcons.iconFor(UpiAppBrand.BHIM),
-                                    size = 22.dp
-                                )
+                            val brandEntries = listOf(
+                                Triple(PaymentActionSlot.GOOGLE_PAY, UpiAppBrand.GOOGLE_PAY, "gpay"),
+                                Triple(PaymentActionSlot.PHONE_PE, UpiAppBrand.PHONE_PE, "phonepe"),
+                                Triple(PaymentActionSlot.PAYTM, UpiAppBrand.PAYTM, "paytm"),
+                                Triple(PaymentActionSlot.BHIM, UpiAppBrand.BHIM, "bhim")
+                            )
+                            brandEntries.forEach { (slot, brand, tagKey) ->
+                                val isRestricted = restrictedProviders.containsKey(brand.packageName)
+                                val isCompatible = !isRestricted && compatiblePackages.contains(brand.packageName)
+                                val iconAlpha = when {
+                                    isRestricted -> 0.28f
+                                    compatiblePackages.isEmpty() || isCompatible -> 1f
+                                    else -> 0.58f
+                                }
+                                PaymentIconButton(
+                                    contentDesc = if (isRestricted) "${brand.displayName} unavailable" else brand.displayName,
+                                    isLoading = loadingSlot == slot,
+                                    enabled = loadingSlot == null && !isRestricted,
+                                    containerColor = buttonSurfaceColor,
+                                    onClick = { initiateUpiAppPayment(slot, brand) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("coffee_pay_${tagKey}_btn")
+                                ) {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(modifier = Modifier.alpha(iconAlpha)) {
+                                            AuthenticUpiBrandIcon(
+                                                brand = brand,
+                                                installedIcon = installedUpiIcons.iconFor(brand),
+                                                size = 22.dp
+                                            )
+                                        }
+                                        if (isRestricted) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(top = 6.dp, end = 6.dp)
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(c.error)
+                                                    .testTag("coffee_pay_${tagKey}_restricted")
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -1338,6 +1409,7 @@ private fun CompactTransactionStatusControl(
     order: DonationTransactionEntity,
     isRefreshing: Boolean,
     hasLaunchError: Boolean,
+    allowRetry: Boolean,
     reducedMotion: Boolean,
     onRefresh: () -> Unit,
     onRetry: () -> Unit,
@@ -1392,18 +1464,20 @@ private fun CompactTransactionStatusControl(
                 tint = if (status == DonationStatus.FAILED || hasLaunchError) c.error else c.textMuted,
                 modifier = Modifier.size(15.dp)
             )
-            IconButton(
-                onClick = onRetry,
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("coffee_retry_payment_btn")
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = "Retry payment",
-                    tint = c.coffeeAccent,
-                    modifier = Modifier.size(16.dp)
-                )
+            if (allowRetry) {
+                IconButton(
+                    onClick = onRetry,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("coffee_retry_payment_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = "Retry payment",
+                        tint = c.coffeeAccent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
         return

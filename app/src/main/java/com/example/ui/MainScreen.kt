@@ -316,8 +316,6 @@ fun MainScreen(
                     val selectedActivity by viewModel.selectedWeatherWorkActivity.collectAsStateWithLifecycle()
                     val hourlyTimeline by viewModel.hourlyWorkSuitabilityTimeline.collectAsStateWithLifecycle()
                     val siteMeasurements by viewModel.actualSiteMeasurements.collectAsStateWithLifecycle()
-                    val workTargetInput by viewModel.workTargetInput.collectAsStateWithLifecycle()
-                    val workTargetPrediction by viewModel.workTargetPrediction.collectAsStateWithLifecycle()
                     val delayRiskSummary by viewModel.weatherDelayRiskSummary.collectAsStateWithLifecycle()
                     val actionableAlerts by viewModel.actionableWeatherAlerts.collectAsStateWithLifecycle()
                     val liveMatch by viewModel.liveMatchResult.collectAsStateWithLifecycle()
@@ -367,14 +365,11 @@ fun MainScreen(
                         selectedActivity = selectedActivity,
                         hourlyWorkTimeline = hourlyTimeline,
                         siteMeasurements = siteMeasurements,
-                        workTargetInput = workTargetInput,
-                        workTargetPrediction = workTargetPrediction,
                         delayRiskSummary = delayRiskSummary,
                         actionableAlerts = actionableAlerts,
                         onSelectActivity = { viewModel.selectWeatherWorkActivity(it) },
                         onUpdateContractSpec = { viewModel.updateContractSpecificationConfig(it) },
                         onUpdateSiteMeasurements = { viewModel.updateActualSiteMeasurements(it) },
-                        onUpdateWorkTargetInput = { viewModel.updateWorkTargetInput(it) },
                         onRefreshWeather = { viewModel.refreshWeather(force = true) },
                         onNavigateBack = { viewModel.setTab(AppTab.HOME) },
                         liveHighwayLocation = liveHighwayLocation,

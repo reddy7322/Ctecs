@@ -25,11 +25,10 @@ import com.example.model.WeatherIntelligenceSettings
 import com.example.model.WeatherObservation
 import com.example.model.WeatherUiState
 import com.example.model.WorkSuitabilityStatus
-import com.example.model.WorkTargetInput
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.weather.WeatherDashboardScreen
 import com.example.weather.IrcMorthWeatherRuleEngine
-import com.example.weather.WorkTargetPredictionEngine
+import com.example.weather.WeatherDelayRiskAnalyzer
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -280,11 +279,8 @@ class SmartHourlyHighwayPredictionTest {
             val timeline = remember(selected, bundle, settings) {
                 IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(selected, bundle.hourly, settings.contractSpec)
             }
-            val pred = remember(timeline) {
-                WorkTargetPredictionEngine.predictWorkTarget(WorkTargetInput(activity = selected), timeline)
-            }
             val risks = remember(selected, timeline) {
-                WorkTargetPredictionEngine.analyzeDelayRisks(selected, timeline, pred)
+                WeatherDelayRiskAnalyzer.analyzeDelayRisks(selected, timeline)
             }
             MyApplicationTheme(themeMode = "dark") {
                 WeatherDashboardScreen(
@@ -297,14 +293,11 @@ class SmartHourlyHighwayPredictionTest {
                     selectedActivity = selected,
                     hourlyWorkTimeline = timeline,
                     siteMeasurements = ActualSiteMeasurements(),
-                    workTargetInput = WorkTargetInput(activity = selected),
-                    workTargetPrediction = pred,
                     delayRiskSummary = risks,
                     actionableAlerts = emptyList(),
                     onSelectActivity = { selected = it },
                     onUpdateContractSpec = {},
                     onUpdateSiteMeasurements = {},
-                    onUpdateWorkTargetInput = {},
                     onRefreshWeather = {},
                     onNavigateBack = {},
                     nowMs = nowMs
@@ -357,8 +350,7 @@ class SmartHourlyHighwayPredictionTest {
     fun `Scenario 9 - Forecast unavailable never fabricates hourly predictions`() {
         val nowMs = makeTimeMs(10)
         val settings = WeatherIntelligenceSettings(animationsEnabled = false)
-        val pred = WorkTargetPredictionEngine.predictWorkTarget(WorkTargetInput(), emptyList())
-        val risks = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, emptyList(), pred)
+        val risks = WeatherDelayRiskAnalyzer.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, emptyList())
 
         composeRule.setContent {
             MyApplicationTheme(themeMode = "light") {
@@ -372,14 +364,11 @@ class SmartHourlyHighwayPredictionTest {
                     selectedActivity = HighwayWorkActivity.BC_LAYING,
                     hourlyWorkTimeline = emptyList(),
                     siteMeasurements = ActualSiteMeasurements(),
-                    workTargetInput = WorkTargetInput(),
-                    workTargetPrediction = pred,
                     delayRiskSummary = risks,
                     actionableAlerts = emptyList(),
                     onSelectActivity = {},
                     onUpdateContractSpec = {},
                     onUpdateSiteMeasurements = {},
-                    onUpdateWorkTargetInput = {},
                     onRefreshWeather = {},
                     onNavigateBack = {},
                     nowMs = nowMs
@@ -405,8 +394,7 @@ class SmartHourlyHighwayPredictionTest {
         val settings = WeatherIntelligenceSettings(animationsEnabled = false)
         val assessments = IrcMorthWeatherRuleEngine.evaluateAllActivities(bundle.current, settings.contractSpec, referenceTimeMs = nowMs)
         val timeline = IrcMorthWeatherRuleEngine.generateHourlyWorkTimeline(HighwayWorkActivity.BC_LAYING, bundle.hourly, settings.contractSpec)
-        val pred = WorkTargetPredictionEngine.predictWorkTarget(WorkTargetInput(), timeline)
-        val risks = WorkTargetPredictionEngine.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline, pred)
+        val risks = WeatherDelayRiskAnalyzer.analyzeDelayRisks(HighwayWorkActivity.BC_LAYING, timeline)
 
         composeRule.setContent {
             MyApplicationTheme(themeMode = "dark") {
@@ -423,14 +411,11 @@ class SmartHourlyHighwayPredictionTest {
                     selectedActivity = HighwayWorkActivity.BC_LAYING,
                     hourlyWorkTimeline = timeline,
                     siteMeasurements = ActualSiteMeasurements(),
-                    workTargetInput = WorkTargetInput(),
-                    workTargetPrediction = pred,
                     delayRiskSummary = risks,
                     actionableAlerts = emptyList(),
                     onSelectActivity = {},
                     onUpdateContractSpec = {},
                     onUpdateSiteMeasurements = {},
-                    onUpdateWorkTargetInput = {},
                     onRefreshWeather = {},
                     onNavigateBack = {},
                     nowMs = nowMs

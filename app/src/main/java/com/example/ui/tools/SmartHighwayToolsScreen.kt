@@ -331,12 +331,12 @@ fun SmartHighwayToolsScreen(
             ),
             ToolGridItem(
                 id = "site_utilities",
-                title = "Project Schedule & Coordinates",
-                subtitle = "GPS to DMS/UTM conversion & working-day deadline estimator",
+                title = "Working Days & Coordinates",
+                subtitle = "GPS to DMS/UTM conversion & net working-day calculator",
                 icon = Icons.Default.Explore,
                 badgeBg = Color(0xFF1D4ED8),
                 category = "Quantity & Equipment",
-                aliases = listOf("Site Utilities", "GPS Coordinates", "Geodetic Converter", "Decimal Degrees to DMS", "UTM Zone", "Working Days", "Milestone Deadline", "Paving Schedule")
+                aliases = listOf("Site Utilities", "GPS Coordinates", "Geodetic Converter", "Decimal Degrees to DMS", "UTM Zone", "Working Days")
             ),
 
             // Category 6: MoRTH Standards
@@ -2236,22 +2236,19 @@ fun SiteUtilitiesView(viewModel: MainViewModel, context: Context) {
             }
         }
 
-        // 2. Highway Working Days & Milestone Deadline Estimator
+        // 2. Highway Working-Day Calculator
         var calendarDays by remember { mutableStateOf("60") }
         var rainStoppageDays by remember { mutableStateOf("8") }
         var maintenanceDays by remember { mutableStateOf("4") }
-        var dailyTargetM by remember { mutableStateOf("250") }
 
         val cal = calendarDays.toIntOrNull() ?: 0
         val rain = rainStoppageDays.toIntOrNull() ?: 0
         val maint = maintenanceDays.toIntOrNull() ?: 0
         val netWorkingDays = (cal - rain - maint).coerceAtLeast(0)
-        val dailyM = dailyTargetM.toDoubleOrNull() ?: 0.0
-        val achievableKm = (netWorkingDays * dailyM) / 1000.0
 
         ToolSectionCard(
-            title = "Highway Working-Day & Deadline Calculator",
-            subtitle = "Estimate effective working days & achievable paving output",
+            title = "Highway Working-Day Calculator",
+            subtitle = "Calculate effective net working days after rain and stoppage days",
             icon = Icons.Default.EventAvailable
         ) {
             Row(
@@ -2272,23 +2269,12 @@ fun SiteUtilitiesView(viewModel: MainViewModel, context: Context) {
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                ToolTextField(
-                    value = maintenanceDays,
-                    onValueChange = { maintenanceDays = it },
-                    label = "Plant Maint. Days",
-                    modifier = Modifier.weight(1f)
-                )
-                ToolTextField(
-                    value = dailyTargetM,
-                    onValueChange = { dailyTargetM = it },
-                    label = "Daily Progress (m/day)",
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            ToolTextField(
+                value = maintenanceDays,
+                onValueChange = { maintenanceDays = it },
+                label = "Plant Maint. Days",
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(modifier = Modifier.height(10.dp))
             ResultBox {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2306,21 +2292,15 @@ fun SiteUtilitiesView(viewModel: MainViewModel, context: Context) {
                             )
                         }
                         Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                            Text("Achievable Stretch", color = ToolColors.textSecondary, fontSize = 11.sp)
+                            Text("Non-Working / Stoppage", color = ToolColors.textSecondary, fontSize = 11.sp)
                             Text(
-                                String.format(Locale.US, "%.2f km", achievableKm),
-                                color = ToolColors.accentBlue,
+                                "${rain + maint} Days",
+                                color = ToolColors.accentOrange,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
+                                fontSize = 15.sp
                             )
                         }
                     }
-                    SmartFadeDivider()
-                    Text(
-                        "Non-Working / Stoppage Days: ${rain + maint} Days",
-                        color = ToolColors.textSecondary,
-                        fontSize = 12.sp
-                    )
                 }
             }
         }

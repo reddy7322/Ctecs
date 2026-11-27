@@ -423,6 +423,30 @@ object UpiQrGenerator {
     }
 
     /**
+     * Validates a UPI payment URI strictly via [DonationConfig.validateUpiPaymentUri]
+     * before generating a standards-compliant QR bitmap so malformed, double-encoded,
+     * or mismatched-amount QR payloads are never rendered.
+     */
+    fun generateValidatedUpiBitmap(
+        upiUri: String,
+        expectedAmountInr: Double,
+        targetSizePx: Int = 512,
+        darkColor: Int = Color.BLACK,
+        lightColor: Int = Color.WHITE
+    ): Bitmap? {
+        val checked = DonationConfig.validateUpiPaymentUri(upiUri, expectedAmountInr)
+        if (checked !is UpiUriValidationResult.Valid) return null
+        return runCatching {
+            generateBitmap(
+                upiUri = checked.uri.toString(),
+                targetSizePx = targetSizePx,
+                darkColor = darkColor,
+                lightColor = lightColor
+            )
+        }.getOrNull()
+    }
+
+    /**
      * Saves the generated QR bitmap into app cache and returns a FileProvider content URI
      * suitable for Intent.ACTION_SEND sharing.
      */

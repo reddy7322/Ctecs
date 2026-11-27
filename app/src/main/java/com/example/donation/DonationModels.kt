@@ -86,57 +86,81 @@ object DonationConfig {
         return AmountValidationResult.Valid(parsed)
     }
 
+    private val VPA_PATTERN = Regex("^[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}$")
+
+    /**
+     * Validates that the configured recipient VPA matches standard NPCI UPI VPA syntax.
+     */
+    fun isValidVpaFormat(vpa: String?): Boolean {
+        val candidate = vpa?.trim().orEmpty()
+        return candidate.isNotEmpty() &&
+            !candidate.contains("%40", ignoreCase = true) &&
+            !candidate.contains("%25", ignoreCase = true) &&
+            VPA_PATTERN.matches(candidate)
+    }
+
     /**
      * Builds the canonical, standard NPCI UPI payment Android [Uri] using [Uri.Builder].
      *
      * Produces:
-     * `upi://pay?pa=tvtelugu%40ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support`
+     * `upi://pay?pa=tvtelugu@ptyes&pn=madhu&am=20.00&cu=INR&tn=CTECS%20Coffee%20Support`
      *
      * Key correctness guarantees:
-     * - Encodes each query parameter exactly once (never double-encoding `%40` as `%2540`).
-     * - Keeps internal recipient VPA (`tvtelugu@ptyes`) and name (`madhu`) intact in the payload.
-     * - Omits merchant-only P2M parameters (`tr`, `mc`, `orgid`, `mode`) that cause BHIM and
-     *   other UPI apps to reject personal VPAs with "This request type is not supported".
+     * - Uses Android [Uri.Builder] with `upi://pay` scheme and authority.
+     * - Encodes each query parameter value exactly once while keeping `@` unencoded in `pa`
+     *   per RFC 3986 §3.4 (`pchar`) and NPCI UPI Linking Spec v1.6. This prevents BHIM and
+     *   strict UPI parsers from displaying or rejecting literal `"tvtelugu%40ptyes"`.
+     * - Prevents double encoding such as `%2540`.
+     * - Omits unsigned merchant-only P2M parameters (`tr`, `mc`, `orgid`, `mode`, `tid`, `url`)
+     *   that cause UPI apps to reject personal VPAs with "This request type is not supported".
      */
     fun buildUpiPaymentAndroidUri(amountInr: Double): Uri {
         require(amountInr.isFinite() && amountInr > 0.0) { "Amount must be positive" }
+        require(isValidVpaFormat(UPI_ID)) { "Configured recipient VPA is invalid" }
         val amountStr = formatUpiAmountParam(amountInr)
+        val encodedQuery = buildString {
+            append("pa=").append(Uri.encode(UPI_ID, "@"))
+            append("&pn=").append(Uri.encode(RECIPIENT_NAME))
+            append("&am=").append(Uri.encode(amountStr))
+            append("&cu=").append(Uri.encode(CURRENCY))
+            append("&tn=").append(Uri.encode(DESCRIPTION))
+        }
         return Uri.Builder()
             .scheme("upi")
             .authority("pay")
-            .appendQueryParameter("pa", UPI_ID)
-            .appendQueryParameter("pn", RECIPIENT_NAME)
-            .appendQueryParameter("am", amountStr)
-            .appendQueryParameter("cu", CURRENCY)
-            .appendQueryParameter("tn", DESCRIPTION)
+            .encodedQuery(encodedQuery)
             .build()
     }
 
     /**
      * String form of the validated standard UPI payment URI.
      * [orderRef] is retained as an optional parameter for signature compatibility and local
-     * tracking, but is intentionally NOT appended as a P2M `tr` parameter on personal VPAs.
+     * tracking, but is intentionally NOT appended as an unsigned P2M `tr` parameter.
      */
     fun buildUpiPaymentUri(amountInr: Double, @Suppress("UNUSED_PARAMETER") orderRef: String? = null): String {
         return buildUpiPaymentAndroidUri(amountInr).toString()
     }
 
     /**
-     * Minimal probe URI built via [Uri.Builder] for detecting installed UPI handler apps.
+     * Minimal probe URI built via [Uri.Builder] for detecting genuinely compatible UPI handler apps.
      */
     fun buildUpiProbeUri(): Uri {
+        val encodedQuery = buildString {
+            append("pa=").append(Uri.encode(UPI_ID, "@"))
+            append("&pn=").append(Uri.encode(RECIPIENT_NAME))
+            append("&cu=").append(Uri.encode(CURRENCY))
+        }
         return Uri.Builder()
             .scheme("upi")
             .authority("pay")
-            .appendQueryParameter("pa", UPI_ID)
-            .appendQueryParameter("pn", RECIPIENT_NAME)
-            .appendQueryParameter("cu", CURRENCY)
+            .encodedQuery(encodedQuery)
             .build()
     }
 
     /**
      * Strictly validates a UPI payment URI before launching any external UPI application or
      * rendering a QR code. Rejects non-UPI schemes, double-encoded parameters (`%2540`),
+     * percent-encoded `@` in raw `pa=` (which BHIM displays literally as `tvtelugu%40ptyes`),
      * mismatched recipient/currency/amount, and unsigned merchant-only P2M parameters.
      */
     fun validateUpiPaymentUri(rawUri: String?, expectedAmountInr: Double): UpiUriValidationResult {
@@ -158,8 +182,18 @@ object DonationConfig {
             return UpiUriValidationResult.Invalid("Unsupported payment URI scheme or host.")
         }
 
+        // Guard raw encoded query so `pa=tvtelugu%40ptyes` is rejected and upgraded to `pa=tvtelugu@ptyes`
+        val rawPaSegment = parsed.encodedQuery
+            ?.split("&")
+            ?.firstOrNull { it.startsWith("pa=", ignoreCase = true) }
+            ?.substringAfter("=")
+            .orEmpty()
+        if (rawPaSegment.contains("%40", ignoreCase = true) || rawPaSegment.contains("%25", ignoreCase = true)) {
+            return UpiUriValidationResult.Invalid("Encoded '@' in payee VPA causes BHIM literal VPA rejection.")
+        }
+
         val pa = parsed.getQueryParameter("pa")?.trim().orEmpty()
-        if (!pa.equals(UPI_ID, ignoreCase = true) || pa.contains("%40", ignoreCase = true) || !pa.contains("@")) {
+        if (!isValidVpaFormat(pa) || !pa.equals(UPI_ID, ignoreCase = true)) {
             return UpiUriValidationResult.Invalid("Invalid payee address parameter.")
         }
         val pn = parsed.getQueryParameter("pn")?.trim().orEmpty()
@@ -182,11 +216,11 @@ object DonationConfig {
             return UpiUriValidationResult.Invalid("Missing transaction note parameter.")
         }
 
-        // Prevent unsigned P2M-only parameters (tr, mc, orgid) that trigger
+        // Prevent unsigned P2M-only or gateway-specific parameters that trigger
         // "This request type is not supported" on personal UPI VPAs in BHIM / UPI apps.
         val hasMerchantSignature = !parsed.getQueryParameter("sign").isNullOrBlank()
         if (!hasMerchantSignature) {
-            val unsupportedP2mKeys = listOf("tr", "mc", "orgid")
+            val unsupportedP2mKeys = listOf("tr", "mc", "orgid", "mode", "tid", "url")
             if (unsupportedP2mKeys.any { !parsed.getQueryParameter(it).isNullOrBlank() }) {
                 return UpiUriValidationResult.Invalid("Unsupported merchant-only parameter for personal VPA.")
             }
@@ -248,6 +282,36 @@ sealed class UpiUriValidationResult {
     data class Valid(val uri: Uri) : UpiUriValidationResult()
     data class Invalid(val reason: String) : UpiUriValidationResult()
 }
+
+/**
+ * Distinct diagnostic failure classifications for UPI payment responses so CTECS
+ * handles provider security/risk restrictions, unsupported requests, VPA issues,
+ * bank declines, cancellations, and network interruptions independently.
+ */
+enum class UpiFailureCategory(val blocksImmediateRetry: Boolean) {
+    NONE(blocksImmediateRetry = false),
+    UNSUPPORTED_REQUEST(blocksImmediateRetry = true),
+    PROVIDER_SECURITY_DECLINE(blocksImmediateRetry = true),
+    RECIPIENT_RISK_RESTRICTION(blocksImmediateRetry = true),
+    RECIPIENT_VPA_UNAVAILABLE(blocksImmediateRetry = true),
+    BANK_OR_PROVIDER_DECLINE(blocksImmediateRetry = false),
+    NETWORK_INTERRUPTION(blocksImmediateRetry = false),
+    USER_CANCELLED(blocksImmediateRetry = false),
+    APP_UNAVAILABLE(blocksImmediateRetry = true)
+}
+
+/**
+ * Persisted provider restriction record created when a UPI app (such as Paytm)
+ * declines a transaction due to UPI Risk Policy or security controls.
+ */
+data class ProviderRestriction(
+    val packageName: String,
+    val displayName: String,
+    val category: UpiFailureCategory,
+    val responseCode: String,
+    val sanitizedReason: String,
+    val restrictedAtMs: Long
+)
 
 /**
  * Full donation payment lifecycle statuses.

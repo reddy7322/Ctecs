@@ -390,9 +390,60 @@ class ChainageAccuracyRefreshCoordinator {
             )
         }
 
-        // Force Refresh All resets transient progression filter & previous lock so stuck chainage recalculates cleanly
+        // Guard against stale or severely inaccurate GPS fixes during Force Refresh when a reliable chainage already exists
+        val isPoorAccuracyGps = locationState.accuracy > ChainageProgressionTracker.MAX_TRACKING_GPS_ACCURACY_M
+        if (mode == RefreshMode.FORCE_ALL && (!gpsValidation.isFresh || isPoorAccuracyGps) && previousResult?.chainage != null) {
+            val rejectReason = if (!gpsValidation.isFresh) "STALE_GPS_FIX" else "POOR_GPS_ACCURACY"
+            SmartChainageCorrectionEngine.recordRejectedChainage(
+                gpsAccuracyMetres = locationState.accuracy,
+                alignmentName = previousResult.matchedAlignmentName.ifBlank { route.name },
+                previousChainageMetres = previousResult.chainage.metres,
+                rejectedChainageMetres = null,
+                direction = previousResult.travelDirection.name,
+                reason = rejectReason,
+                nowMs = nowMs
+            )
+            val fallback = previousResult.copy(
+                gpsAccuracy = locationState.accuracy,
+                isUncertain = true,
+                lastReliableChainage = previousResult.chainage,
+                statusMessage = "Needs GPS (${gpsValidation.reason}) — retained ${previousResult.displayChainage}"
+            )
+            notes += "GPS Guard: Rejected $rejectReason; retained ${previousResult.displayChainage}"
+            return RefreshExecutionOutput(
+                generation = generation,
+                matchResult = fallback,
+                report = ChainageAccuracyReport(
+                    status = ChainageAccuracyStatus.NEEDS_GPS,
+                    mode = mode,
+                    isRefreshing = false,
+                    isStaleFallback = true,
+                    summaryMessage = "Needs GPS • Retained last valid chainage ${previousResult.displayChainage} (Stale)",
+                    lastRefreshedEpochMs = nowMs,
+                    isGpsValid = gpsValidation.isValid,
+                    isGpsFresh = gpsValidation.isFresh,
+                    gpsFixAgeMs = gpsValidation.fixAgeMs,
+                    matchConfidence = previousResult.confidence,
+                    offsetMetres = previousResult.offsetMetres,
+                    isCalibrationProfileValid = calibrationSync.compatibility?.isCompatible ?: true,
+                    isControlPointConsistent = !calibrationSync.conflictReport.hasConflict && !calibrationSync.hasDuplicates,
+                    isChainageProgressionValid = false,
+                    isSideConsistent = false,
+                    isCustomCorrectionValid = !calibrationSync.conflictReport.hasConflict,
+                    isManualOverrideActive = isManualActive,
+                    stepNotes = notes
+                ),
+                syncedPoints = calibrationSync.syncedPoints,
+                profileCompatibility = calibrationSync.compatibility,
+                shouldPersistPoints = false
+            )
+        }
+
+        // Force Refresh All resets ONLY transient auto-smoothing state & pending jump state
+        // while preserving travel direction, manual LHS/RHS lock, and manual calibration session.
         if (mode == RefreshMode.FORCE_ALL) {
-            progressionTracker.resetChainageFilter()
+            progressionTracker.resetAutoChainageFilterOnly()
+            ChainageMatcher.resetJumpValidationState()
         }
 
         val kmzMatch = ChainageMatcher.match(
@@ -400,15 +451,36 @@ class ChainageAccuracyRefreshCoordinator {
             gpsAccuracy = locationState.accuracy,
             bearing = locationState.bearing,
             routeData = route,
-            previousResult = if (mode == RefreshMode.FORCE_ALL) null else previousResult
+            previousResult = if (mode == RefreshMode.FORCE_ALL) null else previousResult,
+            fixTimeMs = if (locationState.lastFixTime > 0L) locationState.lastFixTime else nowMs
         )
 
         val rawKmz = kmzMatch.chainage
         if (kmzMatch.confidence == MatchConfidence.NO_MATCH || rawKmz == null) {
-            val stabilizedNoMatch = progressionTracker.processResult(kmzMatch, route.id).copy(
-                source = ChainageSource.GPS,
-                rawUncorrectedChainage = null
+            SmartChainageCorrectionEngine.recordRejectedChainage(
+                gpsAccuracyMetres = locationState.accuracy,
+                alignmentName = route.name,
+                previousChainageMetres = previousResult?.chainage?.metres,
+                rejectedChainageMetres = null,
+                direction = previousResult?.travelDirection?.name.orEmpty(),
+                reason = "ALIGNMENT_MISMATCH",
+                nowMs = nowMs
             )
+            val stabilizedNoMatch = if (previousResult?.chainage != null) {
+                previousResult.copy(
+                    offsetMetres = kmzMatch.offsetMetres,
+                    gpsAccuracy = locationState.accuracy,
+                    confidence = MatchConfidence.NO_MATCH,
+                    isUncertain = true,
+                    lastReliableChainage = previousResult.chainage,
+                    statusMessage = "Off Route (${kmzMatch.offsetMetres.toInt()}m) — retained ${previousResult.displayChainage}"
+                )
+            } else {
+                progressionTracker.processResult(kmzMatch, route.id).copy(
+                    source = ChainageSource.GPS,
+                    rawUncorrectedChainage = null
+                )
+            }
             notes += "Alignment: GPS is off-route (${kmzMatch.offsetMetres.toInt()}m from corridor)"
             return RefreshExecutionOutput(
                 generation = generation,
@@ -417,8 +489,12 @@ class ChainageAccuracyRefreshCoordinator {
                     status = ChainageAccuracyStatus.ALIGNMENT_MISMATCH,
                     mode = mode,
                     isRefreshing = false,
-                    isStaleFallback = false,
-                    summaryMessage = "Alignment Mismatch • ${kmzMatch.offsetMetres.toInt()}m from ${route.name}",
+                    isStaleFallback = previousResult?.chainage != null,
+                    summaryMessage = if (previousResult?.chainage != null) {
+                        "Alignment Mismatch • ${kmzMatch.offsetMetres.toInt()}m from ${route.name} (Retained ${previousResult.displayChainage})"
+                    } else {
+                        "Alignment Mismatch • ${kmzMatch.offsetMetres.toInt()}m from ${route.name}"
+                    },
                     lastRefreshedEpochMs = nowMs,
                     isGpsValid = true,
                     isGpsFresh = gpsValidation.isFresh,
@@ -437,6 +513,61 @@ class ChainageAccuracyRefreshCoordinator {
                 profileCompatibility = calibrationSync.compatibility,
                 shouldPersistPoints = false
             )
+        }
+
+        // Guard against accepting an unverified large shift during Force Refresh on weak GPS/offset
+        val prevRawBaselineM = (previousResult?.rawUncorrectedChainage ?: previousResult?.chainage)?.metres
+        if (mode == RefreshMode.FORCE_ALL && prevRawBaselineM != null && previousResult?.chainage != null) {
+            val shiftM = abs(rawKmz.metres - prevRawBaselineM)
+            val isStronglyVerified = gpsValidation.isFresh &&
+                locationState.accuracy <= 25.0f &&
+                kmzMatch.offsetMetres <= ChainageMatcher.DEFAULT_MAX_MATCH_OFFSET_METRES &&
+                (kmzMatch.confidence == MatchConfidence.HIGH || kmzMatch.confidence == MatchConfidence.MEDIUM)
+            if (shiftM > ChainageMatcher.SUDDEN_JUMP_THRESHOLD_METRES && !isStronglyVerified) {
+                SmartChainageCorrectionEngine.recordRejectedChainage(
+                    gpsAccuracyMetres = locationState.accuracy,
+                    alignmentName = kmzMatch.matchedAlignmentName.ifBlank { route.name },
+                    previousChainageMetres = prevRawBaselineM,
+                    rejectedChainageMetres = rawKmz.metres,
+                    direction = if (rawKmz.metres >= prevRawBaselineM) "INCREASING" else "DECREASING",
+                    reason = "UNVERIFIED_REFRESH_JUMP",
+                    nowMs = nowMs
+                )
+                val fallback = previousResult.copy(
+                    gpsAccuracy = locationState.accuracy,
+                    isUncertain = true,
+                    lastReliableChainage = previousResult.chainage,
+                    statusMessage = "Unverified GPS jump — retained ${previousResult.displayChainage}"
+                )
+                notes += "Validation: Rejected unverified ${shiftM}m shift (GPS ±${locationState.accuracy.toInt()}m, offset ${kmzMatch.offsetMetres.toInt()}m)"
+                return RefreshExecutionOutput(
+                    generation = generation,
+                    matchResult = fallback,
+                    report = ChainageAccuracyReport(
+                        status = ChainageAccuracyStatus.NEEDS_GPS,
+                        mode = mode,
+                        isRefreshing = false,
+                        isStaleFallback = true,
+                        summaryMessage = "Needs GPS • Retained ${previousResult.displayChainage} (Unverified jump)",
+                        lastRefreshedEpochMs = nowMs,
+                        isGpsValid = gpsValidation.isValid,
+                        isGpsFresh = gpsValidation.isFresh,
+                        gpsFixAgeMs = gpsValidation.fixAgeMs,
+                        matchConfidence = previousResult.confidence,
+                        offsetMetres = kmzMatch.offsetMetres,
+                        isCalibrationProfileValid = calibrationSync.compatibility?.isCompatible ?: true,
+                        isControlPointConsistent = !calibrationSync.conflictReport.hasConflict && !calibrationSync.hasDuplicates,
+                        isChainageProgressionValid = false,
+                        isSideConsistent = false,
+                        isCustomCorrectionValid = !calibrationSync.conflictReport.hasConflict,
+                        isManualOverrideActive = isManualActive,
+                        stepNotes = notes
+                    ),
+                    syncedPoints = calibrationSync.syncedPoints,
+                    profileCompatibility = calibrationSync.compatibility,
+                    shouldPersistPoints = false
+                )
+            }
         }
 
         // Apply calibrated correction if enabled

@@ -174,7 +174,7 @@ fun ChainageCalculatorScreen(context: Context) {
             }
             Spacer(modifier = Modifier.height(10.dp))
             ResultBox(
-                onCopy = { copyToolResult(context, "Target Chainage: $resultChFormatted") }
+                onCopy = { copyToolResult(context, "Resulting Chainage: $resultChFormatted") }
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -192,70 +192,7 @@ fun ChainageCalculatorScreen(context: Context) {
             }
         }
 
-        // Card 3: Work Progress & Target Tracker
-        var totalScopeKm by remember { mutableStateOf("15.5") }
-        var completedKm by remember { mutableStateOf("9.8") }
-        val scope = totalScopeKm.toDoubleOrNull() ?: 1.0
-        val done = completedKm.toDoubleOrNull() ?: 0.0
-        val pct = if (scope > 0) ((done / scope) * 100.0).coerceIn(0.0, 100.0) else 0.0
-        val balanceKm = (scope - done).coerceAtLeast(0.0)
-
-        ToolSectionCard(
-            title = "Work Progress & Target Tracker",
-            subtitle = "Track completed stretch vs balance highway scope",
-            icon = Icons.Default.TrendingUp
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                ToolTextField(
-                    value = totalScopeKm,
-                    onValueChange = { totalScopeKm = it },
-                    label = "Total Scope (km)",
-                    modifier = Modifier.weight(1f)
-                )
-                ToolTextField(
-                    value = completedKm,
-                    onValueChange = { completedKm = it },
-                    label = "Completed (km)",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            ResultBox {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            String.format(Locale.US, "Completion: %.1f%%", pct),
-                            color = ToolColors.accentGreen,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                        Text(
-                            String.format(Locale.US, "Remaining: %.2f km", balanceKm),
-                            color = ToolColors.accentOrange,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
-                        )
-                    }
-                    LinearProgressIndicator(
-                        progress = { (pct / 100.0).toFloat() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp)),
-                        color = ToolColors.accentBlue,
-                        trackColor = ToolColors.border
-                    )
-                }
-            }
-        }
-
-        // Card 4: Chainage Station Interval Generator
+        // Card 3: Chainage Station Interval Generator
         var intervalStartCh by remember { mutableStateOf("177+000") }
         var intervalEndCh by remember { mutableStateOf("177+500") }
         var stationIntervalM by remember { mutableStateOf("25") }

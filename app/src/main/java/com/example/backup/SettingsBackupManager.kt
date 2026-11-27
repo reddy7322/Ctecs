@@ -60,6 +60,10 @@ class SettingsBackupManager(
             PreferencesManager.KEY_CUSTOM_FONT_PATH.name
         )
 
+        private val OBSOLETE_REMOVED_KEYS = setOf(
+            "weather_work_target_input_json"
+        )
+
         private val KNOWN_SUPPORTED_KEYS: Set<String> by lazy {
             setOf(
                 // Highway Customisation
@@ -251,8 +255,7 @@ class SettingsBackupManager(
                 PreferencesManager.KEY_SURVEY_MAP_TYPE.name,
                 PreferencesManager.KEY_OFFLINE_MAP_AUTO_PRELOAD.name,
                 PreferencesManager.KEY_OFFLINE_MAP_WIFI_ONLY.name,
-                PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name,
-                PreferencesManager.KEY_WORK_TARGET_INPUT_JSON.name
+                PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name
             )
         }
     }
@@ -444,8 +447,7 @@ class SettingsBackupManager(
         PreferencesManager.KEY_CHAINAGE_VOICE_ASSISTANT_JSON.name,
         PreferencesManager.KEY_SMART_DIRECTION_PREFS_JSON.name,
         PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name,
-        PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name,
-        PreferencesManager.KEY_WORK_TARGET_INPUT_JSON.name -> BackupCategory.GENERAL
+        PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name -> BackupCategory.GENERAL
 
         else -> BackupCategory.OTHER
     }
@@ -458,7 +460,7 @@ class SettingsBackupManager(
         val collected = linkedMapOf<String, TypedPrefEntry>()
 
         fun putEntry(key: String, type: PrefValueType, value: Any) {
-            if (SENSITIVE_KEY_REGEX.containsMatchIn(key)) return
+            if (SENSITIVE_KEY_REGEX.containsMatchIn(key) || key in OBSOLETE_REMOVED_KEYS) return
             collected[key] = TypedPrefEntry(
                 key = key,
                 type = type,
@@ -655,7 +657,6 @@ class SettingsBackupManager(
         val voiceAssistantSettings = preferencesManager.chainageVoiceAssistantSettingsFlow.first()
         val smartDirectionPrefs = preferencesManager.smartDirectionPreferencesFlow.first()
         val weatherIntelSettings = preferencesManager.weatherIntelligenceSettingsFlow.first()
-        val workTargetInput = preferencesManager.workTargetInputFlow.first()
         putEntry(PreferencesManager.KEY_HOME_SCREENSAVER_JSON.name, PrefValueType.STRING, screensaverSettings.toJsonString())
         putEntry(PreferencesManager.KEY_NAV_NOTIFICATION_JSON.name, PrefValueType.STRING, navNotifSettings.toJsonString())
         putEntry(PreferencesManager.KEY_WIDGET_SETTINGS_JSON.name, PrefValueType.STRING, widgetSettings.toJsonString())
@@ -663,7 +664,6 @@ class SettingsBackupManager(
         putEntry(PreferencesManager.KEY_CHAINAGE_VOICE_ASSISTANT_JSON.name, PrefValueType.STRING, voiceAssistantSettings.toJsonString())
         putEntry(PreferencesManager.KEY_SMART_DIRECTION_PREFS_JSON.name, PrefValueType.STRING, smartDirectionPrefs.toJsonString())
         putEntry(PreferencesManager.KEY_WEATHER_INTELLIGENCE_SETTINGS_JSON.name, PrefValueType.STRING, weatherIntelSettings.toJsonString())
-        putEntry(PreferencesManager.KEY_WORK_TARGET_INPUT_JSON.name, PrefValueType.STRING, workTargetInput.toJsonString())
         preferencesManager.getInitialPreferredExternalNavAppId()?.let {
             putEntry(PreferencesManager.KEY_PREFERRED_EXTERNAL_NAV_APP_ID.name, PrefValueType.STRING, it)
         }
@@ -942,7 +942,7 @@ class SettingsBackupManager(
             warnings.add("Migrated from older backup schema cleanly.")
         }
         entries.forEach { entry ->
-            if (entry.key !in KNOWN_SUPPORTED_KEYS) {
+            if (entry.key !in KNOWN_SUPPORTED_KEYS && entry.key !in OBSOLETE_REMOVED_KEYS) {
                 unsupportedKeys.add(entry.key)
             }
         }
@@ -1181,6 +1181,10 @@ class SettingsBackupManager(
     ) {
         if (SENSITIVE_KEY_REGEX.containsMatchIn(entry.key)) {
             skippedSettings.add("${entry.key}: stripped for security")
+            return
+        }
+        if (entry.key in OBSOLETE_REMOVED_KEYS) {
+            skippedSettings.add("${entry.key}: obsolete setting skipped")
             return
         }
 

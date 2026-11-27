@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -31,48 +30,36 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BitumenBinderType
 import com.example.model.HighwayWorkActivity
 import com.example.model.MoRTHRevision
 import com.example.model.TemperatureUnit
-import com.example.model.ValueSourceTag
 import com.example.model.WeatherIntelligenceSettings
-import com.example.model.WorkTargetInput
 import com.example.ui.theme.CtecsTheme
 import java.util.Locale
 
 /**
- * Modular Settings -> Weather & Highway Work Intelligence content covering all 9 subsections:
+ * Modular Settings -> Weather & Highway Work Intelligence content covering all 7 subsections:
  * 1. Weather Display
  * 2. Hourly and Daily Forecast
  * 3. Weather Notifications
  * 4. Highway Work Activities
  * 5. BC / DBM Suitability
  * 6. Applicable IRC / MoRTH References
- * 7. Project Work Targets
- * 8. Production Rates
- * 9. Forecast and Data Preferences
+ * 7. Forecast and Data Preferences
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WeatherIntelligenceSettingsSectionContent(
     settings: WeatherIntelligenceSettings,
-    workTargetInput: WorkTargetInput,
     accentColor: Color,
     onUpdateSettings: ((WeatherIntelligenceSettings) -> WeatherIntelligenceSettings) -> Unit,
-    onUpdateWorkTargetInput: (WorkTargetInput) -> Unit,
     onOpenWeatherDashboard: () -> Unit,
     onResetDefaults: () -> Unit
 ) {
     val c = CtecsTheme.colors
-    var rateInputText by remember(settings.primaryActivity, settings.savedProductionRatesByActivity) {
-        val currentRate = settings.savedProductionRatesByActivity[settings.primaryActivity]
-            ?: workTargetInput.expectedProductionRatePerHour
-        mutableStateOf(currentRate?.let { String.format(Locale.US, "%.1f", it) } ?: "")
-    }
     var ircRefText by remember(settings.contractSpec.ircReferences) {
         mutableStateOf(settings.contractSpec.ircReferences)
     }
@@ -187,16 +174,13 @@ fun WeatherIntelligenceSettingsSectionContent(
                 }
             )
             WeatherSettingSwitchRow(
-                title = "Unsuitable BC/DBM & Work Target Alerts",
-                subtitle = "Notify when bituminous laying becomes restricted or daily targets drop",
-                checked = settings.alertUnsuitableBituminousConditions && settings.alertWorkTargetChanges,
-                tag = "settings_alert_bituminous_target_switch",
+                title = "Unsuitable BC/DBM Laying Alerts",
+                subtitle = "Notify when weather restricts bituminous laying",
+                checked = settings.alertUnsuitableBituminousConditions,
+                tag = "settings_alert_bituminous_switch",
                 onCheckedChange = { enabled ->
                     onUpdateSettings {
-                        it.copy(
-                            alertUnsuitableBituminousConditions = enabled,
-                            alertWorkTargetChanges = enabled
-                        )
+                        it.copy(alertUnsuitableBituminousConditions = enabled)
                     }
                 }
             )
@@ -215,7 +199,6 @@ fun WeatherIntelligenceSettingsSectionContent(
                     selected = settings.primaryActivity == act,
                     onClick = {
                         onUpdateSettings { it.copy(primaryActivity = act) }
-                        onUpdateWorkTargetInput(workTargetInput.copy(activity = act))
                     },
                     label = { Text(act.shortName, fontSize = 10.sp) }
                 )
@@ -294,45 +277,8 @@ fun WeatherIntelligenceSettingsSectionContent(
             modifier = Modifier.fillMaxWidth()
         )
 
-        // 7 & 8. Project Work Targets & Production Rates
-        SettingsSubsectionHeader("7 & 8. Project Work Targets & Production Rates")
-        OutlinedTextField(
-            value = rateInputText,
-            onValueChange = { txt ->
-                rateInputText = txt
-                val parsed = txt.toDoubleOrNull()
-                if (parsed != null && parsed > 0.0) {
-                    onUpdateSettings { s ->
-                        val updatedMap = s.savedProductionRatesByActivity.toMutableMap().apply {
-                            put(s.primaryActivity, parsed)
-                        }
-                        s.copy(savedProductionRatesByActivity = updatedMap)
-                    }
-                    onUpdateWorkTargetInput(workTargetInput.copy(expectedProductionRatePerHour = parsed))
-                }
-            },
-            label = { Text("Saved Rate for ${settings.primaryActivity.shortName} (${settings.primaryActivity.productionUnitLabel})", fontSize = 10.5.sp) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("settings_saved_production_rate_input")
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ValueSourceTag.entries.forEach { tag ->
-                FilterChip(
-                    selected = settings.defaultProductionRateSource == tag,
-                    onClick = {
-                        onUpdateSettings { it.copy(defaultProductionRateSource = tag) }
-                        onUpdateWorkTargetInput(workTargetInput.copy(productionRateSource = tag))
-                    },
-                    label = { Text(tag.label, fontSize = 10.sp) }
-                )
-            }
-        }
-
-        // 9. Forecast and Data Preferences
-        SettingsSubsectionHeader("9. Forecast and Data Preferences")
+        // 7. Forecast and Data Preferences
+        SettingsSubsectionHeader("7. Forecast and Data Preferences")
         Text(
             text = "Auto-Refresh Interval: ${settings.autoRefreshIntervalMinutes} min • Stale Threshold: ${settings.staleDataThresholdMinutes} min",
             color = c.textMuted,
