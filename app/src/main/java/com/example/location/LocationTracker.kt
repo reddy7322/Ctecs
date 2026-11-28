@@ -384,6 +384,9 @@ class LocationTracker(private val context: Context) {
         if (!isValidCoordinate(loc.latitude, loc.longitude)) return false
         // Use true OS fix timestamp so stale cached lastLocation fixes are NEVER disguised as fresh
         val rawFixTime = loc.time
+        if (maxAccuracyForCachedFallback != null && rawFixTime <= 0L) {
+            return false
+        }
         val effectiveFixTime = if (rawFixTime > 0L) rawFixTime.coerceAtMost(nowMs + 2_000L) else nowMs
         val fixAgeMs = (nowMs - effectiveFixTime).coerceAtLeast(0L)
         if (maxAgeMs > 0L && fixAgeMs > maxAgeMs) {

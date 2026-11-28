@@ -4,6 +4,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -29,14 +30,19 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -80,24 +86,32 @@ import com.example.model.ChainageMatchResult
 import com.example.model.ChainageSource
 import com.example.model.GeoPoint
 import com.example.model.KmzCalibrationCoverageStatus
+import com.example.model.KmzCalibrationRecordStatus
+import com.example.model.KmzCalibrationSuggestion
+import com.example.model.KmzCalibrationSuggestionStatus
 import com.example.model.KmzManualCalibration
 import com.example.model.MatchConfidence
 import com.example.model.RouteData
 import com.example.ui.MainViewModel
+import com.example.ui.calibration.SmartAnimatedAlignmentTrack
 import com.example.ui.theme.CtecsTheme
 import com.example.ui.theme.SmartFadeDivider
 import com.example.ui.theme.ctecsBorderlessInputColors
 import com.example.ui.theme.rememberDialogColors
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToLong
 
 /**
- * Compact, single-reference Manual KMZ/KML Chainage Calibration popup.
+ * Smart KMZ/KML Manual Reference Chainage Calibration Dialog.
  *
- * Rules:
- * - Offset = Manual Reference Chainage - Original KMZ/KML Chainage at the reference position
- * - Applies only within ±2,000 m (2 km) along the selected road alignment
- * - Recalibrating cleanly replaces any previous calibration on the alignment
- * - Reset restores original KMZ/KML chainage without deleting KMZ/KML files
+ * Includes:
+ * - Centralized Manual Reference Chainage Calibration (±2 km coverage in both directions)
+ * - Smart Calibration Suggestion Engine (GPS <= ±5 m, lateral offset <= 20 m, never auto-applied)
+ * - Left / Right Parallel Centerline Offset Detection display
+ * - Smart Animated Alignment Tracking along real offline KMZ/KML geometry
+ * - Smart Calibration Chainage List with full Edit (with history) and Delete (with confirmation)
  */
 @Composable
 fun ChainageManagementDialog(
@@ -113,6 +127,9 @@ fun ChainageManagementDialog(
     val isImportingRoute by viewModel.isImportingRoute.collectAsStateWithLifecycle()
     val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
     val routeImportError by viewModel.routeImportError.collectAsStateWithLifecycle()
+    val calibrationList by viewModel.routeKmzCalibrationsList.collectAsStateWithLifecycle()
+    val calibrationSuggestion by viewModel.calibrationSuggestionState.collectAsStateWithLifecycle()
+    val locationState by viewModel.locationState.collectAsStateWithLifecycle()
 
     val safLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -129,6 +146,9 @@ fun ChainageManagementDialog(
         currentGpsPoint = currentGpsPoint,
         currentGpsAccuracy = currentGpsAccuracy,
         activeCalibration = activeCalibration,
+        calibrationList = calibrationList,
+        calibrationSuggestion = calibrationSuggestion,
+        currentSpeedMps = locationState.speed,
         isImportingRoute = isImportingRoute,
         routeImportStatus = routeImportStatus,
         routeImportError = routeImportError,
@@ -153,6 +173,18 @@ fun ChainageManagementDialog(
                 alignmentIdOverride = alignId
             )
         },
+        onEditCalibration = { calId, newManualRef, newOrigRef, newGpsPt ->
+            viewModel.editManualKmzCalibration(
+                calibrationId = calId,
+                newManualReferenceInput = newManualRef,
+                newOriginalKmzInput = newOrigRef,
+                newGpsPointOverride = newGpsPt,
+                newGpsAccuracyOverride = currentGpsAccuracy
+            )
+        },
+        onDeleteCalibration = { calId ->
+            viewModel.deleteManualKmzCalibration(calibrationId = calId)
+        },
         onResetCalibration = { alignId ->
             viewModel.resetManualKmzCalibration(alignmentIdOverride = alignId)
         },
@@ -168,6 +200,9 @@ fun KmzCalibrationDialogContent(
     currentGpsPoint: GeoPoint?,
     currentGpsAccuracy: Float,
     activeCalibration: KmzManualCalibration?,
+    calibrationList: List<KmzManualCalibration> = emptyList(),
+    calibrationSuggestion: KmzCalibrationSuggestion? = null,
+    currentSpeedMps: Float? = null,
     isImportingRoute: Boolean = false,
     routeImportStatus: String? = null,
     routeImportError: String? = null,
@@ -180,6 +215,13 @@ fun KmzCalibrationDialogContent(
         gpsPoint: GeoPoint?,
         alignmentId: String?
     ) -> Unit,
+    onEditCalibration: (
+        calibrationId: String,
+        newManualReferenceInput: String,
+        newOriginalKmzInput: String?,
+        newGpsPoint: GeoPoint?
+    ) -> Unit = { _, _, _, _ -> },
+    onDeleteCalibration: (calibrationId: String) -> Unit = {},
     onResetCalibration: (alignmentId: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -197,12 +239,29 @@ fun KmzCalibrationDialogContent(
         }
     }
 
+    val effectiveCalibrationList = remember(calibrationList, activeCalibration) {
+        if (calibrationList.isNotEmpty()) {
+            calibrationList
+        } else if (activeCalibration != null) {
+            listOf(activeCalibration)
+        } else {
+            emptyList()
+        }
+    }
+
+    val calibrationMapForEval = remember(effectiveCalibrationList) {
+        effectiveCalibrationList.associateBy { KmzCalibrationEngine.recordStorageKey(it) }
+    }
+
     var manualRefInput by rememberSaveable(activeRoute?.id, effectiveAlignment?.id) {
         mutableStateOf(activeCalibration?.manualReferenceChainage?.format().orEmpty())
     }
     var gpsSnapshotStatus by remember(activeRoute?.id, effectiveAlignment?.id) {
         mutableStateOf<String?>(null)
     }
+
+    var calibrationToEdit by remember { mutableStateOf<KmzManualCalibration?>(null) }
+    var calibrationToDelete by remember { mutableStateOf<KmzManualCalibration?>(null) }
 
     val liveRawKmzChainage: Chainage? = remember(matchResult, activeRoute?.id, currentGpsPoint) {
         when {
@@ -215,7 +274,8 @@ fun KmzCalibrationDialogContent(
                 KmzCalibrationEngine.resolveAlignmentPositionFromGps(
                     routeData = activeRoute,
                     alignment = effectiveAlignment,
-                    gpsPoint = currentGpsPoint
+                    gpsPoint = currentGpsPoint,
+                    gpsAccuracy = currentGpsAccuracy
                 )?.let { Chainage(it.originalKmzMetres) }
             }
             else -> null
@@ -231,22 +291,15 @@ fun KmzCalibrationDialogContent(
         matchResult,
         liveRawKmzChainage,
         activeRoute,
-        activeCalibration,
+        calibrationMapForEval,
         effectiveAlignment?.id
     ) {
         if (activeRoute != null && liveRawKmzChainage != null) {
-            val mapForEval = if (activeCalibration != null) {
-                mapOf(
-                    KmzCalibrationEngine.storageKey(activeCalibration.routeId, activeCalibration.alignmentId) to activeCalibration
-                )
-            } else {
-                emptyMap()
-            }
             KmzCalibrationEngine.evaluateAndApply(
                 rawChainage = liveRawKmzChainage,
                 distanceAlongAlignmentMetres = matchResult.distanceAlongAlignmentMetres,
                 routeData = activeRoute,
-                calibrations = mapForEval,
+                calibrations = calibrationMapForEval,
                 matchedAlignmentId = effectiveAlignment?.id.orEmpty(),
                 matchedAlignmentName = effectiveAlignment?.name.orEmpty()
             )
@@ -255,11 +308,39 @@ fun KmzCalibrationDialogContent(
         }
     }
 
+    val effectiveSuggestion = remember(
+        calibrationSuggestion,
+        activeRoute,
+        matchResult,
+        currentGpsPoint,
+        currentGpsAccuracy,
+        calibrationMapForEval
+    ) {
+        calibrationSuggestion ?: KmzCalibrationEngine.evaluateCalibrationSuggestion(
+            routeData = activeRoute,
+            matchResult = matchResult,
+            gpsPoint = currentGpsPoint,
+            gpsAccuracyMetres = currentGpsAccuracy,
+            calibrations = calibrationMapForEval,
+            stableSampleCount = KmzCalibrationEngine.DEFAULT_REQUIRED_STABLE_SAMPLES
+        )
+    }
+
     val previewOffsetMetres: Long? = remember(parsedManualRef, liveRawKmzChainage, activeCalibration) {
         when {
             parsedManualRef != null && liveRawKmzChainage != null ->
                 parsedManualRef.metres - liveRawKmzChainage.metres
             activeCalibration != null -> activeCalibration.offsetMetres
+            else -> null
+        }
+    }
+
+    val previewCorrectedChainage: Chainage? = remember(parsedManualRef, liveRawKmzChainage, previewOffsetMetres) {
+        when {
+            parsedManualRef != null && liveRawKmzChainage != null ->
+                Chainage(liveRawKmzChainage.metres + (parsedManualRef.metres - liveRawKmzChainage.metres))
+            liveRawKmzChainage != null && previewOffsetMetres != null ->
+                Chainage(liveRawKmzChainage.metres + previewOffsetMetres)
             else -> null
         }
     }
@@ -296,8 +377,8 @@ fun KmzCalibrationDialogContent(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 460.dp)
-                .padding(horizontal = 16.dp, vertical = 16.dp)
+                .widthIn(max = 480.dp)
+                .padding(horizontal = 14.dp, vertical = 14.dp)
                 .imePadding(),
             shape = RoundedCornerShape(22.dp),
             color = dialogColors.containerColor,
@@ -308,10 +389,10 @@ fun KmzCalibrationDialogContent(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 620.dp)
+                    .heightIn(max = 680.dp)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp)
             ) {
                 // Header
                 Row(
@@ -479,7 +560,17 @@ fun KmzCalibrationDialogContent(
                     }
                 }
 
-                // Current Original KMZ/KML Chainage + Optional GPS Capture Button
+                // Smart Calibration Suggestion Banner (GPS <= ±5 m & Lateral Offset <= 20 m)
+                SmartCalibrationSuggestionCard(
+                    suggestion = effectiveSuggestion,
+                    onQuickFillSuggestedReference = { suggestedChainageText ->
+                        if (manualRefInput.isBlank()) {
+                            manualRefInput = suggestedChainageText
+                        }
+                    }
+                )
+
+                // Current Original KMZ/KML Chainage + Signed Lateral Offset + GPS Capture Button
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = c.secondarySurface,
@@ -496,11 +587,31 @@ fun KmzCalibrationDialogContent(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Text(
-                                text = "Original KMZ/KML Chainage",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = dialogColors.textSecondaryColor
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Original KMZ/KML Chainage",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = dialogColors.textSecondaryColor
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = c.accent.copy(alpha = 0.14f)
+                                ) {
+                                    Text(
+                                        text = effectiveSuggestion.parallelOffset.formattedBadge,
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = c.accent,
+                                        modifier = Modifier
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            .testTag("calibration_lateral_offset_chip")
+                                    )
+                                }
+                            }
                             Text(
                                 text = liveRawKmzChainage?.format() ?: "--+---",
                                 style = MaterialTheme.typography.headlineSmall,
@@ -512,7 +623,7 @@ fun KmzCalibrationDialogContent(
                             val gpsLine = gpsSnapshotStatus ?: when {
                                 currentGpsPoint == null -> "Waiting for valid GPS location on alignment"
                                 liveRawKmzChainage == null -> "GPS ±${currentGpsAccuracy.toInt()}m (off alignment)"
-                                else -> "GPS ±${currentGpsAccuracy.toInt()}m • Current alignment position"
+                                else -> "GPS ±${String.format(Locale.US, "%.1f", currentGpsAccuracy)}m • ${effectiveSuggestion.parallelOffset.formattedSummary}"
                             }
                             Text(
                                 text = gpsLine,
@@ -560,9 +671,16 @@ fun KmzCalibrationDialogContent(
                         { Text(parseError, color = c.error) }
                     } else {
                         {
+                            val previewStr = if (parsedManualRef != null && liveRawKmzChainage != null && previewOffsetMetres != null) {
+                                val sign = if (previewOffsetMetres >= 0L) "+$previewOffsetMetres m" else "$previewOffsetMetres m"
+                                "Preview Corrected: ${previewCorrectedChainage?.format()} (Offset $sign • ±2 km coverage)"
+                            } else {
+                                "Applies offset within ±2,000 m (2 km) in both directions along alignment"
+                            }
                             Text(
-                                "Applies offset within ±2,000 m (2 km) along alignment",
-                                color = dialogColors.textSecondaryColor
+                                text = previewStr,
+                                color = dialogColors.textSecondaryColor,
+                                modifier = Modifier.testTag("calibration_preview_corrected_chainage_text")
                             )
                         }
                     },
@@ -629,7 +747,7 @@ fun KmzCalibrationDialogContent(
                             manualRefInput = ""
                             onResetCalibration(effectiveAlignment?.id)
                         },
-                        enabled = activeCalibration != null,
+                        enabled = activeCalibration != null || effectiveCalibrationList.isNotEmpty(),
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, dialogColors.borderColor),
                         modifier = Modifier
@@ -649,8 +767,6 @@ fun KmzCalibrationDialogContent(
                         )
                     }
                 }
-
-                SmartFadeDivider()
 
                 // Compact Status & Offset Card
                 Surface(
@@ -733,9 +849,619 @@ fun KmzCalibrationDialogContent(
                         )
                     }
                 }
+
+                SmartFadeDivider()
+
+                // Smart Animated Alignment Tracking & Parallel Centerline Offset Canvas
+                SmartAnimatedAlignmentTrack(
+                    activeRoute = activeRoute,
+                    effectiveAlignment = effectiveAlignment,
+                    matchResult = matchResult,
+                    currentGpsPoint = currentGpsPoint,
+                    currentGpsAccuracy = currentGpsAccuracy,
+                    speedMps = currentSpeedMps,
+                    calibrations = effectiveCalibrationList,
+                    activeCalibration = liveEval?.calibration ?: activeCalibration
+                )
+
+                SmartFadeDivider()
+
+                // Smart Calibration Chainage List (Scrollable list with Edit, Delete, History, and Status)
+                SmartCalibrationChainageListSection(
+                    calibrations = effectiveCalibrationList,
+                    activeRoute = activeRoute,
+                    activeAlignmentId = effectiveAlignment?.id,
+                    currentDistanceAlongMetres = matchResult.distanceAlongAlignmentMetres
+                        .takeIf { matchResult.confidence != MatchConfidence.NO_MATCH },
+                    activeCalibrationId = (liveEval?.calibration ?: activeCalibration)?.id,
+                    onEditClick = { cal -> calibrationToEdit = cal },
+                    onDeleteClick = { cal -> calibrationToDelete = cal }
+                )
             }
         }
     }
+
+    // Edit Calibration Reference Modal
+    calibrationToEdit?.let { targetCal ->
+        EditCalibrationReferenceDialog(
+            calibration = targetCal,
+            currentGpsPoint = currentGpsPoint,
+            currentGpsAccuracy = currentGpsAccuracy,
+            liveOriginalKmzChainage = liveRawKmzChainage,
+            onSaveEdit = { newManualRefText, newOrigText, newGpsPt ->
+                onEditCalibration(targetCal.id, newManualRefText, newOrigText, newGpsPt)
+                calibrationToEdit = null
+            },
+            onDismiss = { calibrationToEdit = null }
+        )
+    }
+
+    // Delete Calibration Reference Confirmation Dialog
+    calibrationToDelete?.let { targetCal ->
+        DeleteCalibrationConfirmDialog(
+            calibration = targetCal,
+            onConfirmDelete = {
+                onDeleteCalibration(targetCal.id)
+                calibrationToDelete = null
+            },
+            onDismiss = { calibrationToDelete = null }
+        )
+    }
+}
+
+@Composable
+fun SmartCalibrationSuggestionCard(
+    suggestion: KmzCalibrationSuggestion,
+    onQuickFillSuggestedReference: (String) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val c = CtecsTheme.colors
+    val badgeColor = when (suggestion.status) {
+        KmzCalibrationSuggestionStatus.ELIGIBLE_SUGGEST_CALIBRATION -> c.success
+        KmzCalibrationSuggestionStatus.WAIT_POOR_GPS_ACCURACY,
+        KmzCalibrationSuggestionStatus.RECHECK_EXCESSIVE_LATERAL_OFFSET,
+        KmzCalibrationSuggestionStatus.WAIT_STABILIZING_SAMPLES,
+        KmzCalibrationSuggestionStatus.OUT_OF_ALIGNMENT_RANGE -> c.warning
+        KmzCalibrationSuggestionStatus.CONFLICTING_REFERENCE_NEARBY -> c.accent
+        KmzCalibrationSuggestionStatus.ALIGNMENT_OR_GPS_UNAVAILABLE -> c.textSecondary
+    }
+
+    Surface(
+        shape = RoundedCornerShape(13.dp),
+        color = badgeColor.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.28f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("smart_calibration_suggestion_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = badgeColor,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = "Smart Calibration Suggestion",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = c.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = badgeColor.copy(alpha = 0.16f)
+                ) {
+                    Text(
+                        text = suggestion.status.badgeLabel,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = badgeColor,
+                        modifier = Modifier
+                            .padding(horizontal = 7.dp, vertical = 2.5.dp)
+                            .testTag("smart_calibration_suggestion_badge")
+                    )
+                }
+            }
+
+            Text(
+                text = suggestion.telemetryLine,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = c.textSecondary,
+                modifier = Modifier.testTag("smart_calibration_suggestion_telemetry")
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = suggestion.guidanceMessage,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = c.textPrimary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("smart_calibration_suggestion_guidance")
+                )
+
+                if (suggestion.isEligible && suggestion.originalKmzChainage != null) {
+                    TextButton(
+                        onClick = {
+                            onQuickFillSuggestedReference(suggestion.originalKmzChainage.format())
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 32.dp)
+                            .testTag("suggestion_prefill_button")
+                    ) {
+                        Text(
+                            text = "Prefill ${suggestion.originalKmzChainage.format()}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = c.success
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SmartCalibrationChainageListSection(
+    calibrations: List<KmzManualCalibration>,
+    activeRoute: RouteData?,
+    activeAlignmentId: String?,
+    currentDistanceAlongMetres: Double?,
+    activeCalibrationId: String?,
+    onEditClick: (KmzManualCalibration) -> Unit,
+    onDeleteClick: (KmzManualCalibration) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val c = CtecsTheme.colors
+    val sdf = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("smart_calibration_chainage_list_section"),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Smart Calibration Chainage List (${calibrations.size})",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = c.textPrimary,
+                modifier = Modifier.testTag("smart_calibration_list_header")
+            )
+            Text(
+                text = "±2 km coverage each dir",
+                style = MaterialTheme.typography.labelSmall,
+                color = c.textSecondary
+            )
+        }
+
+        if (calibrations.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = c.secondarySurface,
+                border = BorderStroke(1.dp, c.subtleSeparator),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("smart_calibration_list_empty")
+            ) {
+                Text(
+                    text = "No manual reference chainages saved yet. Enter a verified site chainage above to calibrate within ±2 km.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textSecondary,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        } else {
+            calibrations.forEach { cal ->
+                val recordStatus = remember(cal, activeRoute, activeAlignmentId, currentDistanceAlongMetres, activeCalibrationId) {
+                    KmzCalibrationEngine.evaluateRecordStatus(
+                        calibration = cal,
+                        routeData = activeRoute,
+                        activeAlignmentId = activeAlignmentId,
+                        currentDistanceAlongMetres = currentDistanceAlongMetres,
+                        activeCalibrationId = activeCalibrationId
+                    )
+                }
+                val isHighlightedActive = recordStatus == KmzCalibrationRecordStatus.ACTIVE
+                val statusBadgeColor = when (recordStatus) {
+                    KmzCalibrationRecordStatus.ACTIVE -> c.success
+                    KmzCalibrationRecordStatus.OUTSIDE_COVERAGE -> c.warning
+                    KmzCalibrationRecordStatus.INACTIVE -> c.textSecondary
+                    KmzCalibrationRecordStatus.INVALID -> c.error
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isHighlightedActive) c.success.copy(alpha = 0.08f) else c.secondarySurface,
+                    border = BorderStroke(
+                        width = if (isHighlightedActive) 1.5.dp else 1.dp,
+                        color = if (isHighlightedActive) c.success.copy(alpha = 0.55f) else c.subtleSeparator
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("calibration_list_item_${cal.id}")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Top Row: Verified Ref Chainage, Offset Badge, Status Badge, Edit & Delete Icons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "Ref ${cal.manualReferenceChainage.format()}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = c.textPrimary,
+                                        modifier = Modifier.testTag("calibration_item_manual_ref_${cal.id}")
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = c.accent.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = cal.formattedOffset,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = c.accent,
+                                            modifier = Modifier
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .testTag("calibration_item_offset_${cal.id}")
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = statusBadgeColor.copy(alpha = 0.16f)
+                                    ) {
+                                        Text(
+                                            text = recordStatus.label,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = statusBadgeColor,
+                                            modifier = Modifier
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .testTag("calibration_item_status_${cal.id}")
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "Original KMZ/KML: ${cal.originalKmzChainage.format()} • Alignment: ${cal.alignmentName.ifBlank { cal.routeFileName.ifBlank { cal.routeId } }}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = c.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("calibration_item_original_kmz_${cal.id}")
+                                )
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { onEditClick(cal) },
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .testTag("calibration_item_edit_button_${cal.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit calibration reference ${cal.manualReferenceChainage.format()}",
+                                        tint = c.accent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onDeleteClick(cal) },
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .testTag("calibration_item_delete_button_${cal.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Delete calibration reference ${cal.manualReferenceChainage.format()}",
+                                        tint = c.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Metadata Grid: GPS Accuracy, Signed Left/Right Centerline Offset, Coverage, Timestamp
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "GPS ${cal.formattedGpsAccuracy} • Centerline ${cal.formattedLateralOffset}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = c.textPrimary,
+                                modifier = Modifier.testTag("calibration_item_gps_lateral_${cal.id}")
+                            )
+                            Text(
+                                text = sdf.format(Date(cal.updatedAtMs)),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.5.sp,
+                                color = c.textSecondary,
+                                modifier = Modifier.testTag("calibration_item_datetime_${cal.id}")
+                            )
+                        }
+
+                        Text(
+                            text = "Coverage: ${cal.formattedCoverageRange}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = c.textSecondary,
+                            modifier = Modifier.testTag("calibration_item_coverage_${cal.id}")
+                        )
+
+                        // Preserved Calibration Edit History indicator
+                        if (cal.editHistory.isNotEmpty()) {
+                            val latestHist = cal.editHistory.last()
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.testTag("calibration_item_history_${cal.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = c.accentSecondary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "History (${cal.editHistory.size}): Prev Ref ${latestHist.previousManualReferenceChainage.format()} (Orig ${latestHist.previousOriginalKmzChainage.format()}, Offset ${latestHist.formattedPreviousOffset})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.5.sp,
+                                    color = c.accentSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EditCalibrationReferenceDialog(
+    calibration: KmzManualCalibration,
+    currentGpsPoint: GeoPoint?,
+    currentGpsAccuracy: Float,
+    liveOriginalKmzChainage: Chainage?,
+    onSaveEdit: (
+        newManualReferenceInput: String,
+        newOriginalKmzInput: String?,
+        newGpsPoint: GeoPoint?
+    ) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val c = CtecsTheme.colors
+    val dialogColors = rememberDialogColors()
+
+    var manualRefText by rememberSaveable(calibration.id) {
+        mutableStateOf(calibration.manualReferenceChainage.format())
+    }
+    var origRefText by rememberSaveable(calibration.id) {
+        mutableStateOf(calibration.originalKmzChainage.format())
+    }
+    var useCurrentLiveGps by rememberSaveable(calibration.id) {
+        mutableStateOf(false)
+    }
+
+    val (parsedManual, manualErr) = remember(manualRefText) {
+        KmzCalibrationEngine.parseManualReferenceChainage(manualRefText)
+    }
+    val (parsedOrig, origErr) = remember(origRefText) {
+        KmzCalibrationEngine.parseManualReferenceChainage(origRefText)
+    }
+
+    val recalculatedOffset = remember(parsedManual, parsedOrig) {
+        if (parsedManual != null && parsedOrig != null) {
+            parsedManual.metres - parsedOrig.metres
+        } else null
+    }
+
+    val canSave = parsedManual != null && manualErr == null && parsedOrig != null && origErr == null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
+        modifier = Modifier.testTag("calibration_edit_dialog"),
+        title = {
+            Text(
+                text = "Edit Calibration Reference",
+                fontWeight = FontWeight.Bold,
+                color = dialogColors.titleColor
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = manualRefText,
+                    onValueChange = { manualRefText = it },
+                    label = { Text("Verified Manual Reference Chainage") },
+                    singleLine = true,
+                    isError = manualErr != null,
+                    supportingText = manualErr?.let { err -> { Text(err, color = c.error) } },
+                    colors = ctecsBorderlessInputColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_calibration_manual_ref_input")
+                )
+
+                OutlinedTextField(
+                    value = origRefText,
+                    onValueChange = { origRefText = it },
+                    label = { Text("Original KMZ/KML Reference Chainage") },
+                    singleLine = true,
+                    isError = origErr != null,
+                    supportingText = origErr?.let { err -> { Text(err, color = c.error) } },
+                    colors = ctecsBorderlessInputColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_calibration_original_kmz_input")
+                )
+
+                if (currentGpsPoint != null && liveOriginalKmzChainage != null) {
+                    OutlinedButton(
+                        onClick = {
+                            useCurrentLiveGps = true
+                            origRefText = liveOriginalKmzChainage.format()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("edit_calibration_use_live_gps_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MyLocation,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Use Live GPS Position (${liveOriginalKmzChainage.format()} • ±${currentGpsAccuracy.toInt()}m)",
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                val offsetFormatted = recalculatedOffset?.let {
+                    if (it >= 0L) "+$it m" else "$it m"
+                } ?: "--"
+                Text(
+                    text = "Recalculated Correction Offset: $offsetFormatted",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.5.sp,
+                    color = c.accent,
+                    modifier = Modifier.testTag("edit_calibration_recalculated_offset_text")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSaveEdit(
+                        manualRefText.trim(),
+                        origRefText.trim(),
+                        if (useCurrentLiveGps) currentGpsPoint else null
+                    )
+                },
+                enabled = canSave,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = c.accent,
+                    contentColor = c.onAccent
+                ),
+                modifier = Modifier.testTag("edit_calibration_save_button")
+            ) {
+                Text("Save Changes", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("edit_calibration_cancel_button")
+            ) {
+                Text("Cancel", color = dialogColors.textSecondaryColor)
+            }
+        }
+    )
+}
+
+@Composable
+fun DeleteCalibrationConfirmDialog(
+    calibration: KmzManualCalibration,
+    onConfirmDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val c = CtecsTheme.colors
+    val dialogColors = rememberDialogColors()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = dialogColors.shape,
+        containerColor = dialogColors.containerColor,
+        tonalElevation = 0.dp,
+        modifier = Modifier.testTag("calibration_delete_confirm_dialog"),
+        title = {
+            Text(
+                text = "Delete Calibration Reference?",
+                fontWeight = FontWeight.Bold,
+                color = dialogColors.titleColor
+            )
+        },
+        text = {
+            Text(
+                text = "Delete reference ${calibration.manualReferenceChainage.format()} (Original KMZ ${calibration.originalKmzChainage.format()}, Offset ${calibration.formattedOffset})? " +
+                    "This removes only this calibration record and restores original KMZ/KML chainage where no other calibration applies. Original KMZ/KML files are never deleted.",
+                color = dialogColors.textSecondaryColor,
+                fontSize = 13.sp
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirmDelete,
+                modifier = Modifier.testTag("calibration_delete_confirm_button")
+            ) {
+                Text("Delete", color = c.error, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("calibration_delete_cancel_button")
+            ) {
+                Text("Cancel", color = dialogColors.textSecondaryColor)
+            }
+        }
+    )
 }
 
 @Composable

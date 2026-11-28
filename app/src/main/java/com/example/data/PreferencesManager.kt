@@ -1471,12 +1471,45 @@ class PreferencesManager(context: Context) {
     suspend fun saveKmzCalibration(calibration: KmzManualCalibration) {
         safeEdit { prefs ->
             val current = parseKmzCalibrations(prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON]).toMutableMap()
-            val key = com.example.geo.KmzCalibrationEngine.storageKey(
-                calibration.routeId,
-                calibration.alignmentId
-            )
+            // Remove any existing entry with the same calibration.id or legacy alignment key at the same anchor
+            val matchingKeys = current.entries.filter { (_, existing) ->
+                existing.id == calibration.id || (
+                    existing.routeId == calibration.routeId &&
+                        existing.alignmentId == calibration.alignmentId &&
+                        kotlin.math.abs(existing.originalKmzMetres - calibration.originalKmzMetres) <=
+                        com.example.geo.KmzCalibrationEngine.SAME_ANCHOR_MERGE_PROXIMITY_METRES
+                    )
+            }.map { it.key }
+            matchingKeys.forEach { current.remove(it) }
+
+            val key = com.example.geo.KmzCalibrationEngine.recordStorageKey(calibration)
             current[key] = calibration
             prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON] = serializeKmzCalibrations(current)
+        }
+    }
+
+    suspend fun saveAllKmzCalibrations(calibrations: Map<String, KmzManualCalibration>) {
+        safeEdit { prefs ->
+            if (calibrations.isEmpty()) {
+                prefs.remove(KEY_KMZ_MANUAL_CALIBRATIONS_JSON)
+            } else {
+                prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON] = serializeKmzCalibrations(calibrations)
+            }
+        }
+    }
+
+    suspend fun removeKmzCalibrationById(calibrationId: String) {
+        safeEdit { prefs ->
+            val current = parseKmzCalibrations(prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON]).toMutableMap()
+            val keysToRemove = current.entries
+                .filter { (k, cal) -> cal.id == calibrationId || k == calibrationId }
+                .map { it.key }
+            keysToRemove.forEach { current.remove(it) }
+            if (current.isEmpty()) {
+                prefs.remove(KEY_KMZ_MANUAL_CALIBRATIONS_JSON)
+            } else {
+                prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON] = serializeKmzCalibrations(current)
+            }
         }
     }
 
@@ -1484,15 +1517,15 @@ class PreferencesManager(context: Context) {
         safeEdit { prefs ->
             val current = parseKmzCalibrations(prefs[KEY_KMZ_MANUAL_CALIBRATIONS_JSON]).toMutableMap()
             if (!alignmentId.isNullOrBlank()) {
-                val exactKey = com.example.geo.KmzCalibrationEngine.storageKey(routeId, alignmentId)
-                current.remove(exactKey)
-                // Also clean any fallback key stored under routeId alone if matching route
-                val routeFallbackKey = com.example.geo.KmzCalibrationEngine.storageKey(routeId, routeId)
-                if (current[routeFallbackKey]?.alignmentId == alignmentId ||
-                    current[routeFallbackKey]?.alignmentId.isNullOrBlank()
-                ) {
-                    current.remove(routeFallbackKey)
-                }
+                val keysToRemove = current.entries.filter { (_, cal) ->
+                    cal.routeId == routeId && (
+                        cal.alignmentId == alignmentId ||
+                            cal.alignmentId.isBlank() ||
+                            cal.alignmentId == routeId
+                        )
+                }.map { it.key }
+                keysToRemove.forEach { current.remove(it) }
+                current.remove(com.example.geo.KmzCalibrationEngine.storageKey(routeId, alignmentId))
             } else {
                 val keysToRemove = current.entries
                     .filter { it.value.routeId == routeId }
@@ -1517,7 +1550,7 @@ class PreferencesManager(context: Context) {
                 val key = keys.next()
                 val obj = root.optJSONObject(key) ?: continue
                 val cal = KmzManualCalibration.fromJson(obj) ?: continue
-                val normalizedKey = com.example.geo.KmzCalibrationEngine.storageKey(cal.routeId, cal.alignmentId)
+                val normalizedKey = com.example.geo.KmzCalibrationEngine.recordStorageKey(cal)
                 result[normalizedKey] = cal
             }
         } catch (_: Exception) {}

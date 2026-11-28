@@ -47,7 +47,12 @@ data class ChainageMatchResult(
     val calibrationValidationStatus: String? = null,
     val calibrationValidationReason: String? = null,
     val calibrationAttemptedOffsetMetres: Long? = null,
-    val distanceFromCalibrationAnchorMetres: Double? = null
+    val distanceFromCalibrationAnchorMetres: Double? = null,
+    val signedLateralOffsetMetres: Double = 0.0,
+    val centerlineOffsetZone: CenterlineOffsetZone = CenterlineOffsetZone.OUTSIDE,
+    val localTangentBearingDegrees: Double = 0.0,
+    val parallelCenterlineOffset: ParallelCenterlineOffset? = null,
+    val preciseChainageMillimetres: Long? = chainage?.totalMillimetres
 ) {
     val displayChainage: String
         get() = customChainageText?.takeIf { it.isNotBlank() }
@@ -58,6 +63,14 @@ data class ChainageMatchResult(
         get() = customChainageText?.takeIf { it.isNotBlank() }?.let {
             if (it.startsWith("KM", ignoreCase = true)) it else "KM $it"
         } ?: if (chainage != null) "KM ${chainage.format()}" else if (isManual) "Manual" else "---"
+
+    val formattedLateralOffsetBadge: String
+        get() = parallelCenterlineOffset?.formattedBadge
+            ?: if (confidence == MatchConfidence.NO_MATCH) {
+                "OUTSIDE"
+            } else {
+                ParallelCenterlineOffset.formatLateralOffsetBadge(centerlineOffsetZone, offsetMetres)
+            }
 
     companion object {
         fun noRoute(accuracy: Float = 0f) = ChainageMatchResult(

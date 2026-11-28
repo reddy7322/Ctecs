@@ -1475,6 +1475,30 @@ fun CentralChainageDisplay(
                 }
             }
         }
+
+        // Exclusive tiny "mm" precision visual indicator at the bottom-right corner of the Home Page Chainage Card
+        val mmColor by animateColorAsState(
+            targetValue = if (source == ChainageSource.CUSTOM_CORRECTION) {
+                c.accentSecondary.copy(alpha = if (isDark) 0.72f else 0.78f)
+            } else {
+                subTextColor.copy(alpha = if (isDark) 0.56f else 0.64f)
+            },
+            animationSpec = tween(durationMillis = 280),
+            label = "home_chainage_mm_color"
+        )
+        Text(
+            text = "mm",
+            color = mmColor,
+            fontSize = 8.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            letterSpacing = 0.4.sp,
+            maxLines = 1,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = if (isCompact) 7.dp else 10.dp, bottom = if (isCompact) 3.dp else 4.dp)
+                .testTag("home_chainage_card_mm_indicator")
+        )
     }
 }
 

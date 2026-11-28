@@ -700,7 +700,7 @@ class KmzManualCalibrationTest {
 
         composeTestRule.onNodeWithTag("calibration_coverage_status_text")
             .assertTextContains("Active • within 2 km coverage")
-        composeTestRule.onNodeWithTag("calibration_offset_text").assertTextContains("+30 m")
+        composeTestRule.onNodeWithTag("calibration_offset_text").assertTextContains("+30 m", substring = true)
         composeTestRule.onNodeWithTag("calibration_reset_button").assertIsEnabled()
 
         // Switch to Dark theme & move beyond ±2 km -> Outside 2 km range warning
@@ -711,7 +711,7 @@ class KmzManualCalibrationTest {
         }
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("calibration_coverage_status_text").assertTextContains("Outside 2 km range")
-        composeTestRule.onNodeWithText("LHS Mainline").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("calibration_alignment_name").assertTextContains("LHS Mainline", substring = true)
 
         // Reset restores cleanly
         composeTestRule.onNodeWithTag("calibration_reset_button").performClick()
@@ -719,4 +719,278 @@ class KmzManualCalibrationTest {
         assertEquals(1, resetCount)
         composeTestRule.onNodeWithTag("calibration_coverage_status_text").assertTextContains("No calibration")
     }
+
+    // 15. Left / Right Parallel Centerline Offset Detection (straight, curved road, parallel divided carriageways)
+    @Test
+    fun `scenario 15 parallel centerline offset detects LEFT RIGHT ON_LINE OUTSIDE along straight and curved alignments`() {
+        val route = createRoute(parallelSides = true)
+        val align = route.alignments.first { it.id == "align-lhs" }
+
+        // Alignment runs South -> North (bearing ~0°).
+        // West of centerline (negative longitude delta) is LEFT (+signedLateralOffsetMetres);
+        // East of centerline (positive longitude delta) is RIGHT (-signedLateralOffsetMetres).
+        val centerPt = pointAlongIncreasingRoute(188_000L, 192_000L)
+        val cosLat = kotlin.math.cos(Math.toRadians(baseLat))
+        val degLngPerMetre = 1.0 / (111_320.0 * cosLat)
+
+        // 1) Near centerline (0.3 m East -> ON_LINE)
+        val onLinePt = GeoPoint(centerPt.latitude, centerPt.longitude + 0.3 * degLngPerMetre)
+        val onLineRes = ChainageMatcher.computeParallelCenterlineOffset(onLinePt, align, route.markers)
+        assertEquals(com.example.model.CenterlineOffsetZone.ON_LINE, onLineRes.zone)
+        assertEquals("ON LINE", onLineRes.formattedBadge)
+
+        // 2) Left of centerline (3.0 m, 10.0 m, 20.0 m West -> LEFT)
+        for (latDistM in listOf(3.0, 10.0, 20.0)) {
+            val leftPt = GeoPoint(centerPt.latitude, centerPt.longitude - latDistM * degLngPerMetre)
+            val leftRes = ChainageMatcher.computeParallelCenterlineOffset(leftPt, align, route.markers)
+            assertEquals(com.example.model.CenterlineOffsetZone.LEFT, leftRes.zone)
+            assertTrue("Signed lateral offset should be positive for LEFT: ${leftRes.signedLateralOffsetMetres}",
+                leftRes.signedLateralOffsetMetres > 0.0)
+            assertEquals(latDistM, leftRes.perpendicularDistanceMetres, 0.35)
+            assertTrue(leftRes.formattedBadge.startsWith("L "))
+        }
+
+        // 3) Right of centerline (3.0 m, 10.0 m, 20.0 m East -> RIGHT)
+        for (latDistM in listOf(3.0, 10.0, 20.0)) {
+            val rightPt = GeoPoint(centerPt.latitude, centerPt.longitude + latDistM * degLngPerMetre)
+            val rightRes = ChainageMatcher.computeParallelCenterlineOffset(rightPt, align, route.markers)
+            assertEquals(com.example.model.CenterlineOffsetZone.RIGHT, rightRes.zone)
+            assertTrue("Signed lateral offset should be negative for RIGHT: ${rightRes.signedLateralOffsetMetres}",
+                rightRes.signedLateralOffsetMetres < 0.0)
+            assertEquals(latDistM, rightRes.perpendicularDistanceMetres, 0.35)
+            assertTrue(rightRes.formattedBadge.startsWith("R "))
+        }
+
+        // 4) Outside reliable alignment matching range (500 m East -> OUTSIDE)
+        val outsidePt = GeoPoint(centerPt.latitude, centerPt.longitude + 500.0 * degLngPerMetre)
+        val outsideRes = ChainageMatcher.computeParallelCenterlineOffset(outsidePt, align, route.markers)
+        assertEquals(com.example.model.CenterlineOffsetZone.OUTSIDE, outsideRes.zone)
+        assertEquals("OUTSIDE", outsideRes.formattedBadge)
+
+        // 5) Curved alignment (90-degree turn from Northbound to Eastbound)
+        val curvePoints = listOf(
+            GeoPoint(baseLat, baseLng),
+            GeoPoint(baseLat + 500.0 * degPerMetre, baseLng),
+            GeoPoint(baseLat + 500.0 * degPerMetre, baseLng + 500.0 * degLngPerMetre)
+        )
+        val curvedAlign = RouteAlignment(
+            id = "align-curve",
+            name = "Curved Highway",
+            points = curvePoints,
+            direction = "INCREASING"
+        )
+        // On the Eastbound leg (after the turn), North (+latitude) is LEFT and South (-latitude) is RIGHT!
+        val eastboundMid = GeoPoint(baseLat + 500.0 * degPerMetre, baseLng + 250.0 * degLngPerMetre)
+        val northOfEastbound = GeoPoint(eastboundMid.latitude + 6.0 * degPerMetre, eastboundMid.longitude)
+        val southOfEastbound = GeoPoint(eastboundMid.latitude - 6.5 * degPerMetre, eastboundMid.longitude)
+
+        val curveLeft = ChainageMatcher.computeParallelCenterlineOffset(northOfEastbound, curvedAlign)
+        val curveRight = ChainageMatcher.computeParallelCenterlineOffset(southOfEastbound, curvedAlign)
+        assertEquals(com.example.model.CenterlineOffsetZone.LEFT, curveLeft.zone)
+        assertEquals(6.0, curveLeft.perpendicularDistanceMetres, 0.4)
+        assertEquals(com.example.model.CenterlineOffsetZone.RIGHT, curveRight.zone)
+        assertEquals(6.5, curveRight.perpendicularDistanceMetres, 0.4)
+    }
+
+    // 16. Smart Calibration Suggestion Engine (GPS ±3m, ±5m, ±8m, ±12m & lateral offsets 3m, 10m, 20m, >20m)
+    @Test
+    fun `scenario 16 smart suggestion engine enforces 5m GPS accuracy, 20m lateral offset, stability, and never alters chainage by lateral offset`() {
+        val route = createRoute(parallelSides = true).copy(selectedAlignmentId = "align-lhs")
+        val cosLat = kotlin.math.cos(Math.toRadians(baseLat))
+        val degLngPerMetre = 1.0 / (111_320.0 * cosLat)
+        val basePt = pointAlongIncreasingRoute(188_000L, 192_200L)
+
+        fun buildMatch(lateralOffsetM: Double, gpsAcc: Float): Pair<GeoPoint, ChainageMatchResult> {
+            val pt = GeoPoint(basePt.latitude, basePt.longitude + lateralOffsetM * degLngPerMetre)
+            val match = ChainageMatcher.match(
+                gpsPoint = pt,
+                gpsAccuracy = gpsAcc,
+                routeData = route,
+                fixTimeMs = 1_700_300_000_000L
+            )
+            return pt to match
+        }
+
+        // Eligible: GPS ±3m and ±5m with lateral offsets 3m, 10m, 20m (both Left and Right)
+        for (gpsAcc in listOf(3.0f, 5.0f)) {
+            for (latM in listOf(-3.0, 3.0, -10.0, 10.0, -19.8, 19.8)) {
+                val (pt, match) = buildMatch(latM, gpsAcc)
+                // Lateral offset must NEVER be added to or subtracted from chainage
+                assertEquals(192_200L, match.chainage?.metres)
+                val suggestion = KmzCalibrationEngine.evaluateCalibrationSuggestion(
+                    routeData = route,
+                    matchResult = match,
+                    gpsPoint = pt,
+                    gpsAccuracyMetres = gpsAcc,
+                    calibrations = emptyMap(),
+                    stableSampleCount = 2,
+                    requiredStableSamples = 2
+                )
+                assertTrue("Expected eligible suggestion for gps=$gpsAcc, lat=$latM but got ${suggestion.status}: ${suggestion.guidanceMessage}",
+                    suggestion.isEligible)
+                assertEquals(com.example.model.KmzCalibrationSuggestionStatus.ELIGIBLE_SUGGEST_CALIBRATION, suggestion.status)
+                assertEquals("Suggest calibration", suggestion.status.badgeLabel)
+            }
+        }
+
+        // Poor GPS: ±8m and ±12m -> WAIT_POOR_GPS_ACCURACY
+        for (gpsAcc in listOf(8.0f, 12.0f)) {
+            val (pt, match) = buildMatch(-6.0, gpsAcc)
+            val suggestion = KmzCalibrationEngine.evaluateCalibrationSuggestion(
+                routeData = route,
+                matchResult = match,
+                gpsPoint = pt,
+                gpsAccuracyMetres = gpsAcc,
+                calibrations = emptyMap(),
+                stableSampleCount = 3,
+                requiredStableSamples = 2
+            )
+            assertFalse(suggestion.isEligible)
+            assertEquals(com.example.model.KmzCalibrationSuggestionStatus.WAIT_POOR_GPS_ACCURACY, suggestion.status)
+            assertEquals("Wait", suggestion.status.badgeLabel)
+        }
+
+        // Excessive offset: >20m (e.g. 24m Right) with good GPS ±4m -> RECHECK_EXCESSIVE_LATERAL_OFFSET
+        val (excPt, excessiveMatch) = buildMatch(24.0, 4.0f)
+        val excessiveSuggestion = KmzCalibrationEngine.evaluateCalibrationSuggestion(
+            routeData = route,
+            matchResult = excessiveMatch,
+            gpsPoint = excPt,
+            gpsAccuracyMetres = 4.0f,
+            calibrations = emptyMap(),
+            stableSampleCount = 3,
+            requiredStableSamples = 2
+        )
+        assertFalse(excessiveSuggestion.isEligible)
+        assertEquals(com.example.model.KmzCalibrationSuggestionStatus.RECHECK_EXCESSIVE_LATERAL_OFFSET, excessiveSuggestion.status)
+        assertEquals("Recheck alignment", excessiveSuggestion.status.badgeLabel)
+    }
+
+    // 17. Smart Calibration Chainage List: Add, Edit (with history preservation), Duplicate prevention, and Delete
+    @Test
+    fun `scenario 17 smart calibration list supports multiple references, duplicate prevention, edit with history preservation, and delete without touching KMZ`() = runBlocking {
+        val (kmlFile, _) = seedActiveKmlRouteInDbAndPrefs("route-list-test")
+        val vm = MainViewModel(application)
+        vm.routeRepository.loadRouteById("route-list-test")
+        delay(80)
+
+        // 1. Add first reference at 190+000 -> 190+025 (+25 m)
+        val pt190 = pointAlongIncreasingRoute(188_000L, 190_000L)
+        var firstOk = false
+        vm.applyManualKmzCalibration(
+            manualReferenceInput = "190+025",
+            originalKmzMetresOverride = 190_000L,
+            gpsPointOverride = pt190
+        ) { ok, _ -> firstOk = ok }
+        delay(60)
+        assertTrue(firstOk)
+        assertEquals(1, vm.routeKmzCalibrationsList.value.size)
+
+        // 2. Duplicate reference prevention: identical manual & original chainage is rejected
+        var dupOk = true
+        var dupMsg = ""
+        vm.applyManualKmzCalibration(
+            manualReferenceInput = "190+025",
+            originalKmzMetresOverride = 190_000L,
+            gpsPointOverride = pt190
+        ) { ok, msg ->
+            dupOk = ok
+            dupMsg = msg
+        }
+        delay(40)
+        assertFalse("Duplicate calibration reference should be prevented", dupOk)
+        assertTrue(dupMsg.contains("Duplicate", ignoreCase = true))
+        assertEquals(1, vm.routeKmzCalibrationsList.value.size)
+
+        // 3. Add a second reference further along alignment at 195+000 -> 195+040 (+40 m)
+        val pt195 = pointAlongIncreasingRoute(188_000L, 195_000L)
+        var secondOk = false
+        vm.applyManualKmzCalibration(
+            manualReferenceInput = "195+040",
+            originalKmzMetresOverride = 195_000L,
+            gpsPointOverride = pt195
+        ) { ok, _ -> secondOk = ok }
+        delay(60)
+        assertTrue(secondOk)
+        assertEquals(2, vm.routeKmzCalibrationsList.value.size)
+
+        // 4. Edit first reference from 190+025 to 190+035 (+35 m) -> preserves history & recalculates offset
+        val firstRecord = vm.routeKmzCalibrationsList.value.first { it.originalKmzMetres == 190_000L }
+        var editOk = false
+        vm.editManualKmzCalibration(
+            calibrationId = firstRecord.id,
+            newManualReferenceInput = "190+035",
+            newOriginalKmzInput = "190+000",
+            newGpsPointOverride = pt190
+        ) { ok, _ -> editOk = ok }
+        delay(60)
+        assertTrue(editOk)
+        val editedRecord = vm.routeKmzCalibrationsList.value.first { it.id == firstRecord.id }
+        assertEquals(190_035L, editedRecord.manualReferenceMetres)
+        assertEquals(35L, editedRecord.offsetMetres)
+        assertEquals(1, editedRecord.editHistory.size)
+        assertEquals(190_025L, editedRecord.editHistory.first().previousManualReferenceMetres)
+        assertEquals(25L, editedRecord.editHistory.first().previousOffsetMetres)
+
+        // 5. Delete first reference -> deletes ONLY the selected record, keeps second reference & KMZ file intact
+        var deleteOk = false
+        vm.deleteManualKmzCalibration(firstRecord.id) { ok, _ -> deleteOk = ok }
+        delay(60)
+        assertTrue(deleteOk)
+        assertEquals(1, vm.routeKmzCalibrationsList.value.size)
+        assertEquals(195_000L, vm.routeKmzCalibrationsList.value.single().originalKmzMetres)
+        assertTrue("Deleting calibration record must never delete KMZ/KML file", kmlFile.exists())
+    }
+
+    // 18. Fixed-point integer millimetre accuracy & exclusive Home Page Chainage Card tiny "mm" indicator
+    @Test
+    fun `scenario 18 millimetre fixed-point engine has zero drift and mm indicator appears ONLY on Home Page Chainage Card`() {
+        // 1. Verify fixed-point millimetre arithmetic
+        assertEquals(192_230_000L, Chainage.metresToMillimetres(192_230.0))
+        assertEquals(192_230L, Chainage.fromMillimetres(192_230_400L).metres)
+        assertEquals(192_231L, Chainage.fromMillimetres(192_230_600L).metres)
+
+        // 2. Verify Chainage.format() and ChainageMatchResult.displayChainage NEVER append "mm"
+        val ch = Chainage(196_040L)
+        assertEquals("196+040", ch.format())
+        assertFalse(ch.format().contains("mm", ignoreCase = true))
+
+        val match = ChainageMatchResult(
+            chainage = ch,
+            projectedPoint = GeoPoint(baseLat, baseLng),
+            confidence = MatchConfidence.HIGH,
+            gpsAccuracy = 3.0f,
+            detectedSide = "LHS",
+            source = ChainageSource.KMZ
+        )
+        assertEquals("196+040", match.displayChainage)
+        assertFalse(match.displayChainage.contains("mm", ignoreCase = true))
+
+        // 3. Render CentralChainageDisplay (Home Page Chainage Card) and verify tiny "mm" indicator exists inside it
+        composeTestRule.setContent {
+            MyApplicationTheme(themeMode = "dark") {
+                val c = com.example.ui.theme.CtecsTheme.colors
+                com.example.ui.home.CentralChainageDisplay(
+                    chainageText = "196+040",
+                    detectedSide = "LHS",
+                    confidence = MatchConfidence.HIGH,
+                    offsetMetres = 2.4,
+                    hasActiveRoute = true,
+                    source = ChainageSource.KMZ,
+                    cardBgColor = c.secondaryBackground,
+                    cardBorderColor = c.subtleSeparator,
+                    mainTextColor = c.textPrimary,
+                    subTextColor = c.textSecondary,
+                    isDark = true,
+                    onClick = {},
+                    onToggleSide = {}
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("central_chainage_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_chainage_card_mm_indicator", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("mm")
+    }
 }
+

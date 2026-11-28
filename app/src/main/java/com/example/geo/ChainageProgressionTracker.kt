@@ -79,6 +79,14 @@ class ChainageProgressionTracker {
     private var consecutiveSpikeCount: Int = 0
     private var lastSpikeCandidatePoint: GeoPoint? = null
 
+    // Secondary raw-chainage jump guard inside progression tracker (blocks calibrated/KMZ backdrops even if matcher had no previousResult)
+    private var pendingAutoJumpRawMetres: Long? = null
+    private var pendingAutoJumpFixTimeMs: Long = 0L
+    private var pendingAutoJumpCount: Int = 0
+    private var pendingDynJumpRawMetres: Long? = null
+    private var pendingDynJumpFixTimeMs: Long = 0L
+    private var pendingDynJumpCount: Int = 0
+
     companion object {
         private const val SIDE_CONFIRMATION_COUNT = 2
         private const val STATIONARY_JITTER_METRES = 1.5
@@ -128,6 +136,9 @@ class ChainageProgressionTracker {
         smoothedMetres = null
         lastAcceptedAutoFixTimeMs = 0L
         lastChainageDelta = 0L
+        pendingAutoJumpRawMetres = null
+        pendingAutoJumpFixTimeMs = 0L
+        pendingAutoJumpCount = 0
     }
 
     @Synchronized
@@ -172,6 +183,9 @@ class ChainageProgressionTracker {
         offRouteRefUnitNorth = null
         consecutiveSpikeCount = 0
         lastSpikeCandidatePoint = null
+        pendingDynJumpRawMetres = null
+        pendingDynJumpFixTimeMs = 0L
+        pendingDynJumpCount = 0
     }
 
     private fun resetDirectionAndManualTracking() {
@@ -398,6 +412,68 @@ class ChainageProgressionTracker {
                 lastReliableChainage = lastValidChainage,
                 travelDirection = confirmedTravelDirection
             )
+        }
+
+        // Independent raw-chainage jump guard: prevents calibrated/uncalibrated chainage from dropping
+        // (e.g. 171+000 -> 130+000 or calibration switching to OUTSIDE_2KM_RANGE on a glitched fix)
+        // even if ChainageMatcher was called with previousResult = null or calibration offset shifted.
+        val prevRawCh = lastValidRawChainage
+        if (!rawResult.isUncertain && prevRawCh != null && lastValidChainage != null) {
+            val rawJump = abs(rawUncorrected.metres - prevRawCh.metres)
+            val elapsedMs = if (lastAcceptedAutoFixTimeMs > 0L && rawResult.timestamp > 0L) {
+                (rawResult.timestamp - lastAcceptedAutoFixTimeMs).coerceAtLeast(0L)
+            } else 0L
+            val dtSec = elapsedMs / 1000.0
+            val maxPlausibleRawJump = maxOf(250.0, dtSec * 85.0 + 150.0)
+            val isImplausibleRawDropOrJump = rawJump > maxPlausibleRawJump ||
+                (elapsedMs > 0L && dtSec <= 6.0 && rawJump > maxOf(250.0, dtSec * 55.0 + 100.0))
+
+            if (isImplausibleRawDropOrJump) {
+                val candTime = if (rawResult.timestamp > 0L) rawResult.timestamp else System.currentTimeMillis()
+                val sameCandTime = pendingAutoJumpRawMetres != null && candTime == pendingAutoJumpFixTimeMs
+                val candDeltaMs = if (pendingAutoJumpRawMetres != null) candTime - pendingAutoJumpFixTimeMs else -1L
+                val candMaxStep = maxOf(120L, ((candDeltaMs.coerceAtLeast(0L) / 1000.0) * 55.0 + 60.0).roundToLong())
+                val matchesPending = !sameCandTime &&
+                    pendingAutoJumpRawMetres != null &&
+                    candDeltaMs in 400L..15_000L &&
+                    abs(rawUncorrected.metres - pendingAutoJumpRawMetres!!) <= candMaxStep &&
+                    rawResult.gpsAccuracy <= 25.0f
+
+                val nextCount = when {
+                    sameCandTime -> pendingAutoJumpCount
+                    matchesPending -> pendingAutoJumpCount + 1
+                    rawResult.gpsAccuracy <= 25.0f -> 1
+                    else -> 0
+                }
+                if (nextCount < 3) {
+                    if (!sameCandTime) {
+                        pendingAutoJumpRawMetres = if (nextCount > 0) rawUncorrected.metres else null
+                        pendingAutoJumpFixTimeMs = if (nextCount > 0) candTime else 0L
+                        pendingAutoJumpCount = nextCount
+                    }
+                    return rawResult.copy(
+                        chainage = lastValidChainage,
+                        rawUncorrectedChainage = prevRawCh,
+                        confidence = MatchConfidence.LOW,
+                        isUncertain = true,
+                        detectedSide = effectiveSide,
+                        source = lastChainageSource ?: rawResult.source,
+                        lastReliableChainage = lastValidChainage,
+                        travelDirection = confirmedTravelDirection
+                    )
+                }
+                pendingAutoJumpRawMetres = null
+                pendingAutoJumpFixTimeMs = 0L
+                pendingAutoJumpCount = 0
+            } else {
+                pendingAutoJumpRawMetres = null
+                pendingAutoJumpFixTimeMs = 0L
+                pendingAutoJumpCount = 0
+            }
+        } else if (!rawResult.isUncertain) {
+            pendingAutoJumpRawMetres = null
+            pendingAutoJumpFixTimeMs = 0L
+            pendingAutoJumpCount = 0
         }
 
         val prevOffset = lastCalibrationOffset
@@ -871,6 +947,66 @@ class ChainageProgressionTracker {
                 isManualCalibrationPendingGps = false
             )
             return ManualCalibrationResolution(result, workingCal, anchorJustLocked)
+        }
+
+        // Step B2: Reject implausible raw-alignment drops/jumps (e.g. 171+000 -> 130+000) in calibrated
+        // Dynamic mode before applying (rawAlignedM - anchorRawM) offset math.
+        val prevAlignedM = lastAcceptedAlignedRawMetres
+        if (!anchorJustLocked && prevAlignedM != null) {
+            val rawAlignedDelta = abs(rawAlignedM - prevAlignedM)
+            val dynElapsedMs = if (lastAcceptedGpsTimeMs > 0L) abs(fixTimeMs - lastAcceptedGpsTimeMs) else 0L
+            val dynDtSec = dynElapsedMs / 1000.0
+            val maxAllowedRawDelta = maxOf(250.0, maxOf(physicalMovedM * 2.5, dynDtSec * 85.0 + 150.0))
+            if (rawAlignedDelta > maxAllowedRawDelta) {
+                val candDeltaMs = if (pendingDynJumpRawMetres != null) fixTimeMs - pendingDynJumpFixTimeMs else -1L
+                val sameTime = pendingDynJumpRawMetres != null && fixTimeMs == pendingDynJumpFixTimeMs
+                val candStepM = maxOf(120L, ((candDeltaMs.coerceAtLeast(0L) / 1000.0) * 55.0 + 60.0).roundToLong())
+                val matchesPending = !sameTime &&
+                    pendingDynJumpRawMetres != null &&
+                    candDeltaMs in 400L..15_000L &&
+                    abs(rawAlignedM - pendingDynJumpRawMetres!!) <= candStepM &&
+                    locationState.accuracy <= 25.0f
+
+                val nextCount = when {
+                    sameTime -> pendingDynJumpCount
+                    matchesPending -> pendingDynJumpCount + 1
+                    locationState.accuracy <= 25.0f -> 1
+                    else -> 0
+                }
+                if (nextCount < 3) {
+                    if (!sameTime) {
+                        pendingDynJumpRawMetres = if (nextCount > 0) rawAlignedM else null
+                        pendingDynJumpFixTimeMs = if (nextCount > 0) fixTimeMs else 0L
+                        pendingDynJumpCount = nextCount
+                    }
+                    val held = Chainage(previousMetres)
+                    val result = autoResult.copy(
+                        chainage = held,
+                        customChainageText = held.format(),
+                        confidence = MatchConfidence.LOW,
+                        isManual = true,
+                        isUncertain = true,
+                        detectedSide = effectiveSide,
+                        source = ChainageSource.MANUAL,
+                        lastReliableChainage = held,
+                        rawUncorrectedChainage = Chainage(prevAlignedM),
+                        statusMessage = "Alignment Jump Filtered (Holding ${held.format()})",
+                        manualChainageMode = ManualChainageMode.DYNAMIC_CORRECTION,
+                        travelDirection = confirmedTravelDirection,
+                        manualCalibrationAnchorMetres = anchorMetres,
+                        manualCalibrationOffsetMetres = workingCal.computedOffsetMetres,
+                        isManualCalibrationPendingGps = false
+                    )
+                    return ManualCalibrationResolution(result, workingCal, false)
+                }
+                pendingDynJumpRawMetres = null
+                pendingDynJumpFixTimeMs = 0L
+                pendingDynJumpCount = 0
+            } else {
+                pendingDynJumpRawMetres = null
+                pendingDynJumpFixTimeMs = 0L
+                pendingDynJumpCount = 0
+            }
         }
 
         // Step C: Direct NON-CUMULATIVE dynamic calculation from the immutable anchor!

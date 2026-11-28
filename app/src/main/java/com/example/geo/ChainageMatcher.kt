@@ -1,9 +1,11 @@
 package com.example.geo
 
+import com.example.model.CenterlineOffsetZone
 import com.example.model.Chainage
 import com.example.model.ChainageMatchResult
 import com.example.model.GeoPoint
 import com.example.model.MatchConfidence
+import com.example.model.ParallelCenterlineOffset
 import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.RouteMarker
@@ -11,9 +13,12 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.roundToLong
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * High-Precision Single KMZ Alignment Chainage Matcher.
@@ -43,14 +48,16 @@ object ChainageMatcher {
     private val lastMatchLatencyMicros = AtomicLong(0L)
     private val automaticJumpRecoveries = AtomicLong(0L)
 
-    // Multi-fix spatial jump confirmation state: prevents a single stale/glitched GPS fix
-    // (e.g. 171+000 -> 130+000 even after >8s) from blindly replacing a valid chainage.
+    // Multi-fix spatial jump confirmation state: prevents stale/glitched GPS fixes
+    // (e.g. 171+000 -> 130+000) or duplicate-timestamp callbacks from replacing a valid chainage,
+    // while scaling candidate step tolerance with velocity so real recovery never locks.
     private data class PendingJumpCandidate(
         val routeKey: String,
         val gpsPoint: GeoPoint,
         val estimatedMetres: Long,
         val alignmentName: String,
-        val fixTimeMs: Long
+        val fixTimeMs: Long,
+        val confirmCount: Int = 1
     )
 
     private val jumpValidationLock = Any()
@@ -178,6 +185,7 @@ object ChainageMatcher {
             val perpDist: Double
         )
         val rawMapped = ArrayList<CandidateMarkerProj>(allMarkers.size)
+        val wideMapped = ArrayList<CandidateMarkerProj>(allMarkers.size)
         val seenMarkerSegments = HashSet<Int>(32)
         for (m in allMarkers) {
             val mLat = m.point.latitude
@@ -209,9 +217,14 @@ object ChainageMatcher {
                     bestAlong = cumDist[i] + proj.t * segLengths[i]
                 }
             }
-            if (bestDist <= 150.0) { // Marker belongs to this alignment
+            if (bestDist <= 150.0) { // Marker belongs directly to this alignment
                 rawMapped.add(CandidateMarkerProj(MappedMarkerRef(m, bestAlong, m.chainage.metres), bestDist))
+            } else if (bestDist <= 500.0) {
+                wideMapped.add(CandidateMarkerProj(MappedMarkerRef(m, bestAlong, m.chainage.metres), bestDist))
             }
+        }
+        if (rawMapped.isEmpty() && wideMapped.isNotEmpty()) {
+            rawMapped.addAll(wideMapped)
         }
         rawMapped.sortBy { it.ref.distanceAlongAlignmentM }
 
@@ -238,13 +251,11 @@ object ChainageMatcher {
         }
 
         // If no explicit markers mapped to this alignment path, synthesize baseline chainage
-        // directly from the path coordinates so every point along the path has an accurate baseline chainage
+        // directly from the nearest marker to path start (never blind first marker 130+000)
         if (mapped.isEmpty() && n >= 2 && totalDist > 0.0) {
             val nearestStartMarker = allMarkers.minByOrNull { GeoUtils.distanceMetres(pts.first(), it.point) }
-            val nearestStartDist = nearestStartMarker?.let { GeoUtils.distanceMetres(pts.first(), it.point) } ?: Double.MAX_VALUE
             val inferredStartMetres = Chainage.parse(alignment.name)?.metres
-                ?: (if (nearestStartDist <= 1500.0) nearestStartMarker?.chainage?.metres else null)
-                ?: allMarkers.firstOrNull()?.chainage?.metres
+                ?: nearestStartMarker?.chainage?.metres
                 ?: 0L
             val sign = if (alignment.direction == "DECREASING") -1 else 1
             val endMetres = (inferredStartMetres + sign * totalDist).roundToLong().coerceAtLeast(0L)
@@ -422,21 +433,31 @@ object ChainageMatcher {
                     }
                 }
 
-                // Parallel carriageway travel-bearing tie-breaker ONLY when multiple explicit
-                // directional carriageways compete (never penalizes reverse driving on single/main alignment).
+                // Parallel carriageway & intersection travel-bearing tie-breaker when multiple
+                // alignments compete (never penalizes reverse driving on a single alignment).
                 var bearingBonus = 0.0
                 val isExplicitDirectionalCarriageway = cached.carriagewayType.equals("LHS", ignoreCase = true) ||
                     cached.carriagewayType.equals("RHS", ignoreCase = true)
-                if (hasMultiAlignments && isExplicitDirectionalCarriageway && validBearing != null &&
+                if (hasMultiAlignments && validBearing != null &&
                     segIdx in cached.segmentBearingsDeg.indices
                 ) {
                     val segBearing = cached.segmentBearingsDeg[segIdx]
                     val diff = abs(((validBearing - segBearing + 540.0) % 360.0) - 180.0)
                     val cosAlign = cos(Math.toRadians(diff))
-                    if (cosAlign >= 0.5) {
-                        bearingBonus = 3.5
-                    } else if (cosAlign <= -0.5) {
-                        bearingBonus = -3.5
+                    if (isExplicitDirectionalCarriageway) {
+                        if (cosAlign >= 0.5) {
+                            bearingBonus = 3.5
+                        } else if (cosAlign <= -0.5) {
+                            bearingBonus = -3.5
+                        }
+                    } else {
+                        // Disambiguate intersecting/crossing alignments at junctions while allowing forward or reverse
+                        val absCos = abs(cosAlign)
+                        if (absCos >= 0.75) {
+                            bearingBonus = 2.0
+                        } else if (absCos <= 0.30) {
+                            bearingBonus = -2.0
+                        }
                     }
                 }
 
@@ -504,23 +525,29 @@ object ChainageMatcher {
             val segLength = if (bestSegIdx in bestAlignment.segmentLengths.indices) bestAlignment.segmentLengths[bestSegIdx] else 0.0
 
             // 3. Interpolate Chainage along polyline using mapped reference markers
-            val mappedMarkers = bestAlignment.mappedMarkers.ifEmpty {
-                routeData.markers.map { MappedMarkerRef(it, 0.0, it.chainage.metres) }
+            val mappedMarkers = bestAlignment.mappedMarkers
+            if (mappedMarkers.isEmpty()) {
+                return matchToMarkersDirectly(gpsPoint, gpsAccuracy, routeData.markers)
+                    .copy(timestamp = effectiveFixTimeMs)
             }
 
             var estimatedChainageMetres: Long
+            var estimatedChainageMillimetres: Long
             var bracketingInfo: String? = null
             var nearestMarkerLabel: String? = null
             var referenceStatus = "Valid"
 
             if (mappedMarkers.isEmpty()) {
                 estimatedChainageMetres = 0L
+                estimatedChainageMillimetres = 0L
                 referenceStatus = "No references found"
             } else if (mappedMarkers.size == 1) {
                 val single = mappedMarkers[0]
                 val deltaDist = bestDistanceAlongM - single.distanceAlongAlignmentM
                 val sign = if (bestAlignment.direction == "DECREASING") -1 else 1
-                estimatedChainageMetres = (single.chainageMetres + sign * deltaDist).roundToLong()
+                val exactMetres = single.chainageMetres + sign * deltaDist
+                estimatedChainageMillimetres = Chainage.metresToMillimetres(exactMetres)
+                estimatedChainageMetres = Chainage.millimetresToRoundedMetres(estimatedChainageMillimetres)
                 nearestMarkerLabel = single.marker.label
                 bracketingInfo = "Single Ref: ${single.marker.label}"
             } else {
@@ -530,14 +557,18 @@ object ChainageMatcher {
                 if (bestDistanceAlongM <= first.distanceAlongAlignmentM) {
                     val distFromFirst = bestDistanceAlongM - first.distanceAlongAlignmentM
                     val sign = if (first.chainageMetres <= last.chainageMetres) 1 else -1
-                    estimatedChainageMetres = (first.chainageMetres + sign * distFromFirst).roundToLong()
+                    val exactMetres = first.chainageMetres + sign * distFromFirst
+                    estimatedChainageMillimetres = Chainage.metresToMillimetres(exactMetres)
+                    estimatedChainageMetres = Chainage.millimetresToRoundedMetres(estimatedChainageMillimetres)
                     nearestMarkerLabel = first.marker.label
                     bracketingInfo = "Pre-start: Extrapolated from ${first.marker.label}"
                     referenceStatus = "Extrapolated (Pre-Start)"
                 } else if (bestDistanceAlongM >= last.distanceAlongAlignmentM) {
                     val distFromLast = bestDistanceAlongM - last.distanceAlongAlignmentM
                     val sign = if (first.chainageMetres <= last.chainageMetres) 1 else -1
-                    estimatedChainageMetres = (last.chainageMetres + sign * distFromLast).roundToLong()
+                    val exactMetres = last.chainageMetres + sign * distFromLast
+                    estimatedChainageMillimetres = Chainage.metresToMillimetres(exactMetres)
+                    estimatedChainageMetres = Chainage.millimetresToRoundedMetres(estimatedChainageMillimetres)
                     nearestMarkerLabel = last.marker.label
                     bracketingInfo = "Post-end: Extrapolated from ${last.marker.label}"
                     referenceStatus = "Extrapolated (Post-End)"
@@ -560,7 +591,9 @@ object ChainageMatcher {
                     } else 0.0
 
                     val deltaChainage = mB.chainageMetres - mA.chainageMetres
-                    estimatedChainageMetres = (mA.chainageMetres + fraction * deltaChainage).roundToLong()
+                    val exactMetres = mA.chainageMetres + fraction * deltaChainage
+                    estimatedChainageMillimetres = Chainage.metresToMillimetres(exactMetres)
+                    estimatedChainageMetres = Chainage.millimetresToRoundedMetres(estimatedChainageMillimetres)
                     nearestMarkerLabel = if (fraction < 0.5) mA.marker.label else mB.marker.label
                     bracketingInfo = "${mA.marker.label} ↔ ${mB.marker.label}"
                 }
@@ -585,12 +618,11 @@ object ChainageMatcher {
                 val elapsedMs = (effectiveFixTimeMs - previousResult.timestamp).coerceAtLeast(0L)
                 val dtSec = elapsedMs / 1000.0
                 val isPoorAccuracySpike = gpsAccuracy > 35.0f && chainageJump > 25L
-                // Upper highway speed sanity bound (~198 km/h = 55 m/s) — symmetric for forward AND reverse travel
-                val maxPlausibleDistM = maxOf(SUDDEN_JUMP_THRESHOLD_METRES, dtSec * 55.0 + 150.0)
+                // Upper physical travel bound across gaps; still catches multi-km teleports (e.g. 171+000 -> 130+000) cleanly
+                val maxPlausibleDistM = maxOf(SUDDEN_JUMP_THRESHOLD_METRES, dtSec * 85.0 + 150.0)
                 val isImplausibleSpeed = dtSec in 0.1..6.0 && chainageJump > maxOf(65.0, dtSec * 55.0 + 35.0)
                 val isPhysicallyImpossibleJump = chainageJump > maxPlausibleDistM
                 val isLargeJump = chainageJump > SUDDEN_JUMP_THRESHOLD_METRES
-                val directionLabel = if (estimatedChainageMetres >= prevBaselineChainage.metres) "INCREASING" else "DECREASING"
 
                 when {
                     isOlderFixTimestamp -> {
@@ -606,6 +638,7 @@ object ChainageMatcher {
                     }
                     isLargeJump || isImplausibleSpeed -> {
                         val isHighQualityOnAlignment = gpsAccuracy <= 25.0f && effectiveOffset <= maxMatchOffsetMetres
+                        val isRecoverableOnAlignment = gpsAccuracy <= 35.0f && effectiveOffset <= maxMatchOffsetMetres
                         val isPlausibleLongGapTravel = !isPhysicallyImpossibleJump &&
                             elapsedMs > MAX_SPIKE_HOLD_WINDOW_MS &&
                             isHighQualityOnAlignment
@@ -618,37 +651,65 @@ object ChainageMatcher {
                             automaticJumpRecoveries.incrementAndGet()
                         } else {
                             // Suspicious or physically impossible drop/jump (e.g. 171+000 -> 130+000):
-                            // Require 2 consecutive spatially-consistent, fresh, accurate, on-alignment fixes
+                            // Require distinct, time-separated, spatially-consistent fixes (3 for impossible jumps from a
+                            // reliable state, 2 otherwise), never confirming duplicate-timestamp callbacks and never
+                            // locking highway-speed vehicles via a tiny fixed 60m step cap.
                             val routeKey = routeData.id
-                            val confirmedBySecondFix = synchronized(jumpValidationLock) {
+                            val isFromReliableState = !previousResult.isUncertain && previousResult.confidence != MatchConfidence.LOW
+                            val requiredConfirmations = if (isPhysicallyImpossibleJump && isFromReliableState) 3 else 2
+                            val canUseFixAsCandidate = if (isFromReliableState) isHighQualityOnAlignment else isRecoverableOnAlignment
+
+                            val confirmedByMultiFix = synchronized(jumpValidationLock) {
                                 val prevCand = pendingJumpCandidate
-                                val matchesCandidate = isHighQualityOnAlignment &&
-                                    prevCand != null &&
-                                    prevCand.routeKey == routeKey &&
-                                    effectiveFixTimeMs >= prevCand.fixTimeMs &&
-                                    (effectiveFixTimeMs - prevCand.fixTimeMs) <= 15_000L &&
-                                    GeoUtils.distanceMetres(prevCand.gpsPoint, gpsPoint) <= 60.0 &&
-                                    abs(prevCand.estimatedMetres - estimatedChainageMetres) <= 80L
-                                if (matchesCandidate) {
+                                if (!canUseFixAsCandidate) {
                                     pendingJumpCandidate = null
-                                    true
+                                    false
+                                } else if (prevCand != null &&
+                                    prevCand.routeKey == routeKey &&
+                                    effectiveFixTimeMs == prevCand.fixTimeMs
+                                ) {
+                                    // Ignore duplicate-timestamp callback without resetting or advancing confirmation count
+                                    false
                                 } else {
-                                    pendingJumpCandidate = if (isHighQualityOnAlignment) {
-                                        PendingJumpCandidate(
+                                    val candDeltaMs = if (prevCand != null) effectiveFixTimeMs - prevCand.fixTimeMs else -1L
+                                    val candDtSec = candDeltaMs.coerceAtLeast(0L) / 1000.0
+                                    val maxCandStepM = maxOf(80.0, candDtSec * 55.0 + 45.0)
+                                    val matchesCandidate = prevCand != null &&
+                                        prevCand.routeKey == routeKey &&
+                                        candDeltaMs in 400L..15_000L &&
+                                        GeoUtils.distanceMetres(prevCand.gpsPoint, gpsPoint) <= maxCandStepM &&
+                                        abs(prevCand.estimatedMetres - estimatedChainageMetres) <= maxCandStepM.roundToLong() + 20L
+                                    if (matchesCandidate) {
+                                        val nextCount = prevCand!!.confirmCount + 1
+                                        if (nextCount >= requiredConfirmations) {
+                                            pendingJumpCandidate = null
+                                            true
+                                        } else {
+                                            pendingJumpCandidate = PendingJumpCandidate(
+                                                routeKey = routeKey,
+                                                gpsPoint = gpsPoint,
+                                                estimatedMetres = estimatedChainageMetres,
+                                                alignmentName = bestAlignment.alignmentName,
+                                                fixTimeMs = effectiveFixTimeMs,
+                                                confirmCount = nextCount
+                                            )
+                                            false
+                                        }
+                                    } else {
+                                        pendingJumpCandidate = PendingJumpCandidate(
                                             routeKey = routeKey,
                                             gpsPoint = gpsPoint,
                                             estimatedMetres = estimatedChainageMetres,
                                             alignmentName = bestAlignment.alignmentName,
-                                            fixTimeMs = effectiveFixTimeMs
+                                            fixTimeMs = effectiveFixTimeMs,
+                                            confirmCount = 1
                                         )
-                                    } else {
-                                        null
+                                        false
                                     }
-                                    false
                                 }
                             }
 
-                            if (confirmedBySecondFix) {
+                            if (confirmedByMultiFix) {
                                 isUncertain = false
                                 lastReliableChainage = Chainage(estimatedChainageMetres)
                                 automaticJumpRecoveries.incrementAndGet()
@@ -695,18 +756,22 @@ object ChainageMatcher {
                 }
             }
 
-            // 6. Direction & Carriageway Side (LHS / RHS) Detection
+            // 6. Parallel Centerline Offset Detection & Carriageway Side (LHS / RHS) Detection
+            val parallelOffset = computeParallelCenterlineOffset(
+                gpsPoint = gpsPoint,
+                projectedPoint = finalProjectionPoint,
+                perpendicularDistanceMetres = effectiveOffset,
+                cachedAlignment = bestAlignment,
+                segmentIndex = bestSegIdx,
+                segmentProjectionT = bestProj.t
+            )
+
             var detectedSide = bestAlignment.carriagewayType
             if (detectedSide == "MAIN" || detectedSide == "UNKNOWN") {
-                if (bestProj.p1 != null && bestProj.p2 != null) {
-                    val lateral = calculateSignedLateralOffsetMetres(gpsPoint, bestProj.p1!!, bestProj.p2!!)
-                    detectedSide = when {
-                        abs(lateral) < 1.0 -> previousResult?.detectedSide ?: "RHS"
-                        lateral > 0.0 -> if (bestAlignment.direction == "DECREASING") "RHS" else "LHS"
-                        else -> if (bestAlignment.direction == "DECREASING") "LHS" else "RHS"
-                    }
-                } else {
-                    detectedSide = previousResult?.detectedSide ?: "RHS"
+                detectedSide = when {
+                    abs(parallelOffset.signedLateralOffsetMetres) < 1.0 -> previousResult?.detectedSide ?: "RHS"
+                    parallelOffset.signedLateralOffsetMetres > 0.0 -> "LHS"
+                    else -> "RHS"
                 }
             }
 
@@ -714,6 +779,11 @@ object ChainageMatcher {
                 lastReliableChainage
             } else {
                 Chainage(estimatedChainageMetres)
+            }
+            val finalPreciseMm = if (isUncertain && lastReliableChainage != null) {
+                lastReliableChainage.totalMillimetres
+            } else {
+                estimatedChainageMillimetres
             }
             val finalDistanceAlongM = if (isUncertain && lastReliableChainage != null &&
                 previousResult != null && previousResult.matchedSegmentIndex >= 0
@@ -745,11 +815,178 @@ object ChainageMatcher {
                 distanceAlongAlignmentMetres = finalDistanceAlongM,
                 nearestReferenceMarkerLabel = nearestMarkerLabel,
                 bracketingMarkersInfo = bracketingInfo,
-                sourceKmzReferenceStatus = referenceStatus
+                sourceKmzReferenceStatus = referenceStatus,
+                signedLateralOffsetMetres = parallelOffset.signedLateralOffsetMetres,
+                centerlineOffsetZone = parallelOffset.zone,
+                localTangentBearingDegrees = parallelOffset.localTangentBearingDegrees,
+                parallelCenterlineOffset = parallelOffset,
+                preciseChainageMillimetres = finalPreciseMm
             )
         } finally {
             lastMatchLatencyMicros.set((System.nanoTime() - startNs) / 1_000L)
         }
+    }
+
+    /**
+     * Convenience overload that projects [gpsPoint] onto [alignment] and returns the perpendicular
+     * [ParallelCenterlineOffset] relative to the alignment's local forward direction.
+     */
+    fun computeParallelCenterlineOffset(
+        gpsPoint: GeoPoint,
+        alignment: RouteAlignment,
+        markers: List<RouteMarker> = emptyList()
+    ): ParallelCenterlineOffset {
+        if (alignment.points.size < 2) {
+            return ParallelCenterlineOffset.outside(gpsPoint)
+        }
+        val cached = getOrCreateCachedGeometry(alignment, markers)
+        var bestSegIdx = 0
+        var bestProj = GeoUtils.projectPointToSegment(gpsPoint, cached.points[0], cached.points[1])
+        for (i in 1 until cached.segmentCount) {
+            val proj = GeoUtils.projectPointToSegment(gpsPoint, cached.points[i], cached.points[i + 1])
+            if (proj.perpendicularDistance < bestProj.perpendicularDistance) {
+                bestProj = proj
+                bestSegIdx = i
+            }
+        }
+        return computeParallelCenterlineOffset(
+            gpsPoint = gpsPoint,
+            projectedPoint = bestProj.projectedPoint,
+            perpendicularDistanceMetres = bestProj.perpendicularDistance,
+            cachedAlignment = cached,
+            segmentIndex = bestSegIdx,
+            segmentProjectionT = bestProj.t
+        )
+    }
+
+    /**
+     * Computes perpendicular GPS offset relative to the selected KMZ/KML road centerline:
+     * 1. Projects GPS onto the selected alignment at ([segmentIndex], [segmentProjectionT]).
+     * 2. Determines smooth local tangent direction at the projected position (blending adjacent
+     *    segment unit vectors near vertices so curves never flip or jump discontinuously).
+     * 3. Orients the local tangent along the alignment's local forward direction.
+     * 4. Computes signed perpendicular distance via 2D cross product between local tangent and
+     *    the projected-to-GPS vector (never using raw lat/lng differences).
+     * 5. Classifies LEFT (> +0.5 m), RIGHT (< -0.5 m), ON_LINE (<= 0.5 m), or OUTSIDE (> 100 m).
+     */
+    fun computeParallelCenterlineOffset(
+        gpsPoint: GeoPoint,
+        projectedPoint: GeoPoint,
+        perpendicularDistanceMetres: Double,
+        cachedAlignment: CachedAlignmentGeometry,
+        segmentIndex: Int,
+        segmentProjectionT: Double
+    ): ParallelCenterlineOffset {
+        val pts = cachedAlignment.points
+        if (pts.size < 2 || segmentIndex !in 0 until cachedAlignment.segmentCount) {
+            return ParallelCenterlineOffset.outside(gpsPoint, perpendicularDistanceMetres)
+        }
+
+        fun segmentUnitVector(idx: Int): Pair<Double, Double> {
+            val a = pts[idx]
+            val b = pts[idx + 1]
+            val midLatRad = Math.toRadians((a.latitude + b.latitude) * 0.5)
+            val dx = Math.toRadians(b.longitude - a.longitude) * GeoUtils.EARTH_RADIUS_METRES * cos(midLatRad)
+            val dy = Math.toRadians(b.latitude - a.latitude) * GeoUtils.EARTH_RADIUS_METRES
+            val len = sqrt(dx * dx + dy * dy)
+            return if (len > 1e-5) (dx / len) to (dy / len) else 0.0 to 1.0
+        }
+
+        val (currUx, currUy) = segmentUnitVector(segmentIndex)
+        var blendUx = currUx
+        var blendUy = currUy
+
+        // Smooth angle-bisector tangent blending near curve vertices (t in [0, 0.20] or [0.80, 1.0])
+        val t = segmentProjectionT.coerceIn(0.0, 1.0)
+        if (t < 0.20 && segmentIndex > 0) {
+            val (prevUx, prevUy) = segmentUnitVector(segmentIndex - 1)
+            val wPrev = ((0.20 - t) / 0.40).coerceIn(0.0, 0.5)
+            val wCurr = 1.0 - wPrev
+            blendUx = wCurr * currUx + wPrev * prevUx
+            blendUy = wCurr * currUy + wPrev * prevUy
+        } else if (t > 0.80 && segmentIndex + 1 < cachedAlignment.segmentCount) {
+            val (nextUx, nextUy) = segmentUnitVector(segmentIndex + 1)
+            val wNext = ((t - 0.80) / 0.40).coerceIn(0.0, 0.5)
+            val wCurr = 1.0 - wNext
+            blendUx = wCurr * currUx + wNext * nextUx
+            blendUy = wCurr * currUy + wNext * nextUy
+        }
+
+        val norm = sqrt(blendUx * blendUx + blendUy * blendUy)
+        var tangentEast = if (norm > 1e-5) blendUx / norm else currUx
+        var tangentNorth = if (norm > 1e-5) blendUy / norm else currUy
+
+        // Orient tangent in the alignment's local forward chainage direction
+        if (cachedAlignment.direction == "DECREASING") {
+            tangentEast = -tangentEast
+            tangentNorth = -tangentNorth
+        }
+
+        val localTangentBearingDeg = ((Math.toDegrees(atan2(tangentEast, tangentNorth)) % 360.0) + 360.0) % 360.0
+
+        // Vector from projected centerline point to actual GPS coordinate in local East/North metres
+        val midLatRad = Math.toRadians((projectedPoint.latitude + gpsPoint.latitude) * 0.5)
+        val deltaEast = Math.toRadians(gpsPoint.longitude - projectedPoint.longitude) *
+            GeoUtils.EARTH_RADIUS_METRES * cos(midLatRad)
+        val deltaNorth = Math.toRadians(gpsPoint.latitude - projectedPoint.latitude) *
+            GeoUtils.EARTH_RADIUS_METRES
+
+        // 2D cross product: tangent x delta -> > 0 is LEFT of local tangent, < 0 is RIGHT of local tangent
+        val cross = tangentEast * deltaNorth - tangentNorth * deltaEast
+        val cleanPerpDist = if (perpendicularDistanceMetres.isFinite() && perpendicularDistanceMetres >= 0.0) {
+            perpendicularDistanceMetres
+        } else {
+            sqrt(deltaEast * deltaEast + deltaNorth * deltaNorth)
+        }
+
+        if (cleanPerpDist > MAXIMUM_OFF_ROUTE_DISTANCE_METRES) {
+            return ParallelCenterlineOffset(
+                zone = CenterlineOffsetZone.OUTSIDE,
+                perpendicularDistanceMetres = cleanPerpDist,
+                signedLateralOffsetMetres = if (cross >= 0.0) cleanPerpDist else -cleanPerpDist,
+                localTangentBearingDegrees = localTangentBearingDeg,
+                projectedPoint = projectedPoint,
+                gpsPoint = gpsPoint,
+                matchedAlignmentId = cachedAlignment.alignmentId,
+                matchedAlignmentName = cachedAlignment.alignmentName
+            )
+        }
+
+        if (cleanPerpDist <= ParallelCenterlineOffset.ON_CENTERLINE_THRESHOLD_METRES) {
+            return ParallelCenterlineOffset(
+                zone = CenterlineOffsetZone.ON_LINE,
+                perpendicularDistanceMetres = cleanPerpDist,
+                signedLateralOffsetMetres = if (abs(cross) < 1e-4) 0.0 else if (cross > 0.0) cleanPerpDist else -cleanPerpDist,
+                localTangentBearingDegrees = localTangentBearingDeg,
+                projectedPoint = projectedPoint,
+                gpsPoint = gpsPoint,
+                matchedAlignmentId = cachedAlignment.alignmentId,
+                matchedAlignmentName = cachedAlignment.alignmentName
+            )
+        }
+
+        val isLeft = if (abs(cross) > 1e-5) {
+            cross > 0.0
+        } else {
+            val p1 = pts[segmentIndex]
+            val p2 = pts[segmentIndex + 1]
+            val segSign = calculateSignedLateralOffsetMetres(gpsPoint, p1, p2)
+            if (cachedAlignment.direction == "DECREASING") segSign < 0.0 else segSign >= 0.0
+        }
+
+        val zone = if (isLeft) CenterlineOffsetZone.LEFT else CenterlineOffsetZone.RIGHT
+        val signedOffset = if (isLeft) cleanPerpDist else -cleanPerpDist
+
+        return ParallelCenterlineOffset(
+            zone = zone,
+            perpendicularDistanceMetres = cleanPerpDist,
+            signedLateralOffsetMetres = signedOffset,
+            localTangentBearingDegrees = localTangentBearingDeg,
+            projectedPoint = projectedPoint,
+            gpsPoint = gpsPoint,
+            matchedAlignmentId = cachedAlignment.alignmentId,
+            matchedAlignmentName = cachedAlignment.alignmentName
+        )
     }
 
     private fun matchToMarkersDirectly(

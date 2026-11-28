@@ -1,5 +1,6 @@
 package com.example
 
+import android.app.Application
 import android.content.Context
 import android.location.Location
 import androidx.compose.material3.MaterialTheme
@@ -19,9 +20,12 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.AppDatabase
 import com.example.data.PreferencesManager
+import com.example.data.RouteEntity
 import com.example.geo.ChainageMatcher
 import com.example.geo.ChainageProgressionTracker
+import com.example.geo.KmzCalibrationEngine
 import com.example.location.LocationState
 import com.example.location.LocationStatus
 import com.example.location.LocationTracker
@@ -32,17 +36,23 @@ import com.example.model.ChainageSource
 import com.example.model.DirectionControlMode
 import com.example.model.GeoBounds
 import com.example.model.GeoPoint
+import com.example.model.KmzCalibrationCoverageStatus
 import com.example.model.LastReliableChainageSnapshot
 import com.example.model.ManualChainageMode
 import com.example.model.MatchConfidence
+import com.example.model.RoadSide
 import com.example.model.RouteAlignment
 import com.example.model.RouteData
 import com.example.model.RouteMarker
 import com.example.model.SmartDirectionPreferences
 import com.example.model.TravelChainageDirection
+import com.example.navigation.CtecsNavigationTelemetryHub
 import com.example.navigation.SmartDirectionManager
+import com.example.parser.KmzParser
+import com.example.ui.MainViewModel
 import com.example.ui.home.CentralChainageDisplay
 import com.example.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -54,6 +64,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
 import kotlin.math.abs
 
 @RunWith(RobolectricTestRunner::class)
@@ -586,5 +597,353 @@ class ChainageDropPreventionAndHomeRefreshTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("home_chainage_refresh_warning_icon", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Awaiting GPS").assertIsDisplayed()
+    }
+
+    // =========================================================================
+    // 10. Calibrated (KmzManualCalibration + CUSTOM_CORRECTION) 171+000 -> 130+000 backdrop prevention
+    // =========================================================================
+    @Test
+    fun `calibrated KmzManualCalibration holds 171+030 across glitched 130+000 fix even when OUTSIDE_2KM_RANGE flips source`() {
+        val route = createHighway130To175Route()
+        val tracker = ChainageProgressionTracker()
+        val cal = KmzCalibrationEngine.createCalibration(
+            routeData = route,
+            alignment = route.activeAlignment,
+            originalKmzMetres = 171_000L,
+            manualReferenceMetres = 171_030L
+        )
+        val calMap = mapOf(KmzCalibrationEngine.storageKey(cal.routeId, cal.alignmentId) to cal)
+        val t0 = 1_700_010_000_000L
+
+        fun evaluateWithCal(match: ChainageMatchResult): ChainageMatchResult {
+            val rawCh = match.rawUncorrectedChainage ?: match.chainage ?: return match
+            val eval = KmzCalibrationEngine.evaluateAndApply(
+                rawChainage = rawCh,
+                distanceAlongAlignmentMetres = match.distanceAlongAlignmentMetres,
+                routeData = route,
+                calibrations = calMap,
+                matchedAlignmentId = match.matchedAlignmentId,
+                matchedAlignmentName = match.matchedAlignmentName
+            )
+            return if (eval.status == KmzCalibrationCoverageStatus.ACTIVE_WITHIN_RANGE) {
+                match.copy(
+                    chainage = eval.outputChainage,
+                    rawUncorrectedChainage = eval.rawKmzChainage,
+                    source = ChainageSource.CUSTOM_CORRECTION,
+                    manualCalibrationAnchorMetres = eval.calibration?.manualReferenceMetres,
+                    manualCalibrationOffsetMetres = eval.appliedOffsetMetres,
+                    calibrationValidationStatus = eval.status.name
+                )
+            } else {
+                match.copy(
+                    chainage = eval.outputChainage,
+                    rawUncorrectedChainage = eval.rawKmzChainage,
+                    calibrationValidationStatus = eval.status.name
+                )
+            }
+        }
+
+        // Establish calibrated 171+030
+        val raw171 = ChainageMatcher.match(
+            gpsPoint = pointAtChainage(171_000L),
+            gpsAccuracy = 3.5f,
+            routeData = route,
+            previousResult = null,
+            fixTimeMs = t0
+        )
+        val tracked171 = tracker.processResult(evaluateWithCal(raw171), route.id)
+        assertEquals(ChainageSource.CUSTOM_CORRECTION, tracked171.source)
+        assertTrue(abs((tracked171.chainage?.metres ?: 0L) - 171_030L) <= 5L)
+
+        // Single and duplicate-timestamp glitched 130+000 fixes (simulating matcher bypass or fresh eval):
+        // 130+000 is OUTSIDE_2KM_RANGE of 171+000 anchor -> source flips to KMZ (calibrationChanged == true)
+        val rawGlitch1 = ChainageMatcher.match(
+            gpsPoint = pointAtChainage(130_000L),
+            gpsAccuracy = 5.0f,
+            routeData = route,
+            previousResult = null,
+            fixTimeMs = t0 + 1_000L
+        )
+        val evalGlitch1 = evaluateWithCal(rawGlitch1)
+        assertEquals(ChainageSource.KMZ, evalGlitch1.source)
+        val held1 = tracker.processResult(evalGlitch1, route.id)
+        assertTrue("Must hold calibrated 171+030 instead of dropping to 130+000, got ${held1.displayChainage}",
+            abs((held1.chainage?.metres ?: 0L) - 171_030L) <= 5L)
+        assertTrue(held1.isUncertain)
+
+        // Duplicate-timestamp glitch at t0 + 1_000L must also stay blocked
+        val evalGlitchDup = evaluateWithCal(rawGlitch1)
+        val heldDup = tracker.processResult(evalGlitchDup, route.id)
+        assertTrue(abs((heldDup.chainage?.metres ?: 0L) - 171_030L) <= 5L)
+        assertTrue(heldDup.isUncertain)
+
+        // Next valid fix at 171+050 resumes calibrated output at 171+080
+        val rawResume = ChainageMatcher.match(
+            gpsPoint = pointAtChainage(171_050L),
+            gpsAccuracy = 3.5f,
+            routeData = route,
+            previousResult = heldDup,
+            fixTimeMs = t0 + 2_000L
+        )
+        val resumed = tracker.processResult(evaluateWithCal(rawResume), route.id)
+        assertFalse(resumed.isUncertain)
+        assertEquals(ChainageSource.CUSTOM_CORRECTION, resumed.source)
+        assertTrue("Expected calibrated resume ~171+080, got ${resumed.chainage?.metres}",
+            abs((resumed.chainage?.metres ?: 0L) - 171_080L) <= 8L)
+    }
+
+    // =========================================================================
+    // 11. ManualChainageMode.DYNAMIC_CORRECTION 171+000 -> 130+000 alignment drop prevention
+    // =========================================================================
+    @Test
+    fun `dynamic manual calibration blocks glitched 130+000 alignment match and holds 171+250`() {
+        val route = createHighway130To175Route()
+        val tracker = ChainageProgressionTracker()
+        val t0 = 1_700_020_000_000L
+
+        val loc171 = LocationState(
+            point = pointAtChainage(171_000L),
+            accuracy = 3.0f,
+            status = LocationStatus.READY,
+            lastFixTime = t0
+        )
+        val auto171 = ChainageMatcher.match(loc171.point!!, 3.0f, routeData = route, fixTimeMs = t0)
+        val cal = tracker.establishManualCalibration(
+            enteredChainage = Chainage(171_250L),
+            mode = ManualChainageMode.DYNAMIC_CORRECTION,
+            currentAutoResult = auto171,
+            locationState = loc171,
+            routeId = route.id,
+            nowMs = t0
+        )
+        assertEquals(250L, cal.computedOffsetMetres)
+
+        // Glitched raw alignment match jumps to 130+000 while vehicle moved +10m near 171+010
+        val loc171010 = LocationState(
+            point = pointAtChainage(171_010L),
+            accuracy = 3.5f,
+            status = LocationStatus.READY,
+            lastFixTime = t0 + 1_000L
+        )
+        val glitchedAuto130 = ChainageMatcher.match(
+            gpsPoint = pointAtChainage(130_000L),
+            gpsAccuracy = 5.0f,
+            routeData = route,
+            previousResult = null,
+            fixTimeMs = t0 + 1_000L
+        )
+        val afterGlitch = tracker.processWithManualCalibration(
+            autoResult = glitchedAuto130,
+            locationState = loc171010,
+            routeData = route,
+            calibration = cal,
+            nowMs = t0 + 1_000L
+        )
+        assertTrue(
+            "Dynamic correction must hold ~171+250 instead of dropping to ${afterGlitch.matchResult.chainage?.metres}",
+            abs((afterGlitch.matchResult.chainage?.metres ?: 0L) - 171_250L) <= 15L
+        )
+
+        // Valid next fix at 171+030 resumes calibrated progression at 171+280
+        val loc171030 = LocationState(
+            point = pointAtChainage(171_030L),
+            accuracy = 3.0f,
+            status = LocationStatus.READY,
+            lastFixTime = t0 + 2_000L
+        )
+        val auto171030 = ChainageMatcher.match(loc171030.point!!, 3.0f, routeData = route, fixTimeMs = t0 + 2_000L)
+        val resumed = tracker.processWithManualCalibration(
+            autoResult = auto171030,
+            locationState = loc171030,
+            routeData = route,
+            calibration = afterGlitch.updatedCalibration,
+            nowMs = t0 + 2_000L
+        )
+        assertTrue("Expected dynamic continuation ~171+280, got ${resumed.matchResult.chainage?.metres}",
+            abs((resumed.matchResult.chainage?.metres ?: 0L) - 171_280L) <= 10L)
+    }
+
+    // =========================================================================
+    // 12. Duplicate-timestamp rejection & highway-speed recovery
+    // =========================================================================
+    @Test
+    fun `duplicate timestamp callbacks never confirm impossible 130+000 jump and highway speed recovers without deadlock`() {
+        val route = createHighway130To175Route()
+        val t0 = 1_700_030_000_000L
+
+        var prev = ChainageMatcher.match(
+            gpsPoint = pointAtChainage(171_000L),
+            gpsAccuracy = 3.5f,
+            routeData = route,
+            previousResult = null,
+            fixTimeMs = t0
+        )
+        assertEquals(171_000L, prev.chainage?.metres)
+
+        // 3 glitched fixes at 130+000 with identical timestamp (t0 + 1_000L) MUST NOT confirm a jump
+        repeat(3) {
+            prev = ChainageMatcher.match(
+                gpsPoint = pointAtChainage(130_000L),
+                gpsAccuracy = 5.0f,
+                routeData = route,
+                previousResult = prev,
+                fixTimeMs = t0 + 1_000L
+            )
+            assertTrue("Duplicate-timestamp fix must retain 171+000, got ${prev.chainage?.metres}",
+                abs((prev.chainage?.metres ?: 0L) - 171_000L) <= 5L)
+            assertTrue(prev.isUncertain)
+        }
+
+        // Now simulate vehicle actually relocated 2,000m down-highway driving 90m every 3s (30 m/s):
+        // consecutive time-separated fixes at 173+000, 173+090, 173+180 must confirm & recover cleanly!
+        var recovered = prev
+        val recoveryPoints = listOf(
+            (t0 + 5_000L) to 173_000L,
+            (t0 + 8_000L) to 173_090L,
+            (t0 + 11_000L) to 173_180L
+        )
+        for ((ts, targetM) in recoveryPoints) {
+            recovered = ChainageMatcher.match(
+                gpsPoint = pointAtChainage(targetM),
+                gpsAccuracy = 3.5f,
+                routeData = route,
+                previousResult = recovered,
+                fixTimeMs = ts
+            )
+        }
+        assertFalse("Highway-speed consecutive fixes must confirm recovery", recovered.isUncertain)
+        assertTrue("Expected recovery to ~173+180, got ${recovered.chainage?.metres}",
+            abs((recovered.chainage?.metres ?: 0L) - 173_180L) <= 10L)
+    }
+
+    // =========================================================================
+    // 13. Cached fallback Location missing timestamp (time == 0L) rejection
+    // =========================================================================
+    @Test
+    fun `LocationTracker rejects cached fallback location with missing timestamp`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val locTracker = LocationTracker(context)
+        val noTimestampCached = Location("fused").apply {
+            latitude = pointAtChainage(130_000L).latitude
+            longitude = pointAtChainage(130_000L).longitude
+            accuracy = 6.0f
+            time = 0L
+        }
+        assertFalse(
+            "Cached fallback with time <= 0L must be rejected",
+            locTracker.handleNewLocation(
+                loc = noTimestampCached,
+                maxAgeMs = LocationTracker.DEFAULT_GPS_FRESH_AGE_MS,
+                maxAccuracyForCachedFallback = LocationTracker.MAX_LAST_LOCATION_FALLBACK_ACCURACY_M,
+                nowMs = 1_700_040_000_000L
+            )
+        )
+    }
+
+    // =========================================================================
+    // 14. End-to-end MainViewModel triggerHomeChainageForceRefresh restores 171+030 & keeps LHS lock
+    // =========================================================================
+    @Test
+    fun `MainViewModel triggerHomeChainageForceRefresh restores calibrated 171+030 while keeping calibration and manual side lock`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val prefs = PreferencesManager(app)
+        prefs.resetAllSettings()
+        delay(40)
+        PreferencesManager.clearMemoryCacheForProcessRestart()
+        CtecsNavigationTelemetryHub.ensureInitialized(app, forceReload = true)
+
+        // Create and seed 130+000..175+000 KML route
+        val kmlFile = File(app.filesDir, "nh58_130_175_refresh_test.kml")
+        val coords = (130..175).joinToString(" ") { km ->
+            val lat = baseLat + ((km - 130) * 1000.0) * degPerMetre
+            "$baseLng,$lat,240"
+        }
+        val placemarks = (130..175).joinToString("\n") { km ->
+            val lat = baseLat + ((km - 130) * 1000.0) * degPerMetre
+            "<Placemark><name>$km+000</name><Point><coordinates>$baseLng,$lat,240</coordinates></Point></Placemark>"
+        }
+        kmlFile.writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2">
+              <Document>
+                <name>NH-58 130-175</name>
+                <Placemark><name>Mainline</name><LineString><coordinates>$coords</coordinates></LineString></Placemark>
+                $placemarks
+              </Document>
+            </kml>
+            """.trimIndent()
+        )
+
+        val routeId = "nh58-refresh-171"
+        val parsed = KmzParser.parse(kmlFile, kmlFile.name).copy(id = routeId)
+        val db = AppDatabase.getDatabase(app)
+        db.routeDao().insertRoute(
+            RouteEntity(
+                id = routeId,
+                name = parsed.name,
+                fileName = parsed.fileName,
+                markerCount = parsed.markers.size,
+                startChainageMetres = parsed.startChainage?.metres ?: 130_000L,
+                endChainageMetres = parsed.endChainage?.metres ?: 175_000L,
+                minLat = parsed.bounds.minLat,
+                maxLat = parsed.bounds.maxLat,
+                minLng = parsed.bounds.minLng,
+                maxLng = parsed.bounds.maxLng,
+                localFilePath = kmlFile.absolutePath
+            )
+        )
+        prefs.setActiveRouteId(routeId)
+        PreferencesManager.awaitPendingWrites()
+
+        val vm = MainViewModel(app)
+        try {
+            vm.routeRepository.loadRouteById(routeId)
+            delay(100)
+            assertNotNull(vm.activeRouteData.value)
+
+            // Lock manual LHS direction & inject live GPS at 171+000
+            vm.updateSide(RoadSide.LHS)
+            val pt171 = pointAtChainage(171_000L)
+            vm.locationTracker.injectLocation(pt171.latitude, pt171.longitude, accuracy = 3.2f)
+            delay(80)
+
+            // Apply +30m calibration (171+000 -> 171+030)
+            var calApplied = false
+            vm.applyManualKmzCalibration(
+                manualReferenceInput = "171+030",
+                originalKmzMetresOverride = 171_000L,
+                gpsPointOverride = pt171
+            ) { ok, _ -> calApplied = ok }
+            delay(80)
+            assertTrue(calApplied)
+            assertEquals(171_030L, vm.liveMatchResult.value.chainage?.metres)
+            assertEquals(ChainageSource.CUSTOM_CORRECTION, vm.liveMatchResult.value.source)
+
+            // Simulate user tapping Force Refresh while at 171+000 (keep injected fix fresh)
+            vm.locationTracker.injectLocation(pt171.latitude, pt171.longitude, accuracy = 3.2f)
+            vm.triggerHomeChainageForceRefresh()
+            var waitedMs = 0L
+            while (waitedMs < 6_000L) {
+                val st = vm.chainageCardRefreshState.value
+                if (st == ChainageCardRefreshState.SUCCESS || st == ChainageCardRefreshState.WARNING) break
+                delay(100L)
+                waitedMs += 100L
+            }
+
+            assertEquals(ChainageCardRefreshState.SUCCESS, vm.chainageCardRefreshState.value)
+            assertEquals(ChainageSource.CUSTOM_CORRECTION, vm.liveMatchResult.value.source)
+            assertTrue(
+                "Force Refresh must compute calibrated 171+030, got ${vm.liveMatchResult.value.chainage?.metres}",
+                abs((vm.liveMatchResult.value.chainage?.metres ?: 0L) - 171_030L) <= 5L
+            )
+            assertEquals(30L, vm.activeKmzCalibration.value?.offsetMetres)
+            assertEquals(DirectionControlMode.MANUAL_OVERRIDE, vm.smartDirectionPreferences.value.controlMode)
+            assertEquals("LHS", vm.smartDirectionPreferences.value.manualOverrideSide)
+        } finally {
+            prefs.resetAllSettings()
+            PreferencesManager.awaitPendingWrites()
+            kmlFile.delete()
+        }
     }
 }

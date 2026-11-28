@@ -33,7 +33,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import com.example.ui.calibration.SmartAnimatedAlignmentTrack
 import com.example.ui.dialogs.ChainageManagementDialog
+import com.example.ui.dialogs.DeleteCalibrationConfirmDialog
+import com.example.ui.dialogs.EditCalibrationReferenceDialog
+import com.example.ui.dialogs.SmartCalibrationChainageListSection
+import com.example.ui.dialogs.SmartCalibrationSuggestionCard
+import com.example.model.KmzManualCalibration
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -83,6 +89,10 @@ fun RoutesScreen(
     val activeRoute by viewModel.activeRouteData.collectAsStateWithLifecycle()
     val allRoutes by viewModel.allRoutes.collectAsStateWithLifecycle()
     val locationState by viewModel.locationState.collectAsStateWithLifecycle()
+    val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
+    val activeCalibration by viewModel.activeKmzCalibration.collectAsStateWithLifecycle()
+    val routeCalibrations by viewModel.routeKmzCalibrationsList.collectAsStateWithLifecycle()
+    val calibrationSuggestion by viewModel.calibrationSuggestionState.collectAsStateWithLifecycle()
     val mapHeadingState by viewModel.mapHeadingState.collectAsStateWithLifecycle()
     val isImporting by viewModel.isImportingRoute.collectAsStateWithLifecycle()
     val routeImportStatus by viewModel.routeImportStatus.collectAsStateWithLifecycle()
@@ -93,6 +103,8 @@ fun RoutesScreen(
     var routeToDelete by remember { mutableStateOf<RouteEntity?>(null) }
     var showMarkerInspector by remember { mutableStateOf(false) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
+    var recordBeingEdited by remember { mutableStateOf<KmzManualCalibration?>(null) }
+    var recordBeingDeleted by remember { mutableStateOf<KmzManualCalibration?>(null) }
 
     val c = CtecsTheme.colors
 
@@ -149,6 +161,53 @@ fun RoutesScreen(
                     onInspectMarkers = { showMarkerInspector = true },
                     onCalibrate = { showCalibrationDialog = true }
                 )
+            }
+
+            // 1B. Live Smart Animated Alignment Track, Suggestion Card & Smart Calibration Chainage List
+            if (activeRoute != null) {
+                item {
+                    val effectiveAlignment = activeRoute?.activeAlignment
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = c.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("routes_smart_calibration_hub_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            SmartCalibrationSuggestionCard(
+                                suggestion = calibrationSuggestion,
+                                onQuickFillSuggestedReference = { showCalibrationDialog = true }
+                            )
+
+                            SmartAnimatedAlignmentTrack(
+                                activeRoute = activeRoute,
+                                effectiveAlignment = effectiveAlignment,
+                                matchResult = matchResult,
+                                currentGpsPoint = locationState.point,
+                                currentGpsAccuracy = locationState.accuracy,
+                                speedMps = locationState.speed,
+                                calibrations = routeCalibrations,
+                                activeCalibration = activeCalibration
+                            )
+
+                            SmartCalibrationChainageListSection(
+                                calibrations = routeCalibrations,
+                                activeRoute = activeRoute,
+                                activeAlignmentId = effectiveAlignment?.id,
+                                currentDistanceAlongMetres = matchResult.distanceAlongAlignmentMetres
+                                    .takeIf { matchResult.confidence != com.example.model.MatchConfidence.NO_MATCH },
+                                activeCalibrationId = activeCalibration?.id,
+                                onEditClick = { cal -> recordBeingEdited = cal },
+                                onDeleteClick = { cal -> recordBeingDeleted = cal }
+                            )
+                        }
+                    }
+                }
             }
 
             // 2. KML / KMZ File & URL Picker Component & Survey Action
@@ -257,10 +316,6 @@ fun RoutesScreen(
 
     // Smart Chainage Calibration Modal
     if (showCalibrationDialog && activeRoute != null) {
-        val matchResult by viewModel.liveMatchResult.collectAsStateWithLifecycle()
-        val locationState by viewModel.locationState.collectAsStateWithLifecycle()
-        val activeCalibration by viewModel.activeKmzCalibration.collectAsStateWithLifecycle()
-
         ChainageManagementDialog(
             viewModel = viewModel,
             matchResult = matchResult,
@@ -269,6 +324,36 @@ fun RoutesScreen(
             currentGpsAccuracy = locationState.accuracy,
             activeCalibration = activeCalibration,
             onDismiss = { showCalibrationDialog = false }
+        )
+    }
+
+    recordBeingEdited?.let { record ->
+        EditCalibrationReferenceDialog(
+            calibration = record,
+            currentGpsPoint = locationState.point,
+            currentGpsAccuracy = locationState.accuracy,
+            liveOriginalKmzChainage = matchResult.rawUncorrectedChainage ?: matchResult.chainage,
+            onSaveEdit = { newManualInput, newOrigInput, newGpsPt ->
+                viewModel.editManualKmzCalibration(
+                    calibrationId = record.id,
+                    newManualReferenceInput = newManualInput,
+                    newOriginalKmzInput = newOrigInput,
+                    newGpsPointOverride = newGpsPt
+                )
+                recordBeingEdited = null
+            },
+            onDismiss = { recordBeingEdited = null }
+        )
+    }
+
+    recordBeingDeleted?.let { record ->
+        DeleteCalibrationConfirmDialog(
+            calibration = record,
+            onConfirmDelete = {
+                viewModel.deleteManualKmzCalibration(record.id)
+                recordBeingDeleted = null
+            },
+            onDismiss = { recordBeingDeleted = null }
         )
     }
 }

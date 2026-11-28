@@ -12,6 +12,11 @@ data class Chainage(val metres: Long) : Comparable<Chainage> {
     val remainderMetres: Long get() = Math.abs(metres % 1000)
 
     /**
+     * Fixed-point integer millimetre representation (1 m = 1,000 mm) for internal arithmetic.
+     */
+    val totalMillimetres: Long get() = metres * MILLIMETRES_PER_METRE
+
+    /**
      * Formats the chainage to the standard format "196+040".
      */
     fun format(): String {
@@ -27,6 +32,25 @@ data class Chainage(val metres: Long) : Comparable<Chainage> {
     override fun compareTo(other: Chainage): Int = metres.compareTo(other.metres)
 
     companion object {
+        const val MILLIMETRES_PER_METRE = 1_000L
+
+        fun fromMillimetres(millimetres: Long): Chainage {
+            val roundedMetres = millimetresToRoundedMetres(millimetres)
+            return Chainage(roundedMetres)
+        }
+
+        fun metresToMillimetres(metres: Double): Long {
+            if (!metres.isFinite()) return 0L
+            return kotlin.math.round(metres * MILLIMETRES_PER_METRE.toDouble()).toLong()
+        }
+
+        fun millimetresToRoundedMetres(millimetres: Long): Long {
+            return if (millimetres >= 0L) {
+                (millimetres + 500L) / MILLIMETRES_PER_METRE
+            } else {
+                -((Math.abs(millimetres) + 500L) / MILLIMETRES_PER_METRE)
+            }
+        }
         private val CHAINAGE_PLUS_REGEX = Regex(
             """(?i)(?:CH|CHAINAGE|KM|STA|STATION)?[:\s\.-]*(-?\d+)\s*[\+]+\s*(\d{1,4}(?:\.\d+)?)(?:\s*m)?(?:\b|$)"""
         )
